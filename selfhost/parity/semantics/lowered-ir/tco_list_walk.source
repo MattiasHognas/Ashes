@@ -1,0 +1,6 @@
+let recursive walk xs count total =
+    match xs with
+        | [] -> count * 1000 + total
+        | x :: rest -> walk(rest)(count + 1)(total + x)
+
+Ashes.IO.print(Ashes.Text.fromInt(walk([3, 5, 7])(0)(0)))

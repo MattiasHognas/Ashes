@@ -1,0 +1,97 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from count]
+  locals=17 temps=26
+    LoadEnv               Target=0 Index=0   (tco_scalar_owned_let.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (tco_scalar_owned_let.ash:1:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_scalar_owned_let.ash:1:1)
+    StoreLocal            Slot=5 Source=1   (tco_scalar_owned_let.ash:1:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (tco_scalar_owned_let.ash:1:1)
+    LoadLocal             Target=2 Slot=2   (tco_scalar_owned_let.ash:2:8)
+    LoadConstInt          Target=3 Value=0   (tco_scalar_owned_let.ash:2:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_scalar_owned_let.ash:2:8)
+    JumpIfFalse           CondTemp=4 Target=else_0   (tco_scalar_owned_let.ash:2:5)
+    LoadLocal             Target=5 Slot=1   (tco_scalar_owned_let.ash:3:10)
+    StoreLocal            Slot=9 Source=5   (tco_scalar_owned_let.ash:2:5)
+    Jump                  Target=endif_1   (tco_scalar_owned_let.ash:2:5)
+  else_0:
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=6 Slot=2   (tco_scalar_owned_let.ash:5:36)
+    TextFromInt           Target=7 ValueTemp=6   (tco_scalar_owned_let.ash:5:17)
+    StoreLocal            Slot=12 Source=7   (tco_scalar_owned_let.ash:5:9)
+    LoadLocal             Target=8 Slot=2   (tco_scalar_owned_let.ash:7:19)
+    LoadConstInt          Target=9 Value=1   (tco_scalar_owned_let.ash:7:23)
+    SubInt                Target=10 Left=8 Right=9   (tco_scalar_owned_let.ash:7:19)
+    LoadLocal             Target=11 Slot=12   (tco_scalar_owned_let.ash:7:29)
+    Borrow                Target=12 SourceTemp=11
+    LoadConstStr          Target=13 StrLabel=str_0   (tco_scalar_owned_let.ash:7:34)
+    CmpStrEq              Target=14 Left=12 Right=13   (tco_scalar_owned_let.ash:7:29)
+    RcDrop                SourceTemp=7 TypeName=String OwnerSlot=12
+    JumpIfFalse           CondTemp=14 Target=else_2   (tco_scalar_owned_let.ash:7:26)
+    LoadLocal             Target=15 Slot=1   (tco_scalar_owned_let.ash:8:18)
+    LoadConstInt          Target=16 Value=1   (tco_scalar_owned_let.ash:8:24)
+    AddInt                Target=17 Left=15 Right=16   (tco_scalar_owned_let.ash:8:18)
+    StoreLocal            Slot=13 Source=17   (tco_scalar_owned_let.ash:7:26)
+    Jump                  Target=endif_3   (tco_scalar_owned_let.ash:7:26)
+  else_2:
+    LoadLocal             Target=18 Slot=1   (tco_scalar_owned_let.ash:9:18)
+    StoreLocal            Slot=13 Source=18   (tco_scalar_owned_let.ash:7:26)
+  endif_3:
+    LoadLocal             Target=19 Slot=13   (tco_scalar_owned_let.ash:7:26)
+    LoadLocal             Target=20 Slot=2   (tco_scalar_owned_let.ash:7:13)
+    LoadLocal             Target=21 Slot=1   (tco_scalar_owned_let.ash:7:13)
+    StoreLocal            Slot=2 Source=10   (tco_scalar_owned_let.ash:7:13)
+    StoreLocal            Slot=1 Source=19   (tco_scalar_owned_let.ash:7:13)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=16
+    RestoreStackPointer   Slot=8   (tco_scalar_owned_let.ash:7:13)
+    Jump                  Target=lambda_1_body   (tco_scalar_owned_let.ash:7:13)
+    LoadConstInt          Target=22 Value=0   (tco_scalar_owned_let.ash:7:13)
+    StoreLocal            Slot=14 Source=22   (tco_scalar_owned_let.ash:5:9)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=15
+    LoadLocal             Target=24 Slot=14   (tco_scalar_owned_let.ash:5:9)
+    StoreLocal            Slot=9 Source=24   (tco_scalar_owned_let.ash:2:5)
+  endif_1:
+    LoadLocal             Target=25 Slot=9   (tco_scalar_owned_let.ash:2:5)
+    Return                Source=25   (tco_scalar_owned_let.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from count]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (tco_scalar_owned_let.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_scalar_owned_let.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_scalar_owned_let.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_scalar_owned_let.ash:1:1)
+    LoadConstInt          Target=3 Value=0   (tco_scalar_owned_let.ash:1:1)
+    Return                Source=3   (tco_scalar_owned_let.ash:1:1)
+
+function lambda_0  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_scalar_owned_let.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_scalar_owned_let.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_scalar_owned_let.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_scalar_owned_let.ash:1:1)
+    Return                Source=4
+
+function _start_main  [ProgramEntry]
+  locals=4 temps=9
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadLocal             Target=2 Slot=0   (tco_scalar_owned_let.ash:11:35)
+    LoadConstInt          Target=3 Value=10   (tco_scalar_owned_let.ash:11:41)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (tco_scalar_owned_let.ash:11:35)
+    LoadConstInt          Target=5 Value=0   (tco_scalar_owned_let.ash:11:45)
+    CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (tco_scalar_owned_let.ash:11:35)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3
+    TextFromInt           Target=7 ValueTemp=6   (tco_scalar_owned_let.ash:11:16)
+    PrintStr              Source=7   (tco_scalar_owned_let.ash:11:1)
+    AllocAdt              Target=8 Tag=0 FieldCount=0   (tco_scalar_owned_let.ash:11:1)
+    Return                Source=8
+

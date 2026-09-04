@@ -3341,6 +3341,19 @@ let testRunSharedTcoNonTailSelfCallInOperatorOperand shipped unit =
 let testRunSharedTcoLetAliasOfRcParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_let_alias_of_rc_parameter.ash"))("selfhostBackendRunSharedTcoLetAlias")("selfhost_backend_shared_tco_let_alias_e2e")("xxxxx|abcdefghij|Abc.DeAd.1bc|---|A.B.C.D.E.A.B.C.D.E.A.B.C.D.E")
 
+// The TCO loop fixtures of the semantics parity suite (`selfhost/parity/semantics/lowered-ir`),
+// compiled through the loop lowering and executed: a scalar countdown of a million iterations
+// runs as a loop within one stack frame, and a list walk threads its runtime-managed parameter
+// through the back edge.
+let testRunTcoScalarLoopFixture shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("selfhost/parity/semantics/lowered-ir/tco_scalar_loop.source"))("selfhostBackendRunTcoScalarLoop")("selfhost_backend_tco_scalar_loop_e2e")("500000500000")
+
+let testRunTcoListWalkFixture shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("selfhost/parity/semantics/lowered-ir/tco_list_walk.source"))("selfhostBackendRunTcoListWalk")("selfhost_backend_tco_list_walk_e2e")("3015")
+
+let testRunSharedTcoUnusedChainParameter shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_unused_chain_parameter.ash"))("selfhostBackendRunSharedTcoUnusedChainParameter")("selfhost_backend_shared_tco_unused_chain_parameter_e2e")("0")
+
 let testRunSharedTcoLetCallResultInAccumulatorRecord shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_let_call_result_in_accumulator_record.ash"))("selfhostBackendRunSharedTcoAccumulatorRecord")("selfhost_backend_shared_tco_accumulator_record_e2e")("picked;other;picked;other;|2000")
 
@@ -4865,6 +4878,9 @@ let run shipped =
     |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule
     |> testRunSharedTcoNonTailSelfCallInOperatorOperand(shipped)
     |> testRunSharedTcoLetAliasOfRcParameter(shipped)
+    |> testRunTcoScalarLoopFixture(shipped)
+    |> testRunTcoListWalkFixture(shipped)
+    |> testRunSharedTcoUnusedChainParameter(shipped)
     |> testRunSharedTcoLetCallResultInAccumulatorRecord(shipped)
     |> testRunSharedTcoOwnedLetInTailArgumentRecord(shipped)
     |> testRunSharedTcoOwnedLetInOperandSelfCall(shipped)

@@ -65,6 +65,14 @@ let checkFixture root name =
 // release walks the spine inline at the arm exit. handle_match_arm_reset stays out: the
 // single-file lowering does not take capability declarations, so its live-posts guards are
 // covered at the expression level in MatchArmScopeTests.
+// tco_scalar_loop, tco_scalar_owned_let, and tco_unused_chain_parameter add the TCO loop of a
+// self-recursive function over scalar parameters: the chain parameters installed in local slots,
+// the fixed and per-iteration watermarks and the stack pointer saved around the `lambda_N_body`
+// label, the affine accumulator's reservation slots, and the back edge's argument temps, old
+// parameter loads, parameter stores, deferred owner releases and arena reset, stack restore,
+// and jump, with the unread chain parameter's synthetic slot. tco_list_walk (a runtime-managed
+// list parameter) and tco_non_tail_self_call_in_operator_operand keep their loop-function
+// comparisons in `selfhost/tests/semantics/TcoLoopLoweringTests.ash`.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -86,5 +94,8 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("consumed_list_argument"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
+        |> (given (_) -> checkFixture(root)("tco_scalar_loop"))
+        |> (given (_) -> checkFixture(root)("tco_scalar_owned_let"))
+        |> (given (_) -> checkFixture(root)("tco_unused_chain_parameter"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

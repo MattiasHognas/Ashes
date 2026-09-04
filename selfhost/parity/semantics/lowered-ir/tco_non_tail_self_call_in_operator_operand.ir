@@ -1,0 +1,611 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from countLeft]
+  locals=14 temps=27
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0
+    StoreLocal            Slot=4 Source=0
+  lambda_0_body:
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    SaveStackPointer      Slot=7
+    LoadLocal             Target=1 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:10:8)
+    LoadConstInt          Target=2 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:10:13)
+    CmpIntEq              Target=3 Left=1 Right=2   (tco_non_tail_self_call_in_operator_operand.ash:10:8)
+    JumpIfFalse           CondTemp=3 Target=else_0   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
+    LoadConstInt          Target=4 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:11:10)
+    StoreLocal            Slot=8 Source=4   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
+    Jump                  Target=endif_1   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
+  else_0:
+    LoadLocal             Target=5 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:13:12)
+    LoadConstInt          Target=6 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:13:16)
+    DivInt                Target=7 Left=5 Right=6   (tco_non_tail_self_call_in_operator_operand.ash:13:12)
+    MulInt                Target=8 Left=7 Right=6   (tco_non_tail_self_call_in_operator_operand.ash:13:12)
+    SubInt                Target=9 Left=5 Right=8   (tco_non_tail_self_call_in_operator_operand.ash:13:12)
+    LoadConstInt          Target=10 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:13:21)
+    CmpIntEq              Target=11 Left=9 Right=10   (tco_non_tail_self_call_in_operator_operand.ash:13:12)
+    JumpIfFalse           CondTemp=11 Target=else_2   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+    LoadConstInt          Target=12 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:14:14)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=14 Slot=0   (tco_non_tail_self_call_in_operator_operand.ash:14:18)
+    MakeClosure           Target=13 FuncLabel=lambda_0 EnvPtrTemp=14 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:14:18)
+    LoadLocal             Target=15 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:14:28)
+    LoadConstInt          Target=16 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:14:32)
+    SubInt                Target=17 Left=15 Right=16   (tco_non_tail_self_call_in_operator_operand.ash:14:28)
+    CallClosure           Target=18 ClosureTemp=13 ArgTemp=17   (tco_non_tail_self_call_in_operator_operand.ash:14:18)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    AddInt                Target=19 Left=12 Right=18   (tco_non_tail_self_call_in_operator_operand.ash:14:14)
+    StoreLocal            Slot=9 Source=19   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+    Jump                  Target=endif_3   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+  else_2:
+    LoadLocal             Target=20 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:15:24)
+    LoadConstInt          Target=21 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:15:28)
+    SubInt                Target=22 Left=20 Right=21   (tco_non_tail_self_call_in_operator_operand.ash:15:24)
+    LoadLocal             Target=23 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    StoreLocal            Slot=1 Source=22   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=13
+    RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    Jump                  Target=lambda_0_body   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    LoadConstInt          Target=24 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    StoreLocal            Slot=9 Source=24   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+  endif_3:
+    LoadLocal             Target=25 Slot=9   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+    StoreLocal            Slot=8 Source=25   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
+  endif_1:
+    LoadLocal             Target=26 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
+    Return                Source=26
+
+function lambda_1  [SourceFunction from countRight]
+  locals=14 temps=27
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0
+    StoreLocal            Slot=4 Source=0
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    SaveStackPointer      Slot=7
+    LoadLocal             Target=1 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:18:8)
+    LoadConstInt          Target=2 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:18:13)
+    CmpIntEq              Target=3 Left=1 Right=2   (tco_non_tail_self_call_in_operator_operand.ash:18:8)
+    JumpIfFalse           CondTemp=3 Target=else_4   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
+    LoadConstInt          Target=4 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:19:10)
+    StoreLocal            Slot=8 Source=4   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
+    Jump                  Target=endif_5   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
+  else_4:
+    LoadLocal             Target=5 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:21:12)
+    LoadConstInt          Target=6 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:21:16)
+    DivInt                Target=7 Left=5 Right=6   (tco_non_tail_self_call_in_operator_operand.ash:21:12)
+    MulInt                Target=8 Left=7 Right=6   (tco_non_tail_self_call_in_operator_operand.ash:21:12)
+    SubInt                Target=9 Left=5 Right=8   (tco_non_tail_self_call_in_operator_operand.ash:21:12)
+    LoadConstInt          Target=10 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:21:21)
+    CmpIntEq              Target=11 Left=9 Right=10   (tco_non_tail_self_call_in_operator_operand.ash:21:12)
+    JumpIfFalse           CondTemp=11 Target=else_6   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=13 Slot=0   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
+    MakeClosure           Target=12 FuncLabel=lambda_1 EnvPtrTemp=13 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
+    LoadLocal             Target=14 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:22:25)
+    LoadConstInt          Target=15 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:22:29)
+    SubInt                Target=16 Left=14 Right=15   (tco_non_tail_self_call_in_operator_operand.ash:22:25)
+    CallClosure           Target=17 ClosureTemp=12 ArgTemp=16   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    LoadConstInt          Target=18 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:22:34)
+    AddInt                Target=19 Left=17 Right=18   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
+    StoreLocal            Slot=9 Source=19   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+    Jump                  Target=endif_7   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+  else_6:
+    LoadLocal             Target=20 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:23:25)
+    LoadConstInt          Target=21 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:23:29)
+    SubInt                Target=22 Left=20 Right=21   (tco_non_tail_self_call_in_operator_operand.ash:23:25)
+    LoadLocal             Target=23 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    StoreLocal            Slot=1 Source=22   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=13
+    RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    Jump                  Target=lambda_1_body   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    LoadConstInt          Target=24 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    StoreLocal            Slot=9 Source=24   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+  endif_7:
+    LoadLocal             Target=25 Slot=9   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+    StoreLocal            Slot=8 Source=25   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
+  endif_5:
+    LoadLocal             Target=26 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
+    Return                Source=26
+
+function lambda_2  [SourceFunction from countEvens]
+  locals=25 temps=38
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0
+    StoreLocal            Slot=4 Source=0
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    SaveStackPointer      Slot=7
+    LoadLocal             Target=1 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:26:11)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadConstInt          Target=2 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    CmpIntEq              Target=3 Left=1 Right=2   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_11   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    LoadConstInt          Target=4 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:27:17)
+    StoreLocal            Slot=8 Source=4   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    Jump                  Target=match_end_8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+  match_arm_cleanup_11:
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12
+    Jump                  Target=match_next_10   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+  match_next_10:
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=5 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    CmpIntNe              Target=6 Left=1 Right=5   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_12   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    LoadMemOffset         Target=7 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    LoadMemOffset         Target=8 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    StoreLocal            Slot=15 Source=7   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    StoreLocal            Slot=16 Source=8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    LoadLocal             Target=9 Slot=15   (tco_non_tail_self_call_in_operator_operand.ash:29:16)
+    LoadConstInt          Target=10 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:29:20)
+    DivInt                Target=11 Left=9 Right=10   (tco_non_tail_self_call_in_operator_operand.ash:29:16)
+    MulInt                Target=12 Left=11 Right=10   (tco_non_tail_self_call_in_operator_operand.ash:29:16)
+    SubInt                Target=13 Left=9 Right=12   (tco_non_tail_self_call_in_operator_operand.ash:29:16)
+    LoadConstInt          Target=14 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:29:25)
+    CmpIntEq              Target=15 Left=13 Right=14   (tco_non_tail_self_call_in_operator_operand.ash:29:16)
+    JumpIfFalse           CondTemp=15 Target=else_13   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+    LoadConstInt          Target=16 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:30:18)
+    SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
+    LoadLocal             Target=18 Slot=0   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    MakeClosure           Target=17 FuncLabel=lambda_2 EnvPtrTemp=18 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    LoadLocal             Target=19 Slot=16   (tco_non_tail_self_call_in_operator_operand.ash:30:33)
+    Borrow                Target=20 SourceTemp=19
+    LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    LoadConstInt          Target=22 Value=62   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    ShrInt                Target=23 Left=21 Right=22   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    LoadConstInt          Target=24 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    LoadConstInt          Target=25 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    StoreLocal            Slot=20 Source=20   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    JumpIfFalse           CondTemp=25 Target=rc_call_argument_not_retained_15   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    RcDup                 Target=26 SourceTemp=20 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=20 Source=26   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+  rc_call_argument_not_retained_15:
+    LoadLocal             Target=27 Slot=20   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    CallClosure           Target=28 ClosureTemp=17 ArgTemp=27 RuntimeManagedArgumentFlagTemp=25   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    RcDrop                SourceTemp=8 TypeName=List OwnerSlot=16
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=21
+    AddInt                Target=29 Left=16 Right=28   (tco_non_tail_self_call_in_operator_operand.ash:30:18)
+    StoreLocal            Slot=17 Source=29   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+    Jump                  Target=endif_14   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+  else_13:
+    LoadLocal             Target=30 Slot=16   (tco_non_tail_self_call_in_operator_operand.ash:31:29)
+    Borrow                Target=31 SourceTemp=30
+    LoadLocal             Target=32 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    StoreLocal            Slot=1 Source=31   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    RcDrop                SourceTemp=8 TypeName=List OwnerSlot=16
+    RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    Jump                  Target=lambda_2_body   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    LoadConstInt          Target=33 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    StoreLocal            Slot=17 Source=33   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+  endif_14:
+    LoadLocal             Target=34 Slot=17   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+    StoreLocal            Slot=8 Source=34   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=22
+    Jump                  Target=match_end_8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+  match_arm_cleanup_12:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=23
+    Jump                  Target=match_none_9   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+  match_none_9:
+    LoadConstInt          Target=36 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    StoreLocal            Slot=8 Source=36   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+  match_end_8:
+    LoadLocal             Target=37 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    Return                Source=37
+
+function lambda_3  [SourceFunction from sumTo]
+  locals=6 temps=13
+    LoadLocal             Target=0 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:34:8)
+    LoadConstInt          Target=1 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:34:13)
+    CmpIntEq              Target=2 Left=0 Right=1   (tco_non_tail_self_call_in_operator_operand.ash:34:8)
+    JumpIfFalse           CondTemp=2 Target=else_16   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
+    LoadConstInt          Target=3 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:35:10)
+    StoreLocal            Slot=2 Source=3   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
+    Jump                  Target=endif_17   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
+  else_16:
+    LoadLocal             Target=4 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:36:10)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=6 Slot=0   (tco_non_tail_self_call_in_operator_operand.ash:36:14)
+    MakeClosure           Target=5 FuncLabel=lambda_3 EnvPtrTemp=6 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:36:14)
+    LoadLocal             Target=7 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:36:20)
+    LoadConstInt          Target=8 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:36:24)
+    SubInt                Target=9 Left=7 Right=8   (tco_non_tail_self_call_in_operator_operand.ash:36:20)
+    CallClosure           Target=10 ClosureTemp=5 ArgTemp=9   (tco_non_tail_self_call_in_operator_operand.ash:36:14)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    AddInt                Target=11 Left=4 Right=10   (tco_non_tail_self_call_in_operator_operand.ash:36:10)
+    StoreLocal            Slot=2 Source=11   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
+  endif_17:
+    LoadLocal             Target=12 Slot=2   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
+    Return                Source=12
+
+function lambda_4  [SourceFunction from countFields]
+  locals=28 temps=46
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0
+    StoreLocal            Slot=4 Source=0
+  lambda_4_body:
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    SaveStackPointer      Slot=7
+    LoadLocal             Target=1 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:39:11)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadConstInt          Target=2 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    CmpIntEq              Target=3 Left=1 Right=2   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_21   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadConstInt          Target=4 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:40:17)
+    StoreLocal            Slot=8 Source=4   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    Jump                  Target=match_end_18   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+  match_arm_cleanup_21:
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12
+    Jump                  Target=match_next_20   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+  match_next_20:
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=5 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    CmpIntNe              Target=6 Left=1 Right=5   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_23   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadMemOffset         Target=7 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadMemOffset         Target=8 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadConstInt          Target=9 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    CmpIntNe              Target=10 Left=7 Right=9   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_23   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    GetAdtField           Target=11 Ptr=7 FieldIndex=0 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadConstInt          Target=12 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    CmpIntNe              Target=13 Left=11 Right=12   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_23   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    GetAdtTag             Target=14 Ptr=11   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadConstInt          Target=16 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    CmpIntEq              Target=15 Left=14 Right=16   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_23   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    GetAdtField           Target=17 Ptr=11 FieldIndex=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    GetAdtField           Target=18 Ptr=11 FieldIndex=1   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    GetAdtField           Target=19 Ptr=11 FieldIndex=2   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    StoreLocal            Slot=15 Source=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadConstInt          Target=20 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:41:57)
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadLocal             Target=22 Slot=0   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    MakeClosure           Target=21 FuncLabel=lambda_4 EnvPtrTemp=22 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    LoadLocal             Target=23 Slot=15   (tco_non_tail_self_call_in_operator_operand.ash:41:73)
+    Borrow                Target=24 SourceTemp=23
+    LoadMemOffset         Target=25 BasePtr=21 OffsetBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    LoadConstInt          Target=26 Value=62   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    ShrInt                Target=27 Left=25 Right=26   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    LoadConstInt          Target=28 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    LoadConstInt          Target=29 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    StoreLocal            Slot=18 Source=24   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    JumpIfFalse           CondTemp=29 Target=rc_call_argument_not_retained_24   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    RcDup                 Target=30 SourceTemp=24 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=18 Source=30   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+  rc_call_argument_not_retained_24:
+    LoadLocal             Target=31 Slot=18   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    CallClosure           Target=32 ClosureTemp=21 ArgTemp=31 RuntimeManagedArgumentFlagTemp=29   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    RcDrop                SourceTemp=8 TypeName=List OwnerSlot=15
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    AddInt                Target=33 Left=20 Right=32   (tco_non_tail_self_call_in_operator_operand.ash:41:57)
+    StoreLocal            Slot=8 Source=33   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=20
+    Jump                  Target=match_end_18   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+  match_arm_cleanup_23:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=21
+    Jump                  Target=match_next_22   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+  match_next_22:
+    SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
+    LoadConstInt          Target=35 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    CmpIntNe              Target=36 Left=1 Right=35   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    JumpIfFalse           CondTemp=36 Target=match_arm_cleanup_25   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadMemOffset         Target=37 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadMemOffset         Target=38 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    StoreLocal            Slot=24 Source=38   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadLocal             Target=39 Slot=24   (tco_non_tail_self_call_in_operator_operand.ash:42:36)
+    Borrow                Target=40 SourceTemp=39
+    LoadLocal             Target=41 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    StoreLocal            Slot=1 Source=40   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    RcDrop                SourceTemp=38 TypeName=List OwnerSlot=24
+    RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    Jump                  Target=lambda_4_body   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    LoadConstInt          Target=42 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    StoreLocal            Slot=8 Source=42   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=25
+    Jump                  Target=match_end_18   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+  match_arm_cleanup_25:
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=26
+    Jump                  Target=match_none_19   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+  match_none_19:
+    LoadConstInt          Target=44 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    StoreLocal            Slot=8 Source=44   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+  match_end_18:
+    LoadLocal             Target=45 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    Return                Source=45
+
+function lambda_5  [SourceFunction from countNegated]
+  locals=29 temps=51
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0
+    StoreLocal            Slot=4 Source=0
+  lambda_5_body:
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    SaveStackPointer      Slot=7
+    LoadLocal             Target=1 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:45:11)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadConstInt          Target=2 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    CmpIntEq              Target=3 Left=1 Right=2   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_29   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadConstInt          Target=4 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:46:17)
+    StoreLocal            Slot=8 Source=4   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    Jump                  Target=match_end_26   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+  match_arm_cleanup_29:
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12
+    Jump                  Target=match_next_28   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+  match_next_28:
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=5 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    CmpIntNe              Target=6 Left=1 Right=5   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_31   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadMemOffset         Target=7 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadMemOffset         Target=8 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadConstInt          Target=9 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    CmpIntNe              Target=10 Left=7 Right=9   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_31   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    GetAdtField           Target=11 Ptr=7 FieldIndex=0 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadConstInt          Target=12 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    CmpIntNe              Target=13 Left=11 Right=12   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_31   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    GetAdtTag             Target=14 Ptr=11   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadConstInt          Target=16 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    CmpIntEq              Target=15 Left=14 Right=16   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_31   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    GetAdtField           Target=17 Ptr=11 FieldIndex=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    GetAdtField           Target=18 Ptr=11 FieldIndex=1   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    GetAdtField           Target=19 Ptr=11 FieldIndex=2   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    StoreLocal            Slot=15 Source=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadLocal             Target=21 Slot=0   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    MakeClosure           Target=20 FuncLabel=lambda_5 EnvPtrTemp=21 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    LoadLocal             Target=22 Slot=15   (tco_non_tail_self_call_in_operator_operand.ash:48:31)
+    Borrow                Target=23 SourceTemp=22
+    LoadMemOffset         Target=24 BasePtr=20 OffsetBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    LoadConstInt          Target=25 Value=62   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    ShrInt                Target=26 Left=24 Right=25   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    LoadConstInt          Target=27 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    LoadConstInt          Target=28 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    StoreLocal            Slot=18 Source=23   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_32   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    RcDup                 Target=29 SourceTemp=23 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=18 Source=29   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+  rc_call_argument_not_retained_32:
+    LoadLocal             Target=30 Slot=18   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    CallClosure           Target=31 ClosureTemp=20 ArgTemp=30 RuntimeManagedArgumentFlagTemp=28   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    RcDrop                SourceTemp=8 TypeName=List OwnerSlot=15
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    LoadConstInt          Target=32 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:48:40)
+    CmpIntEq              Target=33 Left=31 Right=32   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    LoadConstBool         Target=34   (tco_non_tail_self_call_in_operator_operand.ash:48:16)
+    CmpIntEq              Target=35 Left=33 Right=34   (tco_non_tail_self_call_in_operator_operand.ash:48:16)
+    JumpIfFalse           CondTemp=35 Target=else_33   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+    LoadConstInt          Target=36 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:49:18)
+    StoreLocal            Slot=20 Source=36   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+    Jump                  Target=endif_34   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+  else_33:
+    LoadConstInt          Target=37 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:50:18)
+    StoreLocal            Slot=20 Source=37   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+  endif_34:
+    LoadLocal             Target=38 Slot=20   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+    StoreLocal            Slot=8 Source=38   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=21
+    Jump                  Target=match_end_26   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+  match_arm_cleanup_31:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=22
+    Jump                  Target=match_next_30   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+  match_next_30:
+    SaveArenaState        CursorLocalSlot=23 EndLocalSlot=24
+    LoadConstInt          Target=40 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    CmpIntNe              Target=41 Left=1 Right=40   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    JumpIfFalse           CondTemp=41 Target=match_arm_cleanup_35   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadMemOffset         Target=42 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadMemOffset         Target=43 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    StoreLocal            Slot=25 Source=43   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadLocal             Target=44 Slot=25   (tco_non_tail_self_call_in_operator_operand.ash:51:37)
+    Borrow                Target=45 SourceTemp=44
+    LoadLocal             Target=46 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    StoreLocal            Slot=1 Source=45   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    RcDrop                SourceTemp=43 TypeName=List OwnerSlot=25
+    RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    Jump                  Target=lambda_5_body   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    LoadConstInt          Target=47 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    StoreLocal            Slot=8 Source=47   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=26
+    Jump                  Target=match_end_26   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+  match_arm_cleanup_35:
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=27
+    Jump                  Target=match_none_27   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+  match_none_27:
+    LoadConstInt          Target=49 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    StoreLocal            Slot=8 Source=49   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+  match_end_26:
+    LoadLocal             Target=50 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    Return                Source=50
+
+function _start_main  [ProgramEntry]
+  locals=32 temps=92
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    LoadConstInt          Target=2 Value=0
+    MakeClosure           Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
+    StoreLocal            Slot=1 Source=3
+    LoadConstInt          Target=4 Value=0
+    MakeClosure           Target=5 FuncLabel=lambda_2 EnvPtrTemp=4 EnvSizeBytes=0
+    StoreLocal            Slot=2 Source=5
+    LoadConstInt          Target=6 Value=0
+    MakeClosure           Target=7 FuncLabel=lambda_3 EnvPtrTemp=6 EnvSizeBytes=0
+    StoreLocal            Slot=3 Source=7
+    LoadConstInt          Target=8 Value=0
+    MakeClosure           Target=9 FuncLabel=lambda_4 EnvPtrTemp=8 EnvSizeBytes=0
+    StoreLocal            Slot=4 Source=9
+    LoadConstInt          Target=10 Value=0
+    MakeClosure           Target=11 FuncLabel=lambda_5 EnvPtrTemp=10 EnvSizeBytes=0
+    StoreLocal            Slot=5 Source=11
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=12 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    LoadConstInt          Target=13 Value=5   (tco_non_tail_self_call_in_operator_operand.ash:53:162)
+    AllocAdt              Target=14 Tag=1 FieldCount=1   (tco_non_tail_self_call_in_operator_operand.ash:53:156)
+    SetAdtField           Ptr=14 FieldIndex=0 Source=13   (tco_non_tail_self_call_in_operator_operand.ash:53:156)
+    AllocAdt              Target=15 Tag=0 FieldCount=0   (tco_non_tail_self_call_in_operator_operand.ash:53:173)
+    AllocAdt              Target=16 Tag=0 FieldCount=2 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:140)
+    SetAdtField           Ptr=16 FieldIndex=0 Source=14 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:140)
+    SetAdtField           Ptr=16 FieldIndex=1 Source=15 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:140)
+    Alloc                 Target=17 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=16   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=12   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    LoadConstInt          Target=18 Value=3   (tco_non_tail_self_call_in_operator_operand.ash:53:122)
+    AllocAdt              Target=19 Tag=1 FieldCount=1   (tco_non_tail_self_call_in_operator_operand.ash:53:116)
+    SetAdtField           Ptr=19 FieldIndex=0 Source=18   (tco_non_tail_self_call_in_operator_operand.ash:53:116)
+    AllocAdt              Target=20 Tag=0 FieldCount=0   (tco_non_tail_self_call_in_operator_operand.ash:53:133)
+    AllocAdt              Target=21 Tag=0 FieldCount=2 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:100)
+    SetAdtField           Ptr=21 FieldIndex=0 Source=19 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:100)
+    SetAdtField           Ptr=21 FieldIndex=1 Source=20 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:100)
+    Alloc                 Target=22 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=21   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=17   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    LoadConstInt          Target=23 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:53:76)
+    LoadConstInt          Target=24 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:53:79)
+    LoadConstInt          Target=25 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:53:82)
+    AllocAdt              Target=26 Tag=0 FieldCount=3   (tco_non_tail_self_call_in_operator_operand.ash:53:70)
+    SetAdtField           Ptr=26 FieldIndex=0 Source=23   (tco_non_tail_self_call_in_operator_operand.ash:53:70)
+    SetAdtField           Ptr=26 FieldIndex=1 Source=24   (tco_non_tail_self_call_in_operator_operand.ash:53:70)
+    SetAdtField           Ptr=26 FieldIndex=2 Source=25   (tco_non_tail_self_call_in_operator_operand.ash:53:70)
+    AllocAdt              Target=27 Tag=0 FieldCount=0   (tco_non_tail_self_call_in_operator_operand.ash:53:93)
+    AllocAdt              Target=28 Tag=0 FieldCount=2 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:54)
+    SetAdtField           Ptr=28 FieldIndex=0 Source=26 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:54)
+    SetAdtField           Ptr=28 FieldIndex=1 Source=27 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:54)
+    Alloc                 Target=29 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=29 OffsetBytes=0 Source=28   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=29 OffsetBytes=8 Source=22   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    LoadConstInt          Target=30 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:53:36)
+    AllocAdt              Target=31 Tag=1 FieldCount=1   (tco_non_tail_self_call_in_operator_operand.ash:53:30)
+    SetAdtField           Ptr=31 FieldIndex=0 Source=30   (tco_non_tail_self_call_in_operator_operand.ash:53:30)
+    AllocAdt              Target=32 Tag=0 FieldCount=0   (tco_non_tail_self_call_in_operator_operand.ash:53:47)
+    AllocAdt              Target=33 Tag=0 FieldCount=2 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:14)
+    SetAdtField           Ptr=33 FieldIndex=0 Source=31 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:14)
+    SetAdtField           Ptr=33 FieldIndex=1 Source=32 Tagless=true   (tco_non_tail_self_call_in_operator_operand.ash:53:14)
+    Alloc                 Target=34 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=34 OffsetBytes=0 Source=33   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreMemOffset        BasePtr=34 OffsetBytes=8 Source=29   (tco_non_tail_self_call_in_operator_operand.ash:53:13)
+    StoreLocal            Slot=8 Source=34
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadLocal             Target=35 Slot=0   (tco_non_tail_self_call_in_operator_operand.ash:55:35)
+    LoadConstInt          Target=36 Value=4   (tco_non_tail_self_call_in_operator_operand.ash:55:45)
+    CallClosure           Target=37 ClosureTemp=35 ArgTemp=36   (tco_non_tail_self_call_in_operator_operand.ash:55:35)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    TextFromInt           Target=38 ValueTemp=37   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    LoadConstStr          Target=39 StrLabel=str_0   (tco_non_tail_self_call_in_operator_operand.ash:55:51)
+    ConcatStr             Target=40 Left=38 Right=39   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=41 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:55:76)
+    LoadConstInt          Target=42 Value=4   (tco_non_tail_self_call_in_operator_operand.ash:55:87)
+    CallClosure           Target=43 ClosureTemp=41 ArgTemp=42   (tco_non_tail_self_call_in_operator_operand.ash:55:76)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    TextFromInt           Target=44 ValueTemp=43   (tco_non_tail_self_call_in_operator_operand.ash:55:57)
+    ConcatStr             Target=45 Left=40 Right=44   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    LoadConstStr          Target=46 StrLabel=str_0   (tco_non_tail_self_call_in_operator_operand.ash:55:93)
+    ConcatStr             Target=47 Left=45 Right=46   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadLocal             Target=48 Slot=2   (tco_non_tail_self_call_in_operator_operand.ash:55:118)
+    LoadConstInt          Target=49 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    LoadConstInt          Target=50 Value=4   (tco_non_tail_self_call_in_operator_operand.ash:55:139)
+    Alloc                 Target=51 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=51 OffsetBytes=0 Source=50   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=51 OffsetBytes=8 Source=49   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    LoadConstInt          Target=52 Value=3   (tco_non_tail_self_call_in_operator_operand.ash:55:136)
+    Alloc                 Target=53 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=53 OffsetBytes=0 Source=52   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=53 OffsetBytes=8 Source=51   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    LoadConstInt          Target=54 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:55:133)
+    Alloc                 Target=55 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=55 OffsetBytes=0 Source=54   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=55 OffsetBytes=8 Source=53   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    LoadConstInt          Target=56 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:55:130)
+    Alloc                 Target=57 SizeBytes=16   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=57 OffsetBytes=0 Source=56   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=55   (tco_non_tail_self_call_in_operator_operand.ash:55:129)
+    CallClosure           Target=58 ClosureTemp=48 ArgTemp=57   (tco_non_tail_self_call_in_operator_operand.ash:55:118)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=17
+    TextFromInt           Target=59 ValueTemp=58   (tco_non_tail_self_call_in_operator_operand.ash:55:99)
+    ConcatStr             Target=60 Left=47 Right=59   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    LoadConstStr          Target=61 StrLabel=str_0   (tco_non_tail_self_call_in_operator_operand.ash:55:146)
+    ConcatStr             Target=62 Left=60 Right=61   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
+    LoadLocal             Target=63 Slot=3   (tco_non_tail_self_call_in_operator_operand.ash:55:171)
+    LoadConstInt          Target=64 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:55:177)
+    CallClosure           Target=65 ClosureTemp=63 ArgTemp=64   (tco_non_tail_self_call_in_operator_operand.ash:55:171)
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=20
+    SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
+    LoadLocal             Target=66 Slot=3   (tco_non_tail_self_call_in_operator_operand.ash:55:182)
+    LoadConstInt          Target=67 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:55:188)
+    CallClosure           Target=68 ClosureTemp=66 ArgTemp=67   (tco_non_tail_self_call_in_operator_operand.ash:55:182)
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=23
+    AddInt                Target=69 Left=65 Right=68   (tco_non_tail_self_call_in_operator_operand.ash:55:171)
+    TextFromInt           Target=70 ValueTemp=69   (tco_non_tail_self_call_in_operator_operand.ash:55:152)
+    ConcatStr             Target=71 Left=62 Right=70   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    LoadConstStr          Target=72 StrLabel=str_0   (tco_non_tail_self_call_in_operator_operand.ash:55:194)
+    ConcatStr             Target=73 Left=71 Right=72   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
+    LoadLocal             Target=74 Slot=4   (tco_non_tail_self_call_in_operator_operand.ash:55:219)
+    LoadLocal             Target=75 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:55:231)
+    Borrow                Target=76 SourceTemp=75
+    RcDup                 Target=91 SourceTemp=76   (tco_non_tail_self_call_in_operator_operand.ash:55:219)
+    CallClosure           Target=77 ClosureTemp=74 ArgTemp=76   (tco_non_tail_self_call_in_operator_operand.ash:55:219)
+    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=26
+    TextFromInt           Target=78 ValueTemp=77   (tco_non_tail_self_call_in_operator_operand.ash:55:200)
+    ConcatStr             Target=79 Left=73 Right=78   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    LoadConstStr          Target=80 StrLabel=str_0   (tco_non_tail_self_call_in_operator_operand.ash:55:241)
+    ConcatStr             Target=81 Left=79 Right=80   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    SaveArenaState        CursorLocalSlot=27 EndLocalSlot=28
+    LoadLocal             Target=82 Slot=5   (tco_non_tail_self_call_in_operator_operand.ash:55:266)
+    LoadLocal             Target=83 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:55:279)
+    Borrow                Target=84 SourceTemp=83
+    CallClosure           Target=85 ClosureTemp=82 ArgTemp=84   (tco_non_tail_self_call_in_operator_operand.ash:55:266)
+    RcDrop                SourceTemp=34 TypeName=List OwnerSlot=8
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=29
+    TextFromInt           Target=86 ValueTemp=85   (tco_non_tail_self_call_in_operator_operand.ash:55:247)
+    ConcatStr             Target=87 Left=81 Right=86   (tco_non_tail_self_call_in_operator_operand.ash:55:16)
+    PrintStr              Source=87   (tco_non_tail_self_call_in_operator_operand.ash:55:1)
+    AllocAdt              Target=88 Tag=0 FieldCount=0   (tco_non_tail_self_call_in_operator_operand.ash:55:1)
+    StoreLocal            Slot=30 Source=88
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=31
+    CopyOutArena          DestTemp=90 SrcTemp=88 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=31
+    Return                Source=90
+

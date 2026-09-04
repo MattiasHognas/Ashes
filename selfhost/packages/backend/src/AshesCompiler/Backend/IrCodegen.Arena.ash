@@ -48,6 +48,8 @@ export (
     value loadWordAt,
     value storeWordAt,
     value defineArenaRuntime,
+    value emitSaveStackPointer,
+    value emitRestoreStackPointer,
     value emitArenaInit,
     value emitRegionGrow,
     value emitArenaAlloc,
@@ -95,6 +97,10 @@ type ArenaRuntime =
     | arenaFailureMessage: LLVMValueRef
     | arenaFailureMessageLength: Int
     | arenaCopyOut: Maybe(CopyOutRuntime)
+    | stackSaveFn: LLVMValueRef
+    | stackSaveType: LLVMTypeRef
+    | stackRestoreFn: LLVMValueRef
+    | stackRestoreType: LLVMTypeRef
 
 let arenaChunkBytes = 4194304
 
@@ -828,8 +834,8 @@ let withCopyOutRuntime (arena: ArenaRuntime) copyOut = arena with arenaCopyOut =
 // emitting the helper bodies with `builder` (repositioned by the caller afterwards); the copy-out
 // helpers join them only when `usesCopyOut` says the program's IR needs them.
 let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut mallocFn mallocType freeFn freeType memcpyFn memcpyType =
-    match (functionType(voidType(context))([i64])(1u32)(false), functionType(voidType(context))([i64, i64])(2u32)(false)) with
-        | (growType, reclaimType) ->
+    match (functionType(voidType(context))([i64])(1u32)(false), functionType(voidType(context))([i64, i64])(2u32)(false), functionType(ptrType)([])(0u32)(false), functionType(voidType(context))([ptrType])(1u32)(false)) with
+        | (growType, reclaimType, stackSaveType, stackRestoreType) ->
             ((given (arena) ->
                 Unit
                 |> (given (_) -> emitArenaGrowBody(context)(builder)(i64)(i8)(ptrType)(arena))
@@ -849,8 +855,27 @@ let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut malloc
                 arenaReclaimType = reclaimType,
                 arenaFailureMessage = addFailureMessageGlobal(module_)(i8),
                 arenaFailureMessageLength = Ashes.Collection.List.length(arenaFailureMessageCodes),
-                arenaCopyOut = None
+                arenaCopyOut = None,
+                stackSaveFn = addFunction(module_)("llvm.stacksave.p0")(stackSaveType),
+                stackSaveType = stackSaveType,
+                stackRestoreFn = addFunction(module_)("llvm.stackrestore.p0")(stackRestoreType),
+                stackRestoreType = stackRestoreType
             ))
+
+// `SaveStackPointer`: the loop body's entry stack pointer (`llvm.stacksave`) stored as a word in
+// its slot, so the back edge can free the iteration's dynamic stack allocations.
+let emitSaveStackPointer builder i64 (arena: ArenaRuntime) slot =
+    ""
+    |> buildCall(builder)(arena.stackSaveType)(arena.stackSaveFn)([])(0u32)
+    |> (given (pointer) -> buildPtrToInt(builder)(pointer)(i64)("stacksave_i64"))
+    |> (given (word) -> buildStore(builder)(word)(slot))
+
+// `RestoreStackPointer`: `llvm.stackrestore` to the saved word at a TCO back edge.
+let emitRestoreStackPointer builder i64 ptrType (arena: ArenaRuntime) slot =
+    "stackrestore_i64"
+    |> buildLoad(builder)(i64)(slot)
+    |> (given (word) -> buildIntToPtr(builder)(word)(ptrType)("stackrestore_ptr"))
+    |> (given (pointer) -> buildCall(builder)(arena.stackRestoreType)(arena.stackRestoreFn)([pointer])(1u32)(""))
 
 let managedCode runtimeManaged =
     if runtimeManaged
