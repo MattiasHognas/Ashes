@@ -8,6 +8,7 @@
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
+import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
@@ -310,17 +311,76 @@ let recursive ownershipRecords (ordinal: Int) (summaries: List(FunctionOwnership
         | [] -> []
         | summary :: rest -> ownershipRecord(ordinal)(summary) :: ownershipRecords(ordinal + 1)(rest)
 
+// A bare constructor reference (`Some`, `Dot`, ...) parses as an ordinary variable read, so the
+// free-variable walk behind `capturedValues` cannot itself tell it apart from a genuine closure
+// capture over an enclosing module-level value — nor can a program-scanned constructor list, since
+// a builtin type's constructors (`Maybe`'s `Some`/`None`) never appear as a `TopLevelItem` in a
+// single-file lowering. A capture is only ever a reference to another top-level *value* binding
+// (a parameterless `let`), so keeping just the names the program actually declares that way is
+// both the narrower and the correct fix.
+let recursive topLevelValueNames (entries: List((Str, List(Str), Expr))) =
+    match entries with
+        | [] -> []
+        | (name, [], _body) :: rest -> name :: topLevelValueNames(rest)
+        | _ :: rest -> topLevelValueNames(rest)
+
+let recursive containsValueName (valueNames: List(Str)) (name: Str) =
+    match valueNames with
+        | [] -> false
+        | head :: rest ->
+            if head == name
+            then true
+            else containsValueName(rest)(name)
+
+let restrictCapturesToTopLevelValues (valueNames: List(Str)) (record: FunctionOwnershipRecord) =
+    match record with
+        | FunctionOwnershipRecord { capturedValues = captured } ->
+            record with capturedValues = filter(containsValueName(valueNames))(captured)
+
+// Every data constructor the program declares, paired with its field count — the move-safety call
+// census's seed for recognizing a saturated constructor application as a fully-fresh value.
+let recursive constructorArityEntries (constructors: List(TypeConstructor)) =
+    match constructors with
+        | [] -> []
+        | TypeConstructor { name = name, parameters = parameters } :: rest -> (name, length(parameters)) :: constructorArityEntries(rest)
+
+let recursive declaredConstructorArities (item: TopLevelItem) =
+    match item with
+        | TopLevelAt(_span, inner) -> declaredConstructorArities(inner)
+        | TopLevelType(TypeDecl { constructors = constructors }) -> constructorArityEntries(constructors)
+        | TopLevelZeroCostType(ZeroCostTypeDecl { constructor = TypeConstructor { name = name, parameters = parameters } }) -> [(name, length(parameters))]
+        | _ -> []
+
+let recursive programConstructorArities (items: List(TopLevelItem)) =
+    match items with
+        | [] -> []
+        | item :: rest ->
+            rest
+            |> programConstructorArities
+            |> append(declaredConstructorArities(item))
+
 // The read-only record of what a compilation decided: every let-bound function of the parsed
 // program with its inferred ownership, correlated with the lowered IR through the source origins
 // lowering assigned. `qualifiedNameOf` maps a binding name to its module-qualified name, or `None`
-// when the program has no module context. Value placements, reuse decisions, coroutine
-// representations, and pattern bindings are not retained by the self-hosted lowering yet.
+// when the program has no module context. Reuse decisions, coroutine representations, and pattern
+// bindings are not retained by the self-hosted lowering yet.
 let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: IrProgram) =
-    program
-    |> topLevelFunctions
-    |> filter(hasParameters)
-    |> map(functionSignature(qualifiedNameOf)(lowered))
-    |> (given (signatures) -> inferProgramOwnership(signatures)([]))
-    |> sortBy(summaryBefore)
-    |> ownershipRecords(0)
-    |> (given (records) -> emptyDecisionSnapshot with functionOwnership = records)
+    (let valueNames =
+        program
+        |> topLevelFunctions
+        |> topLevelValueNames
+    in
+        let constructorArities = programConstructorArities(program.items)
+        in
+            program
+            |> topLevelFunctions
+            |> filter(hasParameters)
+            |> map(functionSignature(qualifiedNameOf)(lowered))
+            |> (given (signatures) ->
+                program
+                |> topLevelFunctions
+                |> inferProgramOwnership(signatures)([])(constructorArities)(program.body))
+            |> sortBy(summaryBefore)
+            |> ownershipRecords(0)
+            |> map(restrictCapturesToTopLevelValues(valueNames))
+            |> (given (records) -> emptyDecisionSnapshot with functionOwnership = records))

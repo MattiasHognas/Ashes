@@ -402,7 +402,7 @@ let testProgramOwnershipInference unit =
                     in
                         let prov2 = buildProvenanceNode("id")(false)(false)(1)([])(None)([])(false)
                         in
-                            let summaries = inferProgramOwnership([sig1, sig2])([prov1, prov2])
+                            let summaries = inferProgramOwnership([sig1, sig2])([prov1, prov2])([])(None)([])
                             in
                                 match summaries with
                                     | s1 :: t1 ->
@@ -457,7 +457,7 @@ let testProgramLevelCaptureExcludesOtherFunctions unit =
                     in
                         let provOther = buildProvenanceNode("other")(false)(false)(1)([])(None)([])(false)
                         in
-                            let summaries = inferProgramOwnership([sigHelper, sigOther])([provHelper, provOther])
+                            let summaries = inferProgramOwnership([sigHelper, sigOther])([provHelper, provOther])([])(None)([])
                             in
                                 match summaries with
                                     | s1 :: t1 ->
@@ -614,7 +614,8 @@ let testProgramSummariesSeeThroughHandOff unit =
     in
         funcs
         |> provenanceNodesOf
-        |> inferProgramOwnership(signaturesOf(funcs))
+        |> (given (provNodes) ->
+            inferProgramOwnership(signaturesOf(funcs))(provNodes)([])(None)(funcs))
         |> assertSummaryBorrowed("peek")(["h"])
         |> assertSummaryBorrowed("peekTwice")(["h"])
         |> (given (_summaries) -> Unit))

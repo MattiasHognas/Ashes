@@ -1094,7 +1094,405 @@ let programOwnershipOf (sig: FunctionSignature) (table: ProgramParameterOwnershi
                 | Some(ownership) -> ownership
                 | None -> classifyParameterOwnership(params)(body)([])
 
-let recursive inferProgramOwnershipAux (funcs: List(FunctionSignature)) (provMap: List((Str, FunctionResultProvenance))) (programNames: List(Str)) (table: ProgramParameterOwnership) (acc: List(FunctionOwnershipSummary)) =
+// --- Move-Safety Analysis for the ownership report's `unique` flag ---
+//
+// A parameter is move-safe when the fold/reuse machinery could safely overwrite its value in
+// place: stage 0 proves this from a whole-program call census (`Lowering.MoveAnalysis.cs`). This
+// is a reduced-fidelity port scoped to what the reportable fixtures need — every top-level
+// function here is called only by name, so first-class-value escape is never a concern — and
+// intentionally omits two of stage 0's move sources: a callee proven to return a value fresh of
+// every parameter, and a local `let` binding resolved as a move source. Both only ever WIDEN which
+// arguments count as moves, so omitting them cannot report a parameter move-safe that stage 0
+// would report unsafe — only the reverse, which the explain report's known-difference entries
+// cover where it still occurs. Recursion depth is capped rather than cycle-detected; a cap this
+// generous is never reached by these programs, and a real cycle would only make the capped answer
+// "no" either way.
+type MoveCallSite =
+    | calleeName: Str
+    | enclosingName: Maybe(Str)
+    | arguments: List(Expr)
+
+let moveSafetyFuel = 16
+
+let recursive lookupFunctionEntry (name: Str) (functionTable: List((Str, List(Str), Expr))) =
+    match functionTable with
+        | [] -> None
+        | (fname, params, body) :: rest ->
+            if fname == name
+            then Some((params, body))
+            else lookupFunctionEntry(name)(rest)
+
+let recursive constructorArityOf (name: Str) (constructorArities: List((Str, Int))) =
+    match constructorArities with
+        | [] -> None
+        | (cname, arity) :: rest ->
+            if cname == name
+            then Some(arity)
+            else constructorArityOf(name)(rest)
+
+// A leaf literal, a saturated application of a known data constructor over fresh arguments, an
+// aggregate literal built entirely from fresh parts, or a bare reference to the sole nullary
+// constructor of its type (safe to move even when shared, since overwriting it in place is a
+// no-op) — stage 0's `IsFullyFreshConstruction`/`IsNullarySeed`, merged into one predicate since
+// every nullary-seed case reachable here is also a fully-fresh one.
+let recursive isFullyFreshConstruction (constructorArities: List((Str, Int))) (expr: Expr) =
+    match expr with
+        | ExprAt(_span, inner) -> isFullyFreshConstruction(constructorArities)(inner)
+        | ExprInt(_) -> true
+        | ExprBigInt(_) -> true
+        | ExprUInt(_, _, _) -> true
+        | ExprFloat(_, _) -> true
+        | ExprBool(_) -> true
+        | ExprString(_) -> true
+        | ExprRune(_) -> true
+        | ExprVar(name) ->
+            match constructorArityOf(name)(constructorArities) with
+                | Some(0) -> true
+                | _ -> false
+        | ExprTuple(elements) -> allFreshConstruction(constructorArities)(elements)
+        | ExprList(elements, _isMultiline) -> allFreshConstruction(constructorArities)(elements)
+        | ExprCons(head, tail) ->
+            if isFullyFreshConstruction(constructorArities)(head)
+            then isFullyFreshConstruction(constructorArities)(tail)
+            else false
+        | ExprRecord(_ctor, fields, _isMultiline) -> allFreshConstructionFields(constructorArities)(fields)
+        | ExprCall(_func, _arg, _isSugar, _layout) ->
+            match collectCallArgsAndRoot(expr)([]) with
+                | (root, arguments) ->
+                    match stripSpan(root) with
+                        | ExprVar(name) ->
+                            match constructorArityOf(name)(constructorArities) with
+                                | Some(arity) ->
+                                    if arity == length(arguments)
+                                    then allFreshConstruction(constructorArities)(arguments)
+                                    else false
+                                | None -> false
+                        | _ -> false
+        | _ -> false
+and allFreshConstruction (constructorArities: List((Str, Int))) (elements: List(Expr)) =
+    match elements with
+        | [] -> true
+        | head :: rest ->
+            if isFullyFreshConstruction(constructorArities)(head)
+            then allFreshConstruction(constructorArities)(rest)
+            else false
+and allFreshConstructionFields (constructorArities: List((Str, Int))) (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> true
+        | (_name, value) :: rest ->
+            if isFullyFreshConstruction(constructorArities)(value)
+            then allFreshConstructionFields(constructorArities)(rest)
+            else false
+
+// How many times a name is textually mentioned, ignoring which branch of a conditional or match
+// arm it falls on — a coarser, always-conservative stand-in for stage 0's path-sensitive
+// `MaxPathOccurrences`: this can only ever over-count relative to the true maximum-along-one-path
+// figure, so a name it calls linear (count <= 1) really is.
+let recursive countVarOccurrences (expr: Expr) (name: Str) =
+    match expr with
+        | ExprAt(_span, inner) -> countVarOccurrences(inner)(name)
+        | ExprVar(candidate) ->
+            if candidate == name
+            then 1
+            else 0
+        | ExprIf(cond, thenE, elseE) -> countVarOccurrences(cond)(name) + countVarOccurrences(thenE)(name) + countVarOccurrences(elseE)(name)
+        | ExprLet(_boundName, val, body, _params, _ann, _traits) -> countVarOccurrences(val)(name) + countVarOccurrences(body)(name)
+        | ExprLetResult(_boundName, val, body) -> countVarOccurrences(val)(name) + countVarOccurrences(body)(name)
+        | ExprLetRecursive(_boundName, val, body, _params, _ann, _traits) -> countVarOccurrences(val)(name) + countVarOccurrences(body)(name)
+        | ExprLambda(_p, body, _ann) -> countVarOccurrences(body)(name)
+        | ExprCall(func, arg, _isSugar, _layout) -> countVarOccurrences(func)(name) + countVarOccurrences(arg)(name)
+        | ExprMatch(scrutinee, arms, _defaultArm) -> countVarOccurrences(scrutinee)(name) + countVarOccurrencesArms(arms)(name)
+        | ExprTuple(elements) -> countVarOccurrencesList(elements)(name)
+        | ExprList(elements, _isMultiline) -> countVarOccurrencesList(elements)(name)
+        | ExprCons(head, tail) -> countVarOccurrences(head)(name) + countVarOccurrences(tail)(name)
+        | ExprRecord(_ctor, fields, _isMultiline) -> countVarOccurrencesFields(fields)(name)
+        | ExprRecordUpdate(record, fields) -> countVarOccurrences(record)(name) + countVarOccurrencesFields(fields)(name)
+        | ExprAdd(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprSubtract(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprMultiply(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprDivide(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprModulo(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprBitwiseAnd(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprBitwiseOr(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprBitwiseXor(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprShiftLeft(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprShiftRight(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprBitwiseNot(operand) -> countVarOccurrences(operand)(name)
+        | ExprLogicalNot(operand) -> countVarOccurrences(operand)(name)
+        | ExprLogicalAnd(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprLogicalOr(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprEqual(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprNotEqual(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprLessThan(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprLessOrEqual(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprGreaterThan(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprGreaterOrEqual(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprResultPipe(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprResultMapErrorPipe(left, right) -> countVarOccurrences(left)(name) + countVarOccurrences(right)(name)
+        | ExprAwait(e) -> countVarOccurrences(e)(name)
+        | ExprPerform(e) -> countVarOccurrences(e)(name)
+        | _ -> 0
+and countVarOccurrencesList (elements: List(Expr)) (name: Str) =
+    match elements with
+        | [] -> 0
+        | head :: rest -> countVarOccurrences(head)(name) + countVarOccurrencesList(rest)(name)
+and countVarOccurrencesFields (fields: List((Str, Expr))) (name: Str) =
+    match fields with
+        | [] -> 0
+        | (_fieldName, value) :: rest -> countVarOccurrences(value)(name) + countVarOccurrencesFields(rest)(name)
+and countVarOccurrencesArms (arms: List((Pattern, Expr, Maybe(Expr)))) (name: Str) =
+    match arms with
+        | [] -> 0
+        | (_pat, body, guard) :: rest ->
+            let guardCount =
+                match guard with
+                    | None -> 0
+                    | Some(g) -> countVarOccurrences(g)(name)
+            in guardCount + countVarOccurrences(body)(name) + countVarOccurrencesArms(rest)(name)
+
+// Every saturated call to a KNOWN top-level function anywhere in `expr`, tagged with the top-level
+// function enclosing it (`None` for the shared top-level scope: the trailing expression and every
+// value `let`'s own right-hand side, which stage 0 treats as one un-nested census scope). A call
+// site is kept even when under-applied, so `isParamMoveSafe` can treat under-application as unsafe
+// rather than silently missing it.
+let recursive collectCallSites (functionTable: List((Str, List(Str), Expr))) (enclosing: Maybe(Str)) (expr: Expr) (acc: List(MoveCallSite)) =
+    match expr with
+        | ExprAt(_span, inner) -> collectCallSites(functionTable)(enclosing)(inner)(acc)
+        | ExprCall(_func, _arg, _isSugar, _layout) ->
+            match collectCallArgsAndRoot(expr)([]) with
+                | (root, arguments) ->
+                    let withSite =
+                        match stripSpan(root) with
+                            | ExprVar(name) ->
+                                match lookupFunctionEntry(name)(functionTable) with
+                                    | Some(_entry) -> MoveCallSite(calleeName = name, enclosingName = enclosing, arguments = arguments) :: acc
+                                    | None -> acc
+                            | _ -> acc
+                    in
+                        withSite
+                        |> collectCallSitesList(functionTable)(enclosing)(arguments)
+                        |> collectCallSites(functionTable)(enclosing)(root)
+        | ExprIf(cond, thenE, elseE) ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(cond)
+            |> collectCallSites(functionTable)(enclosing)(thenE)
+            |> collectCallSites(functionTable)(enclosing)(elseE)
+        | ExprLet(_name, val, body, _params, _ann, _traits) ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(val)
+            |> collectCallSites(functionTable)(enclosing)(body)
+        | ExprLetResult(_name, val, body) ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(val)
+            |> collectCallSites(functionTable)(enclosing)(body)
+        | ExprLetRecursive(_name, val, body, _params, _ann, _traits) ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(val)
+            |> collectCallSites(functionTable)(enclosing)(body)
+        | ExprLambda(_p, body, _ann) -> collectCallSites(functionTable)(enclosing)(body)(acc)
+        | ExprMatch(scrutinee, arms, _defaultArm) ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(scrutinee)
+            |> collectCallSitesArms(functionTable)(enclosing)(arms)
+        | ExprTuple(elements) -> collectCallSitesList(functionTable)(enclosing)(elements)(acc)
+        | ExprList(elements, _isMultiline) -> collectCallSitesList(functionTable)(enclosing)(elements)(acc)
+        | ExprCons(head, tail) ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(head)
+            |> collectCallSites(functionTable)(enclosing)(tail)
+        | ExprRecord(_ctor, fields, _isMultiline) -> collectCallSitesFields(functionTable)(enclosing)(fields)(acc)
+        | ExprRecordUpdate(record, fields) ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(record)
+            |> collectCallSitesFields(functionTable)(enclosing)(fields)
+        | ExprAdd(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprSubtract(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprMultiply(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprDivide(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprModulo(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprBitwiseAnd(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprBitwiseOr(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprBitwiseXor(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprShiftLeft(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprShiftRight(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprBitwiseNot(operand) -> collectCallSites(functionTable)(enclosing)(operand)(acc)
+        | ExprLogicalNot(operand) -> collectCallSites(functionTable)(enclosing)(operand)(acc)
+        | ExprLogicalAnd(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprLogicalOr(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprEqual(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprNotEqual(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprLessThan(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprLessOrEqual(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprGreaterThan(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprGreaterOrEqual(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprResultPipe(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprResultMapErrorPipe(left, right) -> collectCallSitesPair(functionTable)(enclosing)(left)(right)(acc)
+        | ExprAwait(e) -> collectCallSites(functionTable)(enclosing)(e)(acc)
+        | ExprPerform(e) -> collectCallSites(functionTable)(enclosing)(e)(acc)
+        | _ -> acc
+and collectCallSitesList (functionTable: List((Str, List(Str), Expr))) (enclosing: Maybe(Str)) (elements: List(Expr)) (acc: List(MoveCallSite)) =
+    match elements with
+        | [] -> acc
+        | head :: rest ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(head)
+            |> collectCallSitesList(functionTable)(enclosing)(rest)
+and collectCallSitesFields (functionTable: List((Str, List(Str), Expr))) (enclosing: Maybe(Str)) (fields: List((Str, Expr))) (acc: List(MoveCallSite)) =
+    match fields with
+        | [] -> acc
+        | (_name, value) :: rest ->
+            acc
+            |> collectCallSites(functionTable)(enclosing)(value)
+            |> collectCallSitesFields(functionTable)(enclosing)(rest)
+and collectCallSitesArms (functionTable: List((Str, List(Str), Expr))) (enclosing: Maybe(Str)) (arms: List((Pattern, Expr, Maybe(Expr)))) (acc: List(MoveCallSite)) =
+    match arms with
+        | [] -> acc
+        | (_pat, body, guard) :: rest ->
+            let withGuard =
+                match guard with
+                    | None -> acc
+                    | Some(g) -> collectCallSites(functionTable)(enclosing)(g)(acc)
+            in
+                withGuard
+                |> collectCallSites(functionTable)(enclosing)(body)
+                |> collectCallSitesArms(functionTable)(enclosing)(rest)
+and collectCallSitesPair (functionTable: List((Str, List(Str), Expr))) (enclosing: Maybe(Str)) (left: Expr) (right: Expr) (acc: List(MoveCallSite)) =
+    acc
+    |> collectCallSites(functionTable)(enclosing)(left)
+    |> collectCallSites(functionTable)(enclosing)(right)
+
+// Every registered function's own body is walked under its own name; a parameterless top-level
+// `let` (a value binding) is walked under the shared top-level scope instead, since it is not
+// itself a callable frame.
+let recursive collectCallSitesForFunctions (functionTable: List((Str, List(Str), Expr))) (funcs: List((Str, List(Str), Expr))) (acc: List(MoveCallSite)) =
+    match funcs with
+        | [] -> acc
+        | (_name, [], body) :: rest ->
+            acc
+            |> collectCallSites(functionTable)(None)(body)
+            |> collectCallSitesForFunctions(functionTable)(rest)
+        | (name, _params, body) :: rest ->
+            acc
+            |> collectCallSites(functionTable)(Some(name))(body)
+            |> collectCallSitesForFunctions(functionTable)(rest)
+
+let collectAllCallSites (functionTable: List((Str, List(Str), Expr))) (topLevelBody: Maybe(Expr)) =
+    (let fromFunctions = collectCallSitesForFunctions(functionTable)(functionTable)([])
+    in
+        match topLevelBody with
+            | None -> fromFunctions
+            | Some(body) -> collectCallSites(functionTable)(None)(body)(fromFunctions))
+
+let recursive callSitesFor (name: Str) (sites: List(MoveCallSite)) =
+    match sites with
+        | [] -> []
+        | (MoveCallSite { calleeName = callee } as site) :: rest ->
+            if callee == name
+            then site :: callSitesFor(name)(rest)
+            else callSitesFor(name)(rest)
+
+let recursive externalCallSitesFor (name: Str) (sites: List(MoveCallSite)) =
+    match sites with
+        | [] -> []
+        | (MoveCallSite { enclosingName = enclosing } as site) :: rest ->
+            if enclosing == Some(name)
+            then externalCallSitesFor(name)(rest)
+            else site :: externalCallSitesFor(name)(rest)
+
+let recursive argumentAt (index: Int) (arguments: List(Expr)) =
+    match arguments with
+        | [] -> None
+        | head :: rest ->
+            if index == 0
+            then Some(head)
+            else argumentAt(index - 1)(rest)
+
+let recursive paramIndexOf (name: Str) (parameters: List(Str)) (index: Int) =
+    match parameters with
+        | [] -> None
+        | head :: rest ->
+            if head == name
+            then Some(index)
+            else paramIndexOf(name)(rest)(index + 1)
+
+// A parameter is move-safe when it has at least one call site outside its own function's
+// self-recursion, and every one of those external sites hands it a move (`argIsMove`). A
+// parameter with no external call site at all — never called, or called only recursively — is
+// never proven, matching stage 0's "no observed call site" verdict.
+let recursive isParamMoveSafe (fuel: Int) (functionTable: List((Str, List(Str), Expr))) (callSites: List(MoveCallSite)) (constructorArities: List((Str, Int))) (funcName: Str) (paramName: Str) =
+    if fuel <= 0
+    then false
+    else
+        match lookupFunctionEntry(funcName)(functionTable) with
+            | None -> false
+            | Some((parameters, _body)) ->
+                match paramIndexOf(paramName)(parameters)(0) with
+                    | None -> false
+                    | Some(index) ->
+                        let sites = callSitesFor(funcName)(callSites)
+                        in
+                            match sites with
+                                | [] -> false
+                                | _ ->
+                                    let externalSites = externalCallSitesFor(funcName)(sites)
+                                    in
+                                        match externalSites with
+                                            | [] -> false
+                                            | _ -> allExternalSitesMoveSafe(fuel)(functionTable)(callSites)(constructorArities)(index)(externalSites)
+and allExternalSitesMoveSafe (fuel: Int) (functionTable: List((Str, List(Str), Expr))) (callSites: List(MoveCallSite)) (constructorArities: List((Str, Int))) (index: Int) (sites: List(MoveCallSite)) =
+    match sites with
+        | [] -> true
+        | MoveCallSite { enclosingName = enclosing, arguments = arguments } :: rest ->
+            match argumentAt(index)(arguments) with
+                | None -> false
+                | Some(argument) ->
+                    if argIsMove(fuel)(functionTable)(callSites)(constructorArities)(enclosing)(argument)
+                    then allExternalSitesMoveSafe(fuel)(functionTable)(callSites)(constructorArities)(index)(rest)
+                    else false
+and argIsMove (fuel: Int) (functionTable: List((Str, List(Str), Expr))) (callSites: List(MoveCallSite)) (constructorArities: List((Str, Int))) (enclosing: Maybe(Str)) (argument: Expr) =
+    if isFullyFreshConstruction(constructorArities)(argument)
+    then true
+    else
+        match stripSpan(argument) with
+            | ExprVar(name) ->
+                match enclosing with
+                    | None -> false
+                    | Some(enclosingName) ->
+                        match lookupFunctionEntry(enclosingName)(functionTable) with
+                            | None -> false
+                            | Some((parameters, body)) ->
+                                let isOwnParameter =
+                                    match paramIndexOf(name)(parameters)(0) with
+                                        | None -> false
+                                        | Some(_index) -> true
+                                in
+                                    if isOwnParameter && countVarOccurrences(body)(name) <= 1
+                                    then isParamMoveSafe(fuel - 1)(functionTable)(callSites)(constructorArities)(enclosingName)(name)
+                                    else false
+            | _ -> false
+
+let moveSafetyProof (functionTable: List((Str, List(Str), Expr))) (callSites: List(MoveCallSite)) (constructorArities: List((Str, Int))) (funcName: Str) (paramName: Str) =
+    (let safe = isParamMoveSafe(moveSafetyFuel)(functionTable)(callSites)(constructorArities)(funcName)(paramName)
+    in
+        ParameterMoveSafetyProof(
+            isMoveSafe = safe,
+            causes = if safe
+            then [MoveCauseNone]
+            else [ConservativeUnknownCause]
+        ))
+
+let recursive moveSafetyProofsFor (functionTable: List((Str, List(Str), Expr))) (callSites: List(MoveCallSite)) (constructorArities: List((Str, Int))) (funcName: Str) (parameters: List(Str)) =
+    match parameters with
+        | [] -> []
+        | param :: rest -> (param, moveSafetyProof(functionTable)(callSites)(constructorArities)(funcName)(param)) :: moveSafetyProofsFor(functionTable)(callSites)(constructorArities)(funcName)(rest)
+
+let recursive moveSafeParameterNames (proofs: List((Str, ParameterMoveSafetyProof))) =
+    match proofs with
+        | [] -> []
+        | (name, ParameterMoveSafetyProof { isMoveSafe = true }) :: rest -> name :: moveSafeParameterNames(rest)
+        | _ :: rest -> moveSafeParameterNames(rest)
+
+let recursive inferProgramOwnershipAux (funcs: List(FunctionSignature)) (provMap: List((Str, FunctionResultProvenance))) (programNames: List(Str)) (table: ProgramParameterOwnership) (functionTable: List((Str, List(Str), Expr))) (callSites: List(MoveCallSite)) (constructorArities: List((Str, Int))) (acc: List(FunctionOwnershipSummary)) =
     match funcs with
         | [] -> reverse(acc)
         | func :: rest ->
@@ -1104,14 +1502,22 @@ let recursive inferProgramOwnershipAux (funcs: List(FunctionSignature)) (provMap
                 |> inferFunctionOwnershipWith(func)(provMap)
             in
                 match rawSummary with
-                    | FunctionOwnershipSummary { capturedValues = caps } ->
-                        let summary = rawSummary with capturedValues = filterOutNames(caps)(programNames)
-                        in inferProgramOwnershipAux(rest)(provMap)(programNames)(table)(summary :: acc)
+                    | FunctionOwnershipSummary { functionName = name, parameters = parameters, capturedValues = caps } ->
+                        let proofs = moveSafetyProofsFor(functionTable)(callSites)(constructorArities)(name)(parameters)
+                        in
+                            let summary = rawSummary with capturedValues = filterOutNames(caps)(programNames), parameterMoveSafety = proofs, uniqueParameters = moveSafeParameterNames(proofs)
+                            in inferProgramOwnershipAux(rest)(provMap)(programNames)(table)(functionTable)(callSites)(constructorArities)(summary :: acc)
 
 // Every top-level function name is excluded from `capturedValues`: an ordinary call to another
 // whole-program function is not a closure capture, only a free reference into an enclosing scope is.
 // Parameter ownership comes from the whole-program inspect-only fixpoint over every signature.
-let inferProgramOwnership (funcs: List(FunctionSignature)) (provNodes: List(ProvenanceFunctionNode)) =
+// `constructorArities` names every data constructor the program declares with its field count, and
+// `topLevelBody` the program's trailing expression — both feed the move-safety call census.
+// `allTopLevelBindings` is every top-level `let`, parameterless value bindings included: the call
+// census needs it (a value binding's own right-hand side is part of the shared top-level scope a
+// call site can live in), even though `funcs` — already filtered to parameterized bindings by the
+// caller — is what actually gets an ownership summary.
+let inferProgramOwnership (funcs: List(FunctionSignature)) (provNodes: List(ProvenanceFunctionNode)) (constructorArities: List((Str, Int))) (topLevelBody: Maybe(Expr)) (allTopLevelBindings: List((Str, List(Str), Expr))) =
     (let provMap = resolveResultProvenances(provNodes)
     in
         let programNames = collectFunctionNames(funcs)([])
@@ -1120,4 +1526,6 @@ let inferProgramOwnership (funcs: List(FunctionSignature)) (provNodes: List(Prov
                 funcs
                 |> signatureFunctions
                 |> inferProgramParameterOwnership
-            in inferProgramOwnershipAux(funcs)(provMap)(programNames)(table)([]))
+            in
+                let callSites = collectAllCallSites(allTopLevelBindings)(topLevelBody)
+                in inferProgramOwnershipAux(funcs)(provMap)(programNames)(table)(allTopLevelBindings)(callSites)(constructorArities)([]))
