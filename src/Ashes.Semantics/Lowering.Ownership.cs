@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -2084,6 +2085,40 @@ public sealed partial class Lowering
         }
 
         return CopyOutKind.None;
+    }
+
+    /// <summary>
+    /// A generic callee (its parameter position quantified in its own type scheme) is compiled once
+    /// with no static layout for that position, so its own cons cells never carry a runtime-managed
+    /// header regardless of what the caller passed in (see <see cref="IsCalleeParameterQuantifiedInScheme"/>).
+    /// <see cref="GetCallCopyOutKind"/> only recognizes <c>Str</c> heads and arena-resettable inner
+    /// lists; every other element shape — a tuple, another aggregate, <c>Bytes</c>/<c>BigInt</c>, or a
+    /// named record/ADT such as the sugar-parameter or token-index pairs the self-hosted parser
+    /// threads through a generic <c>reverse</c> — falls through to <see cref="CopyOutKind.None"/> and
+    /// the call result then escapes with no normalization at all: the elements a generic list-building
+    /// function moves out of its consumed input are never retained, so the caller's own release of
+    /// that now-unreferenced input frees memory the returned list still points at. This predicate
+    /// mirrors exactly what <see cref="EmitRuntimeManagedTcoDeepCopy"/> can express for one element,
+    /// so a caller can fall back to <see cref="EmitRuntimeManagedTcoListDeepCopy"/> — the same
+    /// recursive deep-copy machinery already proven for TCO parameter entry normalization — instead of
+    /// silently skipping normalization.
+    /// </summary>
+    private bool CanEmitRuntimeManagedListElementDeepCopy(TypeRef elementType)
+    {
+        TypeRef pruned = Prune(elementType);
+        if (CanArenaReset(pruned))
+        {
+            return true;
+        }
+
+        return pruned switch
+        {
+            TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+            TypeRef.TList list => CanEmitRuntimeManagedListElementDeepCopy(list.Element),
+            TypeRef.TTuple tuple => tuple.Elements.All(CanEmitRuntimeManagedListElementDeepCopy),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named),
+            _ => false,
+        };
     }
 
     /// <summary>

@@ -1210,7 +1210,8 @@ public sealed partial class Lowering
         int CurrentTemp,
         int RuntimeManagedResultFlagTemp,
         TypeRef ResultType,
-        bool IsDeepCopy = false);
+        bool IsDeepCopy = false,
+        bool CalleeResultElementIsGeneric = false);
 
     private readonly Dictionary<int, PendingCallResultCopyOut> _pendingCallResultCopyOuts = new();
     private int _nextCallResultCopyOutId;
@@ -10510,7 +10511,8 @@ public sealed partial class Lowering
             currentTemp,
             callResultType,
             runtimeManagedResult || stableReuseResult,
-            runtimeManagedResultFlagTemp);
+            runtimeManagedResultFlagTemp,
+            IsCalleeResultListElementQuantifiedInScheme(rootExpr, collectedArgs.Count));
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -11054,6 +11056,54 @@ public sealed partial class Lowering
             && quantifiedIds.Contains(argVar.Id);
     }
 
+    // Whether the callee's own type scheme leaves its RESULT list's element position quantified —
+    // the return-side counterpart to IsCalleeParameterQuantifiedInScheme. A callee generic in this
+    // position (Ashes.Collection.List.reverse's List(v) -> List(v), say) is compiled once with no
+    // static layout for that element, so its own cons cells never carry a runtime-managed header no
+    // matter what the caller instantiates v with — the caller must normalize an escaping List(T)
+    // result itself (LowerUncoveredCallResultCopyOut). A callee whose declared result element is
+    // already a CONCRETE type (a monomorphic list-builder returning List(SomeRecord), say) is not
+    // this case: its own placement machinery can and does decide arena vs. runtime-managed per call,
+    // so forcing a deep copy here would be pure overhead — and would defeat reuse specialization for
+    // a result that a lexically-local consumer (never independently kept alive) was always safe to
+    // read straight out of the arena.
+    private bool IsCalleeResultListElementQuantifiedInScheme(Expr rootExpr, int argumentCount)
+    {
+        Binding? binding = rootExpr switch
+        {
+            Expr.Var variable => Lookup(variable.Name),
+            Expr.QualifiedVar qualified => Lookup(
+                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            _ => null,
+        };
+        TypeScheme? scheme = binding switch
+        {
+            Binding.Scheme s => s.S,
+            Binding.EnvScheme es => es.S,
+            _ => null,
+        };
+        if (scheme is null)
+        {
+            return false;
+        }
+
+        HashSet<int> quantifiedIds = scheme.Quantified.Select(tv => tv.Id).ToHashSet();
+        TypeRef cursor = scheme.Body;
+        for (int index = 0; index < argumentCount; index++)
+        {
+            if (cursor is not TypeRef.TFun fun)
+            {
+                return false;
+            }
+
+            cursor = fun.Ret;
+        }
+
+        return cursor is TypeRef.TList list
+            && list.Element is TypeRef.TVar elementVar
+            && quantifiedIds.Contains(elementVar.Id);
+    }
+
     // Whether the callee's own result may alias this specific parameter, per the whole-program
     // fixed-point analysis in Lowering.MoveAnalysis.cs (the same fact --explain ownership reports
     // under "Result: aliases:") — computed over fully-resolved types, unlike a fresh AST walk, and
@@ -11473,13 +11523,54 @@ public sealed partial class Lowering
     // - Self-contained heap result (String, List with safe element, Closure,
     //   ADT with copy-type fields): restore pointer → copy-out → reclaim chunks
     //   (source stays readable until ReclaimArenaChunks frees the old OS chunks).
+    // GetCallCopyOutKind found no fixed ListHeadCopyKind for this result: either it genuinely never
+    // needs a copy (a closure result, an opaque/resource ADT), or its type still holds an unresolved
+    // inference variable, or it is a list whose element only the recursive deep-copy machinery can
+    // express (see CanEmitRuntimeManagedListElementDeepCopy). Route each case to its own handling
+    // instead of silently leaving the result unnormalized.
+    private int LowerUncoveredCallResultCopyOut(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        TypeRef callResultType,
+        int runtimeManagedResultFlagTemp,
+        bool calleeResultElementIsGeneric)
+    {
+        if (calleeResultElementIsGeneric
+            && Prune(callResultType) is TypeRef.TList deepCopyResultList
+            && !CanArenaReset(Prune(deepCopyResultList.Element))
+            && CanEmitRuntimeManagedListElementDeepCopy(deepCopyResultList.Element))
+        {
+            return LowerCallDeepCopyOutListResult(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                deepCopyResultList.Element,
+                runtimeManagedResultFlagTemp);
+        }
+
+        return ContainsUnresolvedLayoutType(callResultType, [])
+            ? DeferCallResultCopyOut(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                callResultType,
+                runtimeManagedResultFlagTemp,
+                calleeResultElementIsGeneric)
+            : currentTemp;
+    }
+
     private int LowerCallRestoreArena(
         int callWmCursorSlot,
         int callWmEndSlot,
         int currentTemp,
         TypeRef callResultType,
         bool runtimeManagedResult,
-        int runtimeManagedResultFlagTemp)
+        int runtimeManagedResultFlagTemp,
+        bool calleeResultElementIsGeneric)
     {
         int callPreRestoreEndSlot = NewLocal();
         if (runtimeManagedResult || CanArenaReset(callResultType))
@@ -11499,15 +11590,14 @@ public sealed partial class Lowering
             out IrInst.ListHeadCopyKind listHeadCopy);
         if (callCopyOutKind == CopyOutKind.None)
         {
-            return ContainsUnresolvedLayoutType(callResultType, [])
-                ? DeferCallResultCopyOut(
-                    callWmCursorSlot,
-                    callWmEndSlot,
-                    callPreRestoreEndSlot,
-                    currentTemp,
-                    callResultType,
-                    runtimeManagedResultFlagTemp)
-                : currentTemp;
+            return LowerUncoveredCallResultCopyOut(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                callResultType,
+                runtimeManagedResultFlagTemp,
+                calleeResultElementIsGeneric);
         }
 
         if (runtimeManagedResultFlagTemp >= 0)
@@ -11571,6 +11661,50 @@ public sealed partial class Lowering
                 RuntimeManaged: true,
                 IrInst.CopyOutPurpose.RcNormalization));
         }
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(reclaimLabel));
+        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    // A call result list whose element GetCallCopyOutKind cannot express through the fixed
+    // ListHeadCopyKind set (a tuple, a named record/ADT, Bytes/BigInt, or a list nested over one of
+    // those — see CanEmitRuntimeManagedListElementDeepCopy) still needs the same normalize-or-skip
+    // decision as an ordinary call result: with a dynamic ownership flag, normalize only on the
+    // arena-sourced branch; without one (no flag was ever produced for this call), the result may be
+    // arena-built and must be normalized unconditionally. Both branches route through
+    // EmitRuntimeManagedTcoListDeepCopy — the same recursive per-element deep copy the TCO
+    // parameter-entry path already uses for this exact element shape — so a generic function's
+    // returned list is retained exactly like a monomorphic one's.
+    private int LowerCallDeepCopyOutListResult(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        TypeRef elementType,
+        int runtimeManagedResultFlagTemp)
+    {
+        if (runtimeManagedResultFlagTemp < 0)
+        {
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+            int unconditionallyCopiedTemp = EmitRuntimeManagedTcoListDeepCopy(currentTemp, elementType);
+            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+            return unconditionallyCopiedTemp;
+        }
+
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+
+        string copyLabel = NewLabel("call_deep_copy_arena_result");
+        string reclaimLabel = NewLabel("call_reclaim_owned_result");
+        Emit(new IrInst.JumpIfFalse(runtimeManagedResultFlagTemp, copyLabel));
+        Emit(new IrInst.Jump(reclaimLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = EmitRuntimeManagedTcoListDeepCopy(currentTemp, elementType);
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
@@ -11656,7 +11790,8 @@ public sealed partial class Lowering
         int callPreRestoreEndSlot,
         int currentTemp,
         TypeRef callResultType,
-        int runtimeManagedResultFlagTemp)
+        int runtimeManagedResultFlagTemp,
+        bool calleeResultElementIsGeneric = false)
     {
         int resultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
@@ -11668,7 +11803,8 @@ public sealed partial class Lowering
             resultSlot,
             currentTemp,
             runtimeManagedResultFlagTemp,
-            callResultType);
+            callResultType,
+            CalleeResultElementIsGeneric: calleeResultElementIsGeneric);
         int[] usedTemps = runtimeManagedResultFlagTemp >= 0
             ? [currentTemp, runtimeManagedResultFlagTemp]
             : [currentTemp];
@@ -11752,6 +11888,24 @@ public sealed partial class Lowering
             out IrInst.ListHeadCopyKind listHeadCopy);
         if (kind == CopyOutKind.None)
         {
+            if (info.CalleeResultElementIsGeneric
+                && resultType is TypeRef.TList deferredDeepCopyList
+                && !CanArenaReset(Prune(deferredDeepCopyList.Element))
+                && CanEmitRuntimeManagedListElementDeepCopy(deferredDeepCopyList.Element))
+            {
+                int deepCopySourceTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(deepCopySourceTemp, info.ResultSlot));
+                int deepCopiedTemp = LowerCallDeepCopyOutListResult(
+                    info.CallWmCursorSlot,
+                    info.CallWmEndSlot,
+                    info.CallPreRestoreEndSlot,
+                    deepCopySourceTemp,
+                    deferredDeepCopyList.Element,
+                    info.RuntimeManagedResultFlagTemp);
+                Emit(new IrInst.StoreLocal(info.ResultSlot, deepCopiedTemp));
+                return true;
+            }
+
             return false;
         }
 

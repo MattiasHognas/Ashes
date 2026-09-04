@@ -1040,10 +1040,22 @@ same public behavior.
   region (the RC heap is NOT immune — it shares the arena's reclaimable cursor). Covers `Str` and
   `List(Str)`; extend on new failing shapes. Regression:
   `src/Ashes.Tests/GenericParameterHeapValueUafTests.cs`.
-- [ ] **OPT-32** Retain the elements a generic function (`Ashes.Collection.List.reverse`) moves from a
+- [x] **OPT-32** Retain the elements a generic function (`Ashes.Collection.List.reverse`) moves from a
   consumed list into cells it builds — the generic cons allocates an arena cell around a
-  type-variable head with no retain. The known self-hosted instances work around it with
-  monomorphic reverses; the compiler item stays open.
+  type-variable head with no retain. Root cause was one call-boundary gap, not the cons cell
+  itself: `GetCallCopyOutKind` recognized only a `Str` head or a list of arena-resettable elements
+  and fell straight to `CopyOutKind.None` for anything else a generic function's element type
+  variable can be instantiated with — a tuple, a named record/ADT, `Bytes`, `BigInt`, or a nested
+  list over one of those — so a generic function's returned list of such elements escaped the call
+  with no normalization at all, in place of the retain a monomorphic accumulator's own TCO
+  parameter-entry normalization already performs for the identical element shape via
+  `EmitRuntimeManagedTcoListDeepCopy`. Fixed by routing that already-proven recursive per-element
+  deep-copy machinery through the call-result path too (`CanEmitRuntimeManagedListElementDeepCopy`,
+  `LowerUncoveredCallResultCopyOut`, `LowerCallDeepCopyOutListResult` in `Lowering.cs`/
+  `Lowering.Ownership.cs`), both for the immediate and the type-inference-deferred copy-out sites.
+  Regression: `src/Ashes.Tests/GenericListRetainsRuntimeManagedElementsTests.cs` (an IR-level
+  assertion that the deep-copy walk now appears at the call site, plus a churn-loop execution
+  test) and `tests/generic_reverse_retains_runtime_managed_elements.ash`.
 - [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
   specialization (a helper's own body must resolve in the isolated scope too; an already-visited
   helper counts as resolved). Regression: `ReuseInlineResolutionTests`.
@@ -1053,7 +1065,21 @@ same public behavior.
   `Bytes` view to sidestep this; the general cost remains).
 - [ ] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
   caller can prove the aggregate is reference-counted (accessor shape:
-  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call).
+  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call). Root-caused but not
+  yet fixed: an accessor's own compiled body (`let name (p: Person) = p.name`, a bare
+  `GetAdtField` + `Return`) never allocates anything RC, so `_bodyRuntimeManagedByLabel` correctly
+  records it as not provably RC on its own — but that per-callee fact is then baked once into the
+  `ReturnsRuntimeManaged` bit of every closure value built for that function (`LowerVar`'s
+  top-level-function-ref case, `Lowering.cs` ~2892), so it stays `false` at every call site
+  regardless of what the caller's own argument is, and `CopyOutArena RcNormalization` runs
+  unconditionally — confirmed by compiling a 200000-call loop over a `Person` sourced from a
+  monomorphic `List(Person)` (which the TCO parameter-entry path does correctly place RC, unlike
+  OPT-32's generic case) and finding the copy still fires every call. Fixing this needs a
+  call-site-local fact this per-callee bit cannot express: "is this specific argument expression
+  provably RC AND does the callee's result only reach a borrowed field of it" (an accessor-shape
+  summary fact on the parameter, combined with the caller's own `LookupOwnedValue` on the argument
+  variable), substituted for the whole conditional-copy dance with a plain `RcDup`. Deferred for a
+  dedicated pass with room to verify the new fact doesn't misfire on a non-accessor result shape.
 - [ ] **OPT-36** Keep a large string alive when a tail-recursive loop moves it from the list (or tuple state)
   it consumes into its accumulator — the consumed cell's release frees the moved element, read
   back freed for any string past one arena chunk. Repro: split a 15 KB line, walk it inline
