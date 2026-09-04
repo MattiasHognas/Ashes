@@ -263,10 +263,12 @@ let loadShippedModules unit =
     |> shippedRootCandidates
     |> firstReadableShippedRoot
 
-// The lowered program and its optimized form, the one handed to code generation.
+// The lowered program, its optimized form (the one handed to code generation), and every value's
+// placement fact lowering recorded on the way — the explain report's memory representation needs
+// that last one, correlated to the un-optimized `lowered` it was captured against.
 let lowerStitchedProgram inputPath source program =
     match lowerCoreProgramWithSource(inputPath)(source)(program) with
-        | CoreLoweringResult { program = Some(lowered), error = None } -> Ok((lowered, optimizeIrProgram(lowered)))
+        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements } -> Ok((lowered, optimizeIrProgram(lowered), valuePlacements))
         | CoreLoweringResult { error = Some(error) } ->
             error
             |> Ashes.Trait.Show.show
@@ -282,7 +284,7 @@ let lowerFileSource inputPath source shipped =
         | Ok(StitchedSyntaxProject { program = program } as stitched) ->
             match lowerStitchedProgram(inputPath)(source)(program) with
                 | Error(message) -> Error(message)
-                | Ok((lowered, optimized)) -> Ok((stitched, lowered, optimized))
+                | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
 
 // The module-qualified name of a stitched binding for the reports. The single-file form is stage
 // 0's standalone layout, whose entry module is named `Main`; every other definition reports under
@@ -305,12 +307,13 @@ let stitchedQualifiedName (stitched: StitchedSyntaxProject) =
         | StitchedSyntaxProject { definitionPlacements = placements, entryModuleName = entryModule } -> qualifiedNameIn(entryModule)(placements)
 
 // The requested reports as text lines: the decision snapshot pairs the stitched program with its
-// lowering, and the RC counts read the optimized program the backend is about to receive.
-let explainReportLines (explain: ExplainRequest) (stitched: StitchedSyntaxProject) (lowered: IrProgram) (optimized: IrProgram) =
+// lowering and the value placements recorded against it, and the RC counts read the optimized
+// program the backend is about to receive.
+let explainReportLines (explain: ExplainRequest) (stitched: StitchedSyntaxProject) (lowered: IrProgram) valuePlacements (optimized: IrProgram) =
     match stitched with
         | StitchedSyntaxProject { program = program } ->
-            lowered
-            |> captureDecisionSnapshot(stitchedQualifiedName(stitched))(program)
+            valuePlacements
+            |> captureDecisionSnapshot(stitchedQualifiedName(stitched))(program)(lowered)
             |> (given (snapshot) -> buildExplainReport(snapshot)(optimized)(explain))
             |> (given (report) -> formatExplainReport(report)(explain))
 
@@ -323,12 +326,12 @@ let recursive writeErrorLines (lines: List(Str)) =
 
 // Prints the requested reports to stderr, so a program's own stdout stays usable when it is
 // compiled and run in one step.
-let writeExplainReport (explain: ExplainRequest) stitched lowered optimized =
+let writeExplainReport (explain: ExplainRequest) stitched lowered valuePlacements optimized =
     if isExplainRequestEmpty(explain)
     then Unit
     else
         optimized
-        |> explainReportLines(explain)(stitched)(lowered)
+        |> explainReportLines(explain)(stitched)(lowered)(valuePlacements)
         |> writeErrorLines
 
 let disposeEmission buffer machine builder module_ context =
@@ -416,9 +419,9 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) =
                 | Ok(shipped) ->
                     match lowerFileSource(inputPath)(source)(shipped) with
                         | Error(message) -> Error(message)
-                        | Ok((stitched, lowered, optimized)) ->
+                        | Ok((stitched, lowered, optimized, valuePlacements)) ->
                             optimized
-                            |> writeExplainReport(explain)(stitched)(lowered)
+                            |> writeExplainReport(explain)(stitched)(lowered)(valuePlacements)
                             |> (given (_) -> emitAndLink(outputPath)(optimized))
 
 let runCompileWithArguments arguments =

@@ -8,6 +8,7 @@
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
+import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
@@ -310,17 +311,283 @@ let recursive ownershipRecords (ordinal: Int) (summaries: List(FunctionOwnership
         | [] -> []
         | summary :: rest -> ownershipRecord(ordinal)(summary) :: ownershipRecords(ordinal + 1)(rest)
 
+// A bare constructor reference (`Some`, `Dot`, ...) parses as an ordinary variable read, so the
+// free-variable walk behind `capturedValues` cannot itself tell it apart from a genuine closure
+// capture over an enclosing module-level value — nor can a program-scanned constructor list, since
+// a builtin type's constructors (`Maybe`'s `Some`/`None`) never appear as a `TopLevelItem` in a
+// single-file lowering. A capture is only ever a reference to another top-level *value* binding
+// (a parameterless `let`), so keeping just the names the program actually declares that way is
+// both the narrower and the correct fix.
+let recursive topLevelValueNames (entries: List((Str, List(Str), Expr))) =
+    match entries with
+        | [] -> []
+        | (name, [], _body) :: rest -> name :: topLevelValueNames(rest)
+        | _ :: rest -> topLevelValueNames(rest)
+
+let recursive containsValueName (valueNames: List(Str)) (name: Str) =
+    match valueNames with
+        | [] -> false
+        | head :: rest ->
+            if head == name
+            then true
+            else containsValueName(rest)(name)
+
+let restrictCapturesToTopLevelValues (valueNames: List(Str)) (record: FunctionOwnershipRecord) =
+    match record with
+        | FunctionOwnershipRecord { capturedValues = captured } ->
+            record with capturedValues = filter(containsValueName(valueNames))(captured)
+
+// Every data constructor the program declares, paired with its field count — the move-safety call
+// census's seed for recognizing a saturated constructor application as a fully-fresh value.
+let recursive constructorArityEntries (constructors: List(TypeConstructor)) =
+    match constructors with
+        | [] -> []
+        | TypeConstructor { name = name, parameters = parameters } :: rest -> (name, length(parameters)) :: constructorArityEntries(rest)
+
+let recursive declaredConstructorArities (item: TopLevelItem) =
+    match item with
+        | TopLevelAt(_span, inner) -> declaredConstructorArities(inner)
+        | TopLevelType(TypeDecl { constructors = constructors }) -> constructorArityEntries(constructors)
+        | TopLevelZeroCostType(ZeroCostTypeDecl { constructor = TypeConstructor { name = name, parameters = parameters } }) -> [(name, length(parameters))]
+        | _ -> []
+
+let recursive programConstructorArities (items: List(TopLevelItem)) =
+    match items with
+        | [] -> []
+        | item :: rest ->
+            rest
+            |> programConstructorArities
+            |> append(declaredConstructorArities(item))
+
 // The read-only record of what a compilation decided: every let-bound function of the parsed
 // program with its inferred ownership, correlated with the lowered IR through the source origins
 // lowering assigned. `qualifiedNameOf` maps a binding name to its module-qualified name, or `None`
-// when the program has no module context. Value placements, reuse decisions, coroutine
-// representations, and pattern bindings are not retained by the self-hosted lowering yet.
-let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: IrProgram) =
-    program
-    |> topLevelFunctions
-    |> filter(hasParameters)
-    |> map(functionSignature(qualifiedNameOf)(lowered))
-    |> (given (signatures) -> inferProgramOwnership(signatures)([]))
-    |> sortBy(summaryBefore)
-    |> ownershipRecords(0)
-    |> (given (records) -> emptyDecisionSnapshot with functionOwnership = records)
+// when the program has no module context. Reuse decisions, coroutine representations, and pattern
+// bindings are not retained by the self-hosted lowering yet.
+// --- Representation walk over the lowered IR (arena/runtime-managed, for the `memory` report) ---
+//
+// `recordValuePlacement` (in CoreLowering.ash) already records every lowered value's function
+// origin and whether its resolved type is copy-typed — enough, via `classifyValuePlacement`, to
+// report every scalar correctly regardless of how it was produced. What remains is Region vs
+// RuntimeRc vs ConservativeUnknown for the non-scalar values, which this reads straight off the
+// already-emitted instructions rather than re-deriving during lowering: most heap-producing
+// instructions carry their own runtime-managed bit (the same one IrText.ash renders as
+// `RuntimeManaged=...`), and the rest — a slot reload, a borrow, a runtime-managed duplicate —
+// only need to forward whichever representation their source temp already carries. A temp this
+// walk cannot place (an indirect closure call's result, an environment capture) stays
+// ConservativeUnknown, exactly like an unplaced temp in stage 0's own default fact.
+let recursive lookupTempRepr (temp: Int) (reprs: List((Int, Bool, Bool))) =
+    match reprs with
+        | [] -> (false, false)
+        | (t, isArena, isRc) :: rest ->
+            if t == temp
+            then (isArena, isRc)
+            else lookupTempRepr(temp)(rest)
+
+let recursive lookupSlotRepr (slot: Int) (slots: List((Int, Bool, Bool))) =
+    match slots with
+        | [] -> (false, false)
+        | (s, isArena, isRc) :: rest ->
+            if s == slot
+            then (isArena, isRc)
+            else lookupSlotRepr(slot)(rest)
+
+let setTempRepr (temp: Int) (isArena: Bool) (isRc: Bool) (reprs: List((Int, Bool, Bool))) = (temp, isArena, isRc) :: reprs
+
+let setSlotRepr (slot: Int) (isArena: Bool) (isRc: Bool) (slots: List((Int, Bool, Bool))) = (slot, isArena, isRc) :: slots
+
+// A `target,...,runtimeManaged` instruction's representation follows the flag directly: arena when
+// clear, runtime-managed when set.
+let reprOfFlag (runtimeManaged: Bool) = (runtimeManaged == false, runtimeManaged)
+
+let recursive classifyInstructionRepr (kind: IrInstructionKind) (reprs: List((Int, Bool, Bool))) (slots: List((Int, Bool, Bool))) =
+    match kind with
+        | LoadConstStr(target, _value) -> (setTempRepr(target)(false)(false)(reprs), slots)
+        | Alloc(target, _sizeBytes, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | AllocStack(target, _sizeBytes) -> (setTempRepr(target)(true)(false)(reprs), slots)
+        | AllocAdt(target, _tag, _fieldCount, runtimeManaged, _tagless) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | AllocAdtStack(target, _tag, _fieldCount, _tagless) -> (setTempRepr(target)(true)(false)(reprs), slots)
+        | AllocAdtToSpace(target, _tag, _fieldCount, _tagless) -> (setTempRepr(target)(true)(false)(reprs), slots)
+        | MakeClosure(target, _label, _env, _size, runtimeManaged, _returnsRm, _acceptsRm) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | MakeClosureStack(target, _label, _env, _size, _returnsRm, _acceptsRm) -> (setTempRepr(target)(true)(false)(reprs), slots)
+        | RcDup(target, source, runtimeManaged, _mayBeEmpty) ->
+            if runtimeManaged
+            then (setTempRepr(target)(false)(true)(reprs), slots)
+            else
+                match lookupTempRepr(source)(reprs) with
+                    | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | Borrow(target, source) ->
+            match lookupTempRepr(source)(reprs) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | LoadLocal(target, slot) ->
+            match lookupSlotRepr(slot)(slots) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | StoreLocal(slot, source) ->
+            match lookupTempRepr(source)(reprs) with
+                | (isArena, isRc) -> (reprs, setSlotRepr(slot)(isArena)(isRc)(slots))
+        | TextFromInt(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | TextFromFloat(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | TextParseInt(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | TextParseFloat(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | TextToHex(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | RuneToText(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BigIntFromInt(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BigIntToString(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BigIntFromString(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BigIntBinary(target, _left, _right, _op, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | ConcatStr(target, _left, _right, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | ConcatStrTip(target, _left, _right, _cursor, _end, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | ConcatStrN(target, _parts, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BytesEmpty(target, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BytesSingleton(target, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BytesAppend(target, _bytes, _value, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BytesAllocate(target, _size, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | BytesFromList(target, _list, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | CopyOutArena(destTemp, _srcTemp, _staticSizeBytes, runtimeManaged, _purpose, _deferredElementType) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(destTemp)(isArena)(isRc)(reprs), slots)
+        | CopyOutList(destTemp, _srcTemp, _headCopy, runtimeManaged, _purpose) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(destTemp)(isArena)(isRc)(reprs), slots)
+        | CopyOutClosure(destTemp, _srcTemp, runtimeManaged, _purpose) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(destTemp)(isArena)(isRc)(reprs), slots)
+        | CallKnown(target, _name, _a1, _a2, _a3, runtimeManaged) ->
+            match reprOfFlag(runtimeManaged) with
+                | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
+        | _ -> (reprs, slots)
+
+let recursive walkFunctionInstructions (instructions: List(IrInstruction)) (reprs: List((Int, Bool, Bool))) (slots: List((Int, Bool, Bool))) =
+    match instructions with
+        | [] -> reprs
+        | IrInstruction { instruction = kind } :: rest ->
+            match classifyInstructionRepr(kind)(reprs)(slots) with
+                | (nextReprs, nextSlots) -> walkFunctionInstructions(rest)(nextReprs)(nextSlots)
+
+// Every function's temp -> (isArena, isRc) map, keyed by generated label so it can be looked up
+// per value-placement entry.
+let functionRepr (function: IrFunction) =
+    match function with
+        | IrFunction { label = label, instructions = instructions } -> (label, walkFunctionInstructions(instructions)([])([]))
+
+let recursive programRepr (functions: List(IrFunction)) =
+    match functions with
+        | [] -> []
+        | function :: rest -> functionRepr(function) :: programRepr(rest)
+
+let recursive lookupFunctionRepr (label: Str) (reprs: List((Str, List((Int, Bool, Bool))))) =
+    match reprs with
+        | [] -> []
+        | (candidate, temps) :: rest ->
+            if candidate == label
+            then temps
+            else lookupFunctionRepr(label)(rest)
+
+let originGeneratedLabel (origin: Maybe(IrFunctionOrigin)) =
+    match origin with
+        | Some(IrFunctionOrigin { generatedLabel = label }) -> Some(label)
+        | None -> None
+
+// One placement record per (temp, origin, isCopyType) fact `recordValuePlacement` captured during
+// lowering, with its representation looked up from the matching function's instruction walk.
+let recursive placementRecordsFrom (ordinal: Int) (functionReprs: List((Str, List((Int, Bool, Bool))))) (entries: List((Int, Maybe(IrFunctionOrigin), Bool))) =
+    match entries with
+        | [] -> []
+        | (temp, origin, isCopyType) :: rest ->
+            match match originGeneratedLabel(origin) with
+                | Some(label) ->
+                    functionReprs
+                    |> lookupFunctionRepr(label)
+                    |> lookupTempRepr(temp)
+                | None -> (false, false) with
+                | (isArena, isRc) ->
+                    ValuePlacementRecord(
+                        ordinal = ordinal,
+                        functionOrigin = origin,
+                        temp = temp,
+                        placement = classifyValuePlacement(false)(isCopyType)(isArena)(isRc)(false)(false),
+                        ownership = TempOwned,
+                        producer = ProducerOther,
+                        dropKind = DropNone,
+                        reason = ReasonDefault,
+                        typeName = None,
+                        location = None
+                    ) :: placementRecordsFrom(ordinal + 1)(functionReprs)(rest)
+
+// The read-only record of what a compilation decided: every let-bound function of the parsed
+// program with its inferred ownership, correlated with the lowered IR through the source origins
+// lowering assigned, plus every value's placement, correlated the same way through the function
+// origin `recordValuePlacement` stamped on it during lowering. `qualifiedNameOf` maps a binding
+// name to its module-qualified name, or `None` when the program has no module context.
+// `valuePlacements` is the `(temp, functionOrigin, isCopyType)` list `CoreLoweringResult` carries
+// out of lowering. Reuse decisions, coroutine representations, and pattern bindings are not
+// retained by the self-hosted lowering yet.
+let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: IrProgram) (valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))) =
+    (let valueNames =
+        program
+        |> topLevelFunctions
+        |> topLevelValueNames
+    in
+        let constructorArities = programConstructorArities(program.items)
+        in
+            let functionReprs = programRepr(lowered.functions)
+            in
+                let placements =
+                    valuePlacements
+                    |> reverse
+                    |> placementRecordsFrom(0)(functionReprs)
+                in
+                    program
+                    |> topLevelFunctions
+                    |> filter(hasParameters)
+                    |> map(functionSignature(qualifiedNameOf)(lowered))
+                    |> (given (signatures) ->
+                        program
+                        |> topLevelFunctions
+                        |> inferProgramOwnership(signatures)([])(constructorArities)(program.body))
+                    |> sortBy(summaryBefore)
+                    |> ownershipRecords(0)
+                    |> map(restrictCapturesToTopLevelValues(valueNames))
+                    |> (given (records) -> emptyDecisionSnapshot with functionOwnership = records, valuePlacements = placements))

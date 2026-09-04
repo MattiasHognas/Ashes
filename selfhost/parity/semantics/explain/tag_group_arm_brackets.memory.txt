@@ -1,0 +1,18 @@
+Memory report
+=============
+
+Function: render
+  ownership
+    token: consumed, move-safe yes
+    result fresh: yes
+  representation [lambda_1]
+    conservative unknown: 6
+
+Function: weight
+  ownership
+    token: consumed, move-safe yes
+    result fresh: no
+  representation [lambda_0]
+    conservative unknown: 1
+    copy value:           5
+

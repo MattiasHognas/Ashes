@@ -1,0 +1,18 @@
+Memory report
+=============
+
+Function: f
+  ownership
+    n: borrowed, move-safe no
+    acc: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_1]
+    runtime rc:           1
+    copy value:           9
+  representation [lambda_0]
+    region:               3
+

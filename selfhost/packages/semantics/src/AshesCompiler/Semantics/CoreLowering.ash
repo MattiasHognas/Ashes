@@ -121,6 +121,7 @@ type CoreLoweringResult =
     | program: Maybe(IrProgram)
     | semanticType: SemanticType
     | error: Maybe(CoreLoweringError)
+    | valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))
 
 type CoreConstructorLayout =
     | name: Str
@@ -287,6 +288,7 @@ type CoreLoweringState =
     // OPT-42: the live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
     // for a same-name rebuild in its own arm, most recently produced first.
     | reuseTokens: List(CoreReuseToken)
+    | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -540,7 +542,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         recursiveDeclarationSpan = None,
         ownerReleasePlans = [],
         pendingOwnerPlan = None,
-        reuseTokens = []
+        reuseTokens = [],
+        valuePlacements = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -696,14 +699,6 @@ let emit kind state =
         | CoreLoweringState { reversedInstructions = instructions, sourceContext = context, currentSpan = span, currentItem = item } ->
             let wrapped = tagItemInstruction(kind)(span)(item)(context)
             in state with reversedInstructions = wrapped :: instructions
-
-let success temp semanticType state =
-    LoweredCoreValue(
-        state = state,
-        temp = temp,
-        semanticType = semanticType,
-        error = None
-    )
 
 // The innermost enclosing span resolved the way emitted instructions resolve theirs.
 let currentLocation (state: CoreLoweringState) =
@@ -874,6 +869,86 @@ let instantiateBinding binding state =
 let resolveType state semanticType =
     match state with
         | CoreLoweringState { substitution = substitution } -> applySubstitution(substitution)(semanticType)
+
+// A copy-typed value needs no heap ownership at all, so it always reports as `CopyValue` in the
+// explain report's `memory` representation, regardless of how it was produced.
+let isCopyTypeSemantic (semanticType: SemanticType) =
+    match semanticType with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | SemFloat -> true
+        | SemRune -> true
+        | SemBool -> true
+        | _ -> false
+
+// The per-value fact the explain report's `memory` representation needs and nowhere else does:
+// which function produced this temp, and its type at the point it was produced. Recording it
+// here — where every lowered value already passes through with its type — reads state and appends
+// to a list; it changes nothing about what gets lowered. The type is kept unresolved: a builtin
+// call's argument is lowered (and its `success` recorded) before the call site unifies the
+// argument's type with the parameter's, so resolving eagerly here would still see a bare type
+// variable for an Int parameter — `finalizeValuePlacements` resolves every entry once, against
+// the whole program's finished substitution, right before the lowering result is built.
+// Stage 0 only captures a value placement from inside `AddFunction`, called for a lifted function
+// and never for the program entry, so a value lowered while `activeFunctionOrigin` is still `None`
+// (the top-level trailing expression, before any lambda is entered) is not recorded either.
+// A negative temp is a sentinel used by recursive-walk base cases (e.g. `success(-1)(SemNever)(state)`
+// for an empty list) that never reaches a real IR value — skip it rather than recording a phantom placement.
+let recordValuePlacement (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (temp < 0, state.activeFunctionOrigin) with
+        | (true, _) -> state
+        | (false, None) -> state
+        | (false, Some(_origin)) -> state with valuePlacements = (temp, state.activeFunctionOrigin, semanticType) :: state.valuePlacements
+
+let recursive containsTempOrigin (temp: Int) (origin: Maybe(IrFunctionOrigin)) (seen: List((Int, Maybe(IrFunctionOrigin)))) =
+    match seen with
+        | [] -> false
+        | (seenTemp, seenOrigin) :: rest ->
+            if seenTemp == temp && seenOrigin == origin
+            then true
+            else containsTempOrigin(temp)(origin)(rest)
+
+// A temp is produced exactly once (`freshTemp`'s counter never repeats within one function), so
+// the same (temp, origin) pair recorded more than once always names the same value passing
+// through more than one `success`-shaped wrapper on its way out of lowering — a let's closing
+// bracket returning its body's own result temp unchanged, an aggregate's child retain that turned
+// out to be a no-op — rather than two different values sharing a number. Keeping the first
+// occurrence and dropping the rest turns each such re-wrap back into the single placement stage 0
+// would have recorded.
+let recursive dedupeValuePlacements (seen: List((Int, Maybe(IrFunctionOrigin)))) (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) =
+    match placements with
+        | [] -> []
+        | (temp, origin, semanticType) :: rest ->
+            if containsTempOrigin(temp)(origin)(seen)
+            then dedupeValuePlacements(seen)(rest)
+            else (temp, origin, semanticType) :: dedupeValuePlacements((temp, origin) :: seen)(rest)
+
+// Resolves every recorded value placement's type against the finished program's substitution and
+// classifies it, turning the deduplicated `(temp, origin, semanticType)` list `CoreLoweringState`
+// grows during lowering into the `(temp, origin, isCopyType)` list `CoreLoweringResult` exports.
+let recursive finalizeValuePlacements (state: CoreLoweringState) (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) =
+    match placements with
+        | [] -> []
+        | (temp, origin, semanticType) :: rest ->
+            (temp, origin, semanticType
+            |> resolveType(state)
+            |> isCopyTypeSemantic) :: finalizeValuePlacements(state)(rest)
+
+let success temp semanticType state =
+    LoweredCoreValue(
+        state = recordValuePlacement(temp)(semanticType)(state),
+        temp = temp,
+        semanticType = semanticType,
+        error = None
+    )
+
+// Wraps a `let`'s closed-bracket result as a `LoweredCoreValue`, without recording it: whichever
+// temp `closeOwnedLetBracket` hands back has already had its placement decided — either it is the
+// body's own result temp unchanged (recorded by whatever lowered it), a copy-out's temp (recorded
+// by `closeOwnedLetBracket` itself, the one case that is a genuinely new physical value), or a
+// spilled reload's temp (deliberately left unrecorded, since a reload is the same reference at a
+// new address, not a new value).
+let finishClosedLetResult finalTemp resultType state = LoweredCoreValue(state = state, temp = finalTemp, semanticType = resultType, error = None)
 
 let bindType left right state =
     match state with
@@ -1270,6 +1345,19 @@ let lowerConstant kind semanticType state =
             |> emit(kind(temp))
             |> success(temp)(semanticType)
 
+// Like `lowerConstant`, for a constant that only ever feeds a pattern guard's comparison
+// instruction: it is never bound, returned, or otherwise a source-facing value, so unlike
+// `lowerConstant` it does not record a value placement for the report.
+let lowerGuardConstant kind semanticType state =
+    match freshTemp(state) with
+        | FreshTemp { state = nextState, temp = temp } ->
+            LoweredCoreValue(
+                state = emit(kind(temp))(nextState),
+                temp = temp,
+                semanticType = semanticType,
+                error = None
+            )
+
 let recursive findStringLiteral value literals =
     match literals with
         | [] -> None
@@ -1300,6 +1388,12 @@ let lowerString value state =
     match internString(value)(state) with
         | StringInterning { state = internedState, label = label } ->
             lowerConstant(given (target) -> LoadConstStr(target)(label))(SemString)(internedState)
+
+// Like `lowerString`, for a string constant that only feeds a pattern guard's comparison.
+let lowerGuardString value state =
+    match internString(value)(state) with
+        | StringInterning { state = internedState, label = label } ->
+            lowerGuardConstant(given (target) -> LoadConstStr(target)(label))(SemString)(internedState)
 
 // The payload type a zero-cost single-constructor type is represented as, when `name` names one.
 let recursive zeroCostPayloadType (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -2259,6 +2353,11 @@ let reloadLetResult (resultTemp: Int) (resultSlot: Int) (state: CoreLoweringStat
 // owns its binding spills the body result to a slot, releases the binding, restores, and reloads
 // the result afterwards (stage 0's result preservation: the release could otherwise overwrite the
 // result temp); a scope owning nothing restores and returns the body temp directly.
+// Closes an owned `let`'s arena bracket. A result that already survived the scope reset, or
+// simply isn't owned here, keeps its own temp — already recorded by whatever produced it. A
+// runtime-managed result that needed a copy-out is a genuinely new physical value, so this
+// records the copy's own temp itself before handing it back; a reload merely relocates the same
+// reference into a fresh temp to survive the reset and is deliberately left unrecorded.
 let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp resultType state =
     match (ownedTypeName, runtimeOwnerStateOf(ownerSlot)(state)) with
         | (Some(_transferred), Some(false)) -> (closeScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot)(state), resultTemp)
@@ -2269,7 +2368,7 @@ let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp r
                     |> emit(StoreLocal(resultSlot)(resultTemp))
                     |> emitOwnedLetRelease(typeName)(ownerSlot)
                     |> closeOwnedScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot) with
-                        | (closed, Some(copyTemp)) -> (closed, copyTemp)
+                        | (closed, Some(copyTemp)) -> (recordValuePlacement(copyTemp)(resultType)(closed), copyTemp)
                         | (closed, None) -> reloadLetResult(resultTemp)(resultSlot)(closed)
         | (None, _owned) -> (closeScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot)(state), resultTemp)
 
@@ -2808,7 +2907,7 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
-                                        | (closed, finalTemp) -> success(finalTemp)(resultType)(closed)
+                                        | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 let lowerLet name value body lower state =
     match state with
@@ -3128,6 +3227,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with pendingClosureNormalizers = bodyState.pendingClosureNormalizers)
             |> (given (current: CoreLoweringState) -> current with bodyRuntimeManagedByLabel = bodyState.bodyRuntimeManagedByLabel)
             |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
+            |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -5335,7 +5435,7 @@ let finishPatternNonZero valueTemp failLabel zero =
 
 let requirePatternNonZero valueTemp failLabel state =
     state
-    |> lowerConstant(given (target) -> LoadConstInt(target)(0))(SemInt)
+    |> lowerGuardConstant(given (target) -> LoadConstInt(target)(0))(SemInt)
     |> finishPatternNonZero(valueTemp)(failLabel)
 
 let finishEmptyListPattern valueTemp valueType failLabel fresh =
@@ -5345,7 +5445,7 @@ let finishEmptyListPattern valueTemp valueType failLabel fresh =
                 | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
                 | (state, None) ->
                     state
-                    |> lowerConstant(given (target) -> LoadConstInt(target)(0))(SemInt)
+                    |> lowerGuardConstant(given (target) -> LoadConstInt(target)(0))(SemInt)
                     |> finishPatternComparison(valueTemp)(SemInt)(failLabel)(CmpIntEq)
 
 let lowerEmptyListPattern valueTemp valueType failLabel state =
@@ -5690,19 +5790,19 @@ let recursive lowerPattern pattern valueTemp valueType failLabel state =
         | PatternOr(alternatives) -> lowerOrPattern(alternatives)(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
         | PatternInt(value) ->
             state
-            |> lowerConstant(given (target) -> LoadConstInt(target)(value))(SemInt)
+            |> lowerGuardConstant(given (target) -> LoadConstInt(target)(value))(SemInt)
             |> finishPatternComparison(valueTemp)(valueType)(failLabel)(CmpIntEq)
         | PatternRune(value) ->
             state
-            |> lowerConstant(given (target) -> LoadConstInt(target)(value))(SemRune)
+            |> lowerGuardConstant(given (target) -> LoadConstInt(target)(value))(SemRune)
             |> finishPatternComparison(valueTemp)(valueType)(failLabel)(CmpIntEq)
         | PatternBool(value) ->
             state
-            |> lowerConstant(given (target) -> LoadConstBool(target)(value))(SemBool)
+            |> lowerGuardConstant(given (target) -> LoadConstBool(target)(value))(SemBool)
             |> finishPatternComparison(valueTemp)(valueType)(failLabel)(CmpIntEq)
         | PatternString(value) ->
             state
-            |> lowerString(value)
+            |> lowerGuardString(value)
             |> finishPatternComparison(valueTemp)(valueType)(failLabel)(CmpStrEq)
         | unsupported ->
             LoweredCorePattern(
@@ -10159,7 +10259,8 @@ let failedCoreLowering error =
     CoreLoweringResult(
         program = None,
         semanticType = SemNever,
-        error = Some(error)
+        error = Some(error),
+        valuePlacements = []
     )
 
 type CoreProgramUses =
@@ -10275,7 +10376,7 @@ let lowerArenaBracketedTopLevelLet name value remainingBody environment continua
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
-                                        | (closed, finalTemp) -> success(finalTemp)(resultType)(closed)
+                                        | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
 // fully-saturated call to a known field-carrying constructor (see
@@ -10963,7 +11064,10 @@ let buildProgram lowered =
                                             |> placeLifetimes
                                             |> Some,
                                             semanticType = resolveType(state)(semanticType),
-                                            error = None
+                                            error = None,
+                                            valuePlacements = state.valuePlacements
+                                            |> dedupeValuePlacements([])
+                                            |> finalizeValuePlacements(state)
                                         )
 
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered

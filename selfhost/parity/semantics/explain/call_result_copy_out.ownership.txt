@@ -1,0 +1,14 @@
+Ownership report
+================
+
+Function: shout
+  Parameters
+    text
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: yes
+    aliases:  (none)
+

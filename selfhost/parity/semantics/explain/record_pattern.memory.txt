@@ -1,0 +1,11 @@
+Memory report
+=============
+
+Function: describe
+  ownership
+    p: consumed, move-safe yes
+    result fresh: no
+  representation [lambda_0]
+    conservative unknown: 1
+    copy value:           3
+

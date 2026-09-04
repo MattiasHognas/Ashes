@@ -1,0 +1,25 @@
+Ownership report
+================
+
+Function: makeText
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: yes
+    aliases:  (none)
+
+Function: shout
+  Parameters
+    text
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: yes
+    aliases:  (none)
+
