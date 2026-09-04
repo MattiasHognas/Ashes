@@ -1,0 +1,15 @@
+type Pair =
+    | left: Int
+    | right: Int
+
+type Shape =
+    | Dot
+    | Box(Pair)
+
+let swapped =
+    match Box(Pair(left = 1, right = 2)) with
+        | Box(pair) -> Pair(left = pair.right, right = pair.left)
+        | Dot -> Pair(left = 0, right = 0)
+
+match swapped with
+    | Pair { left = left } -> Ashes.IO.print(Ashes.Text.fromInt(left))

@@ -555,7 +555,10 @@ same public behavior.
   back-edge transforms).
 - [x] **IR-5** Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field
   access, patterns, and record updates with stage-0-compatible layouts (tuple words, two-word list
-  cells, interned strings, tagged cells, erased zero-cost wrappers).
+  cells, interned strings, tagged cells, erased zero-cost wrappers). A field read through a
+  receiver whose type is still a variable at the access (a parameter read before any call
+  constrains it) resolves by the field's name when exactly one record type declares it, stage 0's
+  `ResolveRecordReceiverByFieldName`; an ambiguous field leaves the receiver unresolved.
 - [x] **IR-6** Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
 - [x] **IR-7** Lower external calls, resources/destructors, native ownership conventions, library/resource
@@ -753,7 +756,35 @@ same public behavior.
   released a binding closes with stage 0's `PopOwnershipScope` copy-out: a heap result that
   cannot survive the reset but has a copy-out kind (a string or `Bytes`, a list over scalars, a
   same-arity scalar-field ADT) is copied past the reset as an RC-normalized
-  `CopyOutArena`/`CopyOutList`. A general call closes its window under stage 0's
+  `CopyOutArena`/`CopyOutList`, the ADT's static size counting its tag word only when the type
+  is not tagless. Every `match` arm is bracketed on every dispatch path: the tag-group
+  (`SwitchTag`) path brackets each linearly tested group case with its own `match_arm_cleanup_N`
+  block (the `match_group_next_N` label allocated first) and a trivial single-case group on its
+  success path only, and the capability-operation arms bracket like linear arms. An arm's
+  pattern bindings are stage 0's `TrackOwnedBindingsInPattern` owners (a resource, or any
+  heap-typed binding by its owned type name), released at the arm exit after the result store
+  (`RcDrop ... OwnerSlot=N`, moved to the last use by the placement pass), and an arm that owned
+  a live binding closes with the same `PopOwnershipScope` copy-out as an owned `let`, the copy
+  replacing the result in the match slot; a record field receiver is loaded without the
+  owned-read `Borrow`, as stage 0's `TryLowerRecordFieldLoad` does. The `let_bindings`,
+  `nested_let_scopes`, `scalar_match`, `ownerless_match`, `pattern_match`, `closure_capture`,
+  `heap_result_builtin`, `heap_result_let`, `heap_result_list`, `record_pattern`,
+  `tag_group_arm_brackets`, and `match_arm_copy_out` fixtures match stage 0 byte-for-byte,
+  source locations included (`MatchArmScopeTests.ash` covers the list and tagged-ADT arm
+  copy-outs, the lambda arm's pattern-owner release, and the operation-arm brackets). A self-recursive tail call is still a `CallClosure`; the backend fuses it
+  into a `musttail` when the instruction past the call's own window close stores or returns its
+  result. A function whose parameter always reaches its result (`ResultReach.ash`, stage 0's
+  `ResultAlwaysReachesVariable` over the parsed tree, following saturated calls into the
+  let-bound callees the lowering already records) normalizes a string or ADT argument at entry:
+  the `rc_arg_normalize_copy`/`rc_arg_normalize_done` block reads the hidden ownership flag
+  (`LoadArgumentOwnership`), copies a borrowed argument into an owned value (an RC-normalized
+  `CopyOutArena` for a string or a same-arity scalar-field ADT, a `CopyOutList` for a list over
+  copyable heads, the per-child deep copy for a tuple and a runtime-managed ADT, single- and
+  multi-constructor), stores it back into the argument slot ahead of the body, and the closure
+  carrying the function is a `MakeClosure`/`MakeClosureStack AcceptsRuntimeManagedArgument`;
+  the normalized functions of the `parameter_reaches_result_string`,
+  `parameter_reaches_result_record`, and `parameter_reaches_result_record_update` fixtures
+  match stage 0's text (`ResultReachTests.ash`). A general call closes its window under stage 0's
   `LowerCallRestoreArena`: a scalar result, or a result the callee is known to place on the RC
   heap (a single application of a let-bound function whose lowered body produced an RC result
   of a runtime-manageable type, or of a heap type without any copy-out), resets the window; any
@@ -771,24 +802,29 @@ same public behavior.
   `CallClosure`, and a fresh string, `Bytes`, `BigInt`, closure, or childless-ADT argument the
   callee did not take is released after the call. `CallOwnership.ash` holds the pure rules
   (copy-out kind, callee borrow and reach facts), and the reach analysis poisons a call through
-  a qualified or computed callee as stage 0 does. The `let_bindings`, `nested_let_scopes`,
-  `scalar_match`, `ownerless_match`, `pattern_match`, `closure_capture`, `heap_result_builtin`,
-  `heap_result_let`, `heap_result_list`, `call_result_copy_out`, and `call_argument_retain`
-  fixtures match stage 0 byte-for-byte, source locations included. A self-recursive tail call is still a `CallClosure`; the backend fuses it
-  into a `musttail` when the instruction past the call's own window close stores or returns its
-  result. Open: the mutual-recursion loop merge (milestone 5's OPT-19; `mutual_recursion` stays
-  out of the parity runner until then: its `recgroup_*` members and entry already match, the
-  merged `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are
-  missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
-  copy-out at match arms, the deferred call-result copy-out for a result whose layout is still
+  a qualified or computed callee as stage 0 does. The `call_result_copy_out` and
+  `call_argument_retain` fixtures join the byte-identical set. Open: the mutual-recursion loop merge
+  (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
+  `recgroup_*` members and entry already match, the merged `lambda_N` body,
+  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the deferred call-result copy-out for a result whose layout is still
   unresolved at the call (`CallResultCopyOutPending`), the list-spine, tuple, and owned-child
   releases of a consumed call argument, the RC-eligibility provenance behind the known-result
-  decision, the capability live-posts guard around the call reset, the runtime flag on
-  `ConcatStr` (the deferred-add sealing), curried known-call results, coroutine/async back edges,
-  entry normalization of a
-  parameter reaching the result, the owner-alias walk across curried chains, borrowed reads of
-  owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for
-  aggregates (only strings and the provably-dead top-level constructor drop are emitted so far).
+  decision, the capability live-posts guard around the call reset, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
+  it `RuntimeManaged` and flags the closure `ReturnsRuntimeManaged`; the selfhost copies the
+  arena result out at the arm close instead), the runtime-managed scrutinee owner
+  (`$match_rc_N`, a fresh RC-managed call result or nested match result matched directly) and
+  the match result's all-arms runtime-managed status, the live-posts guard around an arm's reset
+  in a program with a `handle`, the static-string arm normalization (`CopyOutArena` of a literal
+  arm when a sibling arm produces a fresh string), the runtime flag on `ConcatStr` (the
+  deferred-add sealing), curried known-call results, coroutine/async back edges, the
+  `rc_normalize_list` deep-copy loop of an entry-normalized list child over non-copyable heads
+  (such a parameter is left unnormalized), the source locations of a curried inner lambda's
+  instructions (stage 0 tags them with the `let`'s span, which keeps the three
+  `parameter_reaches_result_*` fixtures and the entry-normalized `_start_main`s out of the
+  parity runner), the owner-alias walk across curried chains, borrowed reads of owned bindings
+  at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for aggregates (only strings
+  and the provably-dead top-level constructor drop are emitted so far; an owned `let` list still
+  releases with one `RcDrop` where stage 0 walks the spine inline).
   Cascading drops: `StructuralDroppers.ash` synthesizes stage 0's structural owner dropper
   (`__rcdrop_structural_N`, the iterative list-spine walk with an owned-head release, the
   unique-guarded tuple and single-constructor walks, string/bytes/bigint leaves) and the
@@ -804,22 +840,63 @@ same public behavior.
   droppers: the `Result(Str, BigInt)` and text-uncons special drops, zero-cost erasure in the
   classification environment (the dropper environment carries no type-resolution context), and
   naming the dropper on the owned-`let` and pattern-owner releases once those are runtime-managed.
-- [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
+- [~] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
   owning aggregate consumer). Regression: `tests/tco_let_call_result_in_accumulator_record.ash`.
-- [ ] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
+  Done: the consumer request carries stage 0's `TransfersRuntimeManagedChildren`
+  (`transfersRuntimeManagedChildren`); a tail self-call's arguments — `isTailSelfCall`: the
+  enclosing loop function applied to all of its parameters in tail position of its loop body
+  (OPT-29) — are lowered under the transfer, which the constructor, record, cons-head,
+  list-literal, and tuple paths forward to their children and honor by retaining the read of a
+  live `let` owner (`retainTransferredChild`: the `Borrow`, then an `RcDup RuntimeManaged=true`
+  whose duplicate is what the cell stores, guarded `MayBeEmpty` for a list-typed owner), stage 0's
+  `DuplicateRuntimeManagedOwnedValueForTransfer`; the argument's own read of an owner is retained
+  the same way, and the cons tail is not forwarded to, as in stage 0. Covered by
+  `TcoOwnershipRulesTests.ash` and the shared `tests/tco_owned_let_in_tail_argument_record.ash`
+  (a known call whose body is a fresh-string builtin — the one `let` value the selfhost places on
+  the RC heap today) run through the backend suite, next to the regression fixture itself, whose
+  `let label = taken(...)` result stays an arena string until call-result RC normalization is
+  ported, so no retain fires on it. Open: the Perceus pattern-owner duplicate an owning consumer
+  adds (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
+  (`DuplicateRuntimeManagedTcoParameterForAggregate`), waiting on pattern owners and parameter
+  placement.
+- [x] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
   represented: only a fresh producer or a transferred value confers a releasable reference; a
   plain read of an RC-normalized slot is a borrowed read, and registering it as an owner
   double-releases every iteration. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
+  `adoptRuntimeLetValue` registers an owner only for a `RuntimeNewlyProduced` value temp — a
+  fresh producer's result, a known call marked by its callee's body placement, a copy-out, or a
+  transferred read (`transferRuntimeOwner`); a parameter `LoadLocal`, a `LoadEnv`, a pattern-field
+  load, and the `Borrow` of an owner's read are never marked, so `let r = acc` inside a loop
+  releases nothing at its exit (`TcoOwnershipRulesTests.ash`; the regression program runs through
+  the backend suite). The RC-normalized loop parameter the rule guards against arrives with
+  OPT-25's parameter entry normalization.
 - [ ] **OPT-28** Supply the evidence for a trait requirement inside a constrained function from the
   requirement's own instantiated type, never by trait name alone — the call lowering must unify
   the real arguments first, keep any name-threaded hint only for a still-bare type variable, and
   never serve a concrete requirement from the active dictionary. Regression:
   `tests/trait_concrete_requirement_inside_polymorphic_function.ash`.
-- [ ] **OPT-29** Keep every operator operand out of tail position: in a genuine TCO loop, a self-call that is
+- [~] **OPT-29** Keep every operator operand out of tail position: in a genuine TCO loop, a self-call that is
   an operand of an operator in another branch is an ordinary call, never a back-edge jump.
-  Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`.
+  Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`. Done: the consumer request
+  carries stage 0's `InTailPosition` (`tailPosition`), true at a loop body's root — a recursive
+  binding whose innermost lambda body `hasTailSelfCalls` gets a `CoreTcoLoop`
+  (`recursiveTcoLoop`), the curried lambdas between the binding and that body stay in the loop and
+  any other lambda leaves it (`enterLambdaTcoLoop`) — and forwarded only through `let` and
+  `let recursive` bodies, `if` branches (`&&`/`||` included), `match` arms, and the call node
+  itself; every operator operand, call argument, `let` value, condition, and scrutinee is lowered
+  without it (`tailPositionForwards`, the request-side `TcoTailPositionScope`). The flag decides
+  the tail self-call whose arguments transfer their children (OPT-26); the call itself stays a
+  `CallClosure` the backend fuses only when its result is stored or returned, so an operand
+  self-call is an ordinary call by construction. Covered by `TcoTests.ash` (`hasTailSelfCalls`
+  over operator operands), `TcoOwnershipRulesTests.ash` (the operand branch's cons stores the
+  plain borrow, the tail branch's the retained duplicate), and the regression program plus
+  `tests/tco_owned_let_in_operand_self_call.ash` run through the backend suite. Open: the loop
+  lowering itself (parameter slots, the `lambda_N_body` back edge, `SaveStackPointer`, argument
+  ownership flags with entry and back-edge normalization, the exit transfer) — the loop functions
+  of the OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of
+  the parity runner.
 - [ ] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:
@@ -947,9 +1024,22 @@ same public behavior.
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
   header/footer words, bump allocation for every non-RC `AllocAdt`/`Alloc`/`MakeClosure`,
   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` as watermark save, reset, and
-  `munmap` walk, with module-level grow/reclaim helpers). Open: the rest of Perceus placement
-  (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and the
-  async/parallel/net/FFI instruction families.
+  `munmap` walk, with module-level grow/reclaim helpers). The copy and normalization family is
+  complete: `CopyOutArena` (fixed, `-1` string/`Bytes` by header length, `BigInt` by limb
+  count) and `CopyOutList` (inline, string, and inner-list heads) in `IrCodegen.Arena`, and in
+  `IrCodegen.Copy` `CopyOutClosure` (environment plus closure, nil environment kept),
+  `CopyOutTcoListCell` (string/inner-list head, tail word preserved, nil pass-through), the
+  persistent to-space and blob regions stage 0 keeps beside the arena (`__ashes_tospace_*`/
+  `__ashes_blob_*`, grown lazily through `__ashes_region_grow`, never reset) behind
+  `AllocAdtToSpace` and `CopyOutArenaToSpace`, and the in-place reuse forms `CopyFixedInto`,
+  `CopyStringIntoOrFresh`, and `CopyFixedIntoOrFresh` (in place only when the old blob lies in
+  the blob region's current chunk); `TcoResetPending` is rejected at dispatch, since lowering
+  resolves every placeholder before handing the program over. Only `CopyOutArena`/`CopyOutList`
+  are reached from real lowering today; the rest is exercised by hand-built IR fixtures in
+  `selfhost/tests/backend` until the call-window/match-arm copy-out, TCO ownership, and reuse
+  specialization ports emit them. Open: the rest of Perceus placement (cascading drops, dup
+  insertion, closure droppers, reuse), TLS sections, and the async/parallel/net/FFI instruction
+  families.
 - [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
   `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
   "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently
@@ -974,7 +1064,14 @@ same public behavior.
   string literals carry the immortal sentinel so every path leaves static storage alone. The
   provably-dead top-level constructor drop names its type's synthesized structural dropper
   (`StructuralDroppers.ash`, see OPT-25) when the payload reaches past the cell, and the dropper
-  functions are registered in the program. libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
+  functions are registered in the program. The RC-normalizing copies produce real headers: a
+  runtime-managed `CopyOutArena`/`CopyOutList`/`CopyOutClosure` `malloc`s a fresh `{1, size}`
+  cell per copied value, string head, environment block, and closure, and a runtime-managed
+  `CopyOutClosure` dispatches to the program's `$env_normalize` function by code address (the
+  normalizer copies the captures and returns the new dropper; a closure without one gets the
+  raw bytes). The callee side of the hidden ownership flag is `LoadArgumentOwnership` reading
+  the third parameter, which `CallClosure`/`CallKnown` pass from their flag temp (`0` when the
+  call site has none). libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
   (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. Open: the
   free-list cache if the compile-time benchmark needs it; everything else in Perceus placement —
   cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup insertion, and

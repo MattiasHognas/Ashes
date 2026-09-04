@@ -39,6 +39,7 @@ import CoreCapabilityLoweringTests
 import CallWindowLoweringTests
 import StateMachineTransformTests
 import MetadataAndOriginsTests
+import MatchArmScopeTests
 import TcoTests
 import IrValidationTests
 import IrOptimizerTests
@@ -48,6 +49,8 @@ import HeapLayoutClassificationTests
 import ExplainReportTests
 import TaglessAdtLayoutTests
 import StructuralDroppersTests
+import ResultReachTests
+import TcoOwnershipRulesTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -96,6 +99,9 @@ let run unit =
     |> (given (_) -> ExplainReportTests.runExplainReportTests(Unit))
     |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
     |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
+    |> (given (_) -> MatchArmScopeTests.runMatchArmScopeTests(Unit))
+    |> (given (_) -> ResultReachTests.runResultReachTests(Unit))
+    |> (given (_) -> TcoOwnershipRulesTests.runTcoOwnershipRulesTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)
