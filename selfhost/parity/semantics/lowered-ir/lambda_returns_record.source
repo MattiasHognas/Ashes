@@ -1,0 +1,10 @@
+type Label =
+    | text: Str
+    | width: Int
+
+let label n = Label(text = Ashes.Text.fromInt(n), width = n)
+
+let made = label(7)
+
+match made with
+    | Label { text = text } -> Ashes.IO.print(text)

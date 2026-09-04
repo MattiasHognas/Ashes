@@ -22,6 +22,7 @@ import AshesCompiler.Frontend.Syntax.TypeParameter
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
+import AshesCompiler.Semantics.AggregateOwnership
 import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.CallResultProvenance
 import AshesCompiler.Semantics.CoreBuiltinLowering
@@ -56,6 +57,8 @@ import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.PerceusLifetimePlacement
 import AshesCompiler.Semantics.Unification
+// Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some
+// terminal arm, with no passthrough arm that could alias a tuple built elsewhere.
 export (
     type CoreLoweringError(..),
     type CoreLoweringResult(..),
@@ -132,7 +135,8 @@ type CoreBindingLocation =
     | CoreSelf(Str, Int)
 
 // `ownedRead` marks a `let` or pattern binding, whose reads borrow when the binding's resolved
-// type is heap-represented (see `finishOwnedRead`); a parameter, capture, or recursive
+// type is heap-represented (see `finishOwnedRead`), and a capture of such a binding borrows the
+// same way (stage 0 finds the owner by name through the closure); a parameter or recursive
 // self-reference is not owned by its reader and loads plainly.
 type CoreBinding =
     | name: Str
@@ -150,9 +154,16 @@ type CoreBinding =
 // leaves the scopes that own its parts — a tail self-call argument becoming the next iteration's
 // parameter — so an aggregate it builds retains the owned bindings it stores
 // (`TransfersRuntimeManagedChildren`).
+// The four aggregate representations a consumer may ask for besides a string, stage 0's
+// `LoweredValueRuntimeRepresentation.Adt`/`Record`/`List`/`Tuple`: a constructor application, a
+// record literal, a list literal or cons cell, and a tuple placed on the reference-counted heap.
 type ConsumerRequest =
     | expectedType: Maybe(SemanticType)
     | runtimeString: Bool
+    | runtimeAdt: Bool
+    | runtimeRecord: Bool
+    | runtimeList: Bool
+    | runtimeTuple: Bool
     | transferSlot: Maybe(Int)
     | tailPosition: Bool
     | transfersRuntimeManagedChildren: Bool
@@ -167,6 +178,10 @@ let emptyConsumerRequest =
     ConsumerRequest(
         expectedType = None,
         runtimeString = false,
+        runtimeAdt = false,
+        runtimeRecord = false,
+        runtimeList = false,
+        runtimeTuple = false,
         transferSlot = None,
         tailPosition = false,
         transfersRuntimeManagedChildren = false
@@ -258,6 +273,8 @@ type CoreLoweringState =
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
     | pendingTcoResets: List(CoreTcoReset)
     | recursiveDeclarationSpan: Maybe(TextSpan)
+    | ownerReleasePlans: List((Int, SemanticType, OwnedReleasePlan))
+    | pendingOwnerPlan: Maybe(OwnedReleasePlan)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -507,7 +524,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         resultRcEligibility = (0, []),
         tcoLoopFrame = None,
         pendingTcoResets = [],
-        recursiveDeclarationSpan = None
+        recursiveDeclarationSpan = None,
+        ownerReleasePlans = [],
+        pendingOwnerPlan = None
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -884,10 +903,6 @@ let transfersChildrenRequested (state: CoreLoweringState) =
     match consumerRequestOf(state) with
         | ConsumerRequest { transfersRuntimeManagedChildren = requested } -> requested
 
-// The request an aggregate hands each of its children: the transfer it was asked for and nothing
-// else, so a nested aggregate retains its own owned children the same way.
-let withTransferRequest (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with transfersRuntimeManagedChildren = transfers))(state)
-
 // A call argument's request: the callee's parameter type, and the transfer when the call is the
 // loop's tail self-call.
 let withArgumentRequest expected (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, transfersRuntimeManagedChildren = transfers))(state)
@@ -1046,12 +1061,27 @@ let recursive transferRequestForwards expression =
         | ExprTuple(_) -> true
         | _ -> false
 
+// An aggregate representation request reaches the forms that forward their result and the
+// aggregates that honor it: a `let` body, an `if` branch, a `match` arm, a handled body, a call
+// (a constructor application among them), a list literal, a cons cell, a tuple, and a record.
+let recursive aggregateRequestForwards expression =
+    match expression with
+        | ExprAt(_span, inner) -> aggregateRequestForwards(inner)
+        | ExprTuple(_) -> true
+        | ExprRecord(_, _, _) -> true
+        | ExprLambda(_, _, _) -> false
+        | other -> expectedTypeForwards(other)
+
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
     ConsumerRequest(
         expectedType = if expectedTypeForwards(expression)
         then request.expectedType
         else None,
         runtimeString = runtimeRequestForwards(expression) && request.runtimeString,
+        runtimeAdt = aggregateRequestForwards(expression) && request.runtimeAdt,
+        runtimeRecord = aggregateRequestForwards(expression) && request.runtimeRecord,
+        runtimeList = aggregateRequestForwards(expression) && request.runtimeList,
+        runtimeTuple = aggregateRequestForwards(expression) && request.runtimeTuple,
         transferSlot = if transferForwards(expression)
         then request.transferSlot
         else None,
@@ -1661,29 +1691,6 @@ let retainTransferredChild (child: Expr) (transfers: Bool) (lowered: LoweredCore
                 | None -> lowered
         | _ -> lowered
 
-// `lowerCoreValues` for an aggregate's children, each retained under the transfer as it is
-// lowered, before the next child.
-let recursive lowerTransferredValuesInto (transfers: Bool) expressions lower state reversedTemps reversedTypes =
-    match expressions with
-        | [] -> finishCoreValues(state)(reversedTemps)(reversedTypes)
-        | expression :: rest ->
-            match state
-            |> withTransferRequest(transfers)
-            |> lower(expression)
-            |> retainTransferredChild(expression)(transfers) with
-                | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
-                | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
-                    lowerTransferredValuesInto(
-                        transfers,
-                        rest,
-                        lower,
-                        nextState,
-                        temp :: reversedTemps,
-                        semanticType :: reversedTypes
-                    )
-
-let lowerTransferredValues (transfers: Bool) expressions lower state = lowerTransferredValuesInto(transfers)(expressions)(lower)(state)([])([])
-
 let finishOwnedRead ownedRead temp semanticType state =
     match state with
         | CoreLoweringState { constructorLayouts = layouts } ->
@@ -1739,12 +1746,12 @@ and lowerBoundVariable binding state =
                                 tempState
                                 |> emit(LoadLocal(temp)(slot))
                                 |> finishOwnedRead(ownedRead)(temp)(semanticType)
-                | CoreBinding { location = CoreEnvironment(index) } ->
+                | CoreBinding { location = CoreEnvironment(index), ownedRead = ownedRead } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
                             tempState
                             |> emit(LoadEnv(temp)(index))
-                            |> success(temp)(semanticType)
+                            |> finishOwnedRead(ownedRead)(temp)(semanticType)
 
 let addBinding name scheme location state =
     match state with
@@ -1807,13 +1814,23 @@ let pendingOperatorScheme state =
 // A `let` bound to a newly produced reference-counted value owns it: the value temp is handed on
 // to the slot, and a body that returns the binding itself (through nested lets) hands the slot's
 // reference on again instead of borrowing it, stage 0's tail-forwarded binding result.
-let adoptRuntimeLetValue (valueTemp: Int) (slot: Int) (state: CoreLoweringState) =
+// The release plan armed for the binding being adopted: what its value expression proved about
+// the graph's uniqueness and its constructor (`armOwnerReleasePlan`), or nothing for a value the
+// `let` paths did not classify.
+let takePendingOwnerPlan (state: CoreLoweringState) =
+    match state.pendingOwnerPlan with
+        | Some(plan) -> (plan, (state with pendingOwnerPlan = None))
+        | None -> (OwnedReleasePlan(deepUnique = false, constructorName = None), state)
+
+let adoptRuntimeLetValue (valueTemp: Int) (slot: Int) (valueType: SemanticType) (state: CoreLoweringState) =
     match runtimeTempStateOf(valueTemp)(state) with
         | Some(RuntimeNewlyProduced) ->
-            state
-            |> markRuntimeTemp(valueTemp)(RuntimeTransferred)
-            |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (slot, true) :: adopted.runtimeOwners)
-        | _ -> state
+            match takePendingOwnerPlan(state) with
+                | (plan, planned) ->
+                    planned
+                    |> markRuntimeTemp(valueTemp)(RuntimeTransferred)
+                    |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (slot, true) :: adopted.runtimeOwners, ownerReleasePlans = (slot, valueType, plan) :: adopted.ownerReleasePlans)
+        | _ -> state with pendingOwnerPlan = None
 
 let recursive isTailForwardedBindingResult (body: Expr) (name: Str) =
     match body with
@@ -1839,7 +1856,7 @@ let lowerStoredLet name body lower outerBindings valueTemp valueType fresh =
                 in
                     storedState
                     |> withConsumerRequest(letBodyRequest(name)(body)(valueTemp)(local)(storedState))
-                    |> adoptRuntimeLetValue(valueTemp)(local)
+                    |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
                     |> addOwnedBinding(name)(scheme)(CoreLocal(local))
                     |> lower(body)
                     |> restoreLoweredBindings(outerBindings)
@@ -1987,28 +2004,6 @@ let loweredValueOwnedTypeName lowered =
                 | resolved -> ownedTypeNameOf(resolved)(state.constructorLayouts)
         | _ -> None
 
-// The lexical release of an owned `let` binding at its scope exit, stage 0's
-// `EmitOwnedValueDrop`: the owner is loaded back and released with an `RcDrop` naming its slot,
-// which `PerceusLifetimePlacement` later moves to the binding's last use on each path. A closure
-// is released with `CleanupResource` instead, which stays at the scope exit.
-let emitOwnedLetRelease typeName ownerSlot state =
-    if isResourceTypeNameIn(typeName)(state)
-    then emitResourceCleanup(typeName)(ownerSlot)(state)
-    else
-        match runtimeOwnerStateOf(ownerSlot)(state) with
-            | Some(false) -> state
-            | runtimeOwner ->
-                match freshTemp(state) with
-                    | FreshTemp { state = loadState, temp = loadTemp } ->
-                        loadState
-                        |> emit(LoadLocal(loadTemp)(ownerSlot))
-                        |> (given (loaded) ->
-                            if typeName == "Function"
-                            then
-                                emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
-                            else
-                                emit(RcDrop(loadTemp)(typeName)(ownerSlot)(runtimeOwner == Some(true))(false)(None))(loaded))
-
 // The coverage and reachability rules live in `TypeInference.ash`'s `matchCoverageError` — the
 // exact checker the project-inference path runs — fed here with a minimal `TypeEnvironment`
 // carrying the live constructor layouts (intrinsic and user-declared alike, deep-copied out of
@@ -2027,6 +2022,74 @@ let recursive constructorInferenceDefinitionsFromLayouts layouts =
 let coverageEnvironment state =
     match state with
         | CoreLoweringState { constructorLayouts = layouts } -> emptyTypeEnvironment(Unit) with constructors = constructorInferenceDefinitionsFromLayouts(layouts)
+
+let recursive lookupOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
+    match plans with
+        | [] -> None
+        | (candidate, semanticType, plan) :: rest ->
+            if candidate == slot
+            then Some((semanticType, plan))
+            else lookupOwnerReleasePlan(slot)(rest)
+
+let recursive emitSplicedInstructions (instructions: List(IrInstructionKind)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> state
+        | instruction :: rest ->
+            state
+            |> emit(instruction)
+            |> emitSplicedInstructions(rest)
+
+// Splices a synthesized inline release into the current function: the instructions are emitted
+// under the current span, and the counters, dropper cache, and dropper functions the synthesis
+// advanced are carried into the state.
+let spliceInlineRelease (synthesis: InlineReleaseSynthesis) (state: CoreLoweringState) =
+    match synthesis with
+        | InlineReleaseSynthesis { instructions = instructions, nextTemp = nextTemp, nextLocal = nextLocal, cache = cache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> emitSplicedInstructions(instructions)((state with nextTemp = nextTemp, nextLocal = nextLocal, dropperLabels = cache, functions = append(state.functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+
+// The scope-exit release of a runtime-managed owner whose release reaches past its own cell —
+// a tuple, a list, or an ADT with owned children — walked inline at the lexical scope exit as
+// stage 0's `EmitOwnedValueDrop` does (the walk is not one placeable instruction); `None` for an
+// owner whose release is a single allocation.
+let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLoweringState) =
+    match lookupOwnerReleasePlan(ownerSlot)(state.ownerReleasePlans) with
+        | None -> None
+        | Some((semanticType, plan)) ->
+            match state with
+                | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+                    match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                        | None -> None
+                        | Some(synthesis) ->
+                            state
+                            |> spliceInlineRelease(synthesis)
+                            |> Some
+
+let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: CoreLoweringState) =
+    if typeName == "Function"
+    then
+        emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
+    else
+        match (runtimeOwner, emitInlineOwnerRelease(loadTemp)(ownerSlot)(loaded)) with
+            | (true, Some(released)) -> released
+            | _ ->
+                emit(RcDrop(loadTemp)(typeName)(ownerSlot)(runtimeOwner)(false)(None))(loaded)
+
+// The lexical release of an owned `let` binding at its scope exit, stage 0's
+// `EmitOwnedValueDrop`: the owner is loaded back and released with an `RcDrop` naming its slot,
+// which `PerceusLifetimePlacement` later moves to the binding's last use on each path, or with
+// the inline walk of a runtime-managed aggregate. A closure is released with `CleanupResource`
+// instead, which stays at the scope exit.
+let emitOwnedLetRelease typeName ownerSlot state =
+    if isResourceTypeNameIn(typeName)(state)
+    then emitResourceCleanup(typeName)(ownerSlot)(state)
+    else
+        match runtimeOwnerStateOf(ownerSlot)(state) with
+            | Some(false) -> state
+            | runtimeOwner ->
+                match freshTemp(state) with
+                    | FreshTemp { state = loadState, temp = loadTemp } ->
+                        loadState
+                        |> emit(LoadLocal(loadTemp)(ownerSlot))
+                        |> emitOwnerDrop(typeName)(ownerSlot)(loadTemp)(runtimeOwner == Some(true))
 
 let recursive schemeResultName (semanticType: SemanticType) =
     match semanticType with
@@ -2275,15 +2338,442 @@ let isImmediateRuntimeStringUse (body: Expr) (name: Str) =
                 | _ -> false
         | _ -> false
 
+// The structural facts stage 0 reads before it places an aggregate on the reference-counted
+// heap, asked of the constructor layouts and the heap layout classification.
+let recursive constructorLayoutsOfType (name: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | layout :: rest ->
+            if layoutResultName(layout) == Some(name)
+            then layout :: constructorLayoutsOfType(name)(rest)
+            else constructorLayoutsOfType(name)(rest)
+
+// A constructor's field types and result type, instantiated afresh from its scheme so a field
+// typed by a type parameter shows as an unbound variable (the scheme's own quantified ids may
+// coincide with live ids in the substitution and must never be resolved through it); the
+// instantiation is a query, so the advanced supply is discarded.
+let layoutFieldTypes (layout: CoreConstructorLayout) (state: CoreLoweringState) =
+    match (layout, state) with
+        | (CoreConstructorLayout { scheme = scheme }, CoreLoweringState { typeSupply = supply }) ->
+            match instantiate(scheme)(supply) with
+                | InstantiationResult { semanticType = semanticType } -> splitConstructorType(semanticType)([])
+
+let layoutIsGeneric (layout: CoreConstructorLayout) =
+    match layout with
+        | CoreConstructorLayout { scheme = TypeScheme { quantified = [] } } -> false
+        | _ -> true
+
+let recursive lookupRecordFieldExpression (field: Str) (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> None
+        | (candidate, expression) :: rest ->
+            if candidate == field
+            then Some(expression)
+            else lookupRecordFieldExpression(field)(rest)
+
+let recursive orderedRecordFieldExpressions (fieldNames: List(Str)) (fields: List((Str, Expr))) =
+    match fieldNames with
+        | [] -> Some([])
+        | field :: rest ->
+            match (lookupRecordFieldExpression(field)(fields), orderedRecordFieldExpressions(rest)(fields)) with
+                | (Some(expression), Some(ordered)) -> Some(expression :: ordered)
+                | _ -> None
+
+// The constructor application at the top cell of `expression` — a saturated call chain rooted at
+// a constructor name, a nullary constructor, or a record literal — as its layout and arguments in
+// field order, stage 0's `TryDescribeConstructorExpression`.
+let recursive constructorApplicationOf (expression: Expr) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match expression with
+        | ExprAt(_span, inner) -> constructorApplicationOf(inner)(arguments)(state)
+        | ExprCall(function, argument, _isSugar, _layout) -> constructorApplicationOf(function)(argument :: arguments)(state)
+        | ExprVar(name) ->
+            match constructorLayout(name)(state) with
+                | Some(layout) ->
+                    if constructorArity(layout) == length(arguments)
+                    then Some((layout, arguments))
+                    else None
+                | None -> None
+        | ExprRecord(name, fields, _isMultiline) ->
+            match (constructorLayout(name)(state), arguments) with
+                | (Some(CoreConstructorLayout { fieldNames = fieldNames } as layout), []) ->
+                    match orderedRecordFieldExpressions(fieldNames)(fields) with
+                        | Some(ordered) -> Some((layout, ordered))
+                        | None -> None
+                | _ -> None
+        | _ -> None
+
+let isConstructorExpression (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some(_application) -> true
+        | None -> false
+
+let isRecordLiteral (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprRecord(_name, _fields, _isMultiline) -> true
+        | _ -> false
+
+let isTupleLiteral (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprTuple(_elements) -> true
+        | _ -> false
+
+let isInlineCopyLiteral (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprInt(_value) -> true
+        | ExprUInt(_value, _bits, _text) -> true
+        | ExprFloat(_value, _text) -> true
+        | ExprBool(_value) -> true
+        | _ -> false
+
+let recursive isFreshCopyList (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprList(elements, _isMultiline) -> allInlineCopyLiterals(elements)
+        | ExprCons(head, tail) -> isInlineCopyLiteral(head) && isFreshCopyList(tail)
+        | _ -> false
+and allInlineCopyLiterals (elements: List(Expr)) =
+    match elements with
+        | [] -> true
+        | element :: rest -> isInlineCopyLiteral(element) && allInlineCopyLiterals(rest)
+
+let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> coverageEnvironment
+    |> classifyHeapLayout(resolveType(state)(semanticType))
+
+let recordAdtSupported (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { runtimeRecordAdtSupported = supported } -> supported
+
+let copyAdtSupported (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { runtimeCopyAdtSupported = supported } -> supported
+
+let ownedChildAdtSupported (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { runtimeOwnedChildAdtSupported = supported } -> supported
+
+let tcoOwnedChildAdtSupported (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { runtimeTcoOwnedChildAdtSupported = supported } -> supported
+
+let factsContainResource (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { containsResource = contains } -> contains
+
+let namedTypeNameOf (semanticType: SemanticType) =
+    match semanticType with
+        | SemNamed(_symbolId, name, _arguments) -> Some(name)
+        | _ -> None
+
+let isFreshStringChild (expression: Expr) (state: CoreLoweringState) = isRuntimeRcStringProducer(expression)(state) && isCaptureSafeStringProducer(expression)(state)
+
+let isVariableOrCall (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprVar(_name) -> true
+        | ExprCall(_function, _argument, _isSugar, _layout) -> true
+        | _ -> false
+
+// Stage 0's `IsRuntimeManageableFreshGenericPayload`: what a type-parameter field may hold as a
+// fresh owned value.
+let recursive isFreshGenericPayload (expression: Expr) (state: CoreLoweringState) = isFreshStringChild(expression)(state) || isFreshCopyList(expression) || isFreshGenericTuple(expression)(state)
+and isFreshGenericTuple (expression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprTuple(elements) -> allFreshGenericElements(elements)(state)
+        | _ -> false
+and allFreshGenericElements (elements: List(Expr)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest -> (isInlineCopyLiteral(element) || isFreshGenericPayload(element)(state)) && allFreshGenericElements(rest)(state)
+
+// Stage 0's `CanRuntimeManageFreshTupleExpression`: every element is a scalar or a fresh owned
+// producer of its element type.
+let recursive canRuntimeManageFreshTuple (elements: List(Expr)) (elementTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, elementTypes) with
+        | ([], []) -> true
+        | (element :: restElements, elementType :: restTypes) ->
+            freshTupleElementSupported(element)(resolveType(state)(elementType))(state) && canRuntimeManageFreshTuple(restElements)(restTypes)(state)
+        | _ -> false
+and freshTupleElementSupported (element: Expr) (elementType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(elementType)(state)
+    then true
+    else
+        match (elementType, unspanArgument(element)) with
+            | (SemString, _expression) -> isFreshStringChild(element)(state)
+            | (SemList(inner), _expression) -> resultSurvivesReset(inner)(state) && isFreshListConstruction(element)
+            | (SemTuple(innerTypes), ExprTuple(innerElements)) -> canRuntimeManageFreshTuple(innerElements)(innerTypes)(state)
+            | _ -> false
+
+// Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
+// recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer,
+// a list over scalars built fresh or read from a binding or call, a fresh tuple, a fresh record
+// tree, or a fresh application of an accumulator-shaped type.
+let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(fieldType)(state)
+    then true
+    else
+        match (resolveType(state)(fieldType), unspanArgument(expression)) with
+            | (SemString, _expression) -> isFreshStringChild(expression)(state)
+            | (SemList(element), _expression) -> resultSurvivesReset(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression))
+            | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
+            | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state)
+            | _ -> false
+and allFreshOwnedChildren (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, fieldTypes) with
+        | ([], []) -> true
+        | (argument :: restArguments, fieldType :: restTypes) -> canRuntimeManageFreshOwnedChild(argument)(fieldType)(state) && allFreshOwnedChildren(restArguments)(restTypes)(state)
+        | _ -> false
+and isFreshRuntimeManageableRecordTree (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, resultType) ->
+                    isRecordLiteral(expression) && recordAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
+        | None -> false
+and isFreshTcoOwnedChildApplication (expression: Expr) (typeName: Str) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, resultType) ->
+                    namedTypeNameOf(resultType) == Some(typeName) && tcoOwnedChildAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
+        | None -> false
+
+let isBuiltinTypeName (name: Str) = name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Task" || isResourceTypeName(name)
+
+let recursive allFieldsAreScalarOrSelf (fieldTypes: List(SemanticType)) (typeName: Str) (state: CoreLoweringState) (sawSelf: Bool) =
+    match fieldTypes with
+        | [] -> Some(sawSelf)
+        | fieldType :: rest ->
+            if resultSurvivesReset(fieldType)(state)
+            then allFieldsAreScalarOrSelf(rest)(typeName)(state)(sawSelf)
+            else
+                if namedTypeNameOf(resolveType(state)(fieldType)) == Some(typeName)
+                then allFieldsAreScalarOrSelf(rest)(typeName)(state)(true)
+                else None
+
+let recursive allConstructorsScalarOrSelf (layouts: List(CoreConstructorLayout)) (typeName: Str) (state: CoreLoweringState) (sawSelf: Bool) =
+    match layouts with
+        | [] -> sawSelf
+        | layout :: rest ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, _resultType) ->
+                    match allFieldsAreScalarOrSelf(fieldTypes)(typeName)(state)(sawSelf) with
+                        | None -> false
+                        | Some(saw) -> allConstructorsScalarOrSelf(rest)(typeName)(state)(saw)
+
+// Stage 0's `CanRuntimeManageRecursiveCopyAdt`: a user-declared, non-generic, non-resource type
+// whose every non-scalar field is the type itself.
+let canRuntimeManageRecursiveCopyAdt (semanticType: SemanticType) (state: CoreLoweringState) =
+    match semanticType
+    |> resolveType(state)
+    |> namedTypeNameOf with
+        | None -> false
+        | Some(name) ->
+            match constructorLayoutsOfType(name)(state.constructorLayouts) with
+                | [] -> false
+                | first :: _rest as layouts ->
+                    isBuiltinTypeName(name) == false && layoutIsGeneric(first) == false && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(semanticType)(state)) == false && allConstructorsScalarOrSelf(layouts)(name)(state)(false)
+
+// Stage 0's `IsFreshConstructorTree`: a constructor application of `typeName` whose every
+// non-scalar field is itself such a tree.
+let recursive isFreshConstructorTree (expression: Expr) (typeName: Str) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, resultType) -> namedTypeNameOf(resultType) == Some(typeName) && allFreshConstructorFields(arguments)(fieldTypes)(typeName)(state)
+        | None -> false
+and allFreshConstructorFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (typeName: Str) (state: CoreLoweringState) =
+    match (arguments, fieldTypes) with
+        | ([], []) -> true
+        | (argument :: restArguments, fieldType :: restTypes) -> (resultSurvivesReset(fieldType)(state) || isFreshConstructorTree(argument)(typeName)(state)) && allFreshConstructorFields(restArguments)(restTypes)(typeName)(state)
+        | _ -> false
+
+let recursive allGenericCopyFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, fieldTypes) with
+        | ([], []) -> true
+        | (argument :: restArguments, fieldType :: restTypes) -> (resultSurvivesReset(fieldType)(state) || isFieldTypeVariable(fieldType)(state) && isInlineCopyLiteral(argument)) && allGenericCopyFields(restArguments)(restTypes)(state)
+        | _ -> false
+and isFieldTypeVariable (fieldType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(fieldType) with
+        | SemVariable(_id) -> true
+        | _ -> false
+
+// Stage 0's `CanRuntimeManageGenericCopyAdtConstructorApplication`: a single-constructor generic
+// type whose type-parameter fields all receive inline literals.
+let canRuntimeManageGenericCopyAdtApplication (layout: CoreConstructorLayout) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match layoutFieldTypes(layout)(state) with
+        | (fieldTypes, resultType) ->
+            match namedTypeNameOf(resultType) with
+                | None -> false
+                | Some(name) ->
+                    layoutIsGeneric(layout) && length(constructorLayoutsOfType(name)(state.constructorLayouts)) == 1 && isResourceTypeNameIn(name)(state) == false && allGenericCopyFields(arguments)(fieldTypes)(state)
+
+let freshHeapChildFieldSupported (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
+    match (resolveType(state)(fieldType), unspanArgument(argument)) with
+        | (SemString, _expression) -> isFreshStringChild(argument)(state)
+        | (SemList(element), _expression) -> resultSurvivesReset(element)(state) && isFreshListConstruction(argument)
+        | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
+        | (SemVariable(_id), _expression) -> isFreshGenericPayload(argument)(state)
+        | _ -> false
+
+let recursive allFreshHeapChildFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) (sawOwned: Bool) =
+    match (arguments, fieldTypes) with
+        | ([], []) -> sawOwned
+        | (argument :: restArguments, fieldType :: restTypes) ->
+            if resultSurvivesReset(fieldType)(state)
+            then allFreshHeapChildFields(restArguments)(restTypes)(state)(sawOwned)
+            else freshHeapChildFieldSupported(argument)(fieldType)(state) && allFreshHeapChildFields(restArguments)(restTypes)(state)(true)
+        | _ -> false
+
+// Stage 0's `CanRuntimeManageFreshHeapChildAdtConstructorApplication`: a single-constructor,
+// non-resource type with at least one owned field, every owned field receiving a fresh producer.
+let canRuntimeManageFreshHeapChildAdtApplication (layout: CoreConstructorLayout) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match layoutFieldTypes(layout)(state) with
+        | (fieldTypes, resultType) ->
+            match namedTypeNameOf(resultType) with
+                | None -> false
+                | Some(name) ->
+                    length(constructorLayoutsOfType(name)(state.constructorLayouts)) == 1 && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(resultType)(state)) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
+
+// Stage 0's `CanRuntimeManageOwnedChildAdtConstructorApplication`, without the tracked child
+// bindings of an immediate match.
+let canRuntimeManageOwnedChildAdtApplication (layout: CoreConstructorLayout) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match layoutFieldTypes(layout)(state) with
+        | (fieldTypes, resultType) ->
+            ownedChildAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
+
+// A fresh constructor tree of a recursive-copy type.
+let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (state: CoreLoweringState) =
+    match namedTypeNameOf(resultType) with
+        | Some(name) -> canRuntimeManageRecursiveCopyAdt(resultType)(state) && isFreshConstructorTree(expression)(name)(state)
+        | None -> false
+
+// Stage 0's `IsFreshRuntimeManageableAdtExpression`: a constructor application the runtime can
+// own by one of its ADT shapes.
+let isFreshRuntimeManageableAdtExpression (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | None -> false
+        | Some((layout, arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (_fieldTypes, resultType) ->
+                    copyAdtSupported(heapFactsOf(resultType)(state)) || canRuntimeManageGenericCopyAdtApplication(layout)(arguments)(state) || canRuntimeManageFreshHeapChildAdtApplication(layout)(arguments)(state) || canRuntimeManageOwnedChildAdtApplication(layout)(arguments)(state) || isFreshRecursiveCopyTree(expression)(resultType)(state)
+
+// The parent type of the constructor an arm applies at its top cell, stage 0's
+// `AdtConstructorGroupKey`; a passthrough arm has none.
+let constructorGroupKey (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, _arguments)) -> layoutResultName(layout)
+        | None -> None
+
+let recursive callSpineRootAndArity (expression: Expr) (arity: Int) =
+    match expression with
+        | ExprAt(_span, inner) -> callSpineRootAndArity(inner)(arity)
+        | ExprCall(function, _argument, _isSugar, _layout) -> callSpineRootAndArity(function)(arity + 1)
+        | other -> (other, arity)
+
+// A full self-call back into the loop being lowered, stage 0's `IsSelfRecursiveTailFunnelArm`:
+// the arm constructs nothing here, and every path through it bottoms out at one of the same
+// function's own terminals.
+let isSelfFunnelArm (expression: Expr) (state: CoreLoweringState) =
+    match state.tcoLoop with
+        | None -> false
+        | Some(CoreTcoLoop { selfName = selfName, arity = arity }) ->
+            match callSpineRootAndArity(expression)(0) with
+                | (ExprVar(name), applied) -> name == selfName && applied == arity
+                | _ -> false
+
+// Stage 0's `ProducesFreshRuntimeManageableAdt`: some terminal arm applies a runtime-manageable
+// constructor and every sibling arm of its type, or without a constructor, is fresh too.
+let producesFreshRuntimeManageableAdt (body: Expr) (state: CoreLoweringState) =
+    anyArmConsistentlyFresh(freshEscapeTerminals(body))(given (terminal: Expr) -> isFreshRuntimeManageableAdtExpression(terminal)(state))(given (terminal: Expr) -> constructorGroupKey(terminal)(state))(given (terminal: Expr) -> isSelfFunnelArm(terminal)(state))
+
+// Stage 0's `ProducesFreshRuntimeManageableList`: every terminal arm builds its list fresh.
+let producesFreshRuntimeManageableList (body: Expr) =
+    body
+    |> freshEscapeTerminals
+    |> allTerminals(isFreshListConstruction)
+
+let recursive producesFreshTuple (body: Expr) (state: CoreLoweringState) =
+    freshTupleTerminals(freshEscapeTerminals(body))(state)(false)
+and freshTupleTerminals (terminals: List(Expr)) (state: CoreLoweringState) (sawFreshTuple: Bool) =
+    match terminals with
+        | [] -> sawFreshTuple
+        | terminal :: rest ->
+            if isSelfFunnelArm(terminal)(state)
+            then freshTupleTerminals(rest)(state)(sawFreshTuple)
+            else
+                if isTupleLiteral(terminal) || constructorCarriesFreshTuple(terminal)(state)
+                then freshTupleTerminals(rest)(state)(true)
+                else isConstructorExpression(terminal)(state) && freshTupleTerminals(rest)(state)(sawFreshTuple)
+and constructorCarriesFreshTuple (terminal: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(terminal)([])(state) with
+        | Some((_layout, arguments)) -> anyProducesFreshTuple(arguments)(state)
+        | None -> false
+and anyProducesFreshTuple (arguments: List(Expr)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> false
+        | argument :: rest -> producesFreshTuple(argument)(state) || anyProducesFreshTuple(rest)(state)
+
+// Stage 0's `IsImmediateSafeAdtMatchUse` for a non-recursive type: the binding is matched
+// immediately through at least two arms; a self-recursive type stays on the arena path.
+let isImmediateSafeAdtMatchUse (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(value)([])(state) with
+        | None -> false
+        | Some((layout, _arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (_fieldTypes, resultType) -> isImmediateAdtMatchUse(name)(body) && canRuntimeManageRecursiveCopyAdt(resultType)(state) == false
+
+// The representation a `let` asks of its aggregate value, stage 0's `TryLowerRuntimeRcRecordLet`,
+// `TryLowerRuntimeRcTupleLet`, `TryLowerRuntimeRcListLet`, and `TryLowerRuntimeRcAdtLet` in that
+// order: a record literal read only as a field receiver, matched by one constructor arm, or
+// returned directly as a fresh tree; a tuple literal returned directly; a fresh list matched
+// immediately (directly, or through a cons onto it) or returned directly; and a constructor
+// application matched immediately or returned directly as a fresh runtime-manageable value.
+let aggregateLetValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    (let directEscape = bodyReturnsBinding(name)(body)
+    in
+        if isRecordLiteral(value) && (isImmediateCopyUseOfRecord(name)(body) || isImmediateRecordMatchUse(name)(body) || directEscape && isFreshRuntimeManageableRecordTree(value)(state))
+        then emptyConsumerRequest with runtimeRecord = true
+        else
+            if isTupleLiteral(value) && directEscape
+            then emptyConsumerRequest with runtimeTuple = true
+            else
+                if isFreshListConstruction(value) && (isImmediateListMatchUse(name)(body) || isTailConsumedByImmediateListMatch(name)(body) || directEscape)
+                then emptyConsumerRequest with runtimeList = true
+                else
+                    if isConstructorExpression(value)(state) && (isImmediateSafeAdtMatchUse(name)(value)(body)(state) || directEscape && isFreshRuntimeManageableAdtExpression(value)(state))
+                    then emptyConsumerRequest with runtimeAdt = true
+                    else emptyConsumerRequest)
+
 // Stage 0's `TryLowerRuntimeRcStringLet`: a `let` whose value is a fresh string producer and
 // whose body either returns the binding or hands it straight to a runtime-string consumer places
-// the value on the reference-counted heap; the value is otherwise lowered without a request.
+// the value on the reference-counted heap; an aggregate value is asked for its representation by
+// `aggregateLetValueRequest`; the value is otherwise lowered without a request.
 let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
     (let directEscape = isDirectBindingResult(body)(name)
     in
         if isRuntimeRcStringProducer(value)(state) && (directEscape || isImmediateRuntimeStringUse(body)(name)) && (isCaptureSafeStringProducer(value)(state) || directEscape == false)
         then emptyConsumerRequest with runtimeString = true
-        else emptyConsumerRequest)
+        else aggregateLetValueRequest(name)(value)(body)(state))
+
+// What the scope-exit release of the binding may assume about its value, stage 0's
+// `RuntimeDeepUnique` and `RuntimeConstructor` owner facts: a fresh list literal or cons chain,
+// and a fresh constructor tree of a recursive-copy type, are the only references to their whole
+// graph; a direct constructor application names the constructor whose fields the release walks.
+let armOwnerReleasePlan (value: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
+            let deepUnique =
+                match resolveType(state)(semanticType) with
+                    | SemList(_element) -> isFreshListConstruction(value)
+                    | SemNamed(_symbolId, name, _arguments) as named -> canRuntimeManageRecursiveCopyAdt(named)(state) && isFreshConstructorTree(value)(name)(state)
+                    | _ -> false
+            in
+                let constructorName =
+                    match constructorApplicationOf(value)([])(state) with
+                        | Some((CoreConstructorLayout { name = name }, _arguments)) -> Some(name)
+                        | None -> None
+                in lowered with state = (state with pendingOwnerPlan = Some(OwnedReleasePlan(deepUnique = deepUnique, constructorName = constructorName)))
 
 let lowerArenaBracketedNestedLet name value body lower outerBindings state =
     match freshLocal(state) with
@@ -2299,6 +2789,7 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                         | LoweredCoreValue { error = None } as loweredValue ->
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(state))
+                            |> armOwnerReleasePlan(value)
                             |> finishLetValueInSlot(name)(stripChainedLetAt(body))(lower)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
@@ -2576,8 +3067,8 @@ let pruneDeadCaptures captures instructions =
 let recursive capturedScope captures index =
     match captures with
         | [] -> []
-        | CoreBinding { name = name, scheme = scheme } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = false)
+        | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead } :: rest ->
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead)
             in binding :: capturedScope(rest)(index + 1)
 
 let recursive sealOperatorDefaults label pending sealed =
@@ -2979,8 +3470,28 @@ let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
         | None -> state
 
 // Stage 0's `LowerEscapingResult` at a function body: a body that is itself a fresh string
-// producer is asked to place its result on the reference-counted heap.
-let functionBodyRequest (body: Expr) (state: CoreLoweringState) = emptyConsumerRequest with runtimeString = isRuntimeRcStringProducer(body)(state)
+// producer, or whose terminal arms build a fresh runtime-manageable constructor, list, tuple, or
+// record tree, is asked to place its result on the reference-counted heap (a tuple request rides
+// along with every aggregate request, so a tuple nested in the escaping aggregate is
+// materialized too); a body producing none of those carries its children out of the scopes
+// that own them (`WithEscapingConsumerOwnership`), so the aggregates it builds retain them.
+let requestsRuntimeRepresentation (request: ConsumerRequest) =
+    match request with
+        | ConsumerRequest { runtimeString = runtimeString, runtimeAdt = runtimeAdt, runtimeList = runtimeList, runtimeRecord = runtimeRecord, runtimeTuple = runtimeTuple } -> runtimeString || runtimeAdt || runtimeList || runtimeRecord || runtimeTuple
+
+let withEscapingTransfer (request: ConsumerRequest) =
+    if requestsRuntimeRepresentation(request)
+    then request
+    else request with transfersRuntimeManagedChildren = true
+
+let functionBodyRequest (body: Expr) (state: CoreLoweringState) =
+    emptyConsumerRequest
+    |> (given (request: ConsumerRequest) -> request with runtimeString = isRuntimeRcStringProducer(body)(state))
+    |> (given (request: ConsumerRequest) -> request with runtimeAdt = producesFreshRuntimeManageableAdt(body)(state))
+    |> (given (request: ConsumerRequest) -> request with runtimeList = producesFreshRuntimeManageableList(body))
+    |> (given (request: ConsumerRequest) -> request with runtimeRecord = isFreshRuntimeManageableRecordTree(body)(state))
+    |> (given (request: ConsumerRequest) -> request with runtimeTuple = producesFreshTuple(body)(state) || request.runtimeAdt || request.runtimeList || request.runtimeRecord)
+    |> withEscapingTransfer
 
 // The copy an entry normalization makes of a borrowed argument, decided from the parameter's
 // resolved type the way stage 0's `EmitRuntimeManagedTcoParamCopy` and its deep-copy walk decide
@@ -3007,15 +3518,6 @@ let layoutAllocationSizeBytes (layout: CoreConstructorLayout) =
             if tagless
             then 8 * constructorArity(layout)
             else 8 + 8 * constructorArity(layout)
-
-// The constructor layouts of a named type, in declaration order.
-let recursive constructorLayoutsOfType (name: Str) (layouts: List(CoreConstructorLayout)) =
-    match layouts with
-        | [] -> []
-        | layout :: rest ->
-            if layoutResultName(layout) == Some(name)
-            then layout :: constructorLayoutsOfType(name)(rest)
-            else constructorLayoutsOfType(name)(rest)
 
 // The described children of one constructor that own a reference, by field index and type.
 let recursive ownedConstructorChildren (constructorName: Str) (children: List(HeapLayoutChild)) =
@@ -6349,53 +6851,213 @@ let recursive emitTupleFields baseTemp index temps state =
             |> emit(StoreMemOffset(baseTemp)(index * 8)(temp))
             |> emitTupleFields(baseTemp)(index + 1)(rest)
 
-let finishTupleLowering lowered =
+// Whether a lowered child is represented on the reference-counted heap: a newly produced or
+// handed-on runtime temp, or the borrowed read of a binding that still owns its reference.
+let childIsRuntimeManaged (child: Expr) (temp: Int) (state: CoreLoweringState) =
+    if isRuntimeTemp(temp)(state)
+    then true
+    else
+        match unspanArgument(child) with
+            | ExprVar(name) ->
+                match liveRuntimeOwnerSlot(name)(state) with
+                    | Some(_slot) -> true
+                    | None -> false
+            | _ -> false
+
+let isRuntimeManageableHeapChild (semanticType: SemanticType) (listOverScalarsOnly: Bool) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemTuple(_elements) -> true
+        | SemString -> true
+        | SemBytes -> true
+        | SemBigInt -> true
+        | SemList(element) -> listOverScalarsOnly == false || resultSurvivesReset(element)(state)
+        | SemNamed(_symbolId, _name, _arguments) -> true
+        | _ -> false
+
+// Stage 0's `IsRuntimeManageableTupleElement`: a scalar, or a runtime-managed tuple, string,
+// bytes, big integer, list over scalars, or named type.
+let isRuntimeManageableTupleElement (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || childIsRuntimeManaged(child)(temp)(state) && isRuntimeManageableHeapChild(semanticType)(true)(state)
+
+// Stage 0's `IsRuntimeManageableListElement`: a scalar, or a runtime-managed heap value.
+let isRuntimeManageableListElement (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || childIsRuntimeManaged(child)(temp)(state) && isRuntimeManageableHeapChild(semanticType)(false)(state)
+
+let recursive allRuntimeManageableTupleElements (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, temps, semanticTypes) with
+        | ([], [], []) -> true
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) && allRuntimeManageableTupleElements(restElements)(restTemps)(restTypes)(state)
+        | _ -> false
+
+// Stage 0's `RetainRuntimeManagedAggregateChild` on an already lowered child: the read of a
+// binding that still owns its reference is retained, any other child is stored as lowered.
+let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match unspanArgument(child) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) ->
+                    match emitTransferRetain(temp)(semanticType)(state) with
+                        | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
+                | None -> (state, temp)
+        | _ -> (state, temp)
+
+let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+    match (elements, temps, semanticTypes) with
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
+            match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
+                | (retained, retainedTemp) -> retainAggregateChildTemps(restElements)(restTemps)(restTypes)(retained)(retainedTemp :: reversed)
+        | _ -> (state, reverse(reversed))
+
+// The request each tuple element is lowered under, stage 0's `LowerTupleElement`: the tuple's
+// own flags stay, and a runtime tuple asks a fresh string producer for a runtime string, a fresh
+// list construction for a runtime list, and a nested tuple literal, constructor application, or
+// record literal for its own runtime representation.
+let tupleElementRequest (request: ConsumerRequest) (runtimeTuple: Bool) (transfers: Bool) (element: Expr) (state: CoreLoweringState) =
+    match request with
+        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeAdt = parentAdt, runtimeRecord = parentRecord } -> emptyConsumerRequest with runtimeString = parentString || runtimeTuple && isFreshStringChild(element)(state), runtimeList = parentList || runtimeTuple && isFreshListConstruction(element), runtimeTuple = runtimeTuple, runtimeAdt = parentAdt || runtimeTuple && isConstructorExpression(element)(state), runtimeRecord = parentRecord || runtimeTuple && isRecordLiteral(element), transfersRuntimeManagedChildren = transfers
+
+let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: Bool) (transfers: Bool) elements lower reversedTemps reversedTypes state =
+    match elements with
+        | [] -> finishCoreValues(state)(reversedTemps)(reversedTypes)
+        | element :: rest ->
+            match state
+            |> withConsumerRequest(tupleElementRequest(request)(runtimeTuple)(transfers)(element)(state))
+            |> lower(element) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
+                | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
+                    lowerTupleElementsInto(
+                        request,
+                        runtimeTuple,
+                        transfers,
+                        rest,
+                        lower,
+                        temp :: reversedTemps,
+                        semanticType :: reversedTypes,
+                        nextState
+                    )
+
+let retainTupleChildren (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (retains: Bool) (state: CoreLoweringState) =
+    if retains
+    then retainAggregateChildTemps(elements)(temps)(semanticTypes)(state)([])
+    else (state, temps)
+
+let markAggregateRuntimeManaged (temp: Int) (runtimeManaged: Bool) (state: CoreLoweringState) =
+    if runtimeManaged
+    then markRuntimeTemp(temp)(RuntimeNewlyProduced)(state)
+    else state
+
+// The tuple's cell: on the reference-counted heap when the tuple was requested there and every
+// element is runtime-manageable (stage 0's `LowerTupleLit`), otherwise in the arena; a runtime
+// tuple owns its children and an escaping arena tuple carries them out of the scopes that own
+// them, so both retain a child read from a live owner (`RetainRuntimeManagedTupleChildren`),
+// after the tuple temp is allocated and before the cell is.
+let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
-            match freshTemp(state) with
-                | FreshTemp { state = allocatedState, temp = tupleTemp } ->
-                    allocatedState
-                    |> emit(Alloc(tupleTemp)(coreListLength(temps) * 8)(false))
-                    |> emitTupleFields(tupleTemp)(0)(temps)
-                    |> success(tupleTemp)(SemTuple(semanticTypes))
+            match (freshTemp(state), runtimeTuple && allRuntimeManageableTupleElements(elements)(temps)(semanticTypes)(state)) with
+                | (FreshTemp { state = allocatedState, temp = tupleTemp }, runtimeManaged) ->
+                    match retainTupleChildren(elements)(temps)(semanticTypes)(runtimeManaged || transfers)(allocatedState) with
+                        | (retainedState, storedTemps) ->
+                            retainedState
+                            |> emit(Alloc(tupleTemp)(coreListLength(storedTemps) * 8)(runtimeManaged))
+                            |> emitTupleFields(tupleTemp)(0)(storedTemps)
+                            |> markAggregateRuntimeManaged(tupleTemp)(runtimeManaged)
+                            |> success(tupleTemp)(SemTuple(semanticTypes))
 
-// A resource stored into a tuple, list, cons cell, or constructor moves into it.
+let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
+    match (request, state.tcoLoop) with
+        | (ConsumerRequest { tailPosition = true }, Some(_loop)) -> true
+        | _ -> false
+
+let tupleTransfers (request: ConsumerRequest) (state: CoreLoweringState) =
+    match request with
+        | ConsumerRequest { runtimeTuple = runtimeTuple, transfersRuntimeManagedChildren = transfersRequested } -> transfersRequested || inLoopTailPosition(request)(state) || runtimeTuple
+
+// A resource stored into a tuple, list, cons cell, or constructor moves into it. The tuple
+// carries its children out of the scopes that own them when it is a function result (the
+// transfer flag, or the tail position of a loop body) or when it will own them as a runtime
+// tuple; the decision is made before the elements are lowered so a nested aggregate retains its
+// own children the same way.
 let lowerTuple elements lower state =
-    state
-    |> markResourceArgumentsMoved(elements)
-    |> lowerTransferredValues(transfersChildrenRequested(state))(elements)(lower)
-    |> finishTupleLowering
+    match consumerRequestOf(state) with
+        | ConsumerRequest { runtimeTuple = runtimeTuple } as request ->
+            state
+            |> markResourceArgumentsMoved(elements)
+            |> lowerTupleElementsInto(request)(runtimeTuple)(tupleTransfers(request)(state))(elements)(lower)([])([])
+            |> finishTupleLowering(elements)(runtimeTuple)(tupleTransfers(request)(state))
 
-let allocateListCell headTemp tailTemp elementType state =
+let allocateListCell headTemp tailTemp elementType (runtimeManaged: Bool) state =
     match freshTemp(state) with
         | FreshTemp { state = allocatedState, temp = cellTemp } ->
             allocatedState
-            |> emit(Alloc(cellTemp)(16)(false))
+            |> emit(Alloc(cellTemp)(16)(runtimeManaged))
             |> emit(StoreMemOffset(cellTemp)(0)(headTemp))
             |> emit(StoreMemOffset(cellTemp)(8)(tailTemp))
+            |> markAggregateRuntimeManaged(cellTemp)(runtimeManaged)
             |> success(cellTemp)(elementType
             |> resolveType(allocatedState)
             |> SemList)
 
-let finishCons head tail =
+// The request a list element or cons head is lowered under, stage 0's
+// `LowerRuntimeManagedListElement`: the list's own flags stay, the element type is expected, and
+// a runtime list asks a fresh string producer for a runtime string and a tuple literal for a
+// runtime tuple.
+let listElementRequest (request: ConsumerRequest) (elementType: Maybe(SemanticType)) (transfers: Bool) (element: Expr) (state: CoreLoweringState) =
+    match request with
+        | ConsumerRequest { runtimeString = parentString, runtimeList = runtimeList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, runtimeRecord = parentRecord } -> emptyConsumerRequest with expectedType = elementType, runtimeString = parentString || runtimeList && isFreshStringChild(element)(state), runtimeList = runtimeList, runtimeTuple = parentTuple || runtimeList && isTupleLiteral(element), runtimeAdt = parentAdt, runtimeRecord = parentRecord, transfersRuntimeManagedChildren = transfers
+
+let requestsRuntimeList (request: ConsumerRequest) =
+    match request with
+        | ConsumerRequest { runtimeList = runtimeList } -> runtimeList
+
+// A list element or cons head retained when the cell will own it or carry it out of the scope
+// that owns it, stage 0's retain in `LowerRuntimeManagedListElement`.
+let retainListElement (request: ConsumerRequest) (transfers: Bool) (element: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if requestsRuntimeList(request) || transfers
+            then
+                match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
+                    | (retained, retainedTemp) -> success(retainedTemp)(semanticType)(retained)
+            else lowered
+        | _ -> lowered
+
+// The cell of a cons or list literal is runtime-managed when a runtime list was requested and its
+// head is runtime-manageable, stage 0's `LowerConsCell`.
+let cellIsRuntimeManaged (request: ConsumerRequest) (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) = requestsRuntimeList(request) && isRuntimeManageableListElement(headExpression)(headTemp)(headType)(state)
+
+let finishCons (request: ConsumerRequest) (headExpression: Expr) head tail =
     match (head, tail) with
         | (LoweredCoreValue { state = failedState, error = Some(error) }, _tail) -> failure(failedState)(error)
         | (_head, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (LoweredCoreValue { temp = headTemp, semanticType = headType }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType }) ->
             match bindType(SemList(headType))(tailType)(tailState) with
                 | (failedState, Some(error)) -> failure(failedState)(error)
-                | (typedState, None) -> allocateListCell(headTemp)(tailTemp)(headType)(typedState)
+                | (typedState, None) ->
+                    allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState))(typedState)
+
+// The tail of an escaping arena cell carries a runtime-managed owner out of the scope that owns
+// it exactly like an escaping tuple element, and is retained; a runtime cell's tail is stored as
+// lowered.
+let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression: Expr) (tailExpression: Expr) head tail =
+    match (head, tail) with
+        | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
+            if transfers && cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(tailState) == false
+            then
+                match retainAggregateChildTemp(tailExpression)(tailTemp)(tailType)(tailState) with
+                    | (retained, retainedTemp) -> success(retainedTemp)(tailType)(retained)
+            else tail
+        | _ -> tail
 
 // The tail is asked only for the list type: stage 0 forwards the head's transfer to no tail.
-let finishConsTail lower tailExpression head =
+let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = headState, semanticType = headType } ->
             headState
             |> withOnlyExpectedType(Some(SemList(headType)))
             |> lower(tailExpression)
-            |> finishCons(head)
+            |> retainConsTail(request)(transfers)(headExpression)(tailExpression)(head)
+            |> finishCons(request)(headExpression)(head)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.
 let expectedListElementType state =
@@ -6406,20 +7068,26 @@ let expectedListElementType state =
                 | SemList(elementType) -> Some(elementType)
                 | _ -> None
 
+let listTransfers (request: ConsumerRequest) (state: CoreLoweringState) =
+    match request with
+        | ConsumerRequest { transfersRuntimeManagedChildren = transfersRequested } -> transfersRequested || inLoopTailPosition(request)(state)
+
 let lowerCons head tail lower state =
-    state
-    |> markResourceArgumentsMoved([head, tail])
-    |> withArgumentRequest(expectedListElementType(state))(transfersChildrenRequested(state))
-    |> lower(head)
-    |> retainTransferredChild(head)(transfersChildrenRequested(state))
-    |> finishConsTail(lower)(tail)
+    match consumerRequestOf(state) with
+        | request ->
+            state
+            |> markResourceArgumentsMoved([head, tail])
+            |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
+            |> lower(head)
+            |> retainListElement(request)(listTransfers(request)(state))(head)
+            |> finishConsTail(request)(listTransfers(request)(state))(lower)(head)(tail)
 
 let emptyList state =
     match freshType(state) with
         | FreshType { state = typedState, semanticType = elementType } ->
             lowerConstant(given (target) -> LoadConstInt(target)(0))(SemList(elementType))(typedState)
 
-let recursive lowerListElements (transfers: Bool) elements elementType tailTemp lower state =
+let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp lower state =
     match elements with
         | [] ->
             success(tailTemp)(elementType
@@ -6427,17 +7095,18 @@ let recursive lowerListElements (transfers: Bool) elements elementType tailTemp 
             |> SemList)(state)
         | expression :: rest ->
             match state
-            |> withArgumentRequest(Some(elementType))(transfers)
+            |> withConsumerRequest(listElementRequest(request)(Some(elementType))(transfers)(expression)(state))
             |> lower(expression)
-            |> retainTransferredChild(expression)(transfers) with
+            |> retainListElement(request)(transfers)(expression) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
                     match bindType(elementType)(headType)(valueState) with
                         | (failedState, Some(error)) -> failure(failedState)(error)
                         | (typedState, None) ->
-                            match allocateListCell(headTemp)(tailTemp)(elementType)(typedState) with
+                            match allocateListCell(headTemp)(tailTemp)(elementType)(cellIsRuntimeManaged(request)(expression)(headTemp)(headType)(typedState))(typedState) with
                                 | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
                                     lowerListElements(
+                                        request,
                                         transfers,
                                         rest,
                                         elementType,
@@ -6447,11 +7116,11 @@ let recursive lowerListElements (transfers: Bool) elements elementType tailTemp 
                                     )
                                 | failed -> failed
 
-let finishListLiteral (transfers: Bool) elements lower empty =
+let finishListLiteral (request: ConsumerRequest) (transfers: Bool) elements lower empty =
     match empty with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = emptyState, temp = emptyTemp, semanticType = SemList(elementType), error = None } ->
-            lowerListElements(transfers)(reverse(elements))(elementType)(emptyTemp)(lower)(emptyState)
+            lowerListElements(request)(transfers)(reverse(elements))(elementType)(emptyTemp)(lower)(emptyState)
         | LoweredCoreValue { state = failedState } ->
             failure(
                 failedState,
@@ -6470,10 +7139,12 @@ let expectedOrFreshEmptyList state =
             |> emptyList
 
 let lowerListLiteral elements lower state =
-    state
-    |> markResourceArgumentsMoved(elements)
-    |> expectedOrFreshEmptyList
-    |> finishListLiteral(transfersChildrenRequested(state))(elements)(lower)
+    match consumerRequestOf(state) with
+        | request ->
+            state
+            |> markResourceArgumentsMoved(elements)
+            |> expectedOrFreshEmptyList
+            |> finishListLiteral(request)(listTransfers(request)(state))(elements)(lower)
 
 let recursive emitAdtFields baseTemp index tagless temps state =
     match temps with
@@ -6498,20 +7169,176 @@ let finishConstructorAllocation layout resultType runtimeManaged lowered =
                 | FreshTemp { state = allocatedState, temp = resultTemp } ->
                     let fieldCount = coreListLength(temps)
                     in
-                        // `runtimeManaged` is the consumer's placement request carried by the
-                        // constructor shape (see `instantiateConstructor`); without one the cell is
-                        // arena-placed, and any `RcDrop` the consumer pairs with an RC cell is its own.
+                        // `runtimeManaged` is the consumer's placement request: the dead top-level
+                        // `let` path's flag carried by the constructor shape, or a request the
+                        // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
+                        // without one the cell is arena-placed.
                         allocatedState
                         |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))
                         |> emitAdtFields(resultTemp)(0)(tagless)(temps)
+                        |> markAggregateRuntimeManaged(resultTemp)(runtimeManaged)
                         |> success(resultTemp)(resolveType(allocatedState)(resultType))
 
-// Stage 0's `RetainEscapingConstructorArgument` under the transfer: each argument read of a live
-// owner is retained as it is lowered (the Perceus pattern-owner duplicate an owning consumer adds
-// waits on pattern-bound owners).
-let finishConstructorArguments arguments (transfers: Bool) lower shape =
+let nullaryConstructorRuntimeManageable (resultType: SemanticType) (state: CoreLoweringState) =
+    match heapFactsOf(resultType)(state) with
+        | facts -> copyAdtSupported(facts) || recordAdtSupported(facts) || ownedChildAdtSupported(facts) || canRuntimeManageRecursiveCopyAdt(resultType)(state)
+
+let recursive allRecursiveCopyFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (typeName: Str) (state: CoreLoweringState) =
+    match (arguments, fieldTypes) with
+        | ([], []) -> true
+        | (argument :: restArguments, fieldType :: restTypes) -> (resultSurvivesReset(fieldType)(state) || isFreshConstructorTree(argument)(typeName)(state)) && allRecursiveCopyFields(restArguments)(restTypes)(typeName)(state)
+        | _ -> false
+
+// Stage 0's `CanRuntimeManageRecursiveAdtConstructorApplication` without tracked child bindings.
+let canRuntimeManageRecursiveAdtApplication (layout: CoreConstructorLayout) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match layoutFieldTypes(layout)(state) with
+        | (fieldTypes, resultType) ->
+            match namedTypeNameOf(resultType) with
+                | Some(name) -> canRuntimeManageRecursiveCopyAdt(resultType)(state) && allRecursiveCopyFields(arguments)(fieldTypes)(name)(state)
+                | None -> false
+
+let adtRequestHonored (layout: CoreConstructorLayout) (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (resultType: SemanticType) (state: CoreLoweringState) =
+    copyAdtSupported(heapFactsOf(resultType)(state)) || canRuntimeManageGenericCopyAdtApplication(layout)(arguments)(state) || canRuntimeManageFreshHeapChildAdtApplication(layout)(arguments)(state) || canRuntimeManageOwnedChildAdtApplication(layout)(arguments)(state) || tcoOwnedChildAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state) || canRuntimeManageRecursiveAdtApplication(layout)(arguments)(state)
+
+let recordRequestHonored (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (resultType: SemanticType) (state: CoreLoweringState) =
+    recordAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
+
+// Stage 0's `IsRuntimeManagedConstructorCandidate` and the nullary rule of
+// `LowerNullaryConstructor`: a record request is honored when the type is a runtime record and
+// every field receives a fresh owned value; an ADT request when the application is a copy ADT, a
+// generic copy ADT over literals, a single-constructor cell over fresh heap children, an
+// owned-child or accumulator-shaped ADT over fresh children, or a fresh recursive-copy tree.
+let isRuntimeManagedConstructorCandidate (layout: CoreConstructorLayout) (arguments: List(Expr)) (request: ConsumerRequest) (state: CoreLoweringState) =
+    match (layoutFieldTypes(layout)(state), request) with
+        | ((fieldTypes, resultType), ConsumerRequest { runtimeAdt = runtimeAdt, runtimeRecord = runtimeRecord }) ->
+            match (runtimeAdt || runtimeRecord, arguments) with
+                | (false, _arguments) -> false
+                | (true, []) -> nullaryConstructorRuntimeManageable(resultType)(state)
+                | (true, _arguments) -> runtimeRecord && recordRequestHonored(arguments)(fieldTypes)(resultType)(state) || runtimeAdt && adtRequestHonored(layout)(arguments)(fieldTypes)(resultType)(state)
+
+let fieldTypeIsVariable (fieldType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(fieldType) with
+        | SemVariable(_id) -> true
+        | _ -> false
+
+let fieldTypeIs (fieldType: SemanticType) (state: CoreLoweringState) (accepts: SemanticType -> Bool) =
+    accepts(resolveType(state)(fieldType)) || fieldTypeIsVariable(fieldType)(state)
+
+let isStringType (semanticType: SemanticType) =
+    match semanticType with
+        | SemString -> true
+        | _ -> false
+
+let isTupleType (semanticType: SemanticType) =
+    match semanticType with
+        | SemTuple(_elements) -> true
+        | _ -> false
+
+// The request one constructor argument is lowered under, stage 0's
+// `LowerRuntimeManagedConstructorArgument` with `LowerConstructorArguments`' child
+// representations: the parent's flags minus the ADT and record ones, the ADT flag again when the
+// runtime cell was asked for as an ADT, the record flag for any runtime cell, and — for a runtime
+// cell — a runtime string for a fresh string producer in a string or type-parameter field, a
+// runtime list for a fresh list construction in a list or type-parameter field, and a runtime
+// tuple for a tuple literal in a tuple or type-parameter field; the transfer is forwarded.
+let constructorArgumentRequest (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
+    match request with
+        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, transfersRuntimeManagedChildren = transfers } -> emptyConsumerRequest with runtimeString = parentString || runtimeManaged && fieldTypeIs(fieldType)(state)(isStringType) && isFreshStringChild(argument)(state), runtimeList = parentList || runtimeManaged && fieldTypeIs(fieldType)(state)(isListType) && isFreshListConstruction(argument), runtimeTuple = parentTuple || runtimeManaged && fieldTypeIs(fieldType)(state)(isTupleType) && isTupleLiteral(argument), runtimeAdt = runtimeManaged && parentAdt, runtimeRecord = runtimeManaged, transfersRuntimeManagedChildren = transfers
+
+let emitListNormalizingCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = normalizedTemp } ->
+            allocated
+            |> emit(CopyOutList(normalizedTemp)(temp)(InlineListHead)(true)(RcNormalization))
+            |> markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)
+            |> success(normalizedTemp)(semanticType)
+
+// A runtime cell's list field over scalars that arrived as an arena list is copied onto the
+// reference-counted heap, stage 0's `CopyOutList` normalization in
+// `LowerRuntimeManagedConstructorArgument`.
+let normalizeConstructorListArgument (runtimeManaged: Bool) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match resolveType(state)(fieldType) with
+                | SemList(element) ->
+                    if runtimeManaged && resultSurvivesReset(element)(state) && isRuntimeTemp(temp)(state) == false
+                    then emitListNormalizingCopy(temp)(semanticType)(state)
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
+// Stage 0's `RetainEscapingConstructorArgument`: an arena cell built under the transfer retains
+// each argument read of a live owner as it is lowered; a runtime cell retains its owned children
+// after all of its arguments (`RetainRuntimeManagedOwnedChildArguments`).
+let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
+    match request with
+        | ConsumerRequest { transfersRuntimeManagedChildren = transfers } -> retainTransferredChild(argument)(runtimeManaged == false && transfers)(lowered)
+
+let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
+    match (arguments, fieldTypes) with
+        | (argument :: restArguments, fieldType :: restTypes) ->
+            match state
+            |> withConsumerRequest(constructorArgumentRequest(request)(runtimeManaged)(argument)(fieldType)(state))
+            |> lower(argument)
+            |> normalizeConstructorListArgument(runtimeManaged)(fieldType)
+            |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
+                | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
+                    lowerConstructorArgumentsInto(
+                        request,
+                        runtimeManaged,
+                        restArguments,
+                        restTypes,
+                        lower,
+                        nextState,
+                        temp :: reversedTemps,
+                        semanticType :: reversedTypes
+                    )
+        | _ -> finishCoreValues(state)(reversedTemps)(reversedTypes)
+
+// A live owner retained into a runtime cell shares its graph with the cell from then on, so its
+// scope-exit release may no longer assume the graph is unique.
+let recursive shareOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
+    match plans with
+        | [] -> []
+        | (candidate, semanticType, OwnedReleasePlan { constructorName = constructorName } as plan) :: rest ->
+            if candidate == slot
+            then (candidate, semanticType, OwnedReleasePlan(deepUnique = false, constructorName = constructorName)) :: rest
+            else (candidate, semanticType, plan) :: shareOwnerReleasePlan(slot)(rest)
+
+let retainOwnedChildArgument (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(slot) ->
+                    match emitTransferRetain(temp)(semanticType)(state) with
+                        | LoweredCoreValue { state = retained, temp = duplicate } -> ((retained with ownerReleasePlans = shareOwnerReleasePlan(slot)(retained.ownerReleasePlans)), duplicate)
+                | None -> (state, temp)
+        | _ -> (state, temp)
+
+let recursive retainOwnedChildArguments (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+    match (arguments, temps, semanticTypes) with
+        | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
+            match retainOwnedChildArgument(argument)(temp)(semanticType)(state) with
+                | (retained, retainedTemp) -> retainOwnedChildArguments(restArguments)(restTemps)(restTypes)(retained)(retainedTemp :: reversed)
+        | _ -> (state, reverse(reversed))
+
+// Stage 0's `RetainRuntimeManagedOwnedChildArguments`: a runtime cell owns its children, so an
+// argument read from a binding that still owns its reference is retained after every argument
+// is lowered.
+let retainRuntimeCellChildren (runtimeManaged: Bool) arguments lowered =
+    match lowered with
+        | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
+            if runtimeManaged
+            then
+                match retainOwnedChildArguments(arguments)(temps)(semanticTypes)(state)([]) with
+                    | (retained, retainedTemps) -> lowered with state = retained, temps = retainedTemps
+            else lowered
+        | _ -> lowered
+
+let finishConstructorArguments arguments (request: ConsumerRequest) lower shape =
     match shape with
-        | CoreConstructorShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType, constructorRuntimeManaged = runtimeManaged } ->
+        | CoreConstructorShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType, constructorRuntimeManaged = requested } ->
             let expectedArity = coreListLength(parameterTypes)
             in
                 let actualArity = coreListLength(arguments)
@@ -6524,20 +7351,23 @@ let finishConstructorArguments arguments (transfers: Bool) lower shape =
                                 |> CoreConstructorArityMismatch(name)(expectedArity)
                                 |> failure(state)
                     else
-                        match lowerTransferredValues(transfers)(arguments)(lower)(state) with
-                            | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                            | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
-                                match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
-                                    | (failedState, Some(error)) -> failure(failedState)(error)
-                                    | (typedState, None) ->
-                                        let typedValues = lowered with state = typedState
-                                        in finishConstructorAllocation(layout)(resultType)(runtimeManaged)(typedValues)
+                        match requested || isRuntimeManagedConstructorCandidate(layout)(arguments)(request)(state) with
+                            | runtimeManaged ->
+                                match lowerConstructorArgumentsInto(request)(runtimeManaged)(arguments)(parameterTypes)(lower)(state)([])([]) with
+                                    | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                    | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
+                                        match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
+                                            | (failedState, Some(error)) -> failure(failedState)(error)
+                                            | (typedState, None) ->
+                                                (lowered with state = typedState)
+                                                |> retainRuntimeCellChildren(runtimeManaged)(arguments)
+                                                |> finishConstructorAllocation(layout)(resultType)(runtimeManaged)
 
-let lowerConstructor layout arguments (transfers: Bool) lower state =
+let lowerConstructor layout arguments (request: ConsumerRequest) lower state =
     state
     |> markResourceArgumentsMoved(arguments)
     |> instantiateConstructor(layout)
-    |> finishConstructorArguments(arguments)(transfers)(lower)
+    |> finishConstructorArguments(arguments)(request)(lower)
 
 let recursive resolveCoreTypes state semanticTypes =
     match semanticTypes with
@@ -6556,7 +7386,7 @@ let finishBuiltinUnit resultType lower state =
     match constructorLayout("Unit")(state) with
         | None -> failure(state)(UnknownLoweringBinding("Unit"))
         | Some(layout) ->
-            match lowerConstructor(layout)([])(false)(lower)(state) with
+            match lowerConstructor(layout)([])(emptyConsumerRequest)(lower)(state) with
                 | LoweredCoreValue { state = unitState, temp = temp, error = None } ->
                     success(temp)(resolveType(unitState)(resultType))(unitState)
                 | failed -> failed
@@ -6792,7 +7622,7 @@ let builtinLambda layout =
                 |> applyConstructorParameters(ExprQualifiedVar(moduleName)(memberName))
                 |> wrapConstructorParameters(parameters))
 
-let tryLowerConstructorCall expression (transfers: Bool) lower state =
+let tryLowerConstructorCall expression (request: ConsumerRequest) lower state =
     match collectCallSpine(expression) with
         | CoreCallSpine { root = ExprVar(name), arguments = arguments } ->
             match constructorLayout(name)(state) with
@@ -6801,7 +7631,7 @@ let tryLowerConstructorCall expression (transfers: Bool) lower state =
                     if coreListLength(arguments) == constructorArity(layout)
                     then
                         state
-                        |> lowerConstructor(layout)(arguments)(transfers)(lower)
+                        |> lowerConstructor(layout)(arguments)(request)(lower)
                         |> Some
                     else None
         | _ -> None
@@ -6998,7 +7828,7 @@ let lowerRecord name fields lower state =
                     lowerConstructor(
                         layout,
                         expressions,
-                        transfersChildrenRequested(state),
+                        consumerRequestOf(state),
                         lower,
                         state
                     )
@@ -7824,7 +8654,7 @@ let lowerCoreBigInt digits state =
 
 let finishCoreConstructorReference layout lower state =
     if constructorArity(layout) == 0
-    then lowerConstructor(layout)([])(false)(lower)(state)
+    then lowerConstructor(layout)([])(emptyConsumerRequest)(lower)(state)
     else
         lower(constructorLambda(layout))(state)
 
@@ -7921,7 +8751,7 @@ let collectCapabilityPost globalCount capabilityIndex state =
                                                                         let withPrevHead =
                                                                             emit(LoadMemOffset(previousHeadTemp)(postsHeadAddrTemp)(0))(prevHeadState)
                                                                         in
-                                                                            match allocateListCell(postRegTemp)(previousHeadTemp)(SemNever)(withPrevHead) with
+                                                                            match allocateListCell(postRegTemp)(previousHeadTemp)(SemNever)(false)(withPrevHead) with
                                                                                 | LoweredCoreValue { state = failedCellState, error = Some(error) } -> failure(failedCellState)(error)
                                                                                 | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
                                                                                     cellState
@@ -8733,7 +9563,7 @@ let lowerGeneralCall expression function argument lower state =
 let lowerCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
-    |> tryLowerConstructorCall(expression)(transfersChildrenRequested(state))(lower) with
+    |> tryLowerConstructorCall(expression)(consumerRequestOf(state))(lower) with
         | Some(lowered) ->
             unifyOptionalExpectedResult(expectedTypeOf(state))(lowered)
         | None ->
@@ -8965,18 +9795,21 @@ let recursive allTopLevelBindingNames items =
 // the general case additionally needs a CopyOutArena for an escaping heap result, not yet ported
 // (see docs/md/future/SELF_HOSTING.md). Takes the sentinel-placeholder continuation
 // lowerCoreProgramItems supplies (see its own TopLevelLet case) in place of a literal body Expr.
-let lowerArenaBracketedTopLevelLet name value environment continuation outerBindings stackClosure state =
+let lowerArenaBracketedTopLevelLet name value remainingBody environment continuation outerBindings stackClosure state =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = saved, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
                 | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(saved)(UnresolvedTraitEvidenceForwarding(error))
                 | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
                     match saved
+                    |> withConsumerRequest(letValueRequest(name)(rewrittenValue)(remainingBody)(saved))
                     |> armSourceFunction(name)(rewrittenValue)(stackClosure)
                     |> lowerCore(rewrittenValue) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
-                            match finishLetValueInSlot(name)(topLevelContinuationBody)(continuation)(outerBindings)(loweredValue) with
+                            match loweredValue
+                            |> armOwnerReleasePlan(rewrittenValue)
+                            |> finishLetValueInSlot(name)(topLevelContinuationBody)(continuation)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
@@ -9117,6 +9950,29 @@ let recursive letBindingSyntaxListMayReferenceName (bindings: List(LetBindingSyn
 // Conservative the same way: any item this isn't specifically taught about (a recursive group, a
 // self-recursive let) answers `true` via its value/binding expressions rather than trying to reason
 // about what it could shadow or capture.
+// The rest of the program as the body a top-level `let` binds over, the way stage 0 nests every
+// later item under it: each later `let` becomes a nested `let` (a recursive binding or group a
+// `let recursive`) around the trailing expression, and the other items contribute nothing a
+// `let` value's request reads.
+let recursive remainingProgramBody (items: List(TopLevelItem)) (trailingBody: Expr) =
+    match items with
+        | [] -> trailingBody
+        | TopLevelAt(_span, inner) :: rest -> remainingProgramBody(inner :: rest)(trailingBody)
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
+            ExprLet(name)(value)(remainingProgramBody(rest)(trailingBody))([])(None)([])
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
+            ExprLetRecursive(name)(value)(remainingProgramBody(rest)(trailingBody))([])(None)([])
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            trailingBody
+            |> remainingProgramBody(rest)
+            |> recursiveGroupBody(bindings)
+        | _other :: rest -> remainingProgramBody(rest)(trailingBody)
+and recursiveGroupBody (bindings: List(LetBindingSyntax)) (body: Expr) =
+    match bindings with
+        | [] -> body
+        | LetBindingSyntax { name = name, value = value } :: rest ->
+            ExprLetRecursive(name)(value)(recursiveGroupBody(rest)(body))([])(None)([])
+
 let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailingBody: Expr) (name: Str) =
     match items with
         | [] -> exprMayReferenceName(trailingBody)(name)
@@ -9546,10 +10402,11 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                                 match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
                                     | Some(layout) ->
                                         if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
-                                        then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(false)(state)
+                                        then
+                                            lowerArenaBracketedTopLevelLet(name)(value)(remainingProgramBody(rest)(trailingBody))(environment)(continuation)(outerBindings)(false)(state)
                                         else lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(continuation)(state)
                                     | None ->
-                                        lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody))(state)
+                                        lowerArenaBracketedTopLevelLet(name)(value)(remainingProgramBody(rest)(trailingBody))(environment)(continuation)(outerBindings)(topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody))(state)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))

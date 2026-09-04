@@ -73,6 +73,13 @@ let checkFixture root name =
 // and jump, with the unread chain parameter's synthetic slot. tco_list_walk (a runtime-managed
 // list parameter) and tco_non_tail_self_call_in_operator_operand keep their loop-function
 // comparisons in `selfhost/tests/semantics/TcoLoopLoweringTests.ash`.
+// owned_let_list_drop adds a `let`-owned runtime list of fresh strings (the list request, the
+// runtime-managed cells and heads, and the inline unique-spine walk at the scope exit) and
+// aggregate_children_retain the escaping tuple, list literal, and cons cell that retain the owned
+// bindings they store, the runtime tuple and list cells, and the shared-spine walk of an owned
+// list. lambda_returns_record (a lambda returning a fresh record tree, owned by a top-level `let`
+// and released through its field walk) stays out of the runner: its `_start_main` still copies
+// the match result out at the scope exit where stage 0 knows every arm produced a runtime value.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -97,5 +104,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_owned_let"))
         |> (given (_) -> checkFixture(root)("tco_unused_chain_parameter"))
+        |> (given (_) -> checkFixture(root)("owned_let_list_drop"))
+        |> (given (_) -> checkFixture(root)("aggregate_children_retain"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

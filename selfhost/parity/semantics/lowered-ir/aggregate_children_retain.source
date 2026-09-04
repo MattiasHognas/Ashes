@@ -1,0 +1,27 @@
+let label n = Ashes.Text.fromInt(n)
+
+let pair n =
+    let first = label(n)
+    in
+        let second = label(7)
+        in (first, second)
+
+let listed n =
+    let first = label(n)
+    in
+        let second = label(7)
+        in [first, second]
+
+let prefixed n =
+    let first = label(n)
+    in
+        let rest = listed(7)
+        in first :: rest
+
+let both = pair(1)
+
+let three = prefixed(1)
+
+match (both, three) with
+    | ((first, _), _ :: _) -> Ashes.IO.print(first)
+    | _ -> Ashes.IO.print("empty")

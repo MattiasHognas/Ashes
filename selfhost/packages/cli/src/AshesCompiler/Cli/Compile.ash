@@ -457,16 +457,17 @@ let runCompile args =
                     let _ = Ashes.IO.writeErrorLine(message)
                     in 1
 
+// Relays the child's stdout line by line and hands the process back for the next stage.
 let recursive relayStdout process =
     match Ashes.IO.Process.readStdoutLine(process) with
-        | None -> Unit
+        | None -> process
         | Some(line) ->
             let _ = Ashes.IO.writeLine(line)
             in relayStdout(process)
 
 let recursive relayStderr process =
     match Ashes.IO.Process.readStderrLine(process) with
-        | None -> Unit
+        | None -> process
         | Some(line) ->
             let _ = Ashes.IO.writeErrorLine(line)
             in relayStderr(process)
@@ -491,13 +492,11 @@ let spawnCompiledProgram executablePath programArguments =
     match Ashes.IO.Process.spawn(executablePath)(programArguments) with
         | Error(message) -> Error("Could not start " + executablePath + ": " + message)
         | Ok(process) ->
-            Unit
-            |> (given (_) -> relayStdout(process))
-            |> (given (_) -> relayStderr(process))
-            |> (given (_) ->
-                process
-                |> Ashes.IO.Process.waitForExit
-                |> Ok)
+            process
+            |> relayStdout
+            |> relayStderr
+            |> Ashes.IO.Process.waitForExit
+            |> Ok
 
 let runProgramFile inputPath programArguments (explain: ExplainRequest) =
     match temporaryExecutablePath(inputPath) with

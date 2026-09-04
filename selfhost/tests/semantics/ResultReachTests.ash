@@ -270,7 +270,7 @@ let scalarParameterFunction unit =
         "  locals=2 temps=3",
         "    LoadConstInt          Target=0 Value=0   (scalar_parameter.ash:1:21)",
         "    LoadLocal             Target=1 Slot=1   (scalar_parameter.ash:1:22)",
-        "    Alloc                 Target=2 SizeBytes=16   (scalar_parameter.ash:1:21)",
+        "    Alloc                 Target=2 SizeBytes=16 RuntimeManaged=true   (scalar_parameter.ash:1:21)",
         "    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=1   (scalar_parameter.ash:1:21)",
         "    StoreMemOffset        BasePtr=2 OffsetBytes=8 Source=0   (scalar_parameter.ash:1:21)",
         "    Return                Source=2"

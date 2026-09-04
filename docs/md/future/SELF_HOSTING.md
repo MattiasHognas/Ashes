@@ -892,9 +892,42 @@ same public behavior.
   instructions (stage 0 tags them with the `let`'s span, which keeps the three
   `parameter_reaches_result_*` fixtures and the entry-normalized `_start_main`s out of the
   parity runner), the owner-alias walk across curried chains, borrowed reads of owned bindings
-  at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for aggregates (only strings
-  and the provably-dead top-level constructor drop are emitted so far; an owned `let` list still
-  releases with one `RcDrop` where stage 0 walks the spine inline).
+  at call sites, and the remaining runtime-managed aggregate placements. Done on the aggregate
+  side: a `let` whose value is a fresh list matched immediately (directly, or through a cons onto
+  it) or returned directly, a record literal read only as a field receiver, matched by one
+  constructor arm, or returned as a fresh tree, a tuple literal returned directly, and a
+  constructor application matched immediately or returned as a fresh runtime-manageable value
+  ask for stage 0's `List`/`Record`/`Tuple`/`Adt` representation (`aggregateLetValueRequest`, at
+  nested and top-level `let`s alike, the top-level body being the rest of the program); a lambda
+  body whose terminal arms build a fresh runtime-manageable constructor, list, tuple, or record
+  tree asks for it as stage 0's `LowerEscapingResult` does (`functionBodyRequest` over
+  `AggregateOwnership`'s escape terminals and arm reconciliation) and otherwise carries its
+  children out under the transfer; a constructor honors the request through
+  `isRuntimeManagedConstructorCandidate` (copy, generic-copy-over-literals, fresh-heap-child,
+  owned-child, accumulator-shaped, and fresh recursive-copy applications, the record rule, the
+  nullary rule), lowering each field under stage 0's per-field string/list/tuple request,
+  normalizing an arena list field with `CopyOutList`, and retaining its live-owner children after
+  all fields (`AllocAdt RuntimeManaged=true`, the closure `ReturnsRuntimeManaged`); a tuple is
+  runtime-managed when every element is (`isRuntimeManageableTupleElement`) and a list cell when
+  its head is (`isRuntimeManageableListElement`), the runtime or escaping tuple, list literal,
+  and cons cell retaining every owned child they store (OPT-30); and a runtime-managed owned
+  `let` releases at its scope exit with stage 0's inline walk (`StructuralDroppers`'
+  `synthesizeOwnedAggregateRelease` spliced into the function: the `rcdrop_unique_list` walk of
+  a fresh list, the `rcdrop_list` walk of any other list, the tuple walk, the known-constructor
+  field walk under `rc_drop_known_shared`, and the type-directed ADT walk), the owner's
+  `OwnedReleasePlan` (deep uniqueness, constructor) recorded when the `let` adopts the value and
+  shared once a runtime cell retains the binding. A capture of an owned binding borrows its read
+  as stage 0's by-name owner lookup does. The `owned_let_list_drop` and
+  `aggregate_children_retain` fixtures join the byte-identical set
+  (`OwnedAggregateReleaseTests.ash` covers the function-level shapes and the syntactic
+  predicates). Open on the aggregate side: the closure-capture `let` rules
+  (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
+  (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
+  normalization and loop-parameter retains, the proven-fresh call funnel of the ownership
+  summary, the runtime-managed scrutinee owner and the match result's all-arms runtime status
+  (which keep `lambda_returns_record` out of the runner: its `_start_main` still copies the
+  match result out at the top-level scope exit), and the pattern-owner `RcDrop` naming the
+  structural dropper.
   Cascading drops: `StructuralDroppers.ash` synthesizes stage 0's structural owner dropper
   (`__rcdrop_structural_N`, the iterative list-spine walk with an owned-head release, the
   unique-guarded tuple and single-constructor walks, string/bytes/bigint leaves) and the
@@ -903,13 +936,15 @@ same public behavior.
   their type-owned origins, from the pruned type and `HeapLayoutClassification`'s per-child drop
   kinds under a per-name symbol id, matching stage 0's instruction text for a record with a list
   and a string, a list of such records, a tuple with a list, a recursive tree, and an owned-child
-  variant (`StructuralDroppersTests.ash`; the droppers still emit `GetAdtField` with
-  `Tagless=false`, so the OPT-24 flag has to be threaded through `emitAdtFieldDrops` and
-  `emitConstructorSwitch`). `CoreLowering` caches the labels per pretty type
-  (`dropperLabels`) and names the dropper on the dead top-level constructor drop. Open on the
+  variant (`StructuralDroppersTests.ash`); a field load carries the OPT-24 tagless flag decided
+  over the constructors in scope (`typeIsTagless`, a user-declared resource or zero-cost type
+  being invisible to the dropper environment and left tagged). `CoreLowering` caches the labels
+  per pretty type (`dropperLabels`), names the dropper on the dead top-level constructor drop,
+  and splices the same walks inline for a runtime-managed owned `let` at its scope exit
+  (`synthesizeOwnedAggregateRelease`, see the aggregate placements above). Open on the
   droppers: the `Result(Str, BigInt)` and text-uncons special drops, zero-cost erasure in the
   classification environment (the dropper environment carries no type-resolution context), and
-  naming the dropper on the owned-`let` and pattern-owner releases once those are runtime-managed.
+  naming the dropper on the pattern-owner releases once those are runtime-managed.
 - [~] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
@@ -972,10 +1007,19 @@ same public behavior.
   flags with entry and back-edge normalization, the exit transfer) — the loop functions of the
   OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of the
   parity runner.
-- [ ] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
+- [~] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:
-  `tests/aggregate_result_retains_runtime_managed_children.ash`. Related interim narrowing: the
+  `tests/aggregate_result_retains_runtime_managed_children.ash`. Done: a tuple retains each
+  element read from a live owner after the tuple temp is allocated and before the cell is
+  (`retainAggregateChildTemps`) when it is runtime-managed or escaping (the transfer flag, the
+  loop body's tail position, or a runtime tuple request); a list literal's and a cons cell's head
+  are retained as they are lowered when the list is runtime-managed or escaping, and an escaping
+  arena cons cell retains its owned tail null-tolerantly (`retainConsTail`); the
+  `aggregate_children_retain` fixture (a tuple, a list literal, and a cons of `let`-owned
+  strings and lists escaping their functions) matches stage 0 byte for byte and runs through the
+  backend suite. Open: the loop-parameter retain marker and its finalization (the TCO loop
+  lowering), and the pattern-owner duplicate of OPT-26. Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per
@@ -1147,10 +1191,14 @@ same public behavior.
   raw bytes). The callee side of the hidden ownership flag is `LoadArgumentOwnership` reading
   the third parameter, which `CallClosure`/`CallKnown` pass from their flag temp (`0` when the
   call site has none). libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
-  (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. Open: the
-  free-list cache if the compile-time benchmark needs it; everything else in Perceus placement —
-  cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup insertion, and
-  reuse emission.
+  (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. The real
+  lowering now feeds this runtime its aggregate traffic: the runtime-managed tuple, list, and
+  ADT cells, the `RcDup`s of the owned children they retain, and the inline spine, tuple, and
+  field walks of an owned `let` (OPT-25's aggregate placements, OPT-30), exercised end to end by
+  the owned-list, lambda-returns-record, and aggregate-children programs of the backend suite.
+  Open: the free-list cache if the compile-time benchmark needs it; the rest of Perceus
+  placement — the pattern-owner and loop-parameter drops from real lowering, shadowing-aware
+  liveness, and reuse emission.
 - [~] **CG-7** Link the emitted object into a real executable (`AshesCompiler.Backend.ElfLinker`, pure Ashes
   byte manipulation, no `ld`/`lld`). Source of truth: `LlvmImageLinkerElf.cs`. Static and
   eager-dynamic paths are chosen automatically from `.text`'s relocations: dynamic imports resolve

@@ -27,6 +27,7 @@ import AshesCompiler.Semantics.FunctionOrigins
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types
 export (
@@ -38,6 +39,9 @@ export (
     value isScalarResultType,
     value synthesizeStructuralOwnerDropper,
     value synthesizeRuntimeManagedAdtDropper,
+    type OwnedReleasePlan(..),
+    type InlineReleaseSynthesis(..),
+    value synthesizeOwnedAggregateRelease,
 )
 
 // The labels already synthesized, keyed by the pretty-printed type they release.
@@ -283,6 +287,31 @@ let firstConstructorName (named: SemanticType) (body: DropperBody) =
         | [] -> None
         | first :: _rest -> Some(first)
 
+let definitionScheme (definition: ConstructorInferenceDefinition) =
+    match definition with
+        | ConstructorInferenceDefinition { scheme = scheme } -> scheme
+
+let recursive schemesOfType (typeName: Str) (definitions: List(ConstructorInferenceDefinition)) =
+    match definitions with
+        | [] -> []
+        | ConstructorInferenceDefinition { scheme = TypeScheme { body = body } as scheme } :: rest ->
+            if schemeResultTypeName(body) == Some(typeName)
+            then scheme :: schemesOfType(typeName)(rest)
+            else schemesOfType(typeName)(rest)
+
+// Whether the named type's cell carries no tag word, decided by the OPT-24 rule over the
+// constructors in scope: a sole constructor with fields that is neither compiler-provided nor a
+// resource handle nor resource-bearing (a user-declared resource or zero-cost type is not visible
+// here and stays tagged).
+let typeIsTagless (named: SemanticType) (body: DropperBody) =
+    match (named, bodyEnvironment(body)) with
+        | (SemNamed(_symbolId, name, _arguments), TypeEnvironment { constructors = definitions }) ->
+            match schemesOfType(name)(definitions) with
+                | scheme :: [] ->
+                    isTaglessAdtConstructor(isBuiltinResourceTypeName)(map(definitionScheme)(definitions))(false)(scheme)
+                | _ -> false
+        | _ -> false
+
 // Whether a described child is owned (needs a drop) and belongs to the given constructor (`None`
 // for a list or tuple child).
 let childBelongsTo (constructorName: Maybe(Str)) (child: HeapLayoutChild) =
@@ -452,19 +481,19 @@ and emitFirstConstructorDrop (valueTemp: Int) (named: SemanticType) (body: Dropp
                 | (sharedLabel, labelBody) ->
                     labelBody
                     |> emitUniqueTest(valueTemp)(sharedLabel)
-                    |> emitAdtFieldDrops(valueTemp)(children)
+                    |> emitAdtFieldDrops(valueTemp)(typeIsTagless(named)(body))(children)
                     |> emitDropper(Label(sharedLabel))
                     |> emitTypeDrop(valueTemp)(named)
-and emitAdtFieldDrops (valueTemp: Int) (children: List(HeapLayoutChild)) (body: DropperBody) =
+and emitAdtFieldDrops (valueTemp: Int) (tagless: Bool) (children: List(HeapLayoutChild)) (body: DropperBody) =
     match children with
         | [] -> body
         | HeapLayoutChild { fieldIndex = index, childType = childType } :: rest ->
             match freshDropperTemp(body) with
                 | (childTemp, childBody) ->
                     childBody
-                    |> emitDropper(GetAdtField(childTemp)(valueTemp)(index)(false))
+                    |> emitDropper(GetAdtField(childTemp)(valueTemp)(index)(tagless))
                     |> emitChildDrop(childTemp)(childType)
-                    |> emitAdtFieldDrops(valueTemp)(rest)
+                    |> emitAdtFieldDrops(valueTemp)(tagless)(rest)
 and emitRecursiveAdtDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
     match synthesizeAdtDropperIn(named)(body) with
         | (label, synthesizedBody) ->
@@ -515,7 +544,7 @@ and emitConstructorBlocks (valueTemp: Int) (named: SemanticType) (blocks: List((
         | (label, constructorName) :: rest ->
             body
             |> emitDropper(Label(label))
-            |> emitAdtFieldDrops(valueTemp)(ownedChildren(Some(constructorName))(named)(body))
+            |> emitAdtFieldDrops(valueTemp)(typeIsTagless(named)(body))(ownedChildren(Some(constructorName))(named)(body))
             |> emitDropper(Jump(sharedLabel))
             |> emitConstructorBlocks(valueTemp)(named)(rest)(sharedLabel)
 
@@ -580,3 +609,140 @@ let synthesizeRuntimeManagedAdtDropper (semanticType: SemanticType) (definitions
                     match synthesizeAdtDropperIn(named)(body) with
                         | (label, synthesized) -> synthesisResult(Some(label))(synthesized)
                 | _ -> synthesisResult(None)(body)
+
+// What the lowering knows about an owned aggregate when its scope releases it: whether the value
+// is provably the only reference to its whole graph (a fresh list literal or cons chain, a fresh
+// constructor tree of a recursive-copy type), and the constructor that built it when the value is
+// a direct constructor application.
+type OwnedReleasePlan =
+    | deepUnique: Bool
+    | constructorName: Maybe(Str)
+
+// The inline release program of one owned aggregate at its scope exit, in emission order, with
+// the counters, cache, and dropper functions it advanced.
+type InlineReleaseSynthesis =
+    | instructions: List(IrInstructionKind)
+    | nextTemp: Int
+    | nextLocal: Int
+    | cache: DropperLabelCache
+    | functions: List(IrFunction)
+    | nextLambdaId: Int
+    | nextLabelId: Int
+
+// The unique-list walk of a `let`-owned list built fresh in its own scope, stage 0's
+// `EmitRuntimeManagedUniqueListDrop`: every cell is known unique, so no uniqueness test guards the
+// head release and the tail advance.
+let emitUniqueListDrop (listTemp: Int) (elementType: SemanticType) (body: DropperBody) =
+    match freshDropperLocal(body) with
+        | (currentSlot, slotBody) ->
+            match slotBody
+            |> emitDropper(StoreLocal(currentSlot)(listTemp))
+            |> freshDropperLabel("rcdrop_unique_list") with
+                | (loopLabel, loopBody) ->
+                    match freshDropperLabel("rcdrop_unique_list_end")(loopBody) with
+                        | (endLabel, labelBody) ->
+                            match labelBody
+                            |> emitDropper(Label(loopLabel))
+                            |> emitListLoopTest(currentSlot)(endLabel) with
+                                | (currentTemp, testedBody) ->
+                                    testedBody
+                                    |> emitListHeadDrop(currentTemp)(elementType)
+                                    |> emitListTailAdvance(currentTemp)(currentSlot)(loopLabel)
+                                    |> emitDropper(Label(endLabel))
+
+let emitKnownConstructorFieldDrops (valueTemp: Int) (tagless: Bool) (knownUnique: Bool) (sharedLabel: Str) (children: List(HeapLayoutChild)) (body: DropperBody) =
+    if knownUnique
+    then emitAdtFieldDrops(valueTemp)(tagless)(children)(body)
+    else
+        body
+        |> emitUniqueTest(valueTemp)(sharedLabel)
+        |> emitAdtFieldDrops(valueTemp)(tagless)(children)
+        |> emitDropper(Label(sharedLabel))
+
+// The release of a `let`-owned ADT built by a known constructor, stage 0's
+// `EmitKnownConstructorRuntimeManagedAdtDrop`: only that constructor's owned children are walked,
+// under a uniqueness test unless the value is known unique; the shared label is allocated either
+// way.
+let emitKnownConstructorDrop (valueTemp: Int) (named: SemanticType) (constructorName: Str) (knownUnique: Bool) (body: DropperBody) =
+    match ownedChildren(Some(constructorName))(named)(body) with
+        | [] -> emitTypeDrop(valueTemp)(named)(body)
+        | children ->
+            match freshDropperLabel("rc_drop_known_shared")(body) with
+                | (sharedLabel, labelBody) ->
+                    labelBody
+                    |> emitKnownConstructorFieldDrops(valueTemp)(typeIsTagless(named)(body))(knownUnique)(sharedLabel)(children)
+                    |> emitTypeDrop(valueTemp)(named)
+
+let namedTypeOwnsChildren (named: SemanticType) (body: DropperBody) =
+    match body
+    |> bodyEnvironment
+    |> classifyHeapLayout(named) with
+        | HeapLayoutFacts { containsOwnedChild = containsOwnedChild } -> containsOwnedChild
+
+// The inline release of an owned runtime-managed aggregate by its resolved type, stage 0's
+// `EmitOwnedValueDrop` for a tuple, a list, and an ADT with owned children: a tuple walks its
+// owned elements under a uniqueness test, a fresh list walks its spine as unique cells and any
+// other list tests each cell, an ADT built by a known constructor walks that constructor's owned
+// fields, and any other ADT releases through its type-directed dropper. `None` when the value's
+// release is a single allocation, which the caller places as an ordinary owner drop.
+let emitOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (body: DropperBody) =
+    match (semanticType, plan) with
+        | (SemTuple(elements), _plan) ->
+            body
+            |> emitTupleDrop(valueTemp)(elements)
+            |> Some
+        | (SemList(element), OwnedReleasePlan { deepUnique = true }) ->
+            body
+            |> emitUniqueListDrop(valueTemp)(element)
+            |> Some
+        | (SemList(element), _plan) ->
+            body
+            |> emitListDrop(valueTemp)(element)
+            |> Some
+        | (SemNamed(_symbolId, _name, _arguments), OwnedReleasePlan { deepUnique = deepUnique, constructorName = constructorName }) ->
+            if namedTypeOwnsChildren(semanticType)(body)
+            then
+                match constructorName with
+                    | Some(constructor) ->
+                        body
+                        |> emitKnownConstructorDrop(valueTemp)(semanticType)(constructor)(deepUnique)
+                        |> Some
+                    | None ->
+                        body
+                        |> emitAdtDrop(valueTemp)(semanticType)
+                        |> Some
+            else None
+        | _ -> None
+
+let instructionKindOf (instruction: IrInstruction) =
+    match instruction with
+        | IrInstruction { instruction = kind } -> kind
+
+let inlineReleaseResult (body: DropperBody) =
+    match body with
+        | DropperBody { reversedInstructions = reversed, nextTemp = nextTemp, nextLocal = nextLocal, cache = cache, functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+            InlineReleaseSynthesis(
+                instructions = reversed
+                |> reverse
+                |> map(instructionKindOf),
+                nextTemp = nextTemp,
+                nextLocal = nextLocal,
+                cache = cache,
+                functions = functions,
+                nextLambdaId = nextLambdaId,
+                nextLabelId = nextLabelId
+            )
+
+// Synthesizes the scope-exit release of the owned aggregate loaded into `valueTemp`, continuing
+// the caller's temp, local, label, and lambda counters so the instructions splice into the
+// caller's function directly; any ADT dropper the walk calls is synthesized into `functions`.
+// `None` when the type's release is a single allocation.
+let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(definitions)(cache)(nextLambdaId)(nextLabelId) with
+        | (ids, opened) ->
+            match emitOwnedAggregateRelease(valueTemp)(renumberType(ids)(semanticType))(plan)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
+                | None -> None
+                | Some(released) ->
+                    released
+                    |> inlineReleaseResult
+                    |> Some

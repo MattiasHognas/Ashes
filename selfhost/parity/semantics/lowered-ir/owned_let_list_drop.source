@@ -1,0 +1,5 @@
+let labels = [Ashes.Text.fromInt(1), Ashes.Text.fromInt(2)]
+
+match labels with
+    | first :: _ -> Ashes.IO.print(first)
+    | [] -> Ashes.IO.print("empty")
