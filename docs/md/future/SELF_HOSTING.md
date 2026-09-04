@@ -1055,7 +1055,20 @@ same public behavior.
   `Lowering.Ownership.cs`), both for the immediate and the type-inference-deferred copy-out sites.
   Regression: `src/Ashes.Tests/GenericListRetainsRuntimeManagedElementsTests.cs` (an IR-level
   assertion that the deep-copy walk now appears at the call site, plus a churn-loop execution
-  test) and `tests/generic_reverse_retains_runtime_managed_elements.ash`.
+  test) and `tests/generic_reverse_retains_runtime_managed_elements.ash`. Two consequences of
+  that copy now owning what was arena-placed before, both caller-side in `LowerCallFinish`: a
+  call's consumed runtime-managed arguments are released only after its result is normalized
+  (the deep copy of `append(map(f)(xs))(map(f)(ys))` read records the release had already
+  freed through the callee's arena cells), and a deep-copied generic result consumed by a callee
+  whose result stays in its own region (neither normalized here nor produced runtime-managed)
+  and whose ownership summary is poisoned is not released at all — that callee may have borrowed
+  the records' strings into a region that outlives the call (the self-hosted lowering's
+  `finishMatchArm` stores an `ArmOwner` type name into an emitted `CleanupResource`), exactly as it
+  could when the list was arena-placed, so the copy is left with the callee the way its arena
+  predecessor was (`ConsumedDeepCopiedListStaysWithCallee`). Regression:
+  `ConsumedArgumentsReleasedAfterResultNormalizationTests.cs`,
+  `tests/generic_append_of_generic_map_results_releases_after_copy.ash`,
+  `tests/generic_result_consumed_by_opaque_callee_keeps_parts.ash`.
 - [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
   specialization (a helper's own body must resolve in the isolated scope too; an already-visited
   helper counts as resolved). Regression: `ReuseInlineResolutionTests`.
@@ -1109,7 +1122,14 @@ same public behavior.
 - [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
-  them.
+  them. Open: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
+  an aggregate is never retained at the store. For a runtime-RC aggregate that retain would be
+  balanced by its dropper and is the Perceus-correct rule; for an arena aggregate (the self-hosted
+  lowering's emitted instruction records, say) there is no dropper to balance it, so the arena
+  consumer relies on the borrowed value's owner outliving the region instead — which is what the
+  release-side rule under OPT-32 preserves for a generic callee's deep-copied result. Closing this
+  needs the store-site retain for runtime-RC aggregates, mirrored in `CoreLowering.ash` with the
+  affected parity oracles regenerated.
 - [ ] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
   allocation reuse for tuples, ADTs, closures, and tail-recursive paths.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of

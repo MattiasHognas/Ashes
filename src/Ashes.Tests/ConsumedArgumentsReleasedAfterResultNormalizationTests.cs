@@ -108,6 +108,134 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
             $"the appended result must be deep-copied before its consumed arguments are released; dump:\n{dump}");
     }
 
+    // The same deep-copied generic result consumed by a callee whose result stays in its own region
+    // (never normalized, not produced runtime-managed) and whose ownership summary is poisoned: it
+    // hands each record's string to an unknown closure that stores it into the state it returns.
+    // Before the deep copy existed, that list was arena-placed and never released, and the callee's
+    // borrows into its arena state were safe; the caller must therefore leave the copy with the
+    // callee rather than release it after the call.
+    private const string GenericResultConsumedByOpaqueCalleeSource = """
+        type Item =
+            | name: Str
+            | direct: Bool
+
+        type Labels =
+            | seen: List(Str)
+
+        let mapList f =
+            (let recursive mapGo xs =
+                match xs with
+                    | [] -> []
+                    | head :: tail -> f(head) :: mapGo(tail)
+            in mapGo)
+
+        let appendList left right =
+            (let recursive go rest =
+                match rest with
+                    | [] -> right
+                    | head :: tail -> head :: go(tail)
+            in go(left))
+
+        let toEntry (direct: Bool) (name: Str) = Item(name = name, direct = direct)
+
+        let record (label: Str) (state: Labels) = Labels(seen = label :: state.seen)
+
+        let recursive stash (entries: List(Item)) (store: Str -> Labels -> Labels) (state: Labels) =
+            match entries with
+                | [] -> state
+                | Item { name = name } :: rest -> stash(rest)(store)(store(name)(state))
+
+        let recursive show (labels: List(Str)) =
+            match labels with
+                | [] -> Unit
+                | label :: rest ->
+                    let _ = Ashes.IO.print(label)
+                    in show(rest)
+
+        let recursive length items count =
+            match items with
+                | [] -> count
+                | _ :: rest -> length(rest)(count + 1)
+
+        let recursive churn count acc =
+            if count == 0
+            then acc
+            else churn(count - 1)(("churn " + Ashes.Text.fromInt(count)) :: acc)
+
+        let labels = stash(appendList(mapList(toEntry(true))(["Testing"]))(mapList(toEntry(false))(["Mid"])))(record)(Labels(seen = []))
+
+        let noise = churn(5000)([])
+
+        let _ = Ashes.IO.print("noise " + Ashes.Text.fromInt(length(noise)(0)))
+
+        show(labels.seen)
+        """;
+
+    // In the program entry the appended list is deep-copied (the third "rc_normalize_list" walk,
+    // after the two map results' own), appendList's consumed map results are released, and the
+    // copy is then consumed by the stash call — the first call after that walk. A consumed
+    // argument's release is emitted directly after its call, so no "rcdrop_list" may appear
+    // between the stash call and the next call: stash's un-normalized, poisoned result may still
+    // borrow the records' strings.
+    [Test]
+    public void Deep_copied_generic_result_consumed_by_a_poisoned_callee_is_not_released()
+    {
+        Diagnostics diagnostics = new();
+        var program = new Parser(GenericResultConsumedByOpaqueCalleeSource, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics);
+        lowering.SetSourceContext("opaqueStash.ash", GenericResultConsumedByOpaqueCalleeSource);
+        IrProgram ir = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+
+        IReadOnlyList<string> lines = IrTextFormatter.Format(
+            IrOptimizer.Optimize(ir), IrDumpStage.Final, filter: null);
+        string dump = string.Join('\n', lines);
+
+        int entryFunctionStart = dump.IndexOf("function _start_main", StringComparison.Ordinal);
+        entryFunctionStart.ShouldBeGreaterThanOrEqualTo(
+            0, $"expected a ProgramEntry function named _start_main; dump:\n{dump}");
+        string entryFunctionIr = dump[entryFunctionStart..];
+
+        int walk = -1;
+        for (int occurrence = 0; occurrence < 3; occurrence++)
+        {
+            walk = entryFunctionIr.IndexOf("rc_normalize_list_", walk + 1, StringComparison.Ordinal);
+            walk.ShouldBeGreaterThanOrEqualTo(
+                0, $"expected three deep-copy walks in the program entry; dump:\n{dump}");
+        }
+
+        int stashCall = entryFunctionIr.IndexOf("CallKnown", walk, StringComparison.Ordinal);
+        stashCall.ShouldBeGreaterThanOrEqualTo(
+            0, $"expected the stash call after the appended result's deep-copy walk; dump:\n{dump}");
+        int nextCall = entryFunctionIr.IndexOf("CallKnown", stashCall + 1, StringComparison.Ordinal);
+        nextCall.ShouldBeGreaterThanOrEqualTo(
+            0, $"expected the churn calls after the stash call; dump:\n{dump}");
+
+        entryFunctionIr[stashCall..nextCall].ShouldNotContain(
+            "rcdrop_list_",
+            Case.Sensitive,
+            $"the deep-copied list consumed by stash must stay with the callee; dump:\n{dump}");
+    }
+
+    [Test]
+    public async Task Deep_copied_generic_result_consumed_by_a_poisoned_callee_survives_churn()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string stdout = await CompileRunCaptureProgramAsync(GenericResultConsumedByOpaqueCalleeSource).ConfigureAwait(false);
+
+        stdout.ShouldBe("""
+            noise 5000
+            Mid
+            Testing
+
+            """.ReplaceLineEndings("\n"));
+    }
+
     [Test]
     public async Task Generic_append_of_generic_map_results_survives_unrelated_allocation_churn()
     {

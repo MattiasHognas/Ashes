@@ -1225,6 +1225,11 @@ public sealed partial class Lowering
         bool CalleeResultElementIsGeneric = false);
 
     private readonly Dictionary<int, PendingCallResultCopyOut> _pendingCallResultCopyOuts = new();
+    // The temps holding a generic callee's list result after LowerCallDeepCopyOutListResult copied it
+    // into fresh runtime-managed cells (or a placeholder that may yet resolve to that copy): the one
+    // class of consumed call argument that was arena-placed and never released before that copy
+    // existed. Per function: temp numbers restart with each LowerLambdaCoreResetFrame.
+    private readonly HashSet<int> _genericDeepCopiedListTemps = [];
     private int _nextCallResultCopyOutId;
 
     // Set while lowering the tail-call argument of an affine string accumulator (its own param
@@ -7580,6 +7585,7 @@ public sealed partial class Lowering
         _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
+        _genericDeepCopiedListTemps.Clear();
 
         // Lambda function gets implicit locals for env and arg at slots 0 and 1
         int envSlot = NewLocal(); // 0
@@ -10593,7 +10599,8 @@ public sealed partial class Lowering
             callResultType,
             runtimeManagedResult || stableReuseResult,
             runtimeManagedResultFlagTemp,
-            IsCalleeResultListElementQuantifiedInScheme(rootExpr, collectedArgs.Count));
+            IsCalleeResultListElementQuantifiedInScheme(rootExpr, collectedArgs.Count),
+            out bool resultNormalized);
         // The consumed runtime arguments are released only once the result is normalized: an
         // arena-placed result (a generic callee's own cons cells, say) can still reference the
         // arguments' parts until the copy-out or deep copy above has copied them, so releasing the
@@ -10601,7 +10608,9 @@ public sealed partial class Lowering
         LowerCallDropConsumedRuntimeArguments(
             callResultType,
             consumedRuntimeArguments,
-            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count));
+            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count),
+            resultNormalized,
+            GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false });
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -11640,10 +11649,31 @@ public sealed partial class Lowering
             && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
             && runtimeManaged;
 
+    // Whether a consumed argument that is a generic callee's deep-copied list result (see
+    // LowerCallDeepCopyOutListResult) must stay with the callee rather than be released here. Before
+    // that deep copy such a result was arena-placed and never released, so a callee that borrowed
+    // its records into its own arena result (a lowering state record that persists past the call,
+    // say) could rely on them staying alive; now the caller owns them, so releasing them after a
+    // call whose result was neither normalized here nor produced runtime-managed by the callee, and
+    // whose ownership summary is poisoned (its result reach is unknown, so it may keep the list
+    // whole or any of its parts), would free memory that result still points at. Such a list is left
+    // to the callee's region exactly as its arena predecessor was.
+    private bool ConsumedDeepCopiedListStaysWithCallee(
+        int temp,
+        bool calleeCompiledResultVerifiedRuntimeManaged,
+        bool resultNormalized,
+        bool calleeResultPoisoned)
+        => calleeResultPoisoned
+            && !resultNormalized
+            && !calleeCompiledResultVerifiedRuntimeManaged
+            && _genericDeepCopiedListTemps.Contains(temp);
+
     private void LowerCallDropConsumedRuntimeArguments(
         TypeRef resultType,
         IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
-        bool calleeCompiledResultVerifiedRuntimeManaged)
+        bool calleeCompiledResultVerifiedRuntimeManaged,
+        bool resultNormalized,
+        bool calleeResultPoisoned)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -11654,7 +11684,13 @@ public sealed partial class Lowering
         foreach ((int temp, TypeRef type, bool preserveEscapedChildren) in consumedRuntimeArguments)
         {
             TypeRef valueType = Prune(type);
-            if (CanArenaReset(valueType) || !dropped.Add(temp))
+            if (CanArenaReset(valueType)
+                || !dropped.Add(temp)
+                || ConsumedDeepCopiedListStaysWithCallee(
+                    temp,
+                    calleeCompiledResultVerifiedRuntimeManaged,
+                    resultNormalized,
+                    calleeResultPoisoned))
             {
                 continue;
             }
@@ -11738,20 +11774,25 @@ public sealed partial class Lowering
         int currentTemp,
         TypeRef callResultType,
         int runtimeManagedResultFlagTemp,
-        bool calleeResultElementIsGeneric)
+        bool calleeResultElementIsGeneric,
+        out bool resultNormalized)
     {
+        resultNormalized = false;
         if (calleeResultElementIsGeneric
             && Prune(callResultType) is TypeRef.TList deepCopyResultList
             && !CanArenaReset(Prune(deepCopyResultList.Element))
             && CanEmitRuntimeManagedListElementDeepCopy(deepCopyResultList.Element))
         {
-            return LowerCallDeepCopyOutListResult(
+            resultNormalized = true;
+            int deepCopiedTemp = LowerCallDeepCopyOutListResult(
                 callWmCursorSlot,
                 callWmEndSlot,
                 callPreRestoreEndSlot,
                 currentTemp,
                 deepCopyResultList.Element,
                 runtimeManagedResultFlagTemp);
+            _genericDeepCopiedListTemps.Add(deepCopiedTemp);
+            return deepCopiedTemp;
         }
 
         return ContainsUnresolvedLayoutType(callResultType, [])
@@ -11766,6 +11807,11 @@ public sealed partial class Lowering
             : currentTemp;
     }
 
+    // `resultNormalized` reports whether the result was copied out of the call's window here (a
+    // copy-out or deep copy, unconditionally or on the arena branch of a runtime-managed flag),
+    // so nothing reachable from it can still borrow the call's consumed arguments; a result handed
+    // back untouched (runtime-managed or copy-typed, or with no copy-out strategy) or deferred to a
+    // placeholder may still hold such borrows.
     private int LowerCallRestoreArena(
         int callWmCursorSlot,
         int callWmEndSlot,
@@ -11773,8 +11819,10 @@ public sealed partial class Lowering
         TypeRef callResultType,
         bool runtimeManagedResult,
         int runtimeManagedResultFlagTemp,
-        bool calleeResultElementIsGeneric)
+        bool calleeResultElementIsGeneric,
+        out bool resultNormalized)
     {
+        resultNormalized = false;
         int callPreRestoreEndSlot = NewLocal();
         if (runtimeManagedResult || CanArenaReset(callResultType))
         {
@@ -11800,9 +11848,11 @@ public sealed partial class Lowering
                 currentTemp,
                 callResultType,
                 runtimeManagedResultFlagTemp,
-                calleeResultElementIsGeneric);
+                calleeResultElementIsGeneric,
+                out resultNormalized);
         }
 
+        resultNormalized = true;
         if (runtimeManagedResultFlagTemp >= 0)
         {
             return LowerCallConditionalCopyOutResult(
@@ -12017,6 +12067,11 @@ public sealed partial class Lowering
             [callWmCursorSlot, callWmEndSlot, resultSlot]));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        if (calleeResultElementIsGeneric && Prune(callResultType) is TypeRef.TList)
+        {
+            _genericDeepCopiedListTemps.Add(resultTemp);
+        }
+
         return resultTemp;
     }
 
