@@ -602,6 +602,17 @@ public sealed partial class Lowering
     // reconstruct a closure reference to this already-compiled function from a different scope and must
     // bake in this SAME, accurate fact, not a possibly-wrong AST-shape guess.
     private readonly Dictionary<string, bool> _bodyRuntimeManagedByLabel = new(StringComparer.Ordinal);
+    // A callee whose own compiled body is nothing but a borrowed field read of its own single
+    // parameter — LoadLocal(argSlot) [Borrow] GetAdtField(bodyTemp) — and nothing else: no other
+    // allocation, call, or transformation the returned reference could instead derive from. A call
+    // site that independently proves its own argument for this parameter is RC-placed may then
+    // retain (RcDup) the call result instead of paying CopyOutArena RcNormalization's full byte
+    // copy: since an RC parent may only own inline data, static non-owning data, or independently
+    // owned RC children (see the memory-model doc), a genuinely RC aggregate's field is itself a
+    // standalone RC value with its own header, safe to RcDup. Populated in LowerLambdaCore
+    // alongside _bodyRuntimeManagedByLabel; consulted only at a call site (LowerAppliedClosureCall),
+    // never used to change the callee's own ReturnsRuntimeManaged bit.
+    private readonly HashSet<string> _isTrivialParameterFieldAccessorByLabel = new(StringComparer.Ordinal);
     // Curried application labels whose argument is normalized into an independent RC graph at the
     // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
     private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
@@ -1210,9 +1221,15 @@ public sealed partial class Lowering
         int CurrentTemp,
         int RuntimeManagedResultFlagTemp,
         TypeRef ResultType,
-        bool IsDeepCopy = false);
+        bool IsDeepCopy = false,
+        bool CalleeResultElementIsGeneric = false);
 
     private readonly Dictionary<int, PendingCallResultCopyOut> _pendingCallResultCopyOuts = new();
+    // The temps holding a generic callee's list result after LowerCallDeepCopyOutListResult copied it
+    // into fresh runtime-managed cells (or a placeholder that may yet resolve to that copy): the one
+    // class of consumed call argument that was arena-placed and never released before that copy
+    // existed. Per function: temp numbers restart with each LowerLambdaCoreResetFrame.
+    private readonly HashSet<int> _genericDeepCopiedListTemps = [];
     private int _nextCallResultCopyOutId;
 
     // Set while lowering the tail-call argument of an affine string accumulator (its own param
@@ -6317,6 +6334,7 @@ public sealed partial class Lowering
         // same already-compiled function from a different scope later.
         bool bodyRuntimeManaged = IsRuntimeManagedResultTemp(bodyTemp);
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
+        RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
@@ -6327,6 +6345,52 @@ public sealed partial class Lowering
         return LowerLambdaCoreFinalize(
             selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction,
             label, envPtrTemp, stackAllocateClosure, bodyRuntimeManaged, request, funTy);
+    }
+
+    // True when this function's ENTIRE instruction stream — read directly off _inst, which
+    // LowerLambdaCoreResetFrame cleared for this function alone — is exactly a borrowed field read
+    // of its own parameter: LoadLocal(argSlot), an optional Borrow forwarding that same value, then
+    // GetAdtField reading bodyTemp from it. Nothing else may appear; a call, an allocation, or any
+    // further transformation before the field read means the returned reference cannot be assumed
+    // to be that field's own, unmodified value.
+    private bool IsTrivialParameterFieldAccessorBody(int argSlot, int bodyTemp)
+    {
+        if (_inst.Count is not (2 or 3)
+            || _inst[0] is not IrInst.LoadLocal { Slot: var loadedSlot } load
+            || loadedSlot != argSlot)
+        {
+            return false;
+        }
+
+        int fieldPtrTemp = load.Target;
+        int fieldInstructionIndex = 1;
+        if (_inst.Count == 3)
+        {
+            if (_inst[1] is not IrInst.Borrow { SourceTemp: var borrowSource } borrow
+                || borrowSource != load.Target)
+            {
+                return false;
+            }
+
+            fieldPtrTemp = borrow.Target;
+            fieldInstructionIndex = 2;
+        }
+
+        return _inst[fieldInstructionIndex] is IrInst.GetAdtField { Ptr: var fieldPtr } field
+            && fieldPtr == fieldPtrTemp
+            && field.Target == bodyTemp;
+    }
+
+    // Restricted to a Shallow-copyable field (Str/Bytes/a copy-type-field ADT): the call-site
+    // retain this enables (LowerAppliedClosureCall) emits a plain (non-nullable) RcDup, which a
+    // List field's possible empty/null (0) representation would corrupt.
+    private void RecordTrivialParameterFieldAccessorLabel(string label, int argSlot, int bodyTemp, TypeRef bodyType)
+    {
+        if (IsTrivialParameterFieldAccessorBody(argSlot, bodyTemp)
+            && GetCopyOutKind(bodyType, out _) == CopyOutKind.Shallow)
+        {
+            _isTrivialParameterFieldAccessorByLabel.Add(label);
+        }
     }
 
     private (int, TypeRef) LowerLambdaCoreFinalize(
@@ -6748,6 +6812,7 @@ public sealed partial class Lowering
         LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
         FinalizePerceusPatternBindingOwners(tco);
         FinalizeTcoParameterAggregateRetains(tco);
+        FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
@@ -7520,6 +7585,7 @@ public sealed partial class Lowering
         _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
+        _genericDeepCopiedListTemps.Clear();
 
         // Lambda function gets implicit locals for env and arg at slots 0 and 1
         int envSlot = NewLocal(); // 0
@@ -10490,12 +10556,34 @@ public sealed partial class Lowering
         }
         tailPosition.Restore();
 
+        return LowerCallFinish(
+            rootExpr,
+            collectedArgs,
+            request,
+            callWmCursorSlot,
+            callWmEndSlot,
+            currentTemp,
+            currentType,
+            consumedRuntimeArguments,
+            runtimeManagedResultFlagTemp);
+    }
+
+    // The tail of LowerCallGeneral once every argument is applied: unify the result type, normalize
+    // the result out of the call's arena window, release the consumed runtime arguments, and record
+    // the result's ownership.
+    private (int, TypeRef) LowerCallFinish(
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request,
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int currentTemp,
+        TypeRef currentType,
+        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        int runtimeManagedResultFlagTemp)
+    {
         UnifyExpectedType(currentType, request.ExpectedType);
         var callResultType = Prune(currentType);
-        LowerCallDropConsumedRuntimeArguments(
-            callResultType,
-            consumedRuntimeArguments,
-            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count));
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
         TrackStableReuseCallResult(currentTemp, stableReuseResult);
@@ -10510,7 +10598,19 @@ public sealed partial class Lowering
             currentTemp,
             callResultType,
             runtimeManagedResult || stableReuseResult,
-            runtimeManagedResultFlagTemp);
+            runtimeManagedResultFlagTemp,
+            IsCalleeResultListElementQuantifiedInScheme(rootExpr, collectedArgs.Count),
+            out bool resultNormalized);
+        // The consumed runtime arguments are released only once the result is normalized: an
+        // arena-placed result (a generic callee's own cons cells, say) can still reference the
+        // arguments' parts until the copy-out or deep copy above has copied them, so releasing the
+        // arguments first frees memory the normalization then reads.
+        LowerCallDropConsumedRuntimeArguments(
+            callResultType,
+            consumedRuntimeArguments,
+            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count),
+            resultNormalized,
+            GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false });
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -11054,6 +11154,54 @@ public sealed partial class Lowering
             && quantifiedIds.Contains(argVar.Id);
     }
 
+    // Whether the callee's own type scheme leaves its RESULT list's element position quantified —
+    // the return-side counterpart to IsCalleeParameterQuantifiedInScheme. A callee generic in this
+    // position (Ashes.Collection.List.reverse's List(v) -> List(v), say) is compiled once with no
+    // static layout for that element, so its own cons cells never carry a runtime-managed header no
+    // matter what the caller instantiates v with — the caller must normalize an escaping List(T)
+    // result itself (LowerUncoveredCallResultCopyOut). A callee whose declared result element is
+    // already a CONCRETE type (a monomorphic list-builder returning List(SomeRecord), say) is not
+    // this case: its own placement machinery can and does decide arena vs. runtime-managed per call,
+    // so forcing a deep copy here would be pure overhead — and would defeat reuse specialization for
+    // a result that a lexically-local consumer (never independently kept alive) was always safe to
+    // read straight out of the arena.
+    private bool IsCalleeResultListElementQuantifiedInScheme(Expr rootExpr, int argumentCount)
+    {
+        Binding? binding = rootExpr switch
+        {
+            Expr.Var variable => Lookup(variable.Name),
+            Expr.QualifiedVar qualified => Lookup(
+                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            _ => null,
+        };
+        TypeScheme? scheme = binding switch
+        {
+            Binding.Scheme s => s.S,
+            Binding.EnvScheme es => es.S,
+            _ => null,
+        };
+        if (scheme is null)
+        {
+            return false;
+        }
+
+        HashSet<int> quantifiedIds = scheme.Quantified.Select(tv => tv.Id).ToHashSet();
+        TypeRef cursor = scheme.Body;
+        for (int index = 0; index < argumentCount; index++)
+        {
+            if (cursor is not TypeRef.TFun fun)
+            {
+                return false;
+            }
+
+            cursor = fun.Ret;
+        }
+
+        return cursor is TypeRef.TList list
+            && list.Element is TypeRef.TVar elementVar
+            && quantifiedIds.Contains(elementVar.Id);
+    }
+
     // Whether the callee's own result may alias this specific parameter, per the whole-program
     // fixed-point analysis in Lowering.MoveAnalysis.cs (the same fact --explain ownership reports
     // under "Result: aliases:") — computed over fully-resolved types, unlike a fresh AST walk, and
@@ -11098,6 +11246,18 @@ public sealed partial class Lowering
             && freshRuntimeArgument
             && (IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex)
                 || CalleeResultMayKeepParameterWhole(rootExpr, argumentIndex, argumentTemp));
+
+    // Where a trivial-field-accessor call's argument stands on the RC-vs-arena question at the
+    // point its call is lowered (see ClassifyAccessorArgumentRc): not provably RC (the OLD
+    // CopyOutArena-based behavior applies, unchanged); provably RC right now (a fresh temp or a
+    // settled named binding); or a self-recursive loop's own parameter whose placement is not yet
+    // settled this early in lowering, resolved later by FinalizeAccessorResultRetains.
+    private enum AccessorArgumentRcStatus
+    {
+        NotRc,
+        DefinitelyRc,
+        PendingTcoSlot,
+    }
 
     private int LowerAppliedClosureCall(
         Expr rootExpr,
@@ -11148,17 +11308,14 @@ public sealed partial class Lowering
             }
         }
 
+        (AccessorArgumentRcStatus rcStatus, int pendingSlot) =
+            IsTrivialAccessorCall(rootExpr, argumentIndex, needsResultOwnership)
+                ? ClassifyAccessorArgumentRc(argument, originalArgumentTemp)
+                : (AccessorArgumentRcStatus.NotRc, -1);
+
         if (needsResultOwnership)
         {
-            int packedEnvironmentSizeTemp = NewTemp();
-            Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
-            int ownershipShiftTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
-            runtimeManagedResultFlagTemp = NewTemp();
-            Emit(new IrInst.ShrInt(
-                runtimeManagedResultFlagTemp,
-                packedEnvironmentSizeTemp,
-                ownershipShiftTemp));
+            runtimeManagedResultFlagTemp = ResolveCallResultOwnershipFlag(closureTemp, rcStatus, pendingSlot);
         }
 
         int target = NewTemp();
@@ -11168,7 +11325,112 @@ public sealed partial class Lowering
             argumentTemp,
             borrowsOnly,
             runtimeManagedArgumentFlagTemp);
-        return target;
+
+        return rcStatus == AccessorArgumentRcStatus.NotRc
+            ? target
+            : RetainAccessorCallResult(target, rcStatus, pendingSlot);
+    }
+
+    // This callee's own ReturnsRuntimeManaged bit (read below from its closure value in
+    // ResolveCallResultOwnershipFlag) is baked once per callee, false for a plain field accessor
+    // whose own body never allocates RC — so it can never reflect a specific call site's own
+    // argument. Restricted to argumentIndex==0 (a curried accessor's later stages would need the
+    // chain-walk TryResolveKnownFunctionLabel callers elsewhere use; not attempted here) so
+    // rootExpr's own top-level label is guaranteed to name the exact lambda being invoked, not an
+    // earlier stage in its curry chain.
+    private bool IsTrivialAccessorCall(Expr rootExpr, int argumentIndex, bool needsResultOwnership)
+        => needsResultOwnership
+            && argumentIndex == 0
+            && TryResolveKnownFunctionLabel(rootExpr, out string accessorLabel)
+            && _isTrivialParameterFieldAccessorByLabel.Contains(accessorLabel);
+
+    // A fresh producer's temp carries its own RuntimeRc fact directly (IsRuntimeManagedResultTemp):
+    // DefinitelyRc. A plain read of a named binding — an env capture, a top-level let — does not:
+    // the automatic per-instruction dispatcher that populates _tempOwnershipFacts has no case for
+    // LoadLocal/LoadEnv (see IsTrivialParameterFieldAccessorBody's own doc on borrowed reads), so
+    // such a read's temp is untracked even when the binding it reads is genuinely RC; fall back to
+    // the binding's own OwnershipInfo — the same per-name fact OPT-27's let-ownership rules read
+    // (TrackOwnedValue/LookupOwnedValue) — for DefinitelyRc there too. A self-recursive loop's own
+    // parameter is excluded from both: its arena-vs-runtime-RC placement is settled only after this
+    // call's surrounding tail self-call constrains it (the same timing TryGetRuntimeManagedCallArgument
+    // documents), so it is PendingTcoSlot, resolved later by FinalizeAccessorResultRetains, unless
+    // the placement has already resolved true by this point in lowering.
+    private (AccessorArgumentRcStatus, int) ClassifyAccessorArgumentRc(Expr argument, int argumentTemp)
+    {
+        if (IsRuntimeManagedResultTemp(argumentTemp))
+        {
+            return (AccessorArgumentRcStatus.DefinitelyRc, -1);
+        }
+
+        if (argument is not Expr.Var variable)
+        {
+            return (AccessorArgumentRcStatus.NotRc, -1);
+        }
+
+        if (LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
+        {
+            return (AccessorArgumentRcStatus.DefinitelyRc, -1);
+        }
+
+        if (_tcoCtx is { } tco && Lookup(variable.Name) is Binding.Local local && tco.ParamSlots.Contains(local.Slot))
+        {
+            return tco.IsRuntimeManagedSlot(local.Slot)
+                ? (AccessorArgumentRcStatus.DefinitelyRc, -1)
+                : (AccessorArgumentRcStatus.PendingTcoSlot, local.Slot);
+        }
+
+        return (AccessorArgumentRcStatus.NotRc, -1);
+    }
+
+    // Tells the call-result copy-out machinery (LowerCallConditionalCopyOutResult) the result is
+    // already correctly owned for DefinitelyRc/PendingTcoSlot: its "copy" branch becomes dead code
+    // (or, for a pending slot that resolves to arena, is reinstated by ResolvePendingRuntimeArgumentFlags
+    // zeroing this flag), and only its arena-watermark restore/reclaim actually runs, since
+    // RetainAccessorCallResult already retained the value — regardless of what this callee's own
+    // compiled shape (its ReturnsRuntimeManaged bit, read from closureTemp's packed environment word
+    // below) would otherwise have reported.
+    private int ResolveCallResultOwnershipFlag(int closureTemp, AccessorArgumentRcStatus rcStatus, int pendingSlot)
+    {
+        if (rcStatus == AccessorArgumentRcStatus.NotRc)
+        {
+            int packedEnvironmentSizeTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+            int ownershipShiftTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
+            int flagTemp = NewTemp();
+            Emit(new IrInst.ShrInt(flagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
+            return flagTemp;
+        }
+
+        int forcedFlagTemp = EmitForcedRetainFlag();
+        if (rcStatus == AccessorArgumentRcStatus.PendingTcoSlot)
+        {
+            _pendingRuntimeArgumentFlags[forcedFlagTemp] = pendingSlot;
+        }
+
+        return forcedFlagTemp;
+    }
+
+    // The argument is (or, for PendingTcoSlot, may turn out to be) a provably RC aggregate, and this
+    // callee's entire body is nothing but a borrowed read of one of its fields — per the memory
+    // model, an RC parent's non-inline field is itself an independently owned RC value with its own
+    // header, so retaining that exact reference (not copying its bytes) is sound. DefinitelyRc
+    // retains immediately; PendingTcoSlot emits an identity-copy marker FinalizeAccessorResultRetains
+    // upgrades once this loop's own parameter placement is known (an erased copy, matching the OLD
+    // CopyOutArena-based behavior's outcome, if the parameter turns out to be arena after all).
+    private int RetainAccessorCallResult(int target, AccessorArgumentRcStatus rcStatus, int pendingSlot)
+    {
+        int retainedTarget = NewTemp();
+        if (rcStatus == AccessorArgumentRcStatus.DefinitelyRc)
+        {
+            Emit(new IrInst.RcDup(retainedTarget, target, RuntimeManaged: true));
+            MarkRuntimeManagedTemp(retainedTarget);
+            return retainedTarget;
+        }
+
+        Emit(new IrInst.RcDup(retainedTarget, target));
+        _pendingAccessorResultRetains.Add(new PendingAccessorResultRetain(_tcoCtx!, retainedTarget, pendingSlot));
+        return retainedTarget;
     }
 
     private int PrepareRuntimeManagedCallArgument(
@@ -11387,10 +11649,31 @@ public sealed partial class Lowering
             && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
             && runtimeManaged;
 
+    // Whether a consumed argument that is a generic callee's deep-copied list result (see
+    // LowerCallDeepCopyOutListResult) must stay with the callee rather than be released here. Before
+    // that deep copy such a result was arena-placed and never released, so a callee that borrowed
+    // its records into its own arena result (a lowering state record that persists past the call,
+    // say) could rely on them staying alive; now the caller owns them, so releasing them after a
+    // call whose result was neither normalized here nor produced runtime-managed by the callee, and
+    // whose ownership summary is poisoned (its result reach is unknown, so it may keep the list
+    // whole or any of its parts), would free memory that result still points at. Such a list is left
+    // to the callee's region exactly as its arena predecessor was.
+    private bool ConsumedDeepCopiedListStaysWithCallee(
+        int temp,
+        bool calleeCompiledResultVerifiedRuntimeManaged,
+        bool resultNormalized,
+        bool calleeResultPoisoned)
+        => calleeResultPoisoned
+            && !resultNormalized
+            && !calleeCompiledResultVerifiedRuntimeManaged
+            && _genericDeepCopiedListTemps.Contains(temp);
+
     private void LowerCallDropConsumedRuntimeArguments(
         TypeRef resultType,
         IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
-        bool calleeCompiledResultVerifiedRuntimeManaged)
+        bool calleeCompiledResultVerifiedRuntimeManaged,
+        bool resultNormalized,
+        bool calleeResultPoisoned)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -11401,7 +11684,13 @@ public sealed partial class Lowering
         foreach ((int temp, TypeRef type, bool preserveEscapedChildren) in consumedRuntimeArguments)
         {
             TypeRef valueType = Prune(type);
-            if (CanArenaReset(valueType) || !dropped.Add(temp))
+            if (CanArenaReset(valueType)
+                || !dropped.Add(temp)
+                || ConsumedDeepCopiedListStaysWithCallee(
+                    temp,
+                    calleeCompiledResultVerifiedRuntimeManaged,
+                    resultNormalized,
+                    calleeResultPoisoned))
             {
                 continue;
             }
@@ -11473,14 +11762,67 @@ public sealed partial class Lowering
     // - Self-contained heap result (String, List with safe element, Closure,
     //   ADT with copy-type fields): restore pointer → copy-out → reclaim chunks
     //   (source stays readable until ReclaimArenaChunks frees the old OS chunks).
+    // GetCallCopyOutKind found no fixed ListHeadCopyKind for this result: either it genuinely never
+    // needs a copy (a closure result, an opaque/resource ADT), or its type still holds an unresolved
+    // inference variable, or it is a list whose element only the recursive deep-copy machinery can
+    // express (see CanEmitRuntimeManagedListElementDeepCopy). Route each case to its own handling
+    // instead of silently leaving the result unnormalized.
+    private int LowerUncoveredCallResultCopyOut(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        TypeRef callResultType,
+        int runtimeManagedResultFlagTemp,
+        bool calleeResultElementIsGeneric,
+        out bool resultNormalized)
+    {
+        resultNormalized = false;
+        if (calleeResultElementIsGeneric
+            && Prune(callResultType) is TypeRef.TList deepCopyResultList
+            && !CanArenaReset(Prune(deepCopyResultList.Element))
+            && CanEmitRuntimeManagedListElementDeepCopy(deepCopyResultList.Element))
+        {
+            resultNormalized = true;
+            int deepCopiedTemp = LowerCallDeepCopyOutListResult(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                deepCopyResultList.Element,
+                runtimeManagedResultFlagTemp);
+            _genericDeepCopiedListTemps.Add(deepCopiedTemp);
+            return deepCopiedTemp;
+        }
+
+        return ContainsUnresolvedLayoutType(callResultType, [])
+            ? DeferCallResultCopyOut(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                callResultType,
+                runtimeManagedResultFlagTemp,
+                calleeResultElementIsGeneric)
+            : currentTemp;
+    }
+
+    // `resultNormalized` reports whether the result was copied out of the call's window here (a
+    // copy-out or deep copy, unconditionally or on the arena branch of a runtime-managed flag),
+    // so nothing reachable from it can still borrow the call's consumed arguments; a result handed
+    // back untouched (runtime-managed or copy-typed, or with no copy-out strategy) or deferred to a
+    // placeholder may still hold such borrows.
     private int LowerCallRestoreArena(
         int callWmCursorSlot,
         int callWmEndSlot,
         int currentTemp,
         TypeRef callResultType,
         bool runtimeManagedResult,
-        int runtimeManagedResultFlagTemp)
+        int runtimeManagedResultFlagTemp,
+        bool calleeResultElementIsGeneric,
+        out bool resultNormalized)
     {
+        resultNormalized = false;
         int callPreRestoreEndSlot = NewLocal();
         if (runtimeManagedResult || CanArenaReset(callResultType))
         {
@@ -11499,17 +11841,18 @@ public sealed partial class Lowering
             out IrInst.ListHeadCopyKind listHeadCopy);
         if (callCopyOutKind == CopyOutKind.None)
         {
-            return ContainsUnresolvedLayoutType(callResultType, [])
-                ? DeferCallResultCopyOut(
-                    callWmCursorSlot,
-                    callWmEndSlot,
-                    callPreRestoreEndSlot,
-                    currentTemp,
-                    callResultType,
-                    runtimeManagedResultFlagTemp)
-                : currentTemp;
+            return LowerUncoveredCallResultCopyOut(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                callResultType,
+                runtimeManagedResultFlagTemp,
+                calleeResultElementIsGeneric,
+                out resultNormalized);
         }
 
+        resultNormalized = true;
         if (runtimeManagedResultFlagTemp >= 0)
         {
             return LowerCallConditionalCopyOutResult(
@@ -11571,6 +11914,50 @@ public sealed partial class Lowering
                 RuntimeManaged: true,
                 IrInst.CopyOutPurpose.RcNormalization));
         }
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(reclaimLabel));
+        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    // A call result list whose element GetCallCopyOutKind cannot express through the fixed
+    // ListHeadCopyKind set (a tuple, a named record/ADT, Bytes/BigInt, or a list nested over one of
+    // those — see CanEmitRuntimeManagedListElementDeepCopy) still needs the same normalize-or-skip
+    // decision as an ordinary call result: with a dynamic ownership flag, normalize only on the
+    // arena-sourced branch; without one (no flag was ever produced for this call), the result may be
+    // arena-built and must be normalized unconditionally. Both branches route through
+    // EmitRuntimeManagedTcoListDeepCopy — the same recursive per-element deep copy the TCO
+    // parameter-entry path already uses for this exact element shape — so a generic function's
+    // returned list is retained exactly like a monomorphic one's.
+    private int LowerCallDeepCopyOutListResult(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        TypeRef elementType,
+        int runtimeManagedResultFlagTemp)
+    {
+        if (runtimeManagedResultFlagTemp < 0)
+        {
+            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+            int unconditionallyCopiedTemp = EmitRuntimeManagedTcoListDeepCopy(currentTemp, elementType);
+            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+            return unconditionallyCopiedTemp;
+        }
+
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+
+        string copyLabel = NewLabel("call_deep_copy_arena_result");
+        string reclaimLabel = NewLabel("call_reclaim_owned_result");
+        Emit(new IrInst.JumpIfFalse(runtimeManagedResultFlagTemp, copyLabel));
+        Emit(new IrInst.Jump(reclaimLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = EmitRuntimeManagedTcoListDeepCopy(currentTemp, elementType);
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
@@ -11656,7 +12043,8 @@ public sealed partial class Lowering
         int callPreRestoreEndSlot,
         int currentTemp,
         TypeRef callResultType,
-        int runtimeManagedResultFlagTemp)
+        int runtimeManagedResultFlagTemp,
+        bool calleeResultElementIsGeneric = false)
     {
         int resultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
@@ -11668,7 +12056,8 @@ public sealed partial class Lowering
             resultSlot,
             currentTemp,
             runtimeManagedResultFlagTemp,
-            callResultType);
+            callResultType,
+            CalleeResultElementIsGeneric: calleeResultElementIsGeneric);
         int[] usedTemps = runtimeManagedResultFlagTemp >= 0
             ? [currentTemp, runtimeManagedResultFlagTemp]
             : [currentTemp];
@@ -11678,6 +12067,11 @@ public sealed partial class Lowering
             [callWmCursorSlot, callWmEndSlot, resultSlot]));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        if (calleeResultElementIsGeneric && Prune(callResultType) is TypeRef.TList)
+        {
+            _genericDeepCopiedListTemps.Add(resultTemp);
+        }
+
         return resultTemp;
     }
 
@@ -11752,6 +12146,24 @@ public sealed partial class Lowering
             out IrInst.ListHeadCopyKind listHeadCopy);
         if (kind == CopyOutKind.None)
         {
+            if (info.CalleeResultElementIsGeneric
+                && resultType is TypeRef.TList deferredDeepCopyList
+                && !CanArenaReset(Prune(deferredDeepCopyList.Element))
+                && CanEmitRuntimeManagedListElementDeepCopy(deferredDeepCopyList.Element))
+            {
+                int deepCopySourceTemp = NewTemp();
+                Emit(new IrInst.LoadLocal(deepCopySourceTemp, info.ResultSlot));
+                int deepCopiedTemp = LowerCallDeepCopyOutListResult(
+                    info.CallWmCursorSlot,
+                    info.CallWmEndSlot,
+                    info.CallPreRestoreEndSlot,
+                    deepCopySourceTemp,
+                    deferredDeepCopyList.Element,
+                    info.RuntimeManagedResultFlagTemp);
+                Emit(new IrInst.StoreLocal(info.ResultSlot, deepCopiedTemp));
+                return true;
+            }
+
             return false;
         }
 

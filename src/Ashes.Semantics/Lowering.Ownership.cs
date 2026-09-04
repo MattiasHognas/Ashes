@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -300,6 +301,50 @@ public sealed partial class Lowering
                         RuntimeManaged = true,
                         MayBeEmpty = MayUseEmptyListRepresentation(Prune(retain.Type)),
                     };
+                    MarkRuntimeManagedTemp(retain.DupTemp);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// An accessor call's result retained before its argument's own TCO-parameter placement (arena
+    /// or runtime-RC) is known: the marker is upgraded to a runtime-managed RcDup at the same
+    /// finalization point as TcoParameterAggregateRetain when the parameter is admitted to
+    /// runtime-RC, and stays an erased identity copy otherwise (mirroring the OLD copy-based
+    /// behavior would have produced, since the argument turned out to be arena all along).
+    /// </summary>
+    private readonly record struct PendingAccessorResultRetain(TcoContext Tco, int DupTemp, int Slot);
+
+    private readonly List<PendingAccessorResultRetain> _pendingAccessorResultRetains = [];
+
+    private void FinalizeAccessorResultRetains(TcoContext? tco)
+    {
+        if (tco is null)
+        {
+            return;
+        }
+
+        for (int index = _pendingAccessorResultRetains.Count - 1; index >= 0; index--)
+        {
+            PendingAccessorResultRetain retain = _pendingAccessorResultRetains[index];
+            if (!ReferenceEquals(retain.Tco, tco))
+            {
+                continue;
+            }
+
+            _pendingAccessorResultRetains.RemoveAt(index);
+            if (!tco.IsRuntimeManagedSlot(retain.Slot))
+            {
+                continue;
+            }
+
+            for (int instIndex = 0; instIndex < _inst.Count; instIndex++)
+            {
+                if (_inst[instIndex] is IrInst.RcDup { RuntimeManaged: false } marker && marker.Target == retain.DupTemp)
+                {
+                    _inst[instIndex] = marker with { RuntimeManaged = true };
                     MarkRuntimeManagedTemp(retain.DupTemp);
                     break;
                 }
@@ -2084,6 +2129,40 @@ public sealed partial class Lowering
         }
 
         return CopyOutKind.None;
+    }
+
+    /// <summary>
+    /// A generic callee (its parameter position quantified in its own type scheme) is compiled once
+    /// with no static layout for that position, so its own cons cells never carry a runtime-managed
+    /// header regardless of what the caller passed in (see <see cref="IsCalleeParameterQuantifiedInScheme"/>).
+    /// <see cref="GetCallCopyOutKind"/> only recognizes <c>Str</c> heads and arena-resettable inner
+    /// lists; every other element shape — a tuple, another aggregate, <c>Bytes</c>/<c>BigInt</c>, or a
+    /// named record/ADT such as the sugar-parameter or token-index pairs the self-hosted parser
+    /// threads through a generic <c>reverse</c> — falls through to <see cref="CopyOutKind.None"/> and
+    /// the call result then escapes with no normalization at all: the elements a generic list-building
+    /// function moves out of its consumed input are never retained, so the caller's own release of
+    /// that now-unreferenced input frees memory the returned list still points at. This predicate
+    /// mirrors exactly what <see cref="EmitRuntimeManagedTcoDeepCopy"/> can express for one element,
+    /// so a caller can fall back to <see cref="EmitRuntimeManagedTcoListDeepCopy"/> — the same
+    /// recursive deep-copy machinery already proven for TCO parameter entry normalization — instead of
+    /// silently skipping normalization.
+    /// </summary>
+    private bool CanEmitRuntimeManagedListElementDeepCopy(TypeRef elementType)
+    {
+        TypeRef pruned = Prune(elementType);
+        if (CanArenaReset(pruned))
+        {
+            return true;
+        }
+
+        return pruned switch
+        {
+            TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+            TypeRef.TList list => CanEmitRuntimeManagedListElementDeepCopy(list.Element),
+            TypeRef.TTuple tuple => tuple.Elements.All(CanEmitRuntimeManagedListElementDeepCopy),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named),
+            _ => false,
+        };
     }
 
     /// <summary>

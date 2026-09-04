@@ -1086,10 +1086,35 @@ same public behavior.
   region (the RC heap is NOT immune — it shares the arena's reclaimable cursor). Covers `Str` and
   `List(Str)`; extend on new failing shapes. Regression:
   `src/Ashes.Tests/GenericParameterHeapValueUafTests.cs`.
-- [ ] **OPT-32** Retain the elements a generic function (`Ashes.Collection.List.reverse`) moves from a
+- [x] **OPT-32** Retain the elements a generic function (`Ashes.Collection.List.reverse`) moves from a
   consumed list into cells it builds — the generic cons allocates an arena cell around a
-  type-variable head with no retain. The known self-hosted instances work around it with
-  monomorphic reverses; the compiler item stays open.
+  type-variable head with no retain. Root cause was one call-boundary gap, not the cons cell
+  itself: `GetCallCopyOutKind` recognized only a `Str` head or a list of arena-resettable elements
+  and fell straight to `CopyOutKind.None` for anything else a generic function's element type
+  variable can be instantiated with — a tuple, a named record/ADT, `Bytes`, `BigInt`, or a nested
+  list over one of those — so a generic function's returned list of such elements escaped the call
+  with no normalization at all, in place of the retain a monomorphic accumulator's own TCO
+  parameter-entry normalization already performs for the identical element shape via
+  `EmitRuntimeManagedTcoListDeepCopy`. Fixed by routing that already-proven recursive per-element
+  deep-copy machinery through the call-result path too (`CanEmitRuntimeManagedListElementDeepCopy`,
+  `LowerUncoveredCallResultCopyOut`, `LowerCallDeepCopyOutListResult` in `Lowering.cs`/
+  `Lowering.Ownership.cs`), both for the immediate and the type-inference-deferred copy-out sites.
+  Regression: `src/Ashes.Tests/GenericListRetainsRuntimeManagedElementsTests.cs` (an IR-level
+  assertion that the deep-copy walk now appears at the call site, plus a churn-loop execution
+  test) and `tests/generic_reverse_retains_runtime_managed_elements.ash`. Two consequences of
+  that copy now owning what was arena-placed before, both caller-side in `LowerCallFinish`: a
+  call's consumed runtime-managed arguments are released only after its result is normalized
+  (the deep copy of `append(map(f)(xs))(map(f)(ys))` read records the release had already
+  freed through the callee's arena cells), and a deep-copied generic result consumed by a callee
+  whose result stays in its own region (neither normalized here nor produced runtime-managed)
+  and whose ownership summary is poisoned is not released at all — that callee may have borrowed
+  the records' strings into a region that outlives the call (the self-hosted lowering's
+  `finishMatchArm` stores an `ArmOwner` type name into an emitted `CleanupResource`), exactly as it
+  could when the list was arena-placed, so the copy is left with the callee the way its arena
+  predecessor was (`ConsumedDeepCopiedListStaysWithCallee`). Regression:
+  `ConsumedArgumentsReleasedAfterResultNormalizationTests.cs`,
+  `tests/generic_append_of_generic_map_results_releases_after_copy.ash`,
+  `tests/generic_result_consumed_by_opaque_callee_keeps_parts.ash`.
 - [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
   specialization (a helper's own body must resolve in the isolated scope too; an already-visited
   helper counts as resolved). Regression: `ReuseInlineResolutionTests`. Not yet applicable to
@@ -1100,9 +1125,32 @@ same public behavior.
   rather than clone the string elements of an escaping arena tuple — threading a large string
   through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
   `Bytes` view to sidestep this; the general cost remains).
-- [ ] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
+- [x] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
   caller can prove the aggregate is reference-counted (accessor shape:
-  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call).
+  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call). Root cause: an
+  accessor's own compiled body (`let name (p: Person) = p.name`, a bare `GetAdtField` + `Return`)
+  never allocates anything RC, so its per-callee `ReturnsRuntimeManaged` bit is `false`, baked once
+  into every closure value built for that function (`LowerVar`'s top-level-function-ref case) — it
+  can never reflect what a *specific call site's* own argument is, so `CopyOutArena
+  RcNormalization` ran on every call regardless. Fixed with a call-site-local decision, not a
+  change to the callee's bit: `IsTrivialParameterFieldAccessorBody` (`Lowering.cs`) recognizes the
+  callee's body shape (a bare `LoadLocal`/`[Borrow]`/`GetAdtField` of its own single parameter,
+  restricted to a Shallow-copyable field); `ClassifyAccessorArgumentRc` classifies the call site's
+  own argument as `NotRc` (unchanged copy behavior), `DefinitelyRc` (a fresh temp, or a named
+  binding whose own `OwnershipInfo` already says `RuntimeManaged` — the same per-name fact OPT-27's
+  let-ownership rules read), or `PendingTcoSlot` for a self-recursive loop's own parameter, whose
+  arena-vs-runtime-RC placement is not settled this early in lowering (`TryGetRuntimeManagedCallArgument`'s
+  own documented timing) — resolved later by `FinalizeAccessorResultRetains`, an `RcDup`-marker
+  mechanism mirroring `TcoParameterAggregateRetain`. Verified: a 200000-call loop over a `Person`
+  sourced from a genuinely RC-placed `List(Person)` (the TCO parameter-entry path places it RC)
+  went from 15.06s / 38.6M minor page faults (the old unconditional copy of a ~768 KB field) to
+  0.06s / 4K page faults after the fix — a ~250x improvement — with RSS materially unchanged (the
+  per-iteration arena bracket already reclaimed the copy either way; the win is the eliminated copy
+  work, not peak memory). Regression:
+  `src/Ashes.Tests/AccessorRetainsRcAggregateFieldTests.cs` (an IR-level assertion that the call
+  site emits a forced-true ownership flag followed by an `RcDup ... RuntimeManaged=true` in place
+  of the old packed-word bit-63 read, plus a correctness execution test) and
+  `tests/accessor_returns_retained_string_from_rc_record.ash`.
 - [ ] **OPT-36** Keep a large string alive when a tail-recursive loop moves it from the list (or tuple state)
   it consumes into its accumulator — the consumed cell's release frees the moved element, read
   back freed for any string past one arena chunk. Repro: split a 15 KB line, walk it inline
@@ -1134,7 +1182,14 @@ same public behavior.
 - [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
-  them.
+  them. Open: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
+  an aggregate is never retained at the store. For a runtime-RC aggregate that retain would be
+  balanced by its dropper and is the Perceus-correct rule; for an arena aggregate (the self-hosted
+  lowering's emitted instruction records, say) there is no dropper to balance it, so the arena
+  consumer relies on the borrowed value's owner outliving the region instead — which is what the
+  release-side rule under OPT-32 preserves for a generic callee's deep-copied result. Closing this
+  needs the store-site retain for runtime-RC aggregates, mirrored in `CoreLowering.ash` with the
+  affected parity oracles regenerated.
 - [~] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
   allocation reuse for tuples, ADTs, closures, and tail-recursive paths. Done: a first consumer of
   `HeapLayoutClassification.ash`'s reuse-eligibility flags for the ORDINARY (non-TCO,
