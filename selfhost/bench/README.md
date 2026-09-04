@@ -202,3 +202,35 @@ What the first run says, beyond the raw ratios:
 - The single file every stage-1 phase crashes on is `tests/regress_readline_loop_depth.ash`, a
   15 KB `// stdin:` directive line that exposes a stage-0 lifetime bug in a tail-recursive loop
   moving a large string from the list it consumes into its accumulator (checklist: ownership).
+
+### 2026-09-04, milestone 2 batches 2 and 3 (RC runtime, copy-out, entry normalization)
+
+Two entries in one: after batch 2 (PRs #829-#833: the backend RC runtime, runtime-managed
+strings and the owned-scope copy-out, the explain reports, the tagless layout, the structural
+droppers) and after batch 3 (PRs #838-#842: the backend copy and to-space family, match-arm
+brackets and copy-out, entry argument normalization, the let/TCO ownership rules, the
+call-window copy-out and argument retain). No phase regressed beyond the corpus growing with
+each batch's regression programs; the stage-0 optimize row rose with the new fold-release rule
+of #835 and is the one to watch.
+
+Batch 2:
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 21 | 886 | 15 | 886 | 0.71x | |
+| lex | 60 | 562613 | 82 | 562661 | 1.37x | |
+| parse | 218 | 871 | 239 | 866 | 1.10x | |
+| format | 92 | 3698326 | 104 | 2975634 | 1.13x | |
+| infer (stage 1) vs infer+lower (stage 0) | 1107 | 388 | 8 | 37 | 0.01x | |
+| optimize IR (stage 0 only) | 510 | 1412 | - | - | - | |
+
+Batch 3:
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 21 | 895 | 15 | 895 | 0.71x | |
+| lex | 61 | 579794 | 85 | 579851 | 1.39x | |
+| parse | 220 | 880 | 245 | 875 | 1.11x | |
+| format | 113 | 3783639 | 111 | 3053880 | 0.98x | |
+| infer (stage 1) vs infer+lower (stage 0) | 1084 | 391 | 8 | 37 | 0.01x | |
+| optimize IR (stage 0 only) | 626 | 1428 | - | - | - | |
