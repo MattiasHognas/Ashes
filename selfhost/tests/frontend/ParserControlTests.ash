@@ -67,6 +67,38 @@ let checkHandler unit =
         | ExprHandle(_, (Some("Clock"), "now", _parameters, _) :: (None, "return", _, _) :: []) -> Unit
         | _ -> test.fail("expected operation and return handler arms")
 
+let checkMatchScrutinee unit =
+    match "match match x with | 0 -> \"zero\" | _ -> \"other\" with | \"zero\" -> true | _ -> false"
+    |> ParserExpressionTests.expectClean
+    |> ParserExpressionTests.unspan with
+        | ExprMatch(scrutinee, (_, outerFirst, None) :: (_, outerSecond, None) :: [], _) ->
+            match (ParserExpressionTests.unspan(outerFirst), ParserExpressionTests.unspan(outerSecond), ParserExpressionTests.unspan(scrutinee)) with
+                | (ExprBool(true), ExprBool(false), ExprMatch(inner, (_, innerFirst, None) :: (_, innerSecond, None) :: [], _)) ->
+                    match (ParserExpressionTests.unspan(inner), ParserExpressionTests.unspan(innerFirst), ParserExpressionTests.unspan(innerSecond)) with
+                        | (ExprVar("x"), ExprString("zero"), ExprString("other")) -> Unit
+                        | _ -> test.fail("expected the inner match arms to end at the outer with")
+                | _ -> test.fail("expected inner match as scrutinee")
+        | _ -> test.fail("expected outer match over a match scrutinee")
+
+let checkConditionalScrutinee unit =
+    match "match if flag then 1 else 2 with | 1 -> true | _ -> false"
+    |> ParserExpressionTests.expectClean
+    |> ParserExpressionTests.unspan with
+        | ExprMatch(scrutinee, (_, first, None) :: (_, second, None) :: [], _) ->
+            match (ParserExpressionTests.unspan(scrutinee), ParserExpressionTests.unspan(first), ParserExpressionTests.unspan(second)) with
+                | (ExprIf(_, _, _), ExprBool(true), ExprBool(false)) -> Unit
+                | _ -> test.fail("expected conditional as scrutinee")
+        | _ -> test.fail("expected match over a conditional scrutinee")
+
+let checkRecordUpdateScrutineeNeedsParentheses unit =
+    match parseExpression("match p with x = 1 with | _ -> 0") with
+        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } ->
+            test.assertEqual(
+                "Expected Arrow but found Equals.",
+                diagnostic.message
+            )
+        | _ -> test.fail("expected the scrutinee to end at the first with")
+
 let checkMissingElse unit =
     match parseExpression("if true then 1") with
         | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } ->
@@ -85,4 +117,7 @@ let run unit =
     |> checkAwaitBinding
     |> checkRecordUpdate
     |> checkHandler
+    |> checkMatchScrutinee
+    |> checkConditionalScrutinee
+    |> checkRecordUpdateScrutineeNeedsParentheses
     |> checkMissingElse
