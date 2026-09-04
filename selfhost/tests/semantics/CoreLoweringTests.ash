@@ -1422,6 +1422,83 @@ let expectWildcardAfterEmptyAndConsIsTrimmed unit =
         |> countLoadConstInt(instructions)
         |> test.assertEqual(0))
 
+// A slot-collision regression: a reference-counted `let` binding whose local slot number is
+// reused by an unrelated binding inside a nested lambda must not leak its ownership fact across
+// the lambda boundary. `prepareLambdaBodyState` resets `nextLocal` to 2 for every freshly entered
+// lambda body, so a plain (non-runtime-managed) binding inside the lambda can land on the exact
+// same slot number an outer runtime-managed owner already occupies. Padding both sides (an extra
+// `let` before each) forces the collision deterministically: the outer `a` (a call whose callee's
+// body is a fresh string concatenation, so its result is unconditionally runtime-managed) lands
+// on the same slot as the inner `b` (a plain string literal, never runtime-managed) inside the
+// nested lambda `f`.
+let concatLambdaCallExpression =
+    ExprCall(
+        ExprLambda("u")(ExprAdd(ExprString("x"))(ExprString("y")))(None),
+        ExprInt(0),
+        false,
+        callArgumentsInline
+    )
+
+let slotCollisionInnerLambda =
+    ExprLambda(
+        "n",
+        ExprLet(
+            "p",
+            concatLambdaCallExpression,
+            ExprLet("b")(ExprString("literal"))(ExprVar("b"))([])(None)([]),
+            [],
+            None,
+            []
+        ),
+        None
+    )
+
+let slotCollisionOuterBody =
+    ExprLet(
+        "pad",
+        ExprInt(1),
+        ExprLet(
+            "a",
+            concatLambdaCallExpression,
+            ExprLet("f")(slotCollisionInnerLambda)(ExprVar("a"))([])(None)([]),
+            [],
+            None,
+            []
+        ),
+        [],
+        None,
+        []
+    )
+
+let slotCollisionExpression =
+    ExprCall(
+        ExprLambda("dummy")(slotCollisionOuterBody)(None),
+        ExprInt(0),
+        false,
+        callArgumentsInline
+    )
+
+let recursive linesContainExactly (lines: List(Str)) (needle: Str) =
+    match lines with
+        | [] -> false
+        | line :: rest ->
+            if line == needle
+            then true
+            else linesContainExactly(rest)(needle)
+
+let expectNestedLambdaDoesNotInheritOuterRuntimeOwners unit =
+    (let lines = dump(slotCollisionExpression)
+    in
+        Unit
+        |> (given (_) ->
+            "    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=11"
+            |> linesContainExactly(lines)
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            "    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=11 RuntimeManaged=true"
+            |> linesContainExactly(lines)
+            |> test.assertEqual(false)))
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -1458,4 +1535,5 @@ let runCoreLoweringTests unit =
     |> (given (_) -> expectWildcardAfterBothBoolLiteralsIsTrimmed(Unit))
     |> (given (_) -> expectWildcardAfterTupleOfLiteralsIsKept(Unit))
     |> (given (_) -> expectWildcardAfterEmptyAndConsIsTrimmed(Unit))
+    |> (given (_) -> expectNestedLambdaDoesNotInheritOuterRuntimeOwners(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))

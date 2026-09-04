@@ -3165,6 +3165,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [])
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
@@ -6977,6 +6978,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [])
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
