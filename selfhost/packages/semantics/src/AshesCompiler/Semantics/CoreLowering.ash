@@ -34,6 +34,7 @@ import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
+import AshesCompiler.Semantics.MatchArmOwnership
 import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
@@ -271,6 +272,16 @@ type CoreIfThen =
     | thenType: SemanticType
     | error: Maybe(CoreLoweringError)
 
+// The owner an arm makes for a fresh runtime-managed scrutinee, stage 0's `$match_rc_N`: the
+// scrutinee's owned type name, and whether it is a list whose spine the release walks.
+type MatchScrutineeOwner =
+    | scrutineeTypeName: Str
+    | scrutineeIsList: Bool
+
+// The plan of one match: the arms lowered so far record what each stored into the result slot
+// (most recent first), the scrutinee owner every arm adopts when the scrutinee is a fresh
+// runtime-managed value, and whether the literal string arms are normalized to the
+// reference-counted heap.
 type CoreMatchPlan =
     | state: CoreLoweringState
     | valueTemp: Int
@@ -280,7 +291,15 @@ type CoreMatchPlan =
     | noMatchLabel: Str
     | resultType: SemanticType
     | armRequest: ConsumerRequest
+    | armResults: List(MatchArmResult)
+    | scrutineeOwner: Maybe(MatchScrutineeOwner)
+    | normalizeStaticStrings: Bool
     | error: Maybe(CoreLoweringError)
+
+// One lowered arm: its lowered value, and what it contributed to the match's result.
+type LoweredMatchArm =
+    | lowered: LoweredCoreValue
+    | armResult: MatchArmResult
 
 // The cases of one match that share an outer constructor tag, in first-seen order. A group is a
 // trivial single case only while it has exactly one case whose sub-patterns are all catch-alls,
@@ -4781,13 +4800,123 @@ let recursive armBindings (count: Int) (bindings: List(CoreBinding)) =
             then []
             else binding :: armBindings(count - 1)(rest)
 
+// The index of the live-posts counter among the capability globals: one past the pending-post
+// register that follows the capability handler slots.
+let livePostsIndex (state: CoreLoweringState) = state.capabilityGlobalCount + 1
+
+// Stage 0's `BeginLivePostsGuard`: with a capability in the program, an arena restore is skipped
+// while a one-shot post is pending, since the post's closure still lives in the window. The
+// guard reads the live-posts counter and jumps past the block when it is not zero; without a
+// capability nothing is emitted and there is no label to close.
+let beginLivePostsGuard (state: CoreLoweringState) =
+    if state.capabilityGlobalCount == 0
+    then (state, None)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = counterState, temp = counterTemp } ->
+                match freshTemp(counterState) with
+                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                        match freshTemp(zeroState) with
+                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
+                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
+                                in
+                                    isZeroState
+                                    |> emit(state
+                                    |> livePostsIndex
+                                    |> LoadCapabilityHandler(counterTemp))
+                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                    |> emit(CmpIntEq(isZeroTemp)(counterTemp)(zeroTemp))
+                                    |> emit(JumpIfFalse(isZeroTemp)(skipLabel))
+                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
+
+let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) =
+    match skipLabel with
+        | Some(label) -> emit(Label(label))(state)
+        | None -> state
+
+// A match arm's closing reset under the live-posts guard: the pre-restore slot is allocated
+// first, as stage 0 does, then the guarded restore and reclaim.
+let closeGuardedArmBracket cursorSlot endSlot (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = preRestoreSlot } ->
+            match beginLivePostsGuard(allocated) with
+                | (guarded, skipLabel) ->
+                    guarded
+                    |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
+                    |> endLivePostsGuard(skipLabel)
+
+// Whether an arm's closing bracket resets the arena, stage 0's `PopOwnershipScope` test: the
+// result survives the reset, or already lives on the reference-counted heap.
+let armResultSurvivesReset (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(resultType)(state) || isRuntimeTemp(resultTemp)(state)
+
+let emitListSpineWalkBody (cursorSlot: Int) (loopLabel: Str) (sharedLabel: Str) (endLabel: Str) (firstTemp: Int) (state: CoreLoweringState) =
+    state
+    |> emit(Label(loopLabel))
+    |> emit(LoadLocal(firstTemp)(cursorSlot))
+    |> emit(LoadConstInt(firstTemp + 1)(0))
+    |> emit(CmpIntNe(firstTemp + 2)(firstTemp)(firstTemp + 1))
+    |> emit(JumpIfFalse(firstTemp + 2)(endLabel))
+    |> emit(RcIsUnique(firstTemp + 3)(firstTemp))
+    |> emit(JumpIfFalse(firstTemp + 3)(sharedLabel))
+    |> emit(LoadMemOffset(firstTemp + 4)(firstTemp)(8))
+    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
+    |> emit(StoreLocal(cursorSlot)(firstTemp + 4))
+    |> emit(Jump(loopLabel))
+    |> emit(Label(sharedLabel))
+    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
+    |> emit(Jump(endLabel))
+    |> emit(Label(endLabel))
+
+// Stage 0's `EmitOwnedValueDrop` of a runtime-managed list owner whose heads are scalars: the
+// owner is loaded into a cursor slot and its spine walked iteratively (`rcdrop_list_N`), a
+// unique cell releasing its tail and freeing itself, a shared cell decremented once and keeping
+// the rest of the spine. The walk stays at the arm exit: the placement pass moves only a single
+// owner-slot release.
+let emitScrutineeListRelease (ownerSlot: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = loadState, temp = loadTemp } ->
+            match freshLocal(loadState) with
+                | FreshLocal { state = cursorState, local = cursorSlot } ->
+                    match freshLabel("rcdrop_list")(cursorState) with
+                        | FreshLabel { state = loopState, label = loopLabel } ->
+                            match freshLabel("rcdrop_list_shared")(loopState) with
+                                | FreshLabel { state = sharedState, label = sharedLabel } ->
+                                    match freshLabel("rcdrop_list_end")(sharedState) with
+                                        | FreshLabel { state = endState, label = endLabel } ->
+                                            match freshTempRun(5)(endState) with
+                                                | FreshTemp { state = walkState, temp = firstTemp } ->
+                                                    walkState
+                                                    |> emit(LoadLocal(loadTemp)(ownerSlot))
+                                                    |> emit(StoreLocal(cursorSlot)(loadTemp))
+                                                    |> emitListSpineWalkBody(cursorSlot)(loopLabel)(sharedLabel)(endLabel)(firstTemp)
+
+// The owner a match makes for its scrutinee, stage 0's `TrackRuntimeManagedMatchScrutineeOwner`
+// narrowed to the shapes whose release is one owner drop: a fresh runtime-managed string or
+// `Bytes` value, or a list over scalars, matched directly rather than read from a binding.
+let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType) (state: CoreLoweringState) =
+    if scrutineeHasOwnerCandidate(scrutinee) && isRuntimeTemp(valueTemp)(state)
+    then
+        match resolveType(state)(valueType) with
+            | SemString -> Some(MatchScrutineeOwner(scrutineeTypeName = "String", scrutineeIsList = false))
+            | SemBytes -> Some(MatchScrutineeOwner(scrutineeTypeName = "Bytes", scrutineeIsList = false))
+            | SemList(element) ->
+                if element
+                |> resolveType(state)
+                |> canArenaResetLayout
+                then Some(MatchScrutineeOwner(scrutineeTypeName = "List", scrutineeIsList = true))
+                else None
+            | _ -> None
+    else None
+
 // An owned value a match arm's pattern bound, stage 0's `TrackOwnedBindingsInPattern`: a
 // resource by its name, slot, and resource type, any other heap-typed binding by its slot and
 // owned type name. A binding whose type is still unresolved once the pattern is lowered owns
-// nothing.
+// nothing. The arm that matched a fresh runtime-managed scrutinee owns it too, by the owner slot
+// it stored it in, its type name, and whether the release walks a list spine.
 type ArmOwner =
     | ArmResourceOwner(Str, Int, Str)
     | ArmHeapOwner(Int, Str)
+    | ArmScrutineeOwner(Int, Str, Bool)
 
 let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
     match binding with
@@ -4838,6 +4967,7 @@ let armResultIsBinding (name: Str) (body: Expr) =
 let armOwnerAlive (body: Expr) (state: CoreLoweringState) owner =
     match owner with
         | ArmHeapOwner(_slot, _typeName) -> true
+        | ArmScrutineeOwner(_slot, _typeName, _isList) -> true
         | ArmResourceOwner(name, slot, _typeName) ->
             match resourceStateOf(slot)(state) with
                 | Some(_kind) -> false
@@ -4862,6 +4992,14 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
             state
             |> emitOwnedLetRelease(typeName)(slot)
             |> emitArmOwnerReleases(body)(rest)
+        | ArmScrutineeOwner(slot, _typeName, true) :: rest ->
+            state
+            |> emitScrutineeListRelease(slot)
+            |> emitArmOwnerReleases(body)(rest)
+        | ArmScrutineeOwner(slot, typeName, false) :: rest ->
+            state
+            |> emitOwnedLetRelease(typeName)(slot)
+            |> emitArmOwnerReleases(body)(rest)
         | ArmResourceOwner(name, slot, typeName) :: rest ->
             if armResultIsBinding(name)(body)
             then
@@ -4877,45 +5015,134 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
 // surviving or runtime-managed result resets the arena; a heap result of an arm whose pattern
 // owned a live value is copied past the reset when it has a copy-out kind, the copy replacing the
 // result in the match's result slot; any other heap result leaves the window open.
-let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot resultTemp resultType state =
-    if hadAliveOwner
-    then
-        match closeOwnedScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state) with
-            | (closed, Some(copyTemp)) ->
-                emit(StoreLocal(resultSlot)(copyTemp))(closed)
-            | (closed, None) -> closed
-    else closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state)
+let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot resultTemp resultType (state: CoreLoweringState) =
+    match (state.capabilityGlobalCount > 0 && armResultSurvivesReset(resultTemp)(resultType)(state), hadAliveOwner) with
+        | (true, _owned) -> (closeGuardedArmBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
+        | (false, true) ->
+            match closeOwnedScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state) with
+                | (closed, Some(copyTemp)) ->
+                    (emit(StoreLocal(resultSlot)(copyTemp))(closed), copyTemp)
+                | (closed, None) -> (closed, resultTemp)
+        | (false, false) -> (closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
 
+// Closes an arm's scope and returns the closed state with the temp the match slot finally holds:
+// the copy when the close copied the result past the reset, the arm's own result otherwise.
 let closeArmScope body owners bracket resultSlot resultTemp resultType (state: CoreLoweringState) =
     state
     |> emitArmOwnerReleases(body)(owners)
     |> closeArmBracket(bracket)(anyArmOwnerAlive(body)(state)(owners))(resultSlot)(resultTemp)(resultType)
 
-let finishMatchArm body resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
+// An arm that failed to lower contributes nothing to the match's result.
+let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
+    LoweredMatchArm(
+        lowered = failure(failedState)(error),
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false)
+    )
+
+// Stage 0's `LowerMatchArmExpression`: a literal string arm of a match whose arms are normalized
+// is copied to the reference-counted heap as an RC-normalized `CopyOutArena` of the constant,
+// the literal itself loaded at the match's own location; any other arm body lowers as usual.
+let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLoweringState) =
+    match (normalizeStaticStrings, staticStringArmBody(body)) with
+        | (true, Some(value)) ->
+            match lowerString(value)(state) with
+                | LoweredCoreValue { state = literalState, temp = literalTemp, semanticType = literalType, error = None } ->
+                    match freshTemp(literalState) with
+                        | FreshTemp { state = copyState, temp = copyTemp } ->
+                            copyState
+                            |> emit(CopyOutArena(copyTemp)(literalTemp)(-1)(true)(RcNormalization)(None))
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> success(copyTemp)(literalType)
+                | failed -> failed
+        | _ -> lower(body)(state)
+
+let resultTypeIsList (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemList(_element) -> true
+        | _ -> false
+
+let tempIsNewlyProduced (temp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false
+
+// What an arm stored into the match slot: a reference-counted value when its final temp is one,
+// or when it is the empty list literal of a list-typed join; newly produced only when the temp
+// itself was freshly produced.
+let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    MatchArmResult(
+        armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
+        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state)
+    )
+
+let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
-        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
         | LoweredCoreValue { state = bodyState, error = None } ->
             match bodyState
             |> withConsumerRequest(request)
-            |> lower(body) with
-                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+            |> lowerMatchArmBody(body)(normalizeStaticStrings)(lower) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = bodyType, error = None } ->
                     match bindType(resultType)(bodyType)(resultState) with
-                        | (failedState, Some(error)) -> failure(failedState)(error)
+                        | (failedState, Some(error)) -> failedMatchArm(failedState)(error)
                         | (typedState, None) ->
-                            typedState
+                            match typedState
                             |> emit(StoreLocal(resultSlot)(temp))
-                            |> closeArmScope(body)(owners)(bracket)(resultSlot)(temp)(bodyType)
-                            |> emit(Jump(endLabel))
-                            |> restoreBindings(outerBindings)
-                            |> success(temp)(resultType)
+                            |> closeArmScope(body)(owners)(bracket)(resultSlot)(temp)(bodyType) with
+                                | (closed, finalTemp) ->
+                                    LoweredMatchArm(
+                                        lowered = closed
+                                        |> emit(Jump(endLabel))
+                                        |> restoreBindings(outerBindings)
+                                        |> success(temp)(resultType),
+                                        armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
+                                    )
+
+let recursive allBindingsSurviveReset (state: CoreLoweringState) (bindings: List(CoreBinding)) =
+    match bindings with
+        | [] -> true
+        | CoreBinding { scheme = TypeScheme { body = bindingType } } :: rest -> resultSurvivesReset(bindingType)(state) && allBindingsSurviveReset(state)(rest)
+
+// Whether the arm takes the scrutinee owner: not when a plain variable pattern binds the whole
+// scrutinee (stage 0 makes that binding's slot the owner, and the arm may hand it on), and not
+// when the pattern bound a heap value (stage 0 aliases such a binding to the owner and transfers
+// it out of the arm on demand); a pattern binding only scalars leaves the owner nothing to share.
+let armAdoptsScrutinee (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
+    if patternBindsWholeScrutinee(pattern)
+    then false
+    else
+        state.bindings
+        |> armBindings(length(state.bindings) - length(outerBindings))
+        |> allBindingsSurviveReset(state)
+
+// Stage 0's `TrackRuntimeManagedMatchScrutineeOwner` after the guard: the arm stores the fresh
+// scrutinee into an owner slot of its own (`$match_rc_N`), released at the arm exit like any
+// owned binding; the value temp is handed on to the slot.
+let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pattern: Pattern) (outerBindings: List(CoreBinding)) (guarded: LoweredCoreValue) =
+    match (owner, guarded) with
+        | (Some(MatchScrutineeOwner { scrutineeTypeName = typeName, scrutineeIsList = isList }), LoweredCoreValue { state = state, error = None }) ->
+            if armAdoptsScrutinee(pattern)(outerBindings)(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = ownerSlot } ->
+                        allocated
+                        |> emit(StoreLocal(ownerSlot)(valueTemp))
+                        |> markRuntimeTemp(valueTemp)(RuntimeTransferred)
+                        |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (ownerSlot, true) :: adopted.runtimeOwners)
+                        |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)]))
+            else (guarded, [])
+        | _ -> (guarded, [])
 
 // The guard and body of an arm whose pattern is lowered. The guard lowers through `guardLower`
-// and the body through `bodyLower`; the capability-operation arms hand in different ones.
-let finishPatternArm body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
-    patternResult
+// and the body through `bodyLower`; the capability-operation arms hand in different ones. The
+// arm's owners are the pattern's, then the scrutinee owner when the arm adopts one.
+let finishPatternArm (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
+    match patternResult
     |> lowerMatchGuard(guard)(failLabel)(guardLower)
-    |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(armOwners(outerBindings)(patternResult))(bodyLower)
+    |> adoptScrutineeOwner(valueTemp)(scrutineeOwner)(pattern)(outerBindings) with
+        | (guarded, scrutineeOwners) ->
+            finishMatchArm(body)(normalizeStaticStrings)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(append(armOwners(outerBindings)(patternResult))(scrutineeOwners))(bodyLower)(guarded)
 
 // One arm is bracketed on its own: `SaveArenaState` before the pattern test, and a matching
 // restore/reclaim on BOTH exits — the success path (before the jump to the match end) and the
@@ -4923,17 +5150,19 @@ let finishPatternArm body guard failLabel resultSlot endLabel resultType (reques
 // target. Stage 0 emits the cleanup block for every arm, including one whose pattern cannot fail.
 let lowerMatchArm pattern body guard lower cleanupLabel (bracket: ArenaBracket) plan =
     match plan with
-        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request } ->
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings } ->
             match state with
                 | CoreLoweringState { bindings = outerBindings } ->
                     state
                     |> preparePattern(pattern)
                     |> lowerPattern(pattern)(valueTemp)(valueType)(cleanupLabel)
-                    |> finishPatternArm(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
+                    |> finishPatternArm(scrutineeOwner)(normalizeStaticStrings)(pattern)(valueTemp)(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
 
-let recastMatchPlan plan lowered =
-    match (plan, lowered) with
-        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request }, LoweredCoreValue { state = state, error = error }) ->
+// The plan after one arm: the arm's state and error, and its result recorded ahead of the
+// earlier arms'.
+let recastMatchPlan plan (loweredArm: LoweredMatchArm) =
+    match (plan, loweredArm) with
+        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request, armResults = armResults, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings }, LoweredMatchArm { lowered = LoweredCoreValue { state = state, error = error }, armResult = armResult }) ->
             CoreMatchPlan(
                 state = state,
                 valueTemp = valueTemp,
@@ -4943,6 +5172,9 @@ let recastMatchPlan plan lowered =
                 noMatchLabel = noMatchLabel,
                 resultType = resultType,
                 armRequest = request,
+                armResults = armResult :: armResults,
+                scrutineeOwner = scrutineeOwner,
+                normalizeStaticStrings = normalizeStaticStrings,
                 error = error
             )
 
@@ -4957,16 +5189,17 @@ let labelNextMatchArm rest failLabel (plan: CoreMatchPlan) =
         | _ -> plan with state = emit(Label(failLabel))(plan.state)
 
 // The arm's cleanup block, emitted right after its jump to the match end: restore this arm's own
-// bracket, then jump on to the real fail target (`match_next_N`, or the no-match label for the
-// last arm). Label allocation order matches stage 0's — the next-arm label first, then this arm's
-// cleanup label.
+// bracket under the live-posts guard (a guard expression can perform a one-shot capability
+// operation whose pending post must survive the failed arm's cleanup), then jump on to the real
+// fail target (`match_next_N`, or the no-match label for the last arm). Label allocation order
+// matches stage 0's — the next-arm label first, then this arm's cleanup label.
 let emitMatchArmCleanup cleanupLabel failLabel (bracket: ArenaBracket) (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
         | CoreMatchPlan { state = state } ->
             plan with state = emit(Jump(failLabel))(state
             |> emit(Label(cleanupLabel))
-            |> closeArenaBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot))
+            |> closeGuardedArmBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot))
 
 // Brackets one arm of a linear chain: the cleanup label is allocated after the arm's fail label,
 // the bracket opens before the pattern test, and the cleanup block follows the arm's jump to the
@@ -5007,6 +5240,9 @@ let failedMatchPlan state error =
         noMatchLabel = "",
         resultType = SemNever,
         armRequest = emptyConsumerRequest,
+        armResults = [],
+        scrutineeOwner = None,
+        normalizeStaticStrings = false,
         error = Some(error)
     )
 
@@ -5022,6 +5258,9 @@ let finishPreparedMatch valueTemp valueType resultType resultSlot endLabel fresh
                 noMatchLabel = noMatchLabel,
                 resultType = resultType,
                 armRequest = emptyConsumerRequest,
+                armResults = [],
+                scrutineeOwner = None,
+                normalizeStaticStrings = false,
                 error = None
             )
 
@@ -5056,10 +5295,18 @@ let prepareMatchPlan loweredValue =
             |> freshType
             |> prepareMatchResultType(valueTemp)(valueType)
 
+// Stage 0's `MarkRuntimeManagedMatchResult`: the join's reloaded value is a reference-counted
+// value when every arm stored one, newly produced only when every arm's was.
+let markMatchJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
+        | (true, true) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
+        | (true, false) -> markRuntimeTemp(resultTemp)(RuntimeTransferred)(state)
+        | (false, _) -> state
+
 let finishMatchPlan plan =
     match plan with
         | CoreMatchPlan { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | CoreMatchPlan { state = state, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, error = None } ->
+        | CoreMatchPlan { state = state, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armResults = armResults, error = None } ->
             match freshTemp(state) with
                 | FreshTemp { state = defaultState, temp = defaultTemp } ->
                     match freshTemp(defaultState) with
@@ -5070,6 +5317,7 @@ let finishMatchPlan plan =
                             |> emit(StoreLocal(resultSlot)(defaultTemp))
                             |> emit(Label(endLabel))
                             |> emit(LoadLocal(resultTemp)(resultSlot))
+                            |> markMatchJoin(resultTemp)(armResults)
                             |> success(resultTemp)(resolveType(resultState)(resultType))
 
 // Tag-group match dispatch. Arms whose patterns are constructors of one ADT are grouped by their
@@ -5230,7 +5478,7 @@ let lowerKnownTagMatchArm pattern body guard failLabel lower (plan: CoreMatchPla
             bracketState
             |> preparePattern(pattern)
             |> lowerKnownTagPattern(pattern)(plan.valueTemp)(plan.valueType)(failLabel)
-            |> finishPatternArm(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
+            |> finishPatternArm(plan.scrutineeOwner)(plan.normalizeStaticStrings)(pattern)(plan.valueTemp)(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
 
 let groupCaseFailLabel rest (groupFailLabel: Str) state =
     match rest with
@@ -5549,6 +5797,18 @@ let checkCoreMatchCoverage cases (plan: CoreMatchPlan) =
                     |> coverageErrorMessage
                     |> CoreMatchCoverageError)
 
+// The scrutinee owner every arm may adopt, decided once the scrutinee is lowered.
+let withScrutineeOwner (scrutinee: Expr) (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType } -> plan with scrutineeOwner = scrutineeOwnerOf(scrutinee)(valueTemp)(valueType)(state)
+
+let withStaticStringNormalization cases (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | CoreMatchPlan { state = state } ->
+            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state))(cases)
+
 let lowerMatch value cases lower state =
     state
     |> clearConsumerRequest
@@ -5557,6 +5817,8 @@ let lowerMatch value cases lower state =
     |> withPlanArmRequest(state
     |> consumerRequestOf
     |> branchRequest)
+    |> withScrutineeOwner(value)
+    |> withStaticStringNormalization(cases)
     |> checkCoreMatchCoverage(cases)
     |> lowerMatchArmsDispatch(cases)(lower)
     |> finishMatchPlan
@@ -7771,7 +8033,7 @@ and resolveOperationArmMatchArm pattern body guard lower postRegisterIndex capNa
                         then
                             opName
                             |> UnsupportedOperationArmResume(capName)
-                            |> failure(state)
+                            |> failedMatchArm(state)
                         else
                             let bodyLower =
                                 given (armBody) ->
@@ -7780,7 +8042,7 @@ and resolveOperationArmMatchArm pattern body guard lower postRegisterIndex capNa
                                 state
                                 |> preparePattern(pattern)
                                 |> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)
-                                |> finishPatternArm(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
+                                |> finishPatternArm(None)(false)(pattern)(valueTemp)(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
 // Each operation arm is bracketed like a linear arm of an ordinary match.
 and resolveOperationArmMatchArms cases lower postRegisterIndex capName opName plan =
     match (cases, plan) with

@@ -819,6 +819,27 @@ same public behavior.
   `consumed_list_argument` fixture joins the byte-identical set, while
   `curried_known_call_result` and `concat_runtime_result` match stage 0 up to the trait-evidence
   header and the curried inner lambda's locations (`CallWindowLoweringTests.ash`). Open: the mutual-recursion loop merge
+  header and the curried inner lambda's locations (`CallWindowLoweringTests.ash`). A fresh runtime-managed scrutinee
+  matched directly (a call result or a nested match result that is a string, `Bytes`, or a list
+  over scalars) is owned by the arm that matched it, stage 0's `$match_rc_N`: after the pattern
+  test and guard the arm stores it into an owner slot of its own, releases it at the arm exit
+  (`RcDrop ... OwnerSlot=N RuntimeManaged=true`, moved to the store by the placement pass; a
+  list owner walks its spine inline through the `rcdrop_list_N` loop, stage 0's
+  `EmitRuntimeManagedListDrop`), and closes with the owned-scope copy-out; an arm whose pattern
+  binds the whole scrutinee or a heap value out of it takes no owner. The match result carries
+  stage 0's `MarkRuntimeManagedMatchResult` status: runtime-managed when every arm stored a
+  runtime-managed value (the empty list literal of a list-typed join counts), newly produced only
+  when every arm's was, so a lambda whose body is such a match is a `ReturnsRuntimeManaged`
+  closure and a known call to it resets its window. Beside a fresh-string arm, a literal string
+  arm of a guard-free match is normalized to an RC-normalized `CopyOutArena` of the constant
+  (`ShouldNormalizeStaticStringMatchArms`; stage 0 applies no such rule to `if`). With a
+  capability in the program, an arm's closing reset and its cleanup block's reset run under the
+  live-posts guard (`live_posts_skip_N`, the counter one past the pending-post register). The
+  pure rules live in `MatchArmOwnership.ash`; the `match_rc_scrutinee` and
+  `match_list_scrutinee_drop` fixtures join the byte-identical set, and `MatchArmScopeTests.ash`
+  covers the guarded arm resets under a `handle` at the expression level (the
+  `handle_match_arm_reset` fixture stays out of the runner: the single-file lowering takes no
+  capability declarations). Open: the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
   `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the deferred call-result copy-out for a result whose layout is still
@@ -828,11 +849,18 @@ same public behavior.
   forwarding target), the runtime flag on a deferred add that seals to `ConcatStr`, the
   `BigInt.parse`/`Text.uncons` result droppers of a consumed argument, the capability live-posts guard around the call reset, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
   it `RuntimeManaged` and flags the closure `ReturnsRuntimeManaged`; the selfhost copies the
-  arena result out at the arm close instead), the runtime-managed scrutinee owner
-  (`$match_rc_N`, a fresh RC-managed call result or nested match result matched directly) and
-  the match result's all-arms runtime-managed status, the live-posts guard around an arm's reset
-  in a program with a `handle`, the static-string arm normalization (`CopyOutArena` of a literal
-  arm when a sibling arm produces a fresh string), coroutine/async back edges, the
+  arena result out at the arm close instead), the scrutinee owner of an ADT, tuple, or closure
+  scrutinee and of an arm that binds the whole scrutinee or a heap value out of it (stage 0's
+  independently owned fields, the binding-to-owner aliasing, and the
+  `TransferDirectRuntimeManagedMatchResult` transfer of a returned binding; such an arm keeps
+  today's unowned scrutinee), the TCO-parameter branch of the join rule
+  (`BranchJoinsRuntimeManagedResult`), the live-posts guard around an arm's guarded copy-out
+  close and around the `let` and call resets, the whole-program `handle` fixture (the
+  single-file lowering takes no capability declarations), the `Borrow` of a captured closure
+  read as a callee (stage 0 borrows an owned capture; the selfhost loads it bare, which keeps a
+  function whose match scrutinee calls a captured function out of the parity runner), the dead
+  `ReturnsRuntimeManaged` bit read stage 0 emits before a known-RC call of a match-bodied
+  callee, coroutine/async back edges, the
   `rc_normalize_list` deep-copy loop of an entry-normalized list child over non-copyable heads
   (such a parameter is left unnormalized), the source locations of a curried inner lambda's
   instructions (stage 0 tags them with the `let`'s span, which keeps the three

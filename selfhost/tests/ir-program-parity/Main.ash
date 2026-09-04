@@ -58,6 +58,13 @@ let checkFixture root name =
 // did not take, element heads included.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
+// match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
+// (stored to its own slot, released at the arm exit), the all-arms runtime-managed join, and
+// the literal string arm copied to the reference-counted heap beside a fresh-string arm;
+// match_list_scrutinee_drop the owner of a nested match result over a list of scalars, whose
+// release walks the spine inline at the arm exit. handle_match_arm_reset stays out: the
+// single-file lowering does not take capability declarations, so its live-posts guards are
+// covered at the expression level in MatchArmScopeTests.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -77,5 +84,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("call_result_copy_out"))
         |> (given (_) -> checkFixture(root)("call_argument_retain"))
         |> (given (_) -> checkFixture(root)("consumed_list_argument"))
+        |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
+        |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
