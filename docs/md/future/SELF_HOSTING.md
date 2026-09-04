@@ -803,20 +803,36 @@ same public behavior.
   callee did not take is released after the call. `CallOwnership.ash` holds the pure rules
   (copy-out kind, callee borrow and reach facts), and the reach analysis poisons a call through
   a qualified or computed callee as stage 0 does. The `call_result_copy_out` and
-  `call_argument_retain` fixtures join the byte-identical set. Open: the mutual-recursion loop merge
+  `call_argument_retain` fixtures join the byte-identical set. A saturated application of a
+  curried let-bound function follows stage 0's returned-closure chain
+  (`functionReturnedClosureLabels`, recorded from the last closure instruction producing a
+  body temp) to the innermost stage's recorded placement, the known-result decision is gated by
+  the RC-eligibility provenance (`CallResultProvenance.ash` classifies each let-bound function's
+  terminal arms as stage 0's `BuildProvenanceFunctionNode` does and `OwnershipProvenance.ash`
+  solves the forwarding fixpoint; a body-RC but non-eligible callee still reads the returns
+  bit), a `ConcatStr` carries `RuntimeManaged=true` when its consumer asked for a runtime string
+  (its operands lowered without the request, its result newly produced, a newly produced
+  operand released after the use), and a consumed list, tuple, or ADT argument is released
+  through stage 0's inline `rcdrop_list`/`rc_drop_tuple_shared`/`rc_drop_shared` walks (the
+  spine-only and shallow releases when the callee's arena result may keep the parts, the
+  constructor-switching dropper for a recursive or owned-child ADT); the
+  `consumed_list_argument` fixture joins the byte-identical set, while
+  `curried_known_call_result` and `concat_runtime_result` match stage 0 up to the trait-evidence
+  header and the curried inner lambda's locations (`CallWindowLoweringTests.ash`). Open: the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
   `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the deferred call-result copy-out for a result whose layout is still
-  unresolved at the call (`CallResultCopyOutPending`), the list-spine, tuple, and owned-child
-  releases of a consumed call argument, the RC-eligibility provenance behind the known-result
-  decision, the capability live-posts guard around the call reset, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
+  unresolved at the call (`CallResultCopyOutPending`), the provenance classification's
+  `IsFreshRuntimeManageableAdtExpressionCore` fallback and its fresh `Bytes`/`BigInt` builtin
+  producers (only the fresh-string builtins ground a node; a `let recursive` binding is not a
+  forwarding target), the runtime flag on a deferred add that seals to `ConcatStr`, the
+  `BigInt.parse`/`Text.uncons` result droppers of a consumed argument, the capability live-posts guard around the call reset, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
   it `RuntimeManaged` and flags the closure `ReturnsRuntimeManaged`; the selfhost copies the
   arena result out at the arm close instead), the runtime-managed scrutinee owner
   (`$match_rc_N`, a fresh RC-managed call result or nested match result matched directly) and
   the match result's all-arms runtime-managed status, the live-posts guard around an arm's reset
   in a program with a `handle`, the static-string arm normalization (`CopyOutArena` of a literal
-  arm when a sibling arm produces a fresh string), the runtime flag on `ConcatStr` (the
-  deferred-add sealing), curried known-call results, coroutine/async back edges, the
+  arm when a sibling arm produces a fresh string), coroutine/async back edges, the
   `rc_normalize_list` deep-copy loop of an entry-normalized list child over non-copyable heads
   (such a parameter is left unnormalized), the source locations of a curried inner lambda's
   instructions (stage 0 tags them with the `let`'s span, which keeps the three

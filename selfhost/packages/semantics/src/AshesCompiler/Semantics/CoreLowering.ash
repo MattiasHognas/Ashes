@@ -23,6 +23,7 @@ import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CallOwnership
+import AshesCompiler.Semantics.CallResultProvenance
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
@@ -221,6 +222,8 @@ type CoreLoweringState =
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
+    | functionReturnedClosureLabels: List((Str, Str))
+    | resultRcEligibility: (Int, List((Str, Bool)))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -447,7 +450,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         letLambdaLabels = [],
         programParameterOwnership = [],
         dropperLabels = emptyDropperLabelCache,
-        tcoLoop = None
+        tcoLoop = None,
+        functionReturnedClosureLabels = [],
+        resultRcEligibility = (0, [])
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -868,6 +873,28 @@ let recursive lookupBodyRuntimeManaged (label: Str) (entries: List((Str, Bool)))
 let bodyReturnsRuntimeManaged (label: Str) (state: CoreLoweringState) = lookupBodyRuntimeManaged(label)(state.bodyRuntimeManagedByLabel)
 
 let recordBodyRuntimeManaged (label: Str) (runtimeManaged: Bool) (state: CoreLoweringState) = state with bodyRuntimeManagedByLabel = (label, runtimeManaged) :: state.bodyRuntimeManagedByLabel
+
+// The label of the closure a lowered body returns: the last closure instruction that produced
+// the body temp, read from the body's instructions in reverse emission order.
+let recursive returnedClosureLabelOf (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | [] -> None
+        | IrInstruction { instruction = MakeClosure(target, label, _environment, _size, _returns, _accepts, _flag) } :: rest ->
+            if target == bodyTemp
+            then Some(label)
+            else returnedClosureLabelOf(bodyTemp)(rest)
+        | IrInstruction { instruction = MakeClosureStack(target, label, _environment, _size, _returns, _accepts) } :: rest ->
+            if target == bodyTemp
+            then Some(label)
+            else returnedClosureLabelOf(bodyTemp)(rest)
+        | _ :: rest -> returnedClosureLabelOf(bodyTemp)(rest)
+
+// Stage 0's `RecordReturnedClosureLabel`: a curried function's stage is remembered under the
+// function's label, so a saturated spine can be followed to the innermost body it reaches.
+let recordReturnedClosureLabel (label: Str) (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) (state: CoreLoweringState) =
+    match returnedClosureLabelOf(bodyTemp)(reversedInstructions) with
+        | Some(returned) -> state with functionReturnedClosureLabels = (label, returned) :: state.functionReturnedClosureLabels
+        | None -> state
 
 // Whether a lifted function normalizes its argument into an owned value at entry, so its closure
 // advertises that it accepts a runtime-managed argument and a caller hands over a retained
@@ -2524,6 +2551,8 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with substitution = substitution)
             |> (given (current: CoreLoweringState) -> current with sealedOperatorDefaults = sealedOperatorDefaults)
             |> (given (current: CoreLoweringState) -> current with pendingClosureNormalizers = bodyState.pendingClosureNormalizers)
+            |> (given (current: CoreLoweringState) -> current with bodyRuntimeManagedByLabel = bodyState.bodyRuntimeManagedByLabel)
+            |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -2716,6 +2745,7 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
                             finishedBody
                             |> restoreOuterFrame(typedOuter)
                             |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(loweredBody))
+                            |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                             |> markCapturedResourcesMoved(survivors)
                             |> allocateEnvironment(survivors)(stackAllocate)
                             |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
@@ -3251,6 +3281,67 @@ let freshTempRun (count: Int) (state: CoreLoweringState) =
                 temp = base
             )
 
+let recursive constructorAritiesOf (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { name = name } as layout) :: rest -> (name, constructorArity(layout)) :: constructorAritiesOf(rest)
+
+let recursive nullaryConstructorCount (typeName: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> 0
+        | layout :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName && constructorArity(layout) == 0
+                    then 1 + nullaryConstructorCount(typeName)(rest)
+                    else nullaryConstructorCount(typeName)(rest)
+                | None -> nullaryConstructorCount(typeName)(rest)
+
+// The nullary constructors that are the only nullary constructor of their type.
+let recursive soleNullaryConstructorNames (layouts: List(CoreConstructorLayout)) (all: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { name = name } as layout) :: rest ->
+            match constructorResultName(layout) with
+                | Some(typeName) ->
+                    if constructorArity(layout) == 0 && nullaryConstructorCount(typeName)(all) == 1
+                    then name :: soleNullaryConstructorNames(rest)(all)
+                    else soleNullaryConstructorNames(rest)(all)
+                | None -> soleNullaryConstructorNames(rest)(all)
+
+let provenanceConstructorsOf (state: CoreLoweringState) =
+    ProvenanceConstructors(
+        arities = constructorAritiesOf(state.constructorLayouts),
+        soleNullary = soleNullaryConstructorNames(state.constructorLayouts)(state.constructorLayouts)
+    )
+
+let recursive provenanceFunctionsOf (lambdas: List((Str, List(Str), Expr))) =
+    match lambdas with
+        | [] -> []
+        | (name, parameters, body) :: rest -> ProvenanceFunction(name = name, parameters = parameters, body = body) :: provenanceFunctionsOf(rest)
+
+// Stage 0's `IsRuntimeRcFreshBuiltinProducer` over the fresh-string builtins the lowering knows.
+let isFreshBuiltinProducer (expression: Expr) (state: CoreLoweringState) =
+    match freshStringBuiltinCallKind(expression)(state) with
+        | Some(_kind) -> true
+        | None -> false
+
+let resultRcEligibilityOf (state: CoreLoweringState) =
+    match state.resultRcEligibility with
+        | (_count, eligibility) -> eligibility
+
+// Stage 0's `ComputeFunctionResultProvenanceFixpoint` over the let-bound functions recorded so
+// far, recomputed only once a function was recorded since the last call site.
+let ensureResultRcEligibility (state: CoreLoweringState) =
+    match state.resultRcEligibility with
+        | (count, _eligibility) ->
+            if count == length(state.letLambdas)
+            then state
+            else
+                state with resultRcEligibility = (length(state.letLambdas), (given (expression: Expr) -> isFreshBuiltinProducer(expression)(state))
+                |> resultProvenanceNodes(provenanceFunctionsOf(state.letLambdas))(provenanceConstructorsOf(state))
+                |> resolvedRcEligibility)
+
 // Stage 0's known-callee resolution for a call spine: a let-bound function called by name
 // carries its label, the ownership of its parameters (the single-function verdict overlaid with
 // the whole-program fixpoint, as `markCallArgumentsMoved` consults it), and the parameter reach
@@ -3265,6 +3356,9 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                         parameters = parameters,
                         ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                         reach = calleeReach(parameters)(body),
+                        rcEligible = state
+                        |> resultRcEligibilityOf
+                        |> lookupRcEligible(callee),
                         argumentCount = length(spine.arguments)
                     ))
                 | None -> None
@@ -3517,22 +3611,24 @@ let hasCallCopyOut (semanticType: SemanticType) (state: CoreLoweringState) =
         | Some(_copyOut) -> true
         | None -> false
 
-// Whether the callee's lowered body is recorded to produce a reference-counted result, stage 0's
-// `TryGetCompiledFunctionResultRuntimeManaged` for a single application; a curried spine's
-// returned-closure chain is not tracked and a body not lowered yet is unknown.
-let calleeBodyReturnsRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) =
-    match facts with
-        | Some(CoreCalleeFacts { label = Some(label), argumentCount = 1 }) -> bodyReturnsRuntimeManaged(label)(state)
-        | _ -> false
+// Stage 0's `TryGetCompiledFunctionResultRuntimeManaged` read at a call site: the recorded
+// placement of the innermost stage the spine's applications reach, following a curried callee's
+// returned-closure chain; a body not lowered yet is unknown.
+let calleeCompiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) =
+    match compiledResultRuntimeManaged(facts)(state.functionReturnedClosureLabels)(state.bodyRuntimeManagedByLabel) with
+        | Some(runtimeManaged) -> runtimeManaged
+        | None -> false
 
-// Stage 0's `TryResolveKnownFunctionResultOwnership`: the callee's body produced a
-// reference-counted result of a type runtime RC holds.
-let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = calleeBodyReturnsRuntimeManaged(facts)(state) && isRuntimeManageableResultType(resultType)(state)
+// Stage 0's `TryResolveKnownFunctionResultOwnership`: a saturated call to a callee whose result
+// the provenance classification proved RC-eligible, of a type runtime RC holds, whose lowered
+// body produced a reference-counted result.
+let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = calleeSaturatedAndEligible(facts) && isRuntimeManageableResultType(resultType)(state) && calleeCompiledResultRuntimeManaged(facts)(state)
 
 // Stage 0's `IsDirectRuntimeManagedFunctionCall` with `ResolveUncopyableResultRuntimeManaged`:
-// the known result ownership, or a lowered body's reference-counted result of a heap type
-// without any copy-out (such a result can only have left the callee's window by being RC).
-let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = knownResultRuntimeManaged(facts)(resultType)(state) || calleeBodyReturnsRuntimeManaged(facts)(state) && resultSurvivesReset(resultType)(state) == false && hasCallCopyOut(resultType)(state) == false
+// the known result ownership, or a lowered body's reference-counted result of a type runtime RC
+// holds or of a heap type without any copy-out (such a result can only have left the callee's
+// window by being RC).
+let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = knownResultRuntimeManaged(facts)(resultType)(state) || calleeCompiledResultRuntimeManaged(facts)(state) && (isRuntimeManageableResultType(resultType)(state) || resultSurvivesReset(resultType)(state) == false && hasCallCopyOut(resultType)(state) == false)
 
 // The last application of a spine reads the callee's returns bit when the result's ownership
 // is not statically known and its type has a call copy-out, stage 0's `needsResultOwnership`.
@@ -3608,54 +3704,283 @@ let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: 
             |> ensureFunctionType(functionType)
             |> lowerCoreCallTyped(context)(arity)(argument)(transfers)(consumed)(lower)(functionTemp)
 
-let layoutHasNoOwnedChildren (semanticType: SemanticType) (state: CoreLoweringState) =
+// Stage 0's `EmitRuntimeManagedShallowAggregateDrop`: a non-null aggregate cell is released
+// without walking its children.
+let emitRuntimeShallowAggregateDrop (valueTemp: Int) (typeName: Str) (state: CoreLoweringState) =
+    match freshLabel("rcdrop_shallow_end")(state) with
+        | FreshLabel { state = labelled, label = endLabel } ->
+            match freshTempRun(2)(labelled) with
+                | FreshTemp { state = reserved, temp = zeroTemp } ->
+                    reserved
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
+                    |> emit(JumpIfFalse(zeroTemp + 1)(endLabel))
+                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
+                    |> emit(Label(endLabel))
+
+// The loop, shared-cell, and end labels of a list release walk, allocated in that order.
+let freshListDropLabels (prefix: Str) (state: CoreLoweringState) =
+    match freshLabel(prefix)(state) with
+        | FreshLabel { state = loopLabelled, label = loopLabel } ->
+            match freshLabel(prefix + "_shared")(loopLabelled) with
+                | FreshLabel { state = sharedLabelled, label = sharedLabel } ->
+                    match freshLabel(prefix + "_end")(sharedLabelled) with
+                        | FreshLabel { state = labelled, label = endLabel } -> (loopLabel, sharedLabel, endLabel, labelled)
+
+// Loads the walk's current cell from its slot and leaves the loop on the empty list; yields the
+// state and the current cell temp.
+let emitListDropTest (currentSlot: Int) (endLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = reserved, temp = currentTemp } ->
+            reserved
+            |> emit(LoadLocal(currentTemp)(currentSlot))
+            |> emit(LoadConstInt(currentTemp + 1)(0))
+            |> emit(CmpIntNe(currentTemp + 2)(currentTemp)(currentTemp + 1))
+            |> emit(JumpIfFalse(currentTemp + 2)(endLabel))
+            |> (given (tested) -> (tested, currentTemp))
+
+// Jumps to the shared exit unless the cell is uniquely owned.
+let emitUniqueCellTest (cellTemp: Int) (sharedLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = uniqueTemp } ->
+            reserved
+            |> emit(RcIsUnique(uniqueTemp)(cellTemp))
+            |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
+
+// Releases the unique cell and continues the walk through its tail.
+let emitListDropAdvance (cellTemp: Int) (currentSlot: Int) (loopLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = tailTemp } ->
+            reserved
+            |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
+            |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+            |> emit(StoreLocal(currentSlot)(tailTemp))
+            |> emit(Jump(loopLabel))
+
+let emitListDropSharedExit (cellTemp: Int) (sharedLabel: Str) (endLabel: Str) (state: CoreLoweringState) =
+    state
+    |> emit(Label(sharedLabel))
+    |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+    |> emit(Jump(endLabel))
+    |> emit(Label(endLabel))
+
+// Stage 0's `EmitRuntimeManagedListSpineDrop`: the spine's cells are released one by one, the
+// elements left in place.
+let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = currentSlot } ->
+            match allocated
+            |> emit(StoreLocal(currentSlot)(listTemp))
+            |> freshListDropLabels("rcdrop_list_spine") with
+                | (loopLabel, sharedLabel, endLabel, labelled) ->
+                    match labelled
+                    |> emit(Label(loopLabel))
+                    |> emitListDropTest(currentSlot)(endLabel) with
+                        | (tested, currentTemp) ->
+                            tested
+                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
+                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
+                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
+
+// Names the constructor-switching dropper of a named type (stage 0's
+// `SynthesizeRuntimeManagedAdtDropper`), synthesizing it once through the state's label cache.
+let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
+                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> (label, (state with dropperLabels = nextCache, functions = append(functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+
+// Stage 0's `EmitRecursiveRuntimeManagedAdtDrop`: the value is handed to its type's dropper.
+let emitAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    match synthesizeAdtDropperLabel(named)(state) with
+        | (Some(label), synthesized) ->
+            match freshTempRun(2)(synthesized) with
+                | FreshTemp { state = reserved, temp = environmentTemp } ->
+                    reserved
+                    |> emit(LoadConstInt(environmentTemp)(0))
+                    |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
+        | (None, synthesized) ->
+            emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(synthesized)
+
+// A recursive-copy or owned-child ADT is released by its own constructor-switching dropper.
+let usesAdtDropper (named: SemanticType) (state: CoreLoweringState) =
     match state
     |> coverageEnvironment
-    |> classifyHeapLayout(semanticType) with
-        | HeapLayoutFacts { children = [] } -> true
-        | _ -> false
+    |> classifyHeapLayout(named) with
+        | HeapLayoutFacts { runtimeOwnedChildAdtSupported = true } -> true
+        | _ ->
+            state
+            |> coverageEnvironment
+            |> heapRuntimeRecursiveCopyAdtLayout(named)
 
-// Stage 0's `LowerCallDropConsumedRuntimeArguments` for the argument kinds whose runtime release
-// is ported: a fresh string, `Bytes`, or `BigInt` the callee did not take is released after the
-// call, a closure is closed and released, and a named type without owned children is released
-// as a whole unless the release must preserve children the callee's arena result may still
-// reference. An aggregate with owned children keeps its reference until the aggregate droppers
-// are ported.
+// The layout of a named type's first constructor.
+let recursive firstConstructorLayoutOf (typeName: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> None
+        | (CoreConstructorLayout { tag = 0 } as layout) :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName
+                    then Some(layout)
+                    else firstConstructorLayoutOf(typeName)(rest)
+                | None -> firstConstructorLayoutOf(typeName)(rest)
+        | _ :: rest -> firstConstructorLayoutOf(typeName)(rest)
+
+let ownedLayoutChildren (constructorName: Maybe(Str)) (semanticType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> coverageEnvironment
+    |> classifyHeapLayout(semanticType)
+    |> ownedChildrenOf(constructorName)
+
+// Stage 0's `EmitRuntimeManagedChildDrop` family: a string-like leaf is released as one
+// allocation, a list walked cell by cell releasing each unique cell's head, a tuple or a
+// single-constructor ADT its owned children under a uniqueness test, and a recursive or
+// owned-child ADT handed to its dropper; a value the walk does not recognize is left in place.
+let recursive emitRuntimeChildDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemTuple(_elements) as tuple -> emitRuntimeTupleDrop(valueTemp)(tuple)(state)
+        | SemList(element) -> emitRuntimeListDrop(valueTemp)(element)(state)
+        | SemNamed(_symbolId, name, _arguments) as named -> emitRuntimeAdtDrop(valueTemp)(name)(named)(state)
+        | SemString ->
+            emit(RcDrop(valueTemp)("String")(-1)(true)(false)(None))(state)
+        | SemBytes ->
+            emit(RcDrop(valueTemp)("Bytes")(-1)(true)(false)(None))(state)
+        | SemBigInt ->
+            emit(RcDrop(valueTemp)("BigInt")(-1)(true)(false)(None))(state)
+        | _ -> state
+and emitRuntimeListDrop (listTemp: Int) (elementType: SemanticType) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = currentSlot } ->
+            match allocated
+            |> emit(StoreLocal(currentSlot)(listTemp))
+            |> freshListDropLabels("rcdrop_list") with
+                | (loopLabel, sharedLabel, endLabel, labelled) ->
+                    match labelled
+                    |> emit(Label(loopLabel))
+                    |> emitListDropTest(currentSlot)(endLabel) with
+                        | (tested, currentTemp) ->
+                            tested
+                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
+                            |> emitListDropHead(currentTemp)(elementType)
+                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
+                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
+and emitListDropHead (cellTemp: Int) (elementType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(elementType)(state)
+    then state
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = reserved, temp = headTemp } ->
+                reserved
+                |> emit(LoadMemOffset(headTemp)(cellTemp)(0))
+                |> emitRuntimeChildDrop(headTemp)(elementType)
+and emitRuntimeTupleDrop (valueTemp: Int) (tuple: SemanticType) (state: CoreLoweringState) =
+    match freshLabel("rc_drop_tuple_shared")(state) with
+        | FreshLabel { state = labelled, label = sharedLabel } ->
+            match ownedLayoutChildren(None)(tuple)(labelled) with
+                | [] ->
+                    emit(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))(labelled)
+                | children ->
+                    labelled
+                    |> emitUniqueCellTest(valueTemp)(sharedLabel)
+                    |> emitTupleChildDrops(valueTemp)(children)
+                    |> emit(Label(sharedLabel))
+                    |> emit(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))
+and emitTupleChildDrops (valueTemp: Int) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | HeapLayoutChild { fieldIndex = index, childType = childType } :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved, temp = childTemp } ->
+                    reserved
+                    |> emit(LoadMemOffset(childTemp)(valueTemp)(index * 8))
+                    |> emitRuntimeChildDrop(childTemp)(childType)
+                    |> emitTupleChildDrops(valueTemp)(rest)
+and emitRuntimeAdtDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    if isScalarResultType(named)
+    then
+        emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+    else
+        if usesAdtDropper(named)(state)
+        then emitAdtDropperCall(valueTemp)(typeName)(named)(state)
+        else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
+and emitFirstConstructorDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    match firstConstructorLayoutOf(typeName)(state.constructorLayouts) with
+        | Some(CoreConstructorLayout { name = constructorName, tagless = tagless }) ->
+            match ownedLayoutChildren(Some(constructorName))(named)(state) with
+                | [] ->
+                    emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+                | children ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = reserved, temp = uniqueTemp } ->
+                            match freshLabel("rc_drop_shared")(reserved) with
+                                | FreshLabel { state = labelled, label = sharedLabel } ->
+                                    labelled
+                                    |> emit(RcIsUnique(uniqueTemp)(valueTemp))
+                                    |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
+                                    |> emitAdtFieldDrops(valueTemp)(tagless)(children)
+                                    |> emit(Label(sharedLabel))
+                                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
+        | None ->
+            emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+and emitAdtFieldDrops (valueTemp: Int) (tagless: Bool) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | HeapLayoutChild { fieldIndex = index, childType = childType } :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved, temp = childTemp } ->
+                    reserved
+                    |> emit(GetAdtField(childTemp)(valueTemp)(index)(tagless))
+                    |> emitRuntimeChildDrop(childTemp)(childType)
+                    |> emitAdtFieldDrops(valueTemp)(tagless)(rest)
+
+// Stage 0's `EmitRuntimeManagedChildPreservingDrop`: only the references the caller still owns
+// are given up, a list's spine or an aggregate's own cell, because the callee's arena-placed
+// result may still reference the argument's parts.
+let emitChildPreservingDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(_element) -> emitRuntimeListSpineDrop(valueTemp)(state)
+        | SemTuple(_elements) -> emitRuntimeShallowAggregateDrop(valueTemp)("Tuple")(state)
+        | SemNamed(_symbolId, name, _arguments) -> emitRuntimeShallowAggregateDrop(valueTemp)(name)(state)
+        | other -> emitRuntimeChildDrop(valueTemp)(other)(state)
+
+// Stage 0's `LowerCallDropConsumedRuntimeArguments` for one argument: a scalar needs nothing, a
+// closure is closed and released, an argument whose parts the callee's arena-placed result may
+// still reference gives up only the references the caller owns, and any other is released with
+// its owned children.
 let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
-                | SemString ->
-                    emit(RcDrop(temp)("String")(-1)(true)(false)(None))(state)
-                | SemBytes ->
-                    emit(RcDrop(temp)("Bytes")(-1)(true)(false)(None))(state)
-                | SemBigInt ->
-                    emit(RcDrop(temp)("BigInt")(-1)(true)(false)(None))(state)
                 | SemFunction(_parameter, _result, _row) ->
                     state
                     |> emit(CleanupResource(temp)("Function")(None))
                     |> emit(RcDrop(temp)("Function")(-1)(true)(false)(None))
-                | SemNamed(_symbolId, name, _arguments) as named ->
-                    if layoutHasNoOwnedChildren(named)(state) && (preserve == false || verifiedRuntimeResult)
-                    then
-                        emit(RcDrop(temp)(name)(-1)(true)(false)(None))(state)
-                    else state
-                | _ -> state
+                | valueType ->
+                    if resultSurvivesReset(valueType)(state)
+                    then state
+                    else
+                        if preserve && verifiedRuntimeResult == false
+                        then emitChildPreservingDrop(temp)(valueType)(state)
+                        else emitRuntimeChildDrop(temp)(valueType)(state)
 
-let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+// Each consumed temp is released once.
+let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (dropped: List(Int)) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
     match consumed with
         | [] -> state
-        | argument :: rest ->
-            state
-            |> emitConsumedArgumentDrop(verifiedRuntimeResult)(argument)
-            |> emitConsumedArgumentDrops(verifiedRuntimeResult)(rest)
+        | (CoreConsumedArgument { temp = temp } as argument) :: rest ->
+            if containsInt(temp)(dropped)
+            then emitConsumedArgumentDrops(verifiedRuntimeResult)(dropped)(rest)(state)
+            else
+                state
+                |> emitConsumedArgumentDrop(verifiedRuntimeResult)(argument)
+                |> emitConsumedArgumentDrops(verifiedRuntimeResult)(temp :: dropped)(rest)
 
 // A partial application keeps its fresh arguments alive in the returned closure.
 let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            emitConsumedArgumentDrops(calleeBodyReturnsRuntimeManaged(context.facts)(state))(consumed)(state)
+            emitConsumedArgumentDrops(calleeCompiledResultRuntimeManaged(context.facts)(state))([])(consumed)(state)
 
 let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if callResultRuntimeManaged(context.facts)(resultType)(state)
@@ -3785,7 +4110,9 @@ let callContextOf (spine: CoreCallSpine) (state: CoreLoweringState) =
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
 let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool) lower state =
-    match openArenaBracket(state) with
+    match state
+    |> ensureResultRcEligibility
+    |> openArenaBracket with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
             |> callContextOf(spine)
@@ -6540,12 +6867,33 @@ let emitCoreBigIntBinary operation binary =
                 given (right) -> BigIntBinary(target)(left)(right)(operation)(false)
     )(SemBigInt)(binary)
 
+let releaseConcatRightOperand (leftTemp: Int) (rightTemp: Int) (state: CoreLoweringState) =
+    if rightTemp == leftTemp
+    then state
+    else releaseConsumedOperand(rightTemp)(state)
+
+let markConcatResult (target: Int) (runtimeManaged: Bool) (state: CoreLoweringState) =
+    if runtimeManaged
+    then markRuntimeTemp(target)(RuntimeNewlyProduced)(state)
+    else state
+
+// Stage 0's `LowerStringAdd`: the concatenation is placed on the reference-counted heap when its
+// consumer asked for a runtime string, its result then newly produced, and a newly produced
+// operand is released right after the use.
 let emitCoreConcat binary =
-    emitCoreBinaryTarget(
-        given (target) ->
-            given (left) ->
-                given (right) -> ConcatStr(target)(left)(right)(false)
-    )(SemString)(binary)
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = left, rightTemp = right, error = None } ->
+            match freshTemp(state) with
+                | FreshTemp { state = targetState, temp = target } ->
+                    targetState
+                    |> emit(state
+                    |> runtimeStringRequested
+                    |> ConcatStr(target)(left)(right))
+                    |> markConcatResult(target)(runtimeStringRequested(state))
+                    |> releaseConsumedOperand(left)
+                    |> releaseConcatRightOperand(left)(right)
+                    |> success(target)(SemString)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 
 let emitResolvedCoreAdd binary =
     match binary with
@@ -6795,11 +7143,23 @@ let prepareCoreBinary operator left binary =
             else binary
         | _ -> binary
 
+// The operands of a binary operator are lowered without the context's request, as stage 0's
+// `LowerAddOperands` lowers them; the request is restored on the operator's own state, so the
+// concatenation the operator selects still reads it.
+let restoreBinaryRequest (request: ConsumerRequest) (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, error = None } -> binary with state = withConsumerRequest(request)(state)
+        | _ -> binary
+
 let lowerCoreBinary operator left right lower state =
-    state
-    |> lowerCoreBinaryOperands(left)(right)(lower)
-    |> prepareCoreBinary(operator)(left)
-    |> emitPreparedCoreBinary(operator)
+    match consumerRequestOf(state) with
+        | request ->
+            state
+            |> withConsumerRequest(emptyConsumerRequest)
+            |> lowerCoreBinaryOperands(left)(right)(lower)
+            |> restoreBinaryRequest(request)
+            |> prepareCoreBinary(operator)(left)
+            |> emitPreparedCoreBinary(operator)
 
 let finishCoreLogicalNot lowered =
     match lowered with
