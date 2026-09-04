@@ -309,6 +309,50 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// An accessor call's result retained before its argument's own TCO-parameter placement (arena
+    /// or runtime-RC) is known: the marker is upgraded to a runtime-managed RcDup at the same
+    /// finalization point as TcoParameterAggregateRetain when the parameter is admitted to
+    /// runtime-RC, and stays an erased identity copy otherwise (mirroring the OLD copy-based
+    /// behavior would have produced, since the argument turned out to be arena all along).
+    /// </summary>
+    private readonly record struct PendingAccessorResultRetain(TcoContext Tco, int DupTemp, int Slot);
+
+    private readonly List<PendingAccessorResultRetain> _pendingAccessorResultRetains = [];
+
+    private void FinalizeAccessorResultRetains(TcoContext? tco)
+    {
+        if (tco is null)
+        {
+            return;
+        }
+
+        for (int index = _pendingAccessorResultRetains.Count - 1; index >= 0; index--)
+        {
+            PendingAccessorResultRetain retain = _pendingAccessorResultRetains[index];
+            if (!ReferenceEquals(retain.Tco, tco))
+            {
+                continue;
+            }
+
+            _pendingAccessorResultRetains.RemoveAt(index);
+            if (!tco.IsRuntimeManagedSlot(retain.Slot))
+            {
+                continue;
+            }
+
+            for (int instIndex = 0; instIndex < _inst.Count; instIndex++)
+            {
+                if (_inst[instIndex] is IrInst.RcDup { RuntimeManaged: false } marker && marker.Target == retain.DupTemp)
+                {
+                    _inst[instIndex] = marker with { RuntimeManaged = true };
+                    MarkRuntimeManagedTemp(retain.DupTemp);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Resolves an ownership alias chain to the original owner name.
     /// If the name is not an alias, returns itself.
     /// </summary>

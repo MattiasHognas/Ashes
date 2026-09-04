@@ -1063,23 +1063,32 @@ same public behavior.
   rather than clone the string elements of an escaping arena tuple — threading a large string
   through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
   `Bytes` view to sidestep this; the general cost remains).
-- [ ] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
+- [x] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
   caller can prove the aggregate is reference-counted (accessor shape:
-  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call). Root-caused but not
-  yet fixed: an accessor's own compiled body (`let name (p: Person) = p.name`, a bare
-  `GetAdtField` + `Return`) never allocates anything RC, so `_bodyRuntimeManagedByLabel` correctly
-  records it as not provably RC on its own — but that per-callee fact is then baked once into the
-  `ReturnsRuntimeManaged` bit of every closure value built for that function (`LowerVar`'s
-  top-level-function-ref case, `Lowering.cs` ~2892), so it stays `false` at every call site
-  regardless of what the caller's own argument is, and `CopyOutArena RcNormalization` runs
-  unconditionally — confirmed by compiling a 200000-call loop over a `Person` sourced from a
-  monomorphic `List(Person)` (which the TCO parameter-entry path does correctly place RC, unlike
-  OPT-32's generic case) and finding the copy still fires every call. Fixing this needs a
-  call-site-local fact this per-callee bit cannot express: "is this specific argument expression
-  provably RC AND does the callee's result only reach a borrowed field of it" (an accessor-shape
-  summary fact on the parameter, combined with the caller's own `LookupOwnedValue` on the argument
-  variable), substituted for the whole conditional-copy dance with a plain `RcDup`. Deferred for a
-  dedicated pass with room to verify the new fact doesn't misfire on a non-accessor result shape.
+  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call). Root cause: an
+  accessor's own compiled body (`let name (p: Person) = p.name`, a bare `GetAdtField` + `Return`)
+  never allocates anything RC, so its per-callee `ReturnsRuntimeManaged` bit is `false`, baked once
+  into every closure value built for that function (`LowerVar`'s top-level-function-ref case) — it
+  can never reflect what a *specific call site's* own argument is, so `CopyOutArena
+  RcNormalization` ran on every call regardless. Fixed with a call-site-local decision, not a
+  change to the callee's bit: `IsTrivialParameterFieldAccessorBody` (`Lowering.cs`) recognizes the
+  callee's body shape (a bare `LoadLocal`/`[Borrow]`/`GetAdtField` of its own single parameter,
+  restricted to a Shallow-copyable field); `ClassifyAccessorArgumentRc` classifies the call site's
+  own argument as `NotRc` (unchanged copy behavior), `DefinitelyRc` (a fresh temp, or a named
+  binding whose own `OwnershipInfo` already says `RuntimeManaged` — the same per-name fact OPT-27's
+  let-ownership rules read), or `PendingTcoSlot` for a self-recursive loop's own parameter, whose
+  arena-vs-runtime-RC placement is not settled this early in lowering (`TryGetRuntimeManagedCallArgument`'s
+  own documented timing) — resolved later by `FinalizeAccessorResultRetains`, an `RcDup`-marker
+  mechanism mirroring `TcoParameterAggregateRetain`. Verified: a 200000-call loop over a `Person`
+  sourced from a genuinely RC-placed `List(Person)` (the TCO parameter-entry path places it RC)
+  went from 15.06s / 38.6M minor page faults (the old unconditional copy of a ~768 KB field) to
+  0.06s / 4K page faults after the fix — a ~250x improvement — with RSS materially unchanged (the
+  per-iteration arena bracket already reclaimed the copy either way; the win is the eliminated copy
+  work, not peak memory). Regression:
+  `src/Ashes.Tests/AccessorRetainsRcAggregateFieldTests.cs` (an IR-level assertion that the call
+  site emits a forced-true ownership flag followed by an `RcDup ... RuntimeManaged=true` in place
+  of the old packed-word bit-63 read, plus a correctness execution test) and
+  `tests/accessor_returns_retained_string_from_rc_record.ash`.
 - [ ] **OPT-36** Keep a large string alive when a tail-recursive loop moves it from the list (or tuple state)
   it consumes into its accumulator — the consumed cell's release frees the moved element, read
   back freed for any string past one arena chunk. Repro: split a 15 KB line, walk it inline

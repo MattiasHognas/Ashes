@@ -602,6 +602,17 @@ public sealed partial class Lowering
     // reconstruct a closure reference to this already-compiled function from a different scope and must
     // bake in this SAME, accurate fact, not a possibly-wrong AST-shape guess.
     private readonly Dictionary<string, bool> _bodyRuntimeManagedByLabel = new(StringComparer.Ordinal);
+    // A callee whose own compiled body is nothing but a borrowed field read of its own single
+    // parameter — LoadLocal(argSlot) [Borrow] GetAdtField(bodyTemp) — and nothing else: no other
+    // allocation, call, or transformation the returned reference could instead derive from. A call
+    // site that independently proves its own argument for this parameter is RC-placed may then
+    // retain (RcDup) the call result instead of paying CopyOutArena RcNormalization's full byte
+    // copy: since an RC parent may only own inline data, static non-owning data, or independently
+    // owned RC children (see the memory-model doc), a genuinely RC aggregate's field is itself a
+    // standalone RC value with its own header, safe to RcDup. Populated in LowerLambdaCore
+    // alongside _bodyRuntimeManagedByLabel; consulted only at a call site (LowerAppliedClosureCall),
+    // never used to change the callee's own ReturnsRuntimeManaged bit.
+    private readonly HashSet<string> _isTrivialParameterFieldAccessorByLabel = new(StringComparer.Ordinal);
     // Curried application labels whose argument is normalized into an independent RC graph at the
     // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
     private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
@@ -6318,6 +6329,7 @@ public sealed partial class Lowering
         // same already-compiled function from a different scope later.
         bool bodyRuntimeManaged = IsRuntimeManagedResultTemp(bodyTemp);
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
+        RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
@@ -6328,6 +6340,52 @@ public sealed partial class Lowering
         return LowerLambdaCoreFinalize(
             selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction,
             label, envPtrTemp, stackAllocateClosure, bodyRuntimeManaged, request, funTy);
+    }
+
+    // True when this function's ENTIRE instruction stream — read directly off _inst, which
+    // LowerLambdaCoreResetFrame cleared for this function alone — is exactly a borrowed field read
+    // of its own parameter: LoadLocal(argSlot), an optional Borrow forwarding that same value, then
+    // GetAdtField reading bodyTemp from it. Nothing else may appear; a call, an allocation, or any
+    // further transformation before the field read means the returned reference cannot be assumed
+    // to be that field's own, unmodified value.
+    private bool IsTrivialParameterFieldAccessorBody(int argSlot, int bodyTemp)
+    {
+        if (_inst.Count is not (2 or 3)
+            || _inst[0] is not IrInst.LoadLocal { Slot: var loadedSlot } load
+            || loadedSlot != argSlot)
+        {
+            return false;
+        }
+
+        int fieldPtrTemp = load.Target;
+        int fieldInstructionIndex = 1;
+        if (_inst.Count == 3)
+        {
+            if (_inst[1] is not IrInst.Borrow { SourceTemp: var borrowSource } borrow
+                || borrowSource != load.Target)
+            {
+                return false;
+            }
+
+            fieldPtrTemp = borrow.Target;
+            fieldInstructionIndex = 2;
+        }
+
+        return _inst[fieldInstructionIndex] is IrInst.GetAdtField { Ptr: var fieldPtr } field
+            && fieldPtr == fieldPtrTemp
+            && field.Target == bodyTemp;
+    }
+
+    // Restricted to a Shallow-copyable field (Str/Bytes/a copy-type-field ADT): the call-site
+    // retain this enables (LowerAppliedClosureCall) emits a plain (non-nullable) RcDup, which a
+    // List field's possible empty/null (0) representation would corrupt.
+    private void RecordTrivialParameterFieldAccessorLabel(string label, int argSlot, int bodyTemp, TypeRef bodyType)
+    {
+        if (IsTrivialParameterFieldAccessorBody(argSlot, bodyTemp)
+            && GetCopyOutKind(bodyType, out _) == CopyOutKind.Shallow)
+        {
+            _isTrivialParameterFieldAccessorByLabel.Add(label);
+        }
     }
 
     private (int, TypeRef) LowerLambdaCoreFinalize(
@@ -6749,6 +6807,7 @@ public sealed partial class Lowering
         LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
         FinalizePerceusPatternBindingOwners(tco);
         FinalizeTcoParameterAggregateRetains(tco);
+        FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
@@ -11149,6 +11208,18 @@ public sealed partial class Lowering
             && (IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex)
                 || CalleeResultMayKeepParameterWhole(rootExpr, argumentIndex, argumentTemp));
 
+    // Where a trivial-field-accessor call's argument stands on the RC-vs-arena question at the
+    // point its call is lowered (see ClassifyAccessorArgumentRc): not provably RC (the OLD
+    // CopyOutArena-based behavior applies, unchanged); provably RC right now (a fresh temp or a
+    // settled named binding); or a self-recursive loop's own parameter whose placement is not yet
+    // settled this early in lowering, resolved later by FinalizeAccessorResultRetains.
+    private enum AccessorArgumentRcStatus
+    {
+        NotRc,
+        DefinitelyRc,
+        PendingTcoSlot,
+    }
+
     private int LowerAppliedClosureCall(
         Expr rootExpr,
         Expr argument,
@@ -11198,17 +11269,14 @@ public sealed partial class Lowering
             }
         }
 
+        (AccessorArgumentRcStatus rcStatus, int pendingSlot) =
+            IsTrivialAccessorCall(rootExpr, argumentIndex, needsResultOwnership)
+                ? ClassifyAccessorArgumentRc(argument, originalArgumentTemp)
+                : (AccessorArgumentRcStatus.NotRc, -1);
+
         if (needsResultOwnership)
         {
-            int packedEnvironmentSizeTemp = NewTemp();
-            Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
-            int ownershipShiftTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
-            runtimeManagedResultFlagTemp = NewTemp();
-            Emit(new IrInst.ShrInt(
-                runtimeManagedResultFlagTemp,
-                packedEnvironmentSizeTemp,
-                ownershipShiftTemp));
+            runtimeManagedResultFlagTemp = ResolveCallResultOwnershipFlag(closureTemp, rcStatus, pendingSlot);
         }
 
         int target = NewTemp();
@@ -11218,7 +11286,112 @@ public sealed partial class Lowering
             argumentTemp,
             borrowsOnly,
             runtimeManagedArgumentFlagTemp);
-        return target;
+
+        return rcStatus == AccessorArgumentRcStatus.NotRc
+            ? target
+            : RetainAccessorCallResult(target, rcStatus, pendingSlot);
+    }
+
+    // This callee's own ReturnsRuntimeManaged bit (read below from its closure value in
+    // ResolveCallResultOwnershipFlag) is baked once per callee, false for a plain field accessor
+    // whose own body never allocates RC — so it can never reflect a specific call site's own
+    // argument. Restricted to argumentIndex==0 (a curried accessor's later stages would need the
+    // chain-walk TryResolveKnownFunctionLabel callers elsewhere use; not attempted here) so
+    // rootExpr's own top-level label is guaranteed to name the exact lambda being invoked, not an
+    // earlier stage in its curry chain.
+    private bool IsTrivialAccessorCall(Expr rootExpr, int argumentIndex, bool needsResultOwnership)
+        => needsResultOwnership
+            && argumentIndex == 0
+            && TryResolveKnownFunctionLabel(rootExpr, out string accessorLabel)
+            && _isTrivialParameterFieldAccessorByLabel.Contains(accessorLabel);
+
+    // A fresh producer's temp carries its own RuntimeRc fact directly (IsRuntimeManagedResultTemp):
+    // DefinitelyRc. A plain read of a named binding — an env capture, a top-level let — does not:
+    // the automatic per-instruction dispatcher that populates _tempOwnershipFacts has no case for
+    // LoadLocal/LoadEnv (see IsTrivialParameterFieldAccessorBody's own doc on borrowed reads), so
+    // such a read's temp is untracked even when the binding it reads is genuinely RC; fall back to
+    // the binding's own OwnershipInfo — the same per-name fact OPT-27's let-ownership rules read
+    // (TrackOwnedValue/LookupOwnedValue) — for DefinitelyRc there too. A self-recursive loop's own
+    // parameter is excluded from both: its arena-vs-runtime-RC placement is settled only after this
+    // call's surrounding tail self-call constrains it (the same timing TryGetRuntimeManagedCallArgument
+    // documents), so it is PendingTcoSlot, resolved later by FinalizeAccessorResultRetains, unless
+    // the placement has already resolved true by this point in lowering.
+    private (AccessorArgumentRcStatus, int) ClassifyAccessorArgumentRc(Expr argument, int argumentTemp)
+    {
+        if (IsRuntimeManagedResultTemp(argumentTemp))
+        {
+            return (AccessorArgumentRcStatus.DefinitelyRc, -1);
+        }
+
+        if (argument is not Expr.Var variable)
+        {
+            return (AccessorArgumentRcStatus.NotRc, -1);
+        }
+
+        if (LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false })
+        {
+            return (AccessorArgumentRcStatus.DefinitelyRc, -1);
+        }
+
+        if (_tcoCtx is { } tco && Lookup(variable.Name) is Binding.Local local && tco.ParamSlots.Contains(local.Slot))
+        {
+            return tco.IsRuntimeManagedSlot(local.Slot)
+                ? (AccessorArgumentRcStatus.DefinitelyRc, -1)
+                : (AccessorArgumentRcStatus.PendingTcoSlot, local.Slot);
+        }
+
+        return (AccessorArgumentRcStatus.NotRc, -1);
+    }
+
+    // Tells the call-result copy-out machinery (LowerCallConditionalCopyOutResult) the result is
+    // already correctly owned for DefinitelyRc/PendingTcoSlot: its "copy" branch becomes dead code
+    // (or, for a pending slot that resolves to arena, is reinstated by ResolvePendingRuntimeArgumentFlags
+    // zeroing this flag), and only its arena-watermark restore/reclaim actually runs, since
+    // RetainAccessorCallResult already retained the value — regardless of what this callee's own
+    // compiled shape (its ReturnsRuntimeManaged bit, read from closureTemp's packed environment word
+    // below) would otherwise have reported.
+    private int ResolveCallResultOwnershipFlag(int closureTemp, AccessorArgumentRcStatus rcStatus, int pendingSlot)
+    {
+        if (rcStatus == AccessorArgumentRcStatus.NotRc)
+        {
+            int packedEnvironmentSizeTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+            int ownershipShiftTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
+            int flagTemp = NewTemp();
+            Emit(new IrInst.ShrInt(flagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
+            return flagTemp;
+        }
+
+        int forcedFlagTemp = EmitForcedRetainFlag();
+        if (rcStatus == AccessorArgumentRcStatus.PendingTcoSlot)
+        {
+            _pendingRuntimeArgumentFlags[forcedFlagTemp] = pendingSlot;
+        }
+
+        return forcedFlagTemp;
+    }
+
+    // The argument is (or, for PendingTcoSlot, may turn out to be) a provably RC aggregate, and this
+    // callee's entire body is nothing but a borrowed read of one of its fields — per the memory
+    // model, an RC parent's non-inline field is itself an independently owned RC value with its own
+    // header, so retaining that exact reference (not copying its bytes) is sound. DefinitelyRc
+    // retains immediately; PendingTcoSlot emits an identity-copy marker FinalizeAccessorResultRetains
+    // upgrades once this loop's own parameter placement is known (an erased copy, matching the OLD
+    // CopyOutArena-based behavior's outcome, if the parameter turns out to be arena after all).
+    private int RetainAccessorCallResult(int target, AccessorArgumentRcStatus rcStatus, int pendingSlot)
+    {
+        int retainedTarget = NewTemp();
+        if (rcStatus == AccessorArgumentRcStatus.DefinitelyRc)
+        {
+            Emit(new IrInst.RcDup(retainedTarget, target, RuntimeManaged: true));
+            MarkRuntimeManagedTemp(retainedTarget);
+            return retainedTarget;
+        }
+
+        Emit(new IrInst.RcDup(retainedTarget, target));
+        _pendingAccessorResultRetains.Add(new PendingAccessorResultRetain(_tcoCtx!, retainedTarget, pendingSlot));
+        return retainedTarget;
     }
 
     private int PrepareRuntimeManagedCallArgument(
