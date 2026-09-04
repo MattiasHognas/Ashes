@@ -753,20 +753,39 @@ same public behavior.
   released a binding closes with stage 0's `PopOwnershipScope` copy-out: a heap result that
   cannot survive the reset but has a copy-out kind (a string or `Bytes`, a list over scalars, a
   same-arity scalar-field ADT) is copied past the reset as an RC-normalized
-  `CopyOutArena`/`CopyOutList`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
-  `ownerless_match`, `pattern_match`, `closure_capture`, `heap_result_builtin`,
-  `heap_result_let`, and `heap_result_list` fixtures match stage 0 byte-for-byte, source
-  locations included. A self-recursive tail call is still a `CallClosure`; the backend fuses it
+  `CopyOutArena`/`CopyOutList`, the ADT's static size counting its tag word only when the type
+  is not tagless. Every `match` arm is bracketed on every dispatch path: the tag-group
+  (`SwitchTag`) path brackets each linearly tested group case with its own `match_arm_cleanup_N`
+  block (the `match_group_next_N` label allocated first) and a trivial single-case group on its
+  success path only, and the capability-operation arms bracket like linear arms. An arm's
+  pattern bindings are stage 0's `TrackOwnedBindingsInPattern` owners (a resource, or any
+  heap-typed binding by its owned type name), released at the arm exit after the result store
+  (`RcDrop ... OwnerSlot=N`, moved to the last use by the placement pass), and an arm that owned
+  a live binding closes with the same `PopOwnershipScope` copy-out as an owned `let`, the copy
+  replacing the result in the match slot; a record field receiver is loaded without the
+  owned-read `Borrow`, as stage 0's `TryLowerRecordFieldLoad` does. The `let_bindings`,
+  `nested_let_scopes`, `scalar_match`, `ownerless_match`, `pattern_match`, `closure_capture`,
+  `heap_result_builtin`, `heap_result_let`, `heap_result_list`, `record_pattern`,
+  `tag_group_arm_brackets`, and `match_arm_copy_out` fixtures match stage 0 byte-for-byte,
+  source locations included (`MatchArmScopeTests.ash` covers the list and tagged-ADT arm
+  copy-outs, the lambda arm's pattern-owner release, and the operation-arm brackets). A self-recursive tail call is still a `CallClosure`; the backend fuses it
   into a `musttail` when the instruction past the call's own window close stores or returns its
   result. Open: the mutual-recursion loop merge (milestone 5's OPT-19; `mutual_recursion` stays
   out of the parity runner until then: its `recgroup_*` members and entry already match, the
   merged `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are
-  missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
-  copy-out at call windows and match arms, the runtime flag on `ConcatStr` (the deferred-add
-  sealing), curried known-call results, coroutine/async back edges, entry normalization of a
-  parameter reaching the result, the owner-alias walk across curried chains, borrowed reads of
-  owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for
-  aggregates (only strings and the provably-dead top-level constructor drop are emitted so far).
+  missing), copy-out at call windows, the RC request for a constructor or list built in a
+  lambda's arm (stage 0 allocates it `RuntimeManaged` and flags the closure
+  `ReturnsRuntimeManaged`; the selfhost copies the arena result out at the arm close instead),
+  the runtime-managed scrutinee owner (`$match_rc_N`, a fresh RC-managed call result or nested
+  match result matched directly) and the match result's all-arms runtime-managed status, the
+  live-posts guard around an arm's reset in a program with a `handle`, the static-string arm
+  normalization (`CopyOutArena` of a literal arm when a sibling arm produces a fresh string),
+  the runtime flag on `ConcatStr` (the deferred-add sealing), curried known-call results,
+  coroutine/async back edges, entry normalization of a parameter reaching the result, the
+  owner-alias walk across curried chains, borrowed reads of owned bindings at call sites, and
+  the runtime-managed `RcDup`/`RcDrop` emission for aggregates (only strings and the
+  provably-dead top-level constructor drop are emitted so far; an owned `let` list still
+  releases with one `RcDrop` where stage 0 walks the spine inline).
   Cascading drops: `StructuralDroppers.ash` synthesizes stage 0's structural owner dropper
   (`__rcdrop_structural_N`, the iterative list-spine walk with an owned-head release, the
   unique-guarded tuple and single-constructor walks, string/bytes/bigint leaves) and the
