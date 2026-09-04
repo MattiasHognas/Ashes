@@ -119,6 +119,7 @@ type CoreLoweringResult =
     | program: Maybe(IrProgram)
     | semanticType: SemanticType
     | error: Maybe(CoreLoweringError)
+    | valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))
 
 type CoreConstructorLayout =
     | name: Str
@@ -275,6 +276,7 @@ type CoreLoweringState =
     | recursiveDeclarationSpan: Maybe(TextSpan)
     | ownerReleasePlans: List((Int, SemanticType, OwnedReleasePlan))
     | pendingOwnerPlan: Maybe(OwnedReleasePlan)
+    | valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -526,7 +528,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         pendingTcoResets = [],
         recursiveDeclarationSpan = None,
         ownerReleasePlans = [],
-        pendingOwnerPlan = None
+        pendingOwnerPlan = None,
+        valuePlacements = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -683,9 +686,31 @@ let emit kind state =
             let wrapped = tagItemInstruction(kind)(span)(item)(context)
             in state with reversedInstructions = wrapped :: instructions
 
+// A copy-typed value needs no heap ownership at all, so it always reports as `CopyValue` in the
+// explain report's `memory` representation, regardless of how it was produced.
+let isCopyTypeSemantic (semanticType: SemanticType) =
+    match semanticType with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | SemFloat -> true
+        | SemRune -> true
+        | SemBool -> true
+        | _ -> false
+
+// The per-value fact the explain report's `memory` representation needs and nowhere else does:
+// which function produced this temp, and whether its resolved type is copy-typed. Recording it
+// here — where every lowered value already passes through with its type — reads state and appends
+// to a list; it changes nothing about what gets lowered.
+let recordValuePlacement (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let isCopyType =
+        semanticType
+        |> resolveType(state)
+        |> isCopyTypeSemantic
+    in state with valuePlacements = (temp, state.activeFunctionOrigin, isCopyType) :: state.valuePlacements)
+
 let success temp semanticType state =
     LoweredCoreValue(
-        state = state,
+        state = recordValuePlacement(temp)(semanticType)(state),
         temp = temp,
         semanticType = semanticType,
         error = None
@@ -9697,7 +9722,8 @@ let failedCoreLowering error =
     CoreLoweringResult(
         program = None,
         semanticType = SemNever,
-        error = Some(error)
+        error = Some(error),
+        valuePlacements = []
     )
 
 type CoreProgramUses =
@@ -10501,7 +10527,8 @@ let buildProgram lowered =
                                             |> placeLifetimes
                                             |> Some,
                                             semanticType = resolveType(state)(semanticType),
-                                            error = None
+                                            error = None,
+                                            valuePlacements = state.valuePlacements
                                         )
 
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered
