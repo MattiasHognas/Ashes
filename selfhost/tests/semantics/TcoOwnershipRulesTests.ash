@@ -455,6 +455,25 @@ let expectConsumedRecordHeadsEscapeIntoAccumulator unit =
         |> (given (_) -> check("the head is retained by its owner and once more for the successor")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 4))
         |> (given (_) -> check("the exit transfers the accumulator to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
 
+let findStringHeadSource = "let recursive findLong (items: List(Str)) (limit: Int) =\n    match items with\n        | [] -> \"none\"\n        | head :: rest ->\n            if Ashes.Text.byteLength(head) > limit\n            then head\n            else findLong(rest)(limit)\n\nAshes.IO.print(findLong([\"a\", \"bb\"])(1))"
+
+// A search loop returning the matched head of a consumed string list beside a literal arm: the
+// branch retains the head for the result (stage 0's `TransferDirectRuntimeManagedBranchResult`),
+// the literal arm is copied to the reference-counted heap beside it, the arm's reset copies
+// nothing, and the loop's closure advertises a runtime-managed result.
+let expectFindLoopReturningStringHeadNormalizesTheLiteralArm unit =
+    findStringHeadSource
+    |> loopFunctionLines("[ClosureHelper from findLong]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the head's owner retains once, the branch retains once more, the tail is retained for the successor")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 3))
+        |> (given (_) -> check("the literal arm is normalized to the reference-counted heap")(countContainingBoth("CopyOutArena")("RuntimeManaged=true Purpose=RcNormalization")(lines) >= 1))
+        |> (given (_) -> check("the head's owner releases under the string name")(countContainingBoth("TypeName=String OwnerSlot=")("RuntimeManaged=true")(lines) == 2)))
+    |> (given (_) ->
+        findStringHeadSource
+        |> loopFunctionLines("[SourceFunction from findLong]")
+        |> (given (lines) -> check("the loop's closure returns a runtime-managed result")(countContaining("ReturnsRuntimeManaged=true")(lines) == 1)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -552,6 +571,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectNonAffineStrParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectFreshListRebuildParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectConsumedRecordHeadsEscapeIntoAccumulator(Unit))
+    |> (given (_) -> expectFindLoopReturningStringHeadNormalizesTheLiteralArm(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

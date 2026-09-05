@@ -244,7 +244,7 @@ public sealed partial class Lowering
     /// </summary>
     private bool IsProvenFreshCallFunnelArm(Expr arm)
     {
-        if (IsSelfRecursiveTailFunnelArm(arm))
+        if (IsSelfRecursiveTailFunnelArm(arm) || IsRetainedPatternOwnerTerminal(arm))
         {
             return true;
         }

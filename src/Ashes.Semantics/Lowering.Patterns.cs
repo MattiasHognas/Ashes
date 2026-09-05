@@ -169,6 +169,12 @@ public sealed partial class Lowering
         return hasFreshStringResult;
     }
 
+    // A literal string is runtime-managed but not fresh, a fresh producer is both, a `let` chain is
+    // what its body is when that body is fresh, an `if` is what both its branches are, a tail
+    // self-call (which never reaches the join) is runtime-managed but not fresh, and a returned
+    // pattern owner of a runtime-managed loop parameter is fresh: the branch retains its reference
+    // (TransferDirectRuntimeManagedBranchResult), so the literal arms beside it must be normalized
+    // for the join to be uniformly runtime-managed and the retained reference to be released.
     private bool IsRuntimeManagedStringMatchArm(Expr expression, out bool fresh)
     {
         if (expression is Expr.StrLit)
@@ -177,7 +183,7 @@ public sealed partial class Lowering
             return true;
         }
 
-        if (IsRuntimeRcStringProducer(expression))
+        if (IsRuntimeRcStringProducer(expression) || IsRetainedPatternOwnerTerminal(expression))
         {
             fresh = true;
             return true;
@@ -188,8 +194,58 @@ public sealed partial class Lowering
             return IsRuntimeManagedStringMatchArm(let.Body, out fresh) && fresh;
         }
 
+        if (expression is Expr.If conditional)
+        {
+            bool thenManaged = IsRuntimeManagedStringMatchArm(conditional.Then, out bool thenFresh);
+            bool elseManaged = IsRuntimeManagedStringMatchArm(conditional.Else, out bool elseFresh);
+            fresh = thenFresh || elseFresh;
+            return thenManaged && elseManaged;
+        }
+
+        if (IsSelfRecursiveTailFunnelArm(expression))
+        {
+            fresh = false;
+            return true;
+        }
+
         fresh = false;
         return false;
+    }
+
+    /// <summary>
+    /// A bare read of a pattern binding extracted from a runtime-managed loop parameter whose
+    /// ownership fact requires a protective duplicate: returned from a branch, the read is retained
+    /// for the result (TransferDirectRuntimeManagedBranchResult), so at an escaping position it
+    /// carries a runtime-managed value that constructs nothing and never conflicts with a fresh
+    /// sibling. Every fact recorded under the name must agree, so a shadowed name proves nothing.
+    /// </summary>
+    private bool IsRetainedPatternOwnerTerminal(Expr expression)
+    {
+        if (expression is not Expr.Var variable || _tcoCtx is not { } tco)
+        {
+            return false;
+        }
+
+        bool found = false;
+        foreach (PatternBindingOwnershipFact fact in tco.PatternBindingOwnershipFacts)
+        {
+            if (!string.Equals(fact.BindingName, variable.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!fact.RequiresProtectiveDup
+                || fact.RootParameterOrdinal < 0
+                || fact.RootParameterOrdinal >= tco.ParamSlots.Count
+                || !tco.IsRuntimeManagedSlot(tco.ParamSlots[fact.RootParameterOrdinal]))
+            {
+                return false;
+            }
+
+            found = true;
+        }
+
+        return found;
     }
 
     private (string? Name, TypeRef.TNamedType? RuntimeType) GetMatchReuseScrutinee(

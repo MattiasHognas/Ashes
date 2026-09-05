@@ -310,6 +310,9 @@ type CoreLoweringState =
     | runtimeTemps: List((Int, RuntimeTempState))
     | runtimeOwners: List((Int, Bool))
     | patternOwnerSites: List(PatternOwnerSite)
+    // The temps holding a pattern owner's retained reference as a branch result, and the joins
+    // every reaching branch stored one into: such a result crosses an arm's reset without a copy.
+    | patternOwnerResultTemps: List(Int)
     // The identity duplicates of loop-parameter reads stored into constructor cells, with the
     // parameter slot and the read's type; promoted to real retains once the frame's placements
     // are known.
@@ -580,6 +583,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeTemps = [],
         runtimeOwners = [],
         patternOwnerSites = [],
+        patternOwnerResultTemps = [],
         tcoParameterRetainSites = [],
         backEdgeArgumentSlot = None,
         bodyRuntimeManagedByLabel = [],
@@ -2049,6 +2053,20 @@ let adoptRuntimeLetValue (valueTemp: Int) (slot: Int) (valueType: SemanticType) 
                     |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (slot, true) :: adopted.runtimeOwners, ownerReleasePlans = (slot, valueType, plan) :: adopted.ownerReleasePlans)
         | _ -> state with pendingOwnerPlan = None
 
+// The name a body returns through its `let` chain, when the body is a plain read.
+let recursive tailForwardedVariable (body: Expr) =
+    match body with
+        | ExprAt(_span, inner) -> tailForwardedVariable(inner)
+        | ExprVar(name) -> Some(name)
+        | ExprLet(nested, _value, nestedBody, _parameters, _annotation, _requirements) ->
+            match tailForwardedVariable(nestedBody) with
+                | Some(name) ->
+                    if name == nested
+                    then None
+                    else Some(name)
+                | None -> None
+        | _ -> None
+
 let recursive isTailForwardedBindingResult (body: Expr) (name: Str) =
     match body with
         | ExprAt(_span, inner) -> isTailForwardedBindingResult(inner)(name)
@@ -2903,10 +2921,48 @@ let isSelfFunnelArm (expression: Expr) (state: CoreLoweringState) =
                 | (ExprVar(name), applied) -> name == selfName && applied == arity
                 | _ -> false
 
+let recursive patternFactsNamed (name: Str) (facts: List(PatternBindingFact)) =
+    match facts with
+        | [] -> []
+        | (PatternBindingFact { name = candidate } as fact) :: rest ->
+            if candidate == name
+            then fact :: patternFactsNamed(name)(rest)
+            else patternFactsNamed(name)(rest)
+
+let recursive nthArgumentShape (ordinal: Int) (shapes: List(TcoArgumentShape)) =
+    match shapes with
+        | [] -> TcoOtherShape
+        | shape :: rest ->
+            if ordinal == 0
+            then shape
+            else nthArgumentShape(ordinal - 1)(rest)
+
+let recursive allFactsRetained (loop: CoreTcoLoop) (facts: List(PatternBindingFact)) =
+    match facts with
+        | [] -> true
+        | fact :: rest -> patternFactRequiresProtection(fact) && nthArgumentShape(fact.rootParameterOrdinal)(loop.argumentShapes) == TcoConsumedTailShape && allFactsRetained(loop)(rest)
+
+// A terminal arm that reads a pattern owner extracted from a consumed-tail loop parameter: the
+// branch retains the owner's reference for the result (stage 0's
+// `TransferDirectRuntimeManagedBranchResult`), so the arm carries a runtime-managed value that
+// constructs nothing here and never conflicts with a fresh sibling. The placement is decided
+// once the body is lowered; a consumed-tail root is taken as placed.
+let retainedPatternOwnerTerminal (expression: Expr) (state: CoreLoweringState) =
+    match (unspanArgument(expression), state.tcoLoop) with
+        | (ExprVar(name), Some(loop)) ->
+            match patternFactsNamed(name)(loop.patternFacts) with
+                | [] -> false
+                | facts -> allFactsRetained(loop)(facts)
+        | _ -> false
+
+// An arm that constructs nothing at the escaping position and never conflicts with a fresh
+// sibling: a tail self-call, or a retained pattern owner.
+let escapeFunnelArm (expression: Expr) (state: CoreLoweringState) = isSelfFunnelArm(expression)(state) || retainedPatternOwnerTerminal(expression)(state)
+
 // Stage 0's `ProducesFreshRuntimeManageableAdt`: some terminal arm applies a runtime-manageable
 // constructor and every sibling arm of its type, or without a constructor, is fresh too.
 let producesFreshRuntimeManageableAdt (body: Expr) (state: CoreLoweringState) =
-    anyArmConsistentlyFresh(freshEscapeTerminals(body))(given (terminal: Expr) -> isFreshRuntimeManageableAdtExpression(terminal)(state))(given (terminal: Expr) -> constructorGroupKey(terminal)(state))(given (terminal: Expr) -> isSelfFunnelArm(terminal)(state))
+    anyArmConsistentlyFresh(freshEscapeTerminals(body))(given (terminal: Expr) -> isFreshRuntimeManageableAdtExpression(terminal)(state))(given (terminal: Expr) -> constructorGroupKey(terminal)(state))(given (terminal: Expr) -> escapeFunnelArm(terminal)(state))
 
 // Stage 0's `ProducesFreshRuntimeManageableList`: every terminal arm builds its list fresh.
 let producesFreshRuntimeManageableList (body: Expr) =
@@ -2920,7 +2976,7 @@ and freshTupleTerminals (terminals: List(Expr)) (state: CoreLoweringState) (sawF
     match terminals with
         | [] -> sawFreshTuple
         | terminal :: rest ->
-            if isSelfFunnelArm(terminal)(state)
+            if escapeFunnelArm(terminal)(state)
             then freshTupleTerminals(rest)(state)(sawFreshTuple)
             else
                 if isTupleLiteral(terminal) || constructorCarriesFreshTuple(terminal)(state)
@@ -3397,7 +3453,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
@@ -6646,10 +6702,28 @@ let tempIsNewlyProduced (temp: Int) (state: CoreLoweringState) =
 let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     MatchArmResult(
         armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
-        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state)
+        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state),
+        armRetainedOwner = containsInt(finalTemp)(state.patternOwnerResultTemps) || isSelfFunnelArm(body)(state)
     )
 
-let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false)
+let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false)
+
+// Stage 0's `TransferDirectRuntimeManagedBranchResult`: an `if` branch that returns a pattern
+// owner takes a duplicate of its read, an identity marker until the loop's finalize places the
+// owner, since the owner's own release follows the whole `if`; the duplicate is the branch's
+// retained result. A binding of a copy type owns nothing and keeps its plain read.
+let transferBranchOwnerResult (branch: Expr) (temp: Int) (state: CoreLoweringState) =
+    match tailForwardedVariable(branch) with
+        | None -> (state, temp)
+        | Some(name) ->
+            match (patternOwnerBinding(name)(state), lookupBinding(name)(state.bindings)) with
+                | (Some(_fact), Some(CoreBinding { scheme = TypeScheme { body = bindingType } })) ->
+                    if resultSurvivesReset(resolveType(state)(bindingType))(state)
+                    then (state, temp)
+                    else
+                        match duplicatePatternOwnerTemp(ExprVar(name))(temp)(state) with
+                            | (duplicated, duplicate) -> ((duplicated with patternOwnerResultTemps = duplicate :: duplicated.patternOwnerResultTemps), duplicate)
+                | _ -> (state, temp)
 
 // Stage 0's `MarkRuntimeManagedMatchResult` and `MarkUniformRuntimeManagedResult`: a join's
 // reloaded value is a reference-counted value when every branch stored one, and newly produced
@@ -6658,10 +6732,13 @@ let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduce
 // unknown branch makes the join a transferred value: the merged value may then be a live
 // binding's, and releasing it would free memory still in use.
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
-    match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
+    ((given (marked: CoreLoweringState) ->
+        if joinIsRetainedOwner(arms)
+        then marked with patternOwnerResultTemps = resultTemp :: marked.patternOwnerResultTemps
+        else marked))(match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
         | (true, true) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
         | (true, false) -> markRuntimeTemp(resultTemp)(RuntimeTransferred)(state)
-        | (false, _) -> state
+        | (false, _) -> state)
 
 let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
     match plan with
@@ -6688,17 +6765,19 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
                         error = Some(error)
                     )
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = semanticType, error = None } ->
-                    CoreIfThen(
-                        state = resultState
-                        |> emit(StoreLocal(resultSlot)(temp))
-                        |> emit(Jump(endLabel))
-                        |> emit(Label(elseLabel)),
-                        resultSlot = resultSlot,
-                        endLabel = endLabel,
-                        thenType = semanticType,
-                        thenArm = matchArmResultOf(thenBranch)(temp)(semanticType)(resultState),
-                        error = None
-                    )
+                    match transferBranchOwnerResult(thenBranch)(temp)(resultState) with
+                        | (transferred, branchTemp) ->
+                            CoreIfThen(
+                                state = transferred
+                                |> emit(StoreLocal(resultSlot)(branchTemp))
+                                |> emit(Jump(endLabel))
+                                |> emit(Label(elseLabel)),
+                                resultSlot = resultSlot,
+                                endLabel = endLabel,
+                                thenType = semanticType,
+                                thenArm = matchArmResultOf(thenBranch)(branchTemp)(semanticType)(transferred),
+                                error = None
+                            )
 
 let finishIfElseBranch elseBranch (request: ConsumerRequest) lower loweredThen =
     match loweredThen with
@@ -6710,14 +6789,16 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) lower loweredThen =
                     match bindType(thenType)(elseType)(resultState) with
                         | (failedState, Some(error)) -> failure(failedState)(error)
                         | (typedState, None) ->
-                            match freshTemp(typedState) with
-                                | FreshTemp { state = targetState, temp = target } ->
-                                    targetState
-                                    |> emit(StoreLocal(resultSlot)(temp))
-                                    |> emit(Label(endLabel))
-                                    |> emit(LoadLocal(target)(resultSlot))
-                                    |> markControlFlowJoin(target)([thenArm, matchArmResultOf(elseBranch)(temp)(elseType)(typedState)])
-                                    |> success(target)(resolveType(typedState)(thenType))
+                            match transferBranchOwnerResult(elseBranch)(temp)(typedState) with
+                                | (transferred, branchTemp) ->
+                                    match freshTemp(transferred) with
+                                        | FreshTemp { state = targetState, temp = target } ->
+                                            targetState
+                                            |> emit(StoreLocal(resultSlot)(branchTemp))
+                                            |> emit(Label(endLabel))
+                                            |> emit(LoadLocal(target)(resultSlot))
+                                            |> markControlFlowJoin(target)([thenArm, matchArmResultOf(elseBranch)(branchTemp)(elseType)(transferred)])
+                                            |> success(target)(resolveType(transferred)(thenType))
 
 // The then branch inherits the context's expected type; the else branch is expected to have the
 // then branch's type.
@@ -7534,15 +7615,22 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
 // surviving or runtime-managed result resets the arena; a heap result of an arm whose pattern
 // owned a live value is copied past the reset when it has a copy-out kind, the copy replacing the
 // result in the match's result slot; any other heap result leaves the window open.
+// A pattern owner's retained reference as the arm's result crosses the reset like a
+// runtime-managed value: the reset runs, and nothing is copied.
+let closeRetainedResultBracket cursorSlot endSlot (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = preRestoreSlot } -> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
+
 let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot resultTemp resultType (state: CoreLoweringState) =
-    match (state.capabilityGlobalCount > 0 && armResultSurvivesReset(resultTemp)(resultType)(state), hadAliveOwner) with
-        | (true, _owned) -> (closeGuardedArmBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
-        | (false, true) ->
+    match (containsInt(resultTemp)(state.patternOwnerResultTemps), state.capabilityGlobalCount > 0 && armResultSurvivesReset(resultTemp)(resultType)(state), hadAliveOwner) with
+        | (_retained, true, _owned) -> (closeGuardedArmBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
+        | (true, false, _owned) -> (closeRetainedResultBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
+        | (false, false, true) ->
             match closeOwnedScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state) with
                 | (closed, Some(copyTemp)) ->
                     (emit(StoreLocal(resultSlot)(copyTemp))(closed), copyTemp)
                 | (closed, None) -> (closed, resultTemp)
-        | (false, false) -> (closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
+        | (false, false, false) -> (closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
 
 // Closes an arm's scope and returns the closed state with the temp the match slot finally holds:
 // the copy when the close copied the result past the reset, the arm's own result otherwise.
@@ -7555,7 +7643,7 @@ let closeArmScope body owners bracket resultSlot resultTemp resultType (state: C
 let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
     LoweredMatchArm(
         lowered = failure(failedState)(error),
-        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false)
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false)
     )
 
 // Stage 0's `LowerMatchArmExpression`: a literal string arm of a match whose arms are normalized
@@ -7574,20 +7662,6 @@ let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLowe
                             |> success(copyTemp)(literalType)
                 | failed -> failed
         | _ -> lower(body)(state)
-
-// The name an arm body returns through its `let` chain, when the body is a plain read.
-let recursive tailForwardedVariable (body: Expr) =
-    match body with
-        | ExprAt(_span, inner) -> tailForwardedVariable(inner)
-        | ExprVar(name) -> Some(name)
-        | ExprLet(nested, _value, nestedBody, _parameters, _annotation, _requirements) ->
-            match tailForwardedVariable(nestedBody) with
-                | Some(name) ->
-                    if name == nested
-                    then None
-                    else Some(name)
-                | None -> None
-        | _ -> None
 
 let recursive armBindingSlotOf (name: Str) (bindings: List(CoreBinding)) =
     match bindings with
@@ -8579,7 +8653,7 @@ let withStaticStringNormalization cases (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
         | CoreMatchPlan { state = state } ->
-            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state))(cases)
+            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(cases)
 
 let lowerMatch value cases lower state =
     state
@@ -8627,7 +8701,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
@@ -8681,7 +8755,8 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
                         |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
                         |> enterTcoLoopBody(label)(parameter)
-                        |> withLoopBodyRequest(functionBodyRequest(body)(labeled))
+                        |> (given (entered: CoreLoweringState) ->
+                            withLoopBodyRequest(functionBodyRequest(body)(entered))(entered))
                         |> lower(sugarChainBody(body)(labeled.recursiveDeclarationSpan))
                         |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(labeled))
 
