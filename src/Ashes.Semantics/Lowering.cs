@@ -8987,7 +8987,7 @@ public sealed partial class Lowering
         return _tcoCtx is { InTailPosition: true } tco
             && IsTcoSelfCallRoot(rootExpression, tco)
             && arguments.Count == tco.ParamCount
-                ? LowerCallTcoSelfCall(tco, arguments)
+                ? LowerCallTcoSelfCall(tco, rootExpression, arguments)
                 : null;
     }
 
@@ -9322,13 +9322,14 @@ public sealed partial class Lowering
         return null;
     }
 
-    private (int, TypeRef) LowerCallTcoSelfCall(TcoContext tco, List<Expr> collectedArgs)
+    private (int, TypeRef) LowerCallTcoSelfCall(TcoContext tco, Expr rootExpression, List<Expr> collectedArgs)
     {
         // Evaluate all new arg values first (into temps), BEFORE storing any
         var savedTail = tco.InTailPosition;
         tco.InTailPosition = false;
 
-        (int[] newArgTemps, TypeRef[] newArgTypes) = LowerCallTcoEvalBackEdgeArgs(tco, collectedArgs);
+        (int[] newArgTemps, TypeRef[] newArgTypes) =
+            LowerCallTcoEvalBackEdgeArgs(tco, rootExpression, collectedArgs);
         LowerCallTcoPromoteResolvedRuntimeParams(tco, newArgTypes);
         LowerCallTcoTransferPatternBindings(tco, collectedArgs, newArgTemps);
         int[] oldRuntimeParamTemps = LowerCallTcoLoadOldRuntimeParams(tco);
@@ -9508,13 +9509,14 @@ public sealed partial class Lowering
 
     private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalBackEdgeArgs(
         TcoContext tco,
+        Expr rootExpression,
         List<Expr> collectedArgs)
     {
         bool savedBackEdgeArguments = _loweringTcoBackEdgeArguments;
         _loweringTcoBackEdgeArguments = true;
         try
         {
-            return LowerCallTcoEvalArgs(tco, collectedArgs);
+            return LowerCallTcoEvalArgs(tco, rootExpression, collectedArgs);
         }
         finally
         {
@@ -9640,30 +9642,61 @@ public sealed partial class Lowering
         && !info.IsResourceBearing
         && !IsFunctionOwnership(info);
 
-    private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalArgs(TcoContext tco, List<Expr> collectedArgs)
+    private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalArgs(
+        TcoContext tco,
+        Expr rootExpression,
+        List<Expr> collectedArgs)
     {
         var newArgTemps = new int[collectedArgs.Count];
         var newArgTypes = new TypeRef[collectedArgs.Count];
-        // Type-check: resolve self binding and unify arg types with param types
+        // Each argument is checked against the chain lambda parameter it becomes: the type recorded
+        // at that lambda's entry (carrying its annotation) is the type of the very slot the argument
+        // is stored into. The self binding's arrow cannot serve past its first parameter here — its
+        // return is still an open variable until the lambda chain finalizes — so the arrow is bound
+        // to those same parameter types as it is walked, and an open return is bound to a fresh
+        // open-row arrow, so a mismatch is reported once, at the argument.
+        string calleeName = TryGetCalleeDisplayName(rootExpression) ?? tco.SelfName;
         var selfBinding = Lookup(tco.SelfName);
         var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
         for (int i = 0; i < collectedArgs.Count; i++)
         {
-            TypeRef? expectedType = curType is TypeRef.TFun expectedFunction
-                ? expectedFunction.Arg
+            TypeRef? parameterType = tco.ParamTypes.TryGetValue(i, out TypeRef? recordedType)
+                ? recordedType
                 : null;
+            if (curType is TypeRef.TVar)
+            {
+                var arrow = new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = NewTypeVar() };
+                Unify(curType, arrow);
+                curType = arrow;
+            }
+
+            if (curType is TypeRef.TFun expectedFunction)
+            {
+                if (parameterType is not null)
+                {
+                    Unify(expectedFunction.Arg, parameterType);
+                }
+
+                parameterType ??= expectedFunction.Arg;
+            }
+
             var (argTemp, argType) = LowerCallTcoEvalArg(
                 tco,
                 collectedArgs[i],
                 i,
-                expectedType);
+                parameterType);
             newArgTemps[i] = argTemp;
             newArgTypes[i] = argType;
-            if (curType is TypeRef.TFun funType)
+            if (parameterType is not null)
             {
-                Unify(funType.Arg, argType);
-                curType = Prune(funType.Ret);
+                using (PushDiagnosticSpan(collectedArgs[i]))
+                using (PushDiagnosticContext($"in argument #{i + 1} of call to '{calleeName}'"))
+                {
+                    Unify(parameterType, argType);
+                }
             }
+
+            curType = curType is TypeRef.TFun funType ? Prune(funType.Ret) : null;
         }
 
         return (newArgTemps, newArgTypes);

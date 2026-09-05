@@ -45,6 +45,36 @@ public sealed class ApplicationDiagnosticsTests
     }
 
     [Test]
+    public void Tail_self_call_argument_mismatch_against_annotated_parameter_is_reported_at_the_argument()
+    {
+        var diag = LowerExpression(
+            "let recursive f = given (xs: List(Int)) -> given (n: Int) ->\n"
+            + "    match xs with\n"
+            + "        | [] -> n\n"
+            + "        | _ :: rest -> f(rest)(rest)\n"
+            + "in Ashes.IO.print(f([1])(0))");
+
+        diag.Errors.ShouldContain(x =>
+            x.Contains("Type mismatch: Int vs List<Int>.", StringComparison.Ordinal)
+            && x.Contains("Context: in argument #2 of call to 'f'.", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Tail_self_call_first_argument_mismatch_is_reported_at_the_argument()
+    {
+        var diag = LowerExpression(
+            "let recursive f = given (xs: List(Int)) -> given (n: Int) ->\n"
+            + "    match xs with\n"
+            + "        | [] -> n\n"
+            + "        | _ :: rest -> f(0)(n)\n"
+            + "in Ashes.IO.print(f([1])(0))");
+
+        diag.Errors.ShouldContain(x =>
+            x.Contains("Type mismatch: List<Int> vs Int.", StringComparison.Ordinal)
+            && x.Contains("Context: in argument #1 of call to 'f'.", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void Unqualified_print_requires_import_of_Ashes_IO()
     {
         var diag = LowerExpression("print(1)", importAshesIO: false);
