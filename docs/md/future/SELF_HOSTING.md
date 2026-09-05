@@ -1454,7 +1454,14 @@ same public behavior.
   backends. The self-hosted binaries plateau too since the backend places `ConcatStr`/
   `ConcatStrN`/`TextFromInt` results by their runtime-managed flag (CG-4): the direct, join,
   let-scope and discarded-result probes run 200000 iterations in 5.6 MB of RSS, down from 55 to
-  190 MB when every string result was a `malloc` that nothing freed.
+  190 MB when every string result was a `malloc` that nothing freed. `Text.uncons`/`unconsText`
+  results are placed by the same flag: an escaping runtime-managed result owns copied strings, a
+  reference-counted tuple, and a reference-counted option cell, while the immediate arena result
+  keeps zero-copy views over the scrutinee's bytes (`emitArenaStringView`, stage 0's
+  `EmitStringView`) with its tuple and option cell in the arena. `Text.length` walks a string by
+  `unconsText` in a non-tail recursion, so a 15 KB string cost 121 MB of tail copies held by
+  the nested frames and now costs 9 MB, and
+  `tests/tco_loop_moves_split_line_into_accumulator.ash` runs in 11.6 MB instead of 124 MB.
 - [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require

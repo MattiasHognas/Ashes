@@ -494,10 +494,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOlt)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | CmpFloatLe(target, left, right) ->
                                             ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOle)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                                        | TextUnconsText(target, text, _managed) ->
+                                        | TextUnconsText(target, text, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(text)
-                                            |> emitTextUnconsText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                            |> emitTextUnconsText(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedUnconsString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(emitPlacedUnconsTuple(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(true))(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
                                         | RuneToText(target, rune, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(rune)
@@ -511,10 +511,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupIndexed(text)(tempEnv))("text_byte_length")) :: tempEnv, terminated)
                                         | BytesLength(target, bytes) ->
                                             ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupIndexed(bytes)(tempEnv))("bytes_length")) :: tempEnv, terminated)
-                                        | TextUncons(target, text, _managed) ->
+                                        | TextUncons(target, text, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(text)
-                                            |> emitTextUncons(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                            |> emitTextUncons(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedUnconsString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(emitPlacedUnconsTuple(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(false))(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
                                         | TextParseInt(target, text, _managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(text)
