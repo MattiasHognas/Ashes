@@ -10766,7 +10766,8 @@ public sealed partial class Lowering
             runtimeManagedResult || stableReuseResult,
             runtimeManagedResultFlagTemp,
             IsCalleeResultListElementQuantifiedInScheme(rootExpr, collectedArgs.Count),
-            out bool resultNormalized);
+            out bool resultNormalized,
+            out bool resultDeepCopied);
         // The consumed runtime arguments are released only once the result is normalized: an
         // arena-placed result (a generic callee's own cons cells, say) can still reference the
         // arguments' parts until the copy-out or deep copy above has copied them, so releasing the
@@ -10776,6 +10777,7 @@ public sealed partial class Lowering
             consumedRuntimeArguments,
             CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count),
             resultNormalized,
+            resultDeepCopied,
             GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false });
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
@@ -11839,6 +11841,7 @@ public sealed partial class Lowering
         IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         bool calleeCompiledResultVerifiedRuntimeManaged,
         bool resultNormalized,
+        bool resultDeepCopied,
         bool calleeResultPoisoned)
     {
         if (Prune(resultType) is TypeRef.TFun)
@@ -11866,14 +11869,15 @@ public sealed partial class Lowering
                 Emit(new IrInst.CleanupResource(temp, "Function"));
                 Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
             }
-            else if (preserveEscapedChildren && !calleeCompiledResultVerifiedRuntimeManaged)
+            else if (preserveEscapedChildren && !calleeCompiledResultVerifiedRuntimeManaged && !resultDeepCopied)
             {
                 // The callee's result is arena-placed (or unresolved): it may carry raw,
                 // unretained references to this argument's parts, so give up only the references
                 // the caller still owns. A verified runtime-managed result copied or retained
-                // whatever it kept, so the plain deep release below is both safe and required —
+                // whatever it kept, and a deep-copied result copied every element and its parts
+                // out of the window, so the plain deep release below is both safe and required —
                 // skipping head drops there leaks one reference per kept part (caught by the
-                // consumed-tuple-head RSS plateau test).
+                // consumed-tuple-head RSS plateau test and the generic append churn fixture).
                 EmitRuntimeManagedChildPreservingDrop(temp, valueType);
             }
             else
@@ -11941,15 +11945,18 @@ public sealed partial class Lowering
         TypeRef callResultType,
         int runtimeManagedResultFlagTemp,
         bool calleeResultElementIsGeneric,
-        out bool resultNormalized)
+        out bool resultNormalized,
+        out bool resultDeepCopied)
     {
         resultNormalized = false;
+        resultDeepCopied = false;
         if (calleeResultElementIsGeneric
             && Prune(callResultType) is TypeRef.TList deepCopyResultList
             && !CanArenaReset(Prune(deepCopyResultList.Element))
             && CanEmitRuntimeManagedListElementDeepCopy(deepCopyResultList.Element))
         {
             resultNormalized = true;
+            resultDeepCopied = true;
             int deepCopiedTemp = LowerCallDeepCopyOutListResult(
                 callWmCursorSlot,
                 callWmEndSlot,
@@ -11977,7 +11984,9 @@ public sealed partial class Lowering
     // copy-out or deep copy, unconditionally or on the arena branch of a runtime-managed flag),
     // so nothing reachable from it can still borrow the call's consumed arguments; a result handed
     // back untouched (runtime-managed or copy-typed, or with no copy-out strategy) or deferred to a
-    // placeholder may still hold such borrows.
+    // placeholder may still hold such borrows. `resultDeepCopied` narrows that to the generic list
+    // deep copy, which copies every element and its owned parts: after it the result shares
+    // nothing with the consumed arguments, whose parts may then be released along with them.
     private int LowerCallRestoreArena(
         int callWmCursorSlot,
         int callWmEndSlot,
@@ -11986,9 +11995,11 @@ public sealed partial class Lowering
         bool runtimeManagedResult,
         int runtimeManagedResultFlagTemp,
         bool calleeResultElementIsGeneric,
-        out bool resultNormalized)
+        out bool resultNormalized,
+        out bool resultDeepCopied)
     {
         resultNormalized = false;
+        resultDeepCopied = false;
         int callPreRestoreEndSlot = NewLocal();
         if (runtimeManagedResult || CanArenaReset(callResultType))
         {
@@ -12015,7 +12026,8 @@ public sealed partial class Lowering
                 callResultType,
                 runtimeManagedResultFlagTemp,
                 calleeResultElementIsGeneric,
-                out resultNormalized);
+                out resultNormalized,
+                out resultDeepCopied);
         }
 
         resultNormalized = true;

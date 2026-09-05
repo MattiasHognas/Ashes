@@ -108,6 +108,47 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
             $"the appended result must be deep-copied before its consumed arguments are released; dump:\n{dump}");
     }
 
+    // The deep copy leaves the appended result sharing nothing with the consumed map results, so
+    // they are released with their records ("rcdrop_list" with the element drops), never spine-only
+    // ("rcdrop_list_spine"): keeping their elements leaked every record and string once per call.
+    [Test]
+    public void Consumed_generic_map_results_are_released_with_their_elements_after_the_deep_copy()
+    {
+        Diagnostics diagnostics = new();
+        var program = new Parser(GenericAppendOfGenericMapResultsSource, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics);
+        lowering.SetSourceContext("genericAppend.ash", GenericAppendOfGenericMapResultsSource);
+        IrProgram ir = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+
+        IReadOnlyList<string> lines = IrTextFormatter.Format(
+            IrOptimizer.Optimize(ir), IrDumpStage.Final, filter: null);
+        string dump = string.Join('\n', lines);
+
+        int entryFunctionStart = dump.IndexOf("function _start_main", StringComparison.Ordinal);
+        entryFunctionStart.ShouldBeGreaterThanOrEqualTo(
+            0, $"expected a ProgramEntry function named _start_main; dump:\n{dump}");
+        string entryFunctionIr = dump[entryFunctionStart..];
+
+        int walk = -1;
+        for (int occurrence = 0; occurrence < 3; occurrence++)
+        {
+            walk = entryFunctionIr.IndexOf("rc_normalize_list_", walk + 1, StringComparison.Ordinal);
+            walk.ShouldBeGreaterThanOrEqualTo(
+                0, $"expected three deep-copy walks in the program entry; dump:\n{dump}");
+        }
+
+        string afterWalk = entryFunctionIr[walk..];
+        afterWalk.IndexOf("rcdrop_list_spine", StringComparison.Ordinal).ShouldBe(
+            -1, $"a deep-copied result must not leave its consumed inputs released spine-only; dump:\n{dump}");
+        int release = afterWalk.IndexOf("rcdrop_list_", StringComparison.Ordinal);
+        release.ShouldBeGreaterThanOrEqualTo(
+            0, $"the consumed map results should be released after the deep copy; dump:\n{dump}");
+        afterWalk.IndexOf("TypeName=Item", release, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(
+            0, $"the consumed map results' records should be dropped with their spines; dump:\n{dump}");
+    }
+
     // The same deep-copied generic result consumed by a callee whose result stays in its own region
     // (never normalized, not produced runtime-managed) and whose ownership summary is poisoned: it
     // hands each record's string to an unknown closure that stores it into the state it returns.
