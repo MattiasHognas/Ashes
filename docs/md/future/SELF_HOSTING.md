@@ -1077,7 +1077,10 @@ same public behavior.
   through the self-hosted compiler (stage 0: 4.1 MB), its back edge matching stage 0's text up
   to the reuse-specialization and dead retention-flag blocks stage 0 still emits around it.
   Open: the single-cell list copies under the advancing watermark (a
-  `head :: <accumulator>` list the runtime-managed placement declines keeps the arena), the
+  `head :: <accumulator>` list the runtime-managed placement declines keeps the arena; no shared
+  `tco_*`, `runtime_rc_*`, `escaping_*`, `aggregate_*`, or `reuse_*` fixture makes stage 0 emit
+  `CopyOutTcoListCell` or a single-cell compaction copy any more, its runtime-managed list
+  admissions having taken every such shape, so the port waits for a shape that needs it), the
   resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
@@ -1506,17 +1509,30 @@ same public behavior.
   pair (`reuse_record_update.source`/`.ir`, `reuse_list_map.source`/`.ir`) that DOES emit
   `DropReuse`/`AllocReusing` for this exact mechanism, plus a `reuse_shared_falls_back` pair where
   stage 0 correctly emits neither (the scrutinee is provably shared by a second top-level binding).
-  Open, blocking end-to-end activation in selfhost: selfhost's own constructor-placement lowering
-  does not yet mark an ordinary `let`-bound or TCO-parameter named-ADT value `RuntimeManaged` the
-  way stage 0 does for these same shapes (confirmed empirically: stage 0 places `Counter(count =
-  0, total = 0)`/`Cons(1)(...)` as RC from construction; selfhost places the identical source as
-  arena), so the hooks' own precondition (`isRuntimeTemp` on the scrutinee) never holds in selfhost
-  yet and none of the three oracle fixtures are registered in `ir-program-parity/Main.ash`. The
-  TCO-loop-native ARENA direct-reuse mechanism (`LowerLambdaCoreScanDirectReuse` and
-  `CollectCtorMatchedScrutinees`'s constructor-pattern-only scan) and the full fold/list reuse
-  SPECIALIZATION (`f$reuse` functions, to-space allocation, `RcIsUnique`-gated runtime uniqueness
-  checks, structural droppers) are not ported — both are substantially larger than this slice and
-  remain open.
+  Activated end to end (2026-09-05): the three oracle pairs are registered in
+  `ir-program-parity/Main.ash` and match byte for byte (the runner drops stage 0's `trait
+  evidence` section, which trait lowering does not produce until milestone 3). The gate is stage
+  0's `TryGetRuntimeManagedReuseScrutinee` rather than a runtime temp: the scrutinee must be a
+  `let` binding still owning its reference-counted value (`liveRuntimeOwnerSlot`), every arm
+  guard-free and leaving the cell dead, and the match a transfer-safe rebuild; the owner is then
+  released into the arms' tokens (`withReuseScrutinee`), so no scope-exit release or arm adoption
+  competes with `DropReuse`. Feeding it, four placement gaps closed: an ordinary `let` body now
+  carries stage 0's `LowerEscapingResult` request (`escapingLetBodyRequest`, chain-aware like
+  `LowerSequentialBindingChain`, applied to the remaining program body for a top-level `let`); a
+  self-recursive copy ADT `let` matched immediately by a reuse-safe rebuild is placed on the
+  reference-counted heap (`isImmediateSafeAdtMatchUse`, stage 0's
+  `RuntimeReusePointerFieldsAreSafe` branch, with positional constructors matched by arity); a
+  bare nullary constructor keeps the consumer's aggregate request (`aggregateRequestForwards`,
+  stage 0's `LowerNullaryConstructor`), so a runtime-managed parent's `Nil` field lands beside
+  it; and `let y = x` over an owned binding is an alias the original owner alone releases
+  (`letAliasesOwnedBinding`, stage 0's `TrackLetOwnership`). A live token is consumed whatever
+  the rebuild's own placement request, its transferred pointer child read without a borrow
+  (`reuseTransferredNames`, stage 0's alias to the dead scrutinee owner) and guarded on the
+  token's runtime nullness. The TCO-loop-native ARENA direct-reuse mechanism
+  (`LowerLambdaCoreScanDirectReuse` and `CollectCtorMatchedScrutinees`'s constructor-pattern-only
+  scan) and the full fold/list reuse SPECIALIZATION (`f$reuse` functions, to-space allocation,
+  `RcIsUnique`-gated runtime uniqueness checks, structural droppers) are not ported — both are
+  substantially larger than this slice and remain open.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [ ] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization

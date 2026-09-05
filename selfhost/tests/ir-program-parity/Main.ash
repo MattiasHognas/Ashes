@@ -11,6 +11,29 @@ let readFixture path =
         | Ok(value) -> value
         | Error(message) -> test.fail("could not read parity fixture " + path + ": " + message)
 
+// Stage 0 prints the trait evidence it resolved (an `Int` operand of a bound variable's type)
+// ahead of the functions; trait lowering is not ported, so the section is dropped from the
+// oracle together with the blank line that closes it.
+let recursive dropTraitEvidence (inSection: Bool) (lines: List(Str)) =
+    match lines with
+        | [] -> []
+        | line :: rest ->
+            if inSection
+            then
+                if line == ""
+                then dropTraitEvidence(false)(rest)
+                else dropTraitEvidence(true)(rest)
+            else
+                if line == "trait evidence"
+                then dropTraitEvidence(true)(rest)
+                else line :: dropTraitEvidence(false)(rest)
+
+let withoutTraitEvidence (text: Str) =
+    "\n"
+    |> Ashes.Text.split(text)
+    |> dropTraitEvidence(false)
+    |> Ashes.Text.join("\n")
+
 let checkFixture root name =
     (let source =
         ".source"
@@ -21,6 +44,7 @@ let checkFixture root name =
             ".ir"
             |> fixturePath(root)(name)
             |> readFixture
+            |> withoutTraitEvidence
         in
             match parseProgram(source) with
                 | ProgramParseResult { program = program, diagnostics = [] } ->
@@ -80,6 +104,11 @@ let checkFixture root name =
 // list. lambda_returns_record (a lambda returning a fresh record tree, owned by a top-level `let`
 // and released through its field walk) stays out of the runner: its `_start_main` still copies
 // the match result out at the scope exit where stage 0 knows every arm produced a runtime value.
+// reuse_record_update and reuse_list_map add OPT-42's runtime reuse: the `let`-owned scrutinee
+// released into each arm's reuse token, the same-constructor rebuild consuming it in place with
+// its transferred pointer child guarded by the token's uniqueness, and the nullary rebuild reusing
+// the dead cell; reuse_shared_falls_back keeps a scrutinee aliased by a second `let` on the arena
+// path with no token at all.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -106,5 +135,8 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("tco_unused_chain_parameter"))
         |> (given (_) -> checkFixture(root)("owned_let_list_drop"))
         |> (given (_) -> checkFixture(root)("aggregate_children_retain"))
+        |> (given (_) -> checkFixture(root)("reuse_record_update"))
+        |> (given (_) -> checkFixture(root)("reuse_list_map"))
+        |> (given (_) -> checkFixture(root)("reuse_shared_falls_back"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

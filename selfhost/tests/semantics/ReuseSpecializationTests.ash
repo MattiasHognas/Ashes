@@ -2,12 +2,9 @@
 // (`AshesCompiler.Semantics.ReuseSpecialization`): the pure Expr/Pattern-shape predicates
 // CoreLowering.ash's match-arm and constructor-allocation hooks use to decide whether a dead
 // matched cell may become an arena/RC in-place-reuse token, and whether a same-name rebuild may
-// safely consume one. Exercised directly against hand-built AST fragments rather than through the
-// full lowering pipeline: end-to-end `DropReuse`/`AllocReusing` parity is blocked on a pre-existing
-// gap this module does not own — selfhost's own constructor-placement lowering does not yet mark
-// an ordinary `let`-bound or TCO-parameter ADT scrutinee `RuntimeManaged` the way stage 0 does, so
-// the hooks' own precondition (`isRuntimeTemp` on the scrutinee) never holds yet for a plain match
-// on a named-ADT value. See the self-hosting milestone notes for the tracked follow-up.
+// safely consume one. Exercised directly against hand-built AST fragments; the end-to-end
+// `DropReuse`/`AllocReusing` emission is covered by the `reuse_record_update`, `reuse_list_map`,
+// and `reuse_shared_falls_back` whole-program parity fixtures.
 //
 // `Expr` derives neither `Eq` nor `Show`, so a returned argument list is described as a list of
 // discriminator strings (`describeExpr`) rather than compared directly.
