@@ -315,6 +315,10 @@ type CoreLoweringState =
     // parameter slot and the read's type; promoted to real retains once the frame's placements
     // are known.
     | tcoParameterRetainSites: List((Int, Int, SemanticType))
+    // The parameter slot whose tail self-call argument is being lowered, stage 0's
+    // `_loweringTcoBackEdgeArgumentSlot`: a read of that parameter inside its own successor is
+    // the reference the back edge moves, never retained.
+    | backEdgeArgumentSlot: Maybe(Int)
     | bodyRuntimeManagedByLabel: List((Str, Bool))
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
@@ -577,6 +581,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeOwners = [],
         patternOwnerSites = [],
         tcoParameterRetainSites = [],
+        backEdgeArgumentSlot = None,
         bodyRuntimeManagedByLabel = [],
         runtimeNormalizedArgumentLabels = [],
         recursiveGroupNames = [],
@@ -3392,7 +3397,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
@@ -3611,6 +3616,7 @@ type ArgumentCopyPlan =
     | ScalarArgumentCopy
     | LeafArgumentCopy(Int)
     | ListHeadArgumentCopy(ListHeadCopyKind)
+    | ListDeepArgumentCopy(ArgumentCopyPlan)
     | TupleArgumentCopy(List(ArgumentCopyPlan))
     | ShallowAdtArgumentCopy(Int)
     | ConstructorArgumentCopy((Int, Int, Bool, List((Int, ArgumentCopyPlan))))
@@ -3665,7 +3671,10 @@ let recursive argumentCopyPlanOf (semanticType: SemanticType) (state: CoreLoweri
         | SemList(element) ->
             match listHeadCopyKindOf(element)(state) with
                 | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
-                | None -> None
+                | None ->
+                    match argumentCopyPlanOf(element)(state) with
+                        | Some(elementPlan) -> Some(ListDeepArgumentCopy(elementPlan))
+                        | None -> None
         | SemTuple(elements) ->
             match argumentCopyPlansOf(elements)(state) with
                 | Some(plans) -> Some(TupleArgumentCopy(plans))
@@ -3744,6 +3753,7 @@ let firstSwitchLabel (cases: List(IrSwitchCase)) =
 let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match plan with
         | ScalarArgumentCopy -> (state, sourceTemp)
+        | ListDeepArgumentCopy(elementPlan) -> emitListDeepCopy(sourceTemp)(elementPlan)(state)
         | _ ->
             match freshTemp(state) with
                 | FreshTemp { state = allocated, temp = resultTemp } ->
@@ -3751,6 +3761,7 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
                         | LeafArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
                         | ShallowAdtArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
                         | ListHeadArgumentCopy(headCopy) -> (rcNormalizationListCopyOut(resultTemp)(sourceTemp)(headCopy)(allocated), resultTemp)
+                        | ListDeepArgumentCopy(elementPlan) -> emitListDeepCopy(sourceTemp)(elementPlan)(allocated)
                         | TupleArgumentCopy(elements) ->
                             allocated
                             |> emit(Alloc(resultTemp)(8 * coreListLength(elements))(true))
@@ -3760,6 +3771,86 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
                         | ConstructorArgumentCopy(constructorPlan) -> emitConstructorDeepCopy(sourceTemp)(constructorPlan)(allocated)
                         | SwitchArgumentCopy(constructorPlans) -> emitAdtSwitchDeepCopy(sourceTemp)(constructorPlans)(allocated)
                         | ScalarArgumentCopy -> (allocated, sourceTemp)
+// Stage 0's `EmitRuntimeManagedTcoListDeepCopy`: a list whose heads have no spine copy is walked
+// cell by cell, each head deep-copied into a fresh reference-counted cons cell appended behind
+// the last one; the first cell is the copy.
+and emitListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = currentState, local = currentSlot } ->
+            match freshLocal(currentState) with
+                | FreshLocal { state = firstState, local = firstSlot } ->
+                    match freshLocal(firstState) with
+                        | FreshLocal { state = lastState, local = lastSlot } ->
+                            match freshTemp(lastState) with
+                                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                    match freshLabel("rc_normalize_list")(zeroState) with
+                                        | FreshLabel { state = loopState, label = loopLabel } ->
+                                            match freshLabel("rc_normalize_list_end")(loopState) with
+                                                | FreshLabel { state = endState, label = endLabel } ->
+                                                    match endState
+                                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                                    |> emit(StoreLocal(currentSlot)(sourceTemp))
+                                                    |> emit(StoreLocal(firstSlot)(zeroTemp))
+                                                    |> emit(StoreLocal(lastSlot)(zeroTemp))
+                                                    |> emit(Label(loopLabel))
+                                                    |> emitListDeepCopyCell(currentSlot)(firstSlot)(lastSlot)(zeroTemp)(loopLabel)(endLabel)(elementPlan)
+                                                    |> emit(Label(endLabel))
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = resultState, temp = resultTemp } ->
+                                                            resultState
+                                                            |> emit(LoadLocal(resultTemp)(firstSlot))
+                                                            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                                                            |> (given (copied) -> (copied, resultTemp))
+and emitListDeepCopyCell (currentSlot: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (loopLabel: Str) (endLabel: Str) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = currentState, temp = currentTemp } ->
+            match freshTemp(currentState) with
+                | FreshTemp { state = nonEmptyState, temp = nonEmptyTemp } ->
+                    match freshTemp(nonEmptyState) with
+                        | FreshTemp { state = headState, temp = headTemp } ->
+                            match freshTemp(headState) with
+                                | FreshTemp { state = tailState, temp = tailTemp } ->
+                                    match tailState
+                                    |> emit(LoadLocal(currentTemp)(currentSlot))
+                                    |> emit(CmpIntNe(nonEmptyTemp)(currentTemp)(zeroTemp))
+                                    |> emit(JumpIfFalse(nonEmptyTemp)(endLabel))
+                                    |> emit(LoadMemOffset(headTemp)(currentTemp)(0))
+                                    |> emit(LoadMemOffset(tailTemp)(currentTemp)(8))
+                                    |> emitArgumentDeepCopy(headTemp)(elementPlan) with
+                                        | (copied, copiedHead) ->
+                                            match freshTemp(copied) with
+                                                | FreshTemp { state = cellState, temp = cellTemp } ->
+                                                    cellState
+                                                    |> emit(Alloc(cellTemp)(16)(true))
+                                                    |> emit(StoreMemOffset(cellTemp)(0)(copiedHead))
+                                                    |> emit(StoreMemOffset(cellTemp)(8)(zeroTemp))
+                                                    |> emitListDeepCopyAppend(firstSlot)(lastSlot)(zeroTemp)(cellTemp)
+                                                    |> emit(StoreLocal(currentSlot)(tailTemp))
+                                                    |> emit(Jump(loopLabel))
+// Stage 0's `EmitRuntimeManagedTcoListAppendCell`: the fresh cell becomes the first cell of the
+// copy or the tail of the last one, and is the last one from then on.
+and emitListDeepCopyAppend (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (cellTemp: Int) (state: CoreLoweringState) =
+    match freshLabel("rc_normalize_list_first")(state) with
+        | FreshLabel { state = firstLabelState, label = firstLabel } ->
+            match freshLabel("rc_normalize_list_linked")(firstLabelState) with
+                | FreshLabel { state = linkedLabelState, label = linkedLabel } ->
+                    match freshTemp(linkedLabelState) with
+                        | FreshTemp { state = firstState, temp = firstTemp } ->
+                            match freshTemp(firstState) with
+                                | FreshTemp { state = hasFirstState, temp = hasFirstTemp } ->
+                                    match freshTemp(hasFirstState) with
+                                        | FreshTemp { state = lastState, temp = lastTemp } ->
+                                            lastState
+                                            |> emit(LoadLocal(firstTemp)(firstSlot))
+                                            |> emit(CmpIntNe(hasFirstTemp)(firstTemp)(zeroTemp))
+                                            |> emit(JumpIfFalse(hasFirstTemp)(firstLabel))
+                                            |> emit(LoadLocal(lastTemp)(lastSlot))
+                                            |> emit(StoreMemOffset(lastTemp)(8)(cellTemp))
+                                            |> emit(Jump(linkedLabel))
+                                            |> emit(Label(firstLabel))
+                                            |> emit(StoreLocal(firstSlot)(cellTemp))
+                                            |> emit(Label(linkedLabel))
+                                            |> emit(StoreLocal(lastSlot)(cellTemp))
 and emitTupleElementCopies (sourceTemp: Int) (resultTemp: Int) (index: Int) (elements: List(ArgumentCopyPlan)) (state: CoreLoweringState) =
     match elements with
         | [] -> state
@@ -3851,6 +3942,7 @@ let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLowe
             match plan with
                 | ListHeadArgumentCopy(headCopy) ->
                     (emit(CopyOutList(normalizedTemp)(sourceTemp)(headCopy)(true)(RcNormalization))(allocated), normalizedTemp)
+                | ListDeepArgumentCopy(_elementPlan) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
                 | TupleArgumentCopy(_elements) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
                 | ConstructorArgumentCopy(_constructorPlan) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
                 | SwitchArgumentCopy(_constructorPlans) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
@@ -4670,9 +4762,9 @@ let isUnconditionallyRcManagedType (semanticType: SemanticType) =
 let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
         | Some(SemList(element)) ->
-            match listHeadCopyKindOf(element)(state) with
+            match argumentCopyPlanOf(SemList(element))(state) with
                 | None -> None
-                | Some(_kind) ->
+                | Some(_plan) ->
                     if tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(state.pendingTcoResets) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) && (!containsInt(ordinal)(loop.escapingHeadOrdinals) || isUnconditionallyRcManagedType(resolveType(state)(element))))
                     then Some(element)
                     else None
@@ -4813,8 +4905,8 @@ let recursive tcoEntryNormalizationEntries (candidates: List(TcoManagedCandidate
             match (candidate.strManaged, lookupRuntimeManagedListSlot(candidate.slot)(managedLists), lookupRuntimeManagedAdtSlot(candidate.slot)(managedAdts)) with
                 | (true, _managed, _adt) -> (candidate.slot, LeafArgumentCopy(-1), None) :: tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
                 | (false, Some((activeSlot, element)), _adt) ->
-                    match listHeadCopyKindOf(element)(state) with
-                        | Some(kind) -> (candidate.slot, ListHeadArgumentCopy(kind), Some(activeSlot)) :: tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
+                    match argumentCopyPlanOf(SemList(element))(state) with
+                        | Some(plan) -> (candidate.slot, plan, Some(activeSlot)) :: tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
                         | None -> tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
                 | (false, None, Some((activeSlot, semanticType, _typeName))) -> (candidate.slot, tcoAdtCopyPlanOf(semanticType)(state), Some(activeSlot)) :: tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
                 | _ -> tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
@@ -8432,7 +8524,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
@@ -8678,8 +8770,97 @@ let recursive emitTupleFields baseTemp index temps state =
             |> emit(StoreMemOffset(baseTemp)(index * 8)(temp))
             |> emitTupleFields(baseTemp)(index + 1)(rest)
 
+let parameterSlotOfName (name: Str) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot) }) ->
+            if containsInt(slot)(frame.parameterSlots)
+            then Some(slot)
+            else None
+        | _ -> None
+
+let recursive ordinalOfSlot (slot: Int) (slots: List(Int)) (ordinal: Int) =
+    match slots with
+        | [] -> None
+        | candidate :: rest ->
+            if candidate == slot
+            then Some(ordinal)
+            else ordinalOfSlot(slot)(rest)(ordinal + 1)
+
+let recursive shapeAtOrdinal (ordinal: Int) (shapes: List(TcoArgumentShape)) =
+    match shapes with
+        | [] -> TcoOtherShape
+        | shape :: rest ->
+            if ordinal == 0
+            then shape
+            else shapeAtOrdinal(ordinal - 1)(rest)
+
+// A loop parameter read is a runtime-managed value when its slot's resolved type and self-call
+// shape admit it to reference-counted placement (an ADT cell, or a `Str` the affine analysis
+// manages): a cell built around it may then live on the reference-counted heap. The finalize
+// pass places the parameter or demotes the whole frame; a demoted frame never reclaims the arena
+// at its back edge, so a cell placed early holds no dangling reference.
+let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop) with
+        | (Some(frame), Some(loop)) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) ->
+                    match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
+                        | Some(ordinal) ->
+                            tcoAdtSlotAdmitted(slot)(shapeAtOrdinal(ordinal)(loop.argumentShapes))(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+                        | None -> false
+                | None -> false
+        | _ -> false
+
+// The loop parameter an aggregate child reads: the parameter itself, or a record field read out
+// of it (`s.label`, a qualified name whose module part is the parameter's binding).
+let loopParameterReadSlot (argument: Expr) (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | None -> None
+        | Some(frame) ->
+            match unspanArgument(argument) with
+                | ExprVar(name) -> parameterSlotOfName(name)(frame)(state)
+                | ExprQualifiedVar(owner, _field) -> parameterSlotOfName(owner)(frame)(state)
+                | _ -> None
+
+// A parameter's own read inside the tail self-call argument that rebuilds it: the reference the
+// back edge moves into the successor (stage 0's `_loweringTcoBackEdgeArgumentSlot` exclusion). A
+// field read out of the parameter is a borrow of a child the old parameter's structural walk
+// releases, so it is never excluded.
+let isOwnSuccessorRead (argument: Expr) (slot: Int) (state: CoreLoweringState) =
+    match (unspanArgument(argument), state.backEdgeArgumentSlot) with
+        | (ExprVar(_name), Some(argumentSlot)) -> argumentSlot == slot
+        | _ -> false
+
+// Stage 0's `RetainRuntimeManagedTcoConstructorArguments` and
+// `DuplicateRuntimeManagedTcoParameterForAggregate`: a heap-typed loop parameter read, or a
+// heap-typed field read out of one, stored into an aggregate cell takes a duplicate — an
+// identity marker until the loop's finalize pass turns it into a real retain for a parameter it
+// places on the reference-counted heap. The back edge releases the old parameter's own reference
+// (and its children through the structural walk) once its argument rebuilds the value, so a
+// stored borrow would be freed under the cell.
+let retainLoopParameterChild (argument: Expr) (originalTemp: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if temp != originalTemp || resultSurvivesReset(semanticType)(state)
+            then lowered
+            else
+                match loopParameterReadSlot(argument)(state) with
+                    | Some(slot) ->
+                        if isOwnSuccessorRead(argument)(slot)(state)
+                        then lowered
+                        else
+                            match freshTemp(state) with
+                                | FreshTemp { state = allocated, temp = duplicate } ->
+                                    allocated
+                                    |> emit(RcDup(duplicate)(temp)(false)(false))
+                                    |> (given (marked: CoreLoweringState) -> marked with tcoParameterRetainSites = (duplicate, slot, semanticType) :: marked.tcoParameterRetainSites)
+                                    |> success(duplicate)(semanticType)
+                    | None -> lowered
+        | _ -> lowered
+
 // Whether a lowered child is represented on the reference-counted heap: a newly produced or
-// handed-on runtime temp, or the borrowed read of a binding that still owns its reference.
+// handed-on runtime temp, the borrowed read of a binding that still owns its reference, or the
+// read of a loop parameter the frame places on the reference-counted heap.
 let childIsRuntimeManaged (child: Expr) (temp: Int) (state: CoreLoweringState) =
     if isRuntimeTemp(temp)(state)
     then true
@@ -8688,7 +8869,7 @@ let childIsRuntimeManaged (child: Expr) (temp: Int) (state: CoreLoweringState) =
             | ExprVar(name) ->
                 match liveRuntimeOwnerSlot(name)(state) with
                     | Some(_slot) -> true
-                    | None -> false
+                    | None -> loopParameterIsRuntimeManaged(name)(state)
             | _ -> false
 
 let isRuntimeManageableHeapChild (semanticType: SemanticType) (listOverScalarsOnly: Bool) (state: CoreLoweringState) =
@@ -8844,7 +9025,10 @@ let retainListElement (request: ConsumerRequest) (transfers: Bool) (element: Exp
             if requestsRuntimeList(request) || transfers
             then
                 match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
-                    | (retained, retainedTemp) -> success(retainedTemp)(semanticType)(retained)
+                    | (retained, retainedTemp) ->
+                        retained
+                        |> success(retainedTemp)(semanticType)
+                        |> retainLoopParameterChild(element)(temp)
             else lowered
         | _ -> lowered
 
@@ -8871,7 +9055,10 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
             if transfers && cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(tailState) == false
             then
                 match retainAggregateChildTemp(tailExpression)(tailTemp)(tailType)(tailState) with
-                    | (retained, retainedTemp) -> success(retainedTemp)(tailType)(retained)
+                    | (retained, retainedTemp) ->
+                        retained
+                        |> success(retainedTemp)(tailType)
+                        |> retainLoopParameterChild(tailExpression)(tailTemp)
             else tail
         | _ -> tail
 
@@ -9205,48 +9392,6 @@ let transferSlotRequested (transferSlot: Maybe(Int)) =
     match transferSlot with
         | Some(_slot) -> true
         | None -> false
-
-let parameterSlotOfName (name: Str) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
-    match lookupBinding(name)(state.bindings) with
-        | Some(CoreBinding { location = CoreLocal(slot) }) ->
-            if containsInt(slot)(frame.parameterSlots)
-            then Some(slot)
-            else None
-        | _ -> None
-
-// The loop parameter a constructor argument reads: the parameter itself, or a record field read
-// out of it (`s.label`, a qualified name whose module part is the parameter's binding).
-let loopParameterReadSlot (argument: Expr) (state: CoreLoweringState) =
-    match state.tcoLoopFrame with
-        | None -> None
-        | Some(frame) ->
-            match unspanArgument(argument) with
-                | ExprVar(name) -> parameterSlotOfName(name)(frame)(state)
-                | ExprQualifiedVar(owner, _field) -> parameterSlotOfName(owner)(frame)(state)
-                | _ -> None
-
-// Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: a heap-typed loop parameter read, or
-// a heap-typed field read out of one, stored into a constructor cell takes a duplicate — an
-// identity marker until the loop's finalize pass turns it into a real retain for a parameter it
-// places on the reference-counted heap. The back edge copies the successor's children and
-// releases the dying successor's references to them, then releases the old parameter's own
-// children through its structural walk, so a stored borrow would be freed twice.
-let retainLoopParameterChild (argument: Expr) (originalTemp: Int) (lowered: LoweredCoreValue) =
-    match lowered with
-        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if temp != originalTemp || resultSurvivesReset(semanticType)(state)
-            then lowered
-            else
-                match loopParameterReadSlot(argument)(state) with
-                    | Some(slot) ->
-                        match freshTemp(state) with
-                            | FreshTemp { state = allocated, temp = duplicate } ->
-                                allocated
-                                |> emit(RcDup(duplicate)(temp)(false)(false))
-                                |> (given (marked: CoreLoweringState) -> marked with tcoParameterRetainSites = (duplicate, slot, semanticType) :: marked.tcoParameterRetainSites)
-                                |> success(duplicate)(semanticType)
-                    | None -> lowered
-        | _ -> lowered
 
 // Stage 0's `RetainEscapingConstructorArgument`: a constructor whose consumer owns the value (a
 // runtime-managed candidate, a transfer slot, or the loop body's tail position) takes a
@@ -11426,7 +11571,17 @@ let headArgumentShape (shapes: List(TcoArgumentShape)) =
 // Stage 0's `LowerCallTcoEvalArgs`: every argument of the tail self-call is lowered into a temp
 // first, expected to have the loop function's parameter type, under the children transfer and
 // never in tail position, before any parameter slot changes.
-let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (shapes: List(TcoArgumentShape)) functionType lower (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
+let headSlotOf (slots: List(Int)) =
+    match slots with
+        | slot :: _rest -> Some(slot)
+        | [] -> None
+
+let restSlotsOf (slots: List(Int)) =
+    match slots with
+        | _slot :: rest -> rest
+        | [] -> []
+
+let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(Int)) (shapes: List(TcoArgumentShape)) functionType lower (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
     match arguments with
         | [] ->
             CoreTailSelfCallArguments(
@@ -11439,17 +11594,13 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (shapes: List(T
             match ensureFunctionType(functionType)(state) with
                 | FunctionTypeResolution { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
                 | FunctionTypeResolution { state = functionState, argumentType = parameterType, resultType = resultType, error = None } ->
-                    match functionState
-                    |> tailSelfCallArgumentRequest(parameterType)(headArgumentShape(shapes))
-                    |> lower(argument)
-                    |> duplicatePatternOwnerChild(argument)
-                    |> retainTransferredChild(argument)(true) with
-                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
+                    match retainTransferredChild(argument)(true)(duplicatePatternOwnerChild(argument)(lower(argument)(tailSelfCallArgumentRequest(parameterType)(headArgumentShape(shapes))((functionState with backEdgeArgumentSlot = headSlotOf(slots)))))) with
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failedTailSelfCallArguments((failedState with backEdgeArgumentSlot = None))(error)
                         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
-                            match bindType(parameterType)(argumentType)(argumentState) with
+                            match bindType(parameterType)(argumentType)((argumentState with backEdgeArgumentSlot = None)) with
                                 | (failedState, Some(error)) -> failedTailSelfCallArguments(failedState)(error)
                                 | (typedState, None) ->
-                                    lowerTailSelfCallArguments(rest)(restArgumentShapes(shapes))(resultType)(lower)(typedState)(argumentTemp :: reversedTemps)(argumentType :: reversedTypes)
+                                    lowerTailSelfCallArguments(rest)(restSlotsOf(slots))(restArgumentShapes(shapes))(resultType)(lower)(typedState)(argumentTemp :: reversedTemps)(argumentType :: reversedTypes)
 
 let recursive loadOldParameters (slots: List(Int)) (state: CoreLoweringState) (reversedTemps: List(Int)) =
     match slots with
@@ -11565,7 +11716,7 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
         | Some(binding) ->
             match instantiateBinding(binding)(state) with
                 | InstantiatedBinding { state = instantiatedState, semanticType = functionType } ->
-                    match lowerTailSelfCallArguments(spine.arguments)(loop.argumentShapes)(functionType)(lower)(instantiatedState)([])([]) with
+                    match lowerTailSelfCallArguments(spine.arguments)(frame.parameterSlots)(loop.argumentShapes)(functionType)(lower)(instantiatedState)([])([]) with
                         | CoreTailSelfCallArguments { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
                             argumentState

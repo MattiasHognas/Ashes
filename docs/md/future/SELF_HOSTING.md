@@ -938,15 +938,29 @@ same public behavior.
   argument expression now reaches the back edge (`PendingTcoReset.ArgExpressions`,
   `CoreTcoReset.argumentExpressions`), and a literal child releases only the references it holds,
   recursively through nested constructor, record, tuple, list and cons literals
-  (`TryEmitRuntimeManagedTcoLiteralChildrenRelease`, `emitLiteralChildrenRelease`). A
+  (`TryEmitRuntimeManagedTcoLiteralChildrenRelease`, `emitLiteralChildrenRelease`). A list
+  accumulator over record heads (`collect(n - 1)(State(...))(s :: acc)`) is admitted with the
+  record parameter it conses: the entry normalizes the borrowed list through stage 0's
+  `rc_normalize_list` walk (`ListDeepArgumentCopy`, each head deep-copied into a fresh
+  reference-counted cell), a loop-parameter read consed into a sibling accumulator or into the
+  exit arm's cell takes the retain marker the constructor path already took (`retainListElement`,
+  `retainConsTail`; a parameter's own read inside the argument that rebuilds it is the reference
+  the back edge moves, `backEdgeArgumentSlot`), and a cons cell around an admitted parameter's
+  read is placed on the reference-counted heap as it is lowered (`loopParameterIsRuntimeManaged`,
+  the frame's later demotion never reclaims the arena at the back edge, so an early placement
+  never dangles). The loop's lowered IR matches stage 0's
+  (`tests/tco_runtime_managed_record_list_accumulator.ash`). A
   body result that reloads an
   `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
   result runtime-managed, as a direct read did. Open: multi-constructor ADT parameters (stage 0
   keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations), freshly rebuilt lists, lists over heads without a spine copy (the `rc_normalize_list` deep copy),
+  iterations), freshly rebuilt lists,
   escaping aggregate heads of a consumed list (a promoted aggregate owner needs the structural
-  release the placement does not name yet), the runtime-managed reset and
+  release the placement does not name yet), a `Str` parameter read a second time outside its own
+  successor (`collect(n - 1)(text + suffix)(text :: acc)`: the affine analysis declines the
+  parameter and the frame stays on the arena path, where stage 0 retains the read), the
+  runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
   paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine
   string reservations — a loop over such parameters is emitted without a back-edge reset), the
