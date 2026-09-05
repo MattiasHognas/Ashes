@@ -877,11 +877,34 @@ same public behavior.
   value at runtime and releases only when they differ (the transferred-reference case). Verified
   crash- and leak-free at 200000 iterations
   (`tests/tco_runtime_managed_str_accumulator_plateau.ash`, run through the backend suite next to
-  a 200000-element `List(Str)` consumed through its own pattern-owned tail). Open: the same for a
-  `List`- or ADT-typed parameter (the `Borrow` of a pattern-owned successor and the old root's
-  drop, `TcoBackEdgeNormalizeRuntimeManagedArg`'s remaining cases) and the copy-out reset paths
-  for such parameters (fixed-watermark compaction, the two-phase up/down copies, affine string
-  reservations — a loop over such parameters is emitted without a back-edge reset), the
+  a 200000-element `List(Str)` consumed through its own pattern-owned tail). A `List`-typed
+  parameter is placed the same way in two self-call shapes (`TcoRuntimeManagedParams.ash`'s
+  `tcoSelfCallShapes`, stage 0's `TcoSelfCallArgumentShape` walk over the loop body's `if`
+  branches, `match` arms, and `let` bodies): grown by one cons cell per iteration onto the
+  parameter's own value (every back edge's cell allocated on the reference-counted heap, its head
+  a fresh producer or a retained owner) or consumed through its own pattern-bound tail over heap
+  heads whose arm keeps them borrowed (`namesBorrowedOnly`: an operator operand, a scrutinee, a
+  condition, a field read, or an argument of a borrowing builtin — a head passed to a self-call
+  or user function, consed, stored, returned, or captured keeps the list in the arena, since no
+  pattern-owner protective duplicate is ported). The resolved element must support the
+  runtime-managed accumulator layout and a spine copy (`listHeadCopyKindOf`), and a sibling that
+  permanently blocks the frame's reclaim (stage 0's `IsPermanentlyBlockingTcoParam`) demotes every
+  list candidate. Each candidate's active flag is allocated at loop entry; an admitted slot is
+  normalized at entry (`CopyOutList` under the ownership flag for the direct argument, unconditional
+  for a captured chain parameter) with its flag set, every back edge with a runtime-managed list
+  takes stage 0's runtime-managed reset (`TcoBackEdgeTryEmitRuntimeManagedReset`: a consumed
+  tail's successor is retained null-tolerantly and the old root released under the flag, the
+  iteration owners released, the fixed loop-entry watermark restored, the successors stored with
+  their flags set, the chunks reclaimed), and the exit releases each slot under its flag through
+  the shared-cell `rcdrop_list` walk, transfer-checked against a list-typed result whose direct
+  read of a slot also marks the function's result runtime-managed. Verified at 200000 iterations
+  by `tests/tco_runtime_managed_list_accumulator_plateau.ash` through the backend suite and by
+  `TcoOwnershipRulesTests.ash`. Open: ADT- and tuple-typed parameters, freshly rebuilt lists,
+  lists over heads without a spine copy (the `rc_normalize_list` deep copy), escaping heads of a
+  consumed list (stage 0's pattern-owner protective duplicate), the runtime-managed reset and
+  active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
+  paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine
+  string reservations — a loop over such parameters is emitted without a back-edge reset), the
   resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
@@ -1001,7 +1024,8 @@ same public behavior.
   the Perceus pattern-owner duplicate an owning consumer adds
   (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
   (`DuplicateRuntimeManagedTcoParameterForAggregate`) for a `List`- or ADT-typed loop parameter,
-  waiting on pattern owners and parameter placement for those shapes;
+  waiting on pattern owners (a grown or consumed `List` parameter is now placed runtime-managed
+  under OPT-25's shape rules, an ADT parameter is not);
   `tco_owned_let_in_tail_argument_record.ash` and
   `tco_let_call_result_in_accumulator_record.ash`'s remaining diff from stage 0 is a
   call-argument-retention gap for a plain top-level function called from inside the loop body
@@ -1055,7 +1079,8 @@ same public behavior.
   still differs from stage 0 (a `let`-wrapped `if`-window `Str` copy-out neither this nor OPT-25
   ports, and its `pascalCaseCharacters`/`continuePascalCase` pair is mutual recursion, milestone
   5's OPT-19), so it stays out of the parity runner. A `List`- or ADT-typed loop parameter (the
-  OPT-26 and OPT-29 fixtures proper) is unaffected and stays open, waiting on OPT-25's aggregate-shaped
+  OPT-26 and OPT-29 fixtures proper) follows OPT-25's list shapes for a grown or consumed `List`
+  (the operand fixture's `acc` is now a runtime-managed list) and stays open for an ADT, waiting on OPT-25's aggregate-shaped
   tail above.
 - [~] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a

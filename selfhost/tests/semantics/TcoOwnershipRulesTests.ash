@@ -177,9 +177,76 @@ let expectLetAliasOfParameterIsNotAnOwner unit =
         |> (given (_) -> check("the back-edge predecessor release and the exit-guarded release, no more")(countContaining("RcDrop")(lines) == 2))
         |> (given (_) -> check("no retain of the alias or the parameter")(countContaining("RcDup")(lines) == 0)))
 
+// The `acc` of `count` grows by one cons cell at every tail self-call, and the head it stores
+// is a live owner's reference, so `acc` is a runtime-managed list: the direct argument is
+// normalized at entry against the caller's ownership flag (a borrowed list copies its spine with
+// its string heads), the tail branch's cons cell is allocated on the reference-counted heap, the
+// back edge resets the arena to the fixed loop-entry watermark once the successor is stored, and
+// the loop exit releases the accumulator under its active flag through the shared-cell walk.
+let expectGrownConsAccumulatorIsRuntimeManaged unit =
+    ownedLetInOperandSelfCallSource
+    |> loopFunctionLines("[ClosureHelper from count]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the entry normalization reads the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) ->
+            "HeadCopy=String RuntimeManaged=true"
+            |> Ashes.Text.contains(lineContaining("CopyOutList")(lines))
+            |> check("the borrowed list copies its spine with its string heads"))
+        |> (given (_) ->
+            check("the tail branch's cons cell on the reference-counted heap")(countContaining("Alloc ")(afterLastElseLabel(lines)([])) == 1))
+        |> (given (_) ->
+            "RuntimeManaged=true"
+            |> Ashes.Text.contains([]
+            |> afterLastElseLabel(lines)
+            |> lineContaining("Alloc "))
+            |> check("a runtime-managed cons cell"))
+        |> (given (_) ->
+            "RestoreArenaState     CursorLocalSlot=" + fieldAfter("CursorLocalSlot=")(lineContaining("SaveArenaState")(lines))
+            |> countContaining
+            |> (given (count) ->
+                []
+                |> afterLastElseLabel(lines)
+                |> count)
+            |> (given (resets) -> check("the back edge resets to the fixed loop-entry watermark")(resets == 1)))
+        |> (given (_) ->
+            "ReclaimArenaChunks    SavedEndSlot=" + fieldAfter("EndLocalSlot=")(lineContaining("SaveArenaState")(lines))
+            |> countContaining
+            |> (given (count) ->
+                []
+                |> afterLastElseLabel(lines)
+                |> count)
+            |> (given (reclaims) -> check("the back edge reclaims the chunks above the fixed watermark")(reclaims == 1)))
+        |> (given (_) -> check("the exit release under the active flag")(countContaining("rc_tco_exit_drop_inactive")(lines) == 2))
+        |> (given (_) -> check("the exit release walks the shared-cell list")(countContaining("rcdrop_list_shared")(lines) == 2)))
+
+let consumedTailListSource = "let recursive total xs acc =\n    match xs with\n        | [] -> acc\n        | s :: rest -> total(rest)(acc + Ashes.Text.byteLength(s))\n\nAshes.IO.print(total([Ashes.Text.fromInt(1)])(0))"
+
+// The `xs` of `total` is consumed through its own pattern-bound tail at every tail self-call
+// over string heads, so it is a runtime-managed list: the chain parameter is always copied at
+// entry (no ownership flag reaches a captured parameter), the back edge retains the successor
+// tail null-tolerantly before releasing the old root under the active flag, and the loop exit
+// releases whatever the slot still holds.
+let expectConsumedTailListIsRuntimeManaged unit =
+    consumedTailListSource
+    |> loopFunctionLines("[ClosureHelper from total]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("no ownership flag for a captured chain parameter")(countContaining("LoadArgumentOwnership")(lines) == 0))
+        |> (given (_) ->
+            "HeadCopy=String RuntimeManaged=true"
+            |> Ashes.Text.contains(lineContaining("CopyOutList")(lines))
+            |> check("the entry copies the spine with its string heads"))
+        |> (given (_) -> check("the successor tail retained null-tolerantly at the back edge")(countContaining("MayBeEmpty=true")(lines) == 1))
+        |> (given (_) -> check("the old root released under the active flag at the back edge")(countContaining("rc_tco_drop_inactive")(lines) == 2))
+        |> (given (_) -> check("the exit release under the active flag")(countContaining("rc_tco_exit_drop_inactive")(lines) == 2))
+        |> (given (_) -> check("one list walk at the back edge and one at the exit")(countContaining("rcdrop_list_shared")(lines) == 4)))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
     |> (given (_) -> expectOperandSelfCallIsNotATailCall(Unit))
     |> (given (_) -> expectLetAliasOfParameterIsNotAnOwner(Unit))
+    |> (given (_) -> expectGrownConsAccumulatorIsRuntimeManaged(Unit))
+    |> (given (_) -> expectConsumedTailListIsRuntimeManaged(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))
