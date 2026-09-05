@@ -498,10 +498,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(text)
                                             |> emitTextUnconsText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
-                                        | RuneToText(target, rune, _managed) ->
+                                        | RuneToText(target, rune, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(rune)
-                                            |> emitRuneToText(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)) :: tempEnv, terminated)
+                                            |> emitRuneToText(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
                                         | TextFromInt(target, value, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(value)
@@ -523,34 +523,37 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(text)
                                             |> emitTextParseFloat(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
-                                        | BytesSingleton(target, byte, _managed) ->
+                                        | BytesSingleton(target, byte, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(byte)
-                                            |> emitBytesSingleton(builder)(i64)(i8)(mallocFn)(mallocType)) :: tempEnv, terminated)
+                                            |> emitBytesSingleton(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
                                         | BytesHash(target, bytes) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(bytes)
                                             |> emitBytesHash(context)(function_)(i64)(i8)(ptrType)(builder)) :: tempEnv, terminated)
-                                        | BytesAppendByte(target, bytes, byte, _managed) ->
+                                        | BytesAppendByte(target, bytes, byte, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(byte)
-                                            |> emitBytesAppendByte(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(bytes)(tempEnv))) :: tempEnv, terminated)
-                                        | BytesAllocate(target, length, _managed) ->
+                                            |> emitBytesAppendByte(builder)(i64)(i8)(ptrType)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(memcpyFn)(memcpyType)(lookupIndexed(bytes)(tempEnv))) :: tempEnv, terminated)
+                                        | BytesAllocate(target, length, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(length)
-                                            |> emitBytesAllocate(context)(function_)(i64)(i8)(builder)(mallocFn)(mallocType)) :: tempEnv, terminated)
+                                            |> emitBytesAllocate(context)(function_)(i64)(i8)(builder)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
                                         | BytesFromList(target, list, _managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(list)
                                             |> emitBytesFromList(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)) :: tempEnv, terminated)
-                                        | BytesEmpty(target, _managed) -> ((target, emitBytesEmpty(builder)(i64)(i8)(mallocFn)(mallocType)) :: tempEnv, terminated)
-                                        | BytesAppend(target, left, right, _managed) -> ((target, emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([lookupIndexed(left)(tempEnv), lookupIndexed(right)(tempEnv)])) :: tempEnv, terminated)
-                                        | BytesU16Le(target, value, _managed) ->
-                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(mallocFn)(mallocType)(2)(lookupIndexed(value)(tempEnv))("bytes_u16")) :: tempEnv, terminated)
-                                        | BytesU32Le(target, value, _managed) ->
-                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(mallocFn)(mallocType)(4)(lookupIndexed(value)(tempEnv))("bytes_u32")) :: tempEnv, terminated)
-                                        | BytesU64Le(target, value, _managed) ->
-                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(mallocFn)(mallocType)(8)(lookupIndexed(value)(tempEnv))("bytes_u64")) :: tempEnv, terminated)
+                                        | BytesEmpty(target, managed) ->
+                                            ((target, managed
+                                            |> emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)
+                                            |> emitBytesEmpty(builder)(i64)(i8)) :: tempEnv, terminated)
+                                        | BytesAppend(target, left, right, managed) -> ((target, emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)([lookupIndexed(left)(tempEnv), lookupIndexed(right)(tempEnv)])) :: tempEnv, terminated)
+                                        | BytesU16Le(target, value, managed) ->
+                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(2)(lookupIndexed(value)(tempEnv))("bytes_u16")) :: tempEnv, terminated)
+                                        | BytesU32Le(target, value, managed) ->
+                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(4)(lookupIndexed(value)(tempEnv))("bytes_u32")) :: tempEnv, terminated)
+                                        | BytesU64Le(target, value, managed) ->
+                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))(8)(lookupIndexed(value)(tempEnv))("bytes_u64")) :: tempEnv, terminated)
                                         | BytesGetU16Le(target, bytes, offset) ->
                                             ((target, emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(2)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 49, 54, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(offset)(tempEnv))("bytes_getu16")) :: tempEnv, terminated)
                                         | BytesGetU32Le(target, bytes, offset) ->

@@ -57,6 +57,8 @@ export (
     value emitArenaAllocAdt,
     value emitArenaValueAllocDynamic,
     value emitPlacedStringFromBytesAddr,
+    value emitPlacedPayloadPtr,
+    value emitPlacedPayloadPtrDynamic,
     value emitPlacedStringConcatN,
     value emitRcAllocWord,
     value emitMoveBytes,
@@ -371,6 +373,24 @@ let emitPlacedStringFromBytesAddr context function_ builder i64 i8 ptrType (aren
             |> (given (_) ->
                 buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(buildAdd(builder)(dest)(arenaConst(i64)(8))(name + "_bytes"))(ptrType)(name + "_bytes_ptr"), buildIntToPtr(builder)(srcBytesAddr)(ptrType)(name + "_src_ptr"), len])(3u32)(name + "_memcpy"))
             |> (given (_) -> dest))
+
+// A payload of `payloadSizeBytes` bytes behind a header, placed by `managed` exactly like the
+// string producers above: `emitRcAllocPayloadPtr`'s `malloc`'d `{1, size}` cell, or an arena
+// block behind the immortal header. Answers the payload pointer, so a builder writing a fixed
+// layout (`Bytes.empty`, a singleton, a little-endian word, a rune's UTF-8 bytes) fills it the
+// same way whichever placement it got.
+let emitPlacedPayloadPtr context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType (managed: Bool) (payloadSizeBytes: Int) name =
+    if managed
+    then emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(payloadSizeBytes)(name)
+    else
+        buildIntToPtr(builder)(emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(arenaConst(i64)(payloadSizeBytes))(name))(ptrType)(name + "_payload_ptr")
+
+// `emitPlacedPayloadPtr` for a payload whose byte size is the runtime word `payloadSize`.
+let emitPlacedPayloadPtrDynamic context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType (managed: Bool) payloadSize name =
+    if managed
+    then emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(payloadSize)(name)
+    else
+        buildIntToPtr(builder)(emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(payloadSize)(name))(ptrType)(name + "_payload_ptr")
 
 // `ConcatStr`/`ConcatStrN` placed by the instruction's flag: `emitStringConcatN`'s
 // reference-counted cell when runtime-managed, otherwise an arena string holding every part's

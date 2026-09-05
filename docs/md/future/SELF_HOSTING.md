@@ -1386,9 +1386,11 @@ same public behavior.
   (`.rodata`-backed immortal-header globals; length-check-then-`memcmp`; one result with
   per-part `memcpy`, placed by the instruction's runtime-managed flag: a `malloc`'d
   reference-counted cell the lowering's `RcDrop` frees, or an arena block with the immortal
-  header the bracket reclaims — `ConcatStr`, `ConcatStrN` and `TextFromInt` today; `BytesAppend`,
-  `RuneToText`, the float, slicing, UTF-8 and I/O producers still `malloc` unconditionally and
-  leak their arena-placed results), `PrintInt`/`PrintBool`/`PanicStr` over the raw `write` syscall, and
+  header the bracket reclaims — `ConcatStr`, `ConcatStrN`, `TextFromInt`, `RuneToText` and the
+  `Bytes` builders `BytesAppend`, `BytesAppendByte`, `BytesAllocate`, `BytesEmpty`,
+  `BytesSingleton` and `BytesU16Le`/`U32Le`/`U64Le` today; `BytesFromList`, the copy-on-write
+  `BytesSet*`/`BytesCopyRange`, the float, slicing, uncons, parse, UTF-8 and I/O producers still
+  `malloc` unconditionally and leak their arena-placed results), `PrintInt`/`PrintBool`/`PanicStr` over the raw `write` syscall, and
   the builtin surface tracked under "Object parsing and executable linking". The entry function
   lowers `Return` to the raw `exit` syscall plus `unreachable` (`e_entry` contract — the process
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
