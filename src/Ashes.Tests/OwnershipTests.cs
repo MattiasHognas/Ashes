@@ -608,6 +608,36 @@ public sealed class OwnershipTests
             "the let still releases its own reference");
     }
 
+    // A runtime-managed string loop parameter consed into a sibling accumulator at the tail
+    // self-call is a second reference the cell keeps: the back edge releases the parameter's own
+    // once its argument rebuilds the string, so the cell's copy is retained. Only the parameter's
+    // read inside its own successor is the reference the back edge moves and stays unretained.
+    [Test]
+    public void Tco_loop_parameter_consed_into_a_sibling_accumulator_is_retained_for_the_cell()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive collect (n: Int) (text: Str) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(n - 1)(text + Ashes.Text.fromInt(n))(text :: acc)
+
+            Ashes.IO.print(1)
+            """);
+
+        IrFunction loop = ir.Functions.Single(function =>
+            function.Instructions.Any(inst => inst is IrInst.ConcatStr));
+        List<IrInst> instructions = loop.Instructions;
+        int cellIndex = instructions.FindIndex(inst => inst is IrInst.Alloc { RuntimeManaged: true });
+        cellIndex.ShouldBeGreaterThan(0, "the accumulator's cons cell lives on the reference-counted heap");
+        instructions.Take(cellIndex).Any(inst =>
+            inst is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue(
+            "the string parameter is retained before the cell stores it");
+        instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue(
+            "the back edge still releases the parameter's own reference");
+    }
+
     [Test]
     public void Directly_escaping_generic_adt_with_copy_payload_transfers_runtime_ownership()
     {

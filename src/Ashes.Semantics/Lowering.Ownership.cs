@@ -239,16 +239,19 @@ public sealed partial class Lowering
     private readonly List<TcoParameterAggregateRetain> _tcoParameterAggregateRetains = [];
 
     // A loop parameter's placement (arena or runtime-RC) is decided after its body is lowered, so
-    // the retain is an RcDup marker recorded for FinalizeTcoParameterAggregateRetains. Never inside
-    // a tail self-call's arguments: the back edge moves the old parameter's reference into the
-    // successor it builds there, so a retain would leave one reference per iteration unreleased.
+    // the retain is an RcDup marker recorded for FinalizeTcoParameterAggregateRetains. Never for a
+    // parameter read inside its own successor at a tail self-call: the back edge moves the old
+    // parameter's reference into the successor it builds there, so a retain would leave one
+    // reference per iteration unreleased. A parameter read into a sibling parameter's successor
+    // is a second reference the aggregate keeps: the back edge releases the parameter's own once
+    // its argument rebuilds the value, and the aggregate would otherwise hold a freed value.
     private int DuplicateRuntimeManagedTcoParameterForAggregate(Expr element, int elementTemp, TypeRef elementType)
     {
-        if (_loweringTcoBackEdgeArguments
-            || _tcoCtx is not { } tco
+        if (_tcoCtx is not { } tco
             || element is not Expr.Var variable
             || Lookup(variable.Name) is not Binding.Local local
             || !tco.ParamSlots.Contains(local.Slot)
+            || _loweringTcoBackEdgeArguments && local.Slot == _loweringTcoBackEdgeArgumentSlot
             || LookupOwnedValue(variable.Name) is { PerceusPatternOwner: true })
         {
             return elementTemp;

@@ -560,6 +560,12 @@ public sealed partial class Lowering
     // instead of crossing an intermediate call boundary before the back-edge copy/reset.
     private bool _loweringTcoBackEdgeArguments;
 
+    // The parameter slot the tail self-call argument being lowered is stored into (-1 outside a
+    // back edge's arguments): a read of that same parameter inside its own successor is the
+    // reference the back edge moves, every other parameter read into an aggregate there is a
+    // reference the aggregate must retain.
+    private int _loweringTcoBackEdgeArgumentSlot = -1;
+
     // Nesting depth of LowerLambdaCore (0 = lowering a top-level declaration's value). Used to snapshot
     // the top-level scope so a lazily-generated reuse specialization can resolve the stdlib helper
     // functions it references (Ashes_Map_makeNode, ...) as globals, even though it is generated deep
@@ -9513,6 +9519,7 @@ public sealed partial class Lowering
         List<Expr> collectedArgs)
     {
         bool savedBackEdgeArguments = _loweringTcoBackEdgeArguments;
+        int savedBackEdgeArgumentSlot = _loweringTcoBackEdgeArgumentSlot;
         _loweringTcoBackEdgeArguments = true;
         try
         {
@@ -9521,6 +9528,7 @@ public sealed partial class Lowering
         finally
         {
             _loweringTcoBackEdgeArguments = savedBackEdgeArguments;
+            _loweringTcoBackEdgeArgumentSlot = savedBackEdgeArgumentSlot;
         }
     }
 
@@ -9680,6 +9688,9 @@ public sealed partial class Lowering
                 parameterType ??= expectedFunction.Arg;
             }
 
+            _loweringTcoBackEdgeArgumentSlot = _loweringTcoBackEdgeArguments && i < tco.ParamSlots.Count
+                ? tco.ParamSlots[i]
+                : -1;
             var (argTemp, argType) = LowerCallTcoEvalArg(
                 tco,
                 collectedArgs[i],
