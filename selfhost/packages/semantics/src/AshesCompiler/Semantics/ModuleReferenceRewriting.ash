@@ -274,7 +274,22 @@ and rewritePattern project moduleName boundary pattern =
             alternatives
             |> rewritePatterns(project)(moduleName)(boundary)
             |> PatternOr
+        | PatternVar(name) -> rewriteNullaryConstructorPattern(project)(moduleName)(boundary)(name)(pattern)
         | _ -> pattern
+// A bare name in pattern position parses as a variable, but when it names a stitched constructor
+// (a module's nullary `Empty`, renamed the way its type declaration was) it is that constructor:
+// left unrewritten it would bind a variable instead, matching every value and hiding the arms
+// after it. Only a definition of the constructor kind is taken; a value of the same name is not.
+and rewriteNullaryConstructorPattern project moduleName boundary name pattern =
+    match resolveStitchedUnqualified(moduleName)(boundary)(StitchedConstructor)(name)(project) with
+        | Some(definition) ->
+            match definitionKind(definition) with
+                | StitchedConstructor ->
+                    definition
+                    |> definitionCompilerName
+                    |> PatternVar
+                | _ -> pattern
+        | None -> pattern
 
 // A bare name unresolved against real stitched bindings may still be an unqualified reference to
 // an intrinsic builtin module's member: language.md's `import M` (no `as`) exposes `M`'s exported
@@ -377,49 +392,48 @@ and rewriteMatchCases project moduleName boundary locals cases =
     match cases with
         | [] -> []
         | (pattern, body, guard) :: rest ->
-            let caseLocals =
-                appendList(patternNames(pattern))(locals)
+            let rewrittenPattern = rewritePattern(project)(moduleName)(boundary)(pattern)
             in
-                (rewritePattern(project)(moduleName)(boundary)(pattern), rewriteExpression(
-                    project,
-                    moduleName,
-                    boundary,
-                    caseLocals,
-                    body
-                ), rewriteOptionalExpression(
-                    project,
-                    moduleName,
-                    boundary,
-                    caseLocals,
-                    guard
-                )) :: rewriteMatchCases(project)(moduleName)(boundary)(locals)(rest)
+                let caseLocals =
+                    appendList(patternNames(rewrittenPattern))(locals)
+                in
+                    (rewrittenPattern, rewriteExpression(
+                        project,
+                        moduleName,
+                        boundary,
+                        caseLocals,
+                        body
+                    ), rewriteOptionalExpression(
+                        project,
+                        moduleName,
+                        boundary,
+                        caseLocals,
+                        guard
+                    )) :: rewriteMatchCases(project)(moduleName)(boundary)(locals)(rest)
 and rewriteHandlerArms project moduleName boundary locals arms =
     match arms with
         | [] -> []
         | (instance, operation, patterns, body) :: rest ->
-            let armLocals =
-                appendList(patternListNames(patterns))(locals)
+            let rewrittenPatterns = rewritePatterns(project)(moduleName)(boundary)(patterns)
             in
-                let rewrittenInstance =
-                    match instance with
-                        | None -> None
-                        | Some(name) ->
-                            name
-                            |> rewriteTypeName(project)(moduleName)(boundary)([])
-                            |> Some
+                let armLocals =
+                    appendList(patternListNames(rewrittenPatterns))(locals)
                 in
-                    (rewrittenInstance, operation, rewritePatterns(
-                        project,
-                        moduleName,
-                        boundary,
-                        patterns
-                    ), rewriteExpression(
-                        project,
-                        moduleName,
-                        boundary,
-                        armLocals,
-                        body
-                    )) :: rewriteHandlerArms(project)(moduleName)(boundary)(locals)(rest)
+                    let rewrittenInstance =
+                        match instance with
+                            | None -> None
+                            | Some(name) ->
+                                name
+                                |> rewriteTypeName(project)(moduleName)(boundary)([])
+                                |> Some
+                    in
+                        (rewrittenInstance, operation, rewrittenPatterns, rewriteExpression(
+                            project,
+                            moduleName,
+                            boundary,
+                            armLocals,
+                            body
+                        )) :: rewriteHandlerArms(project)(moduleName)(boundary)(locals)(rest)
 and rewriteExpression project moduleName boundary locals expression =
     match expression with
         | ExprAt(span, inner) ->

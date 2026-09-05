@@ -949,6 +949,18 @@ let resolveType state semanticType =
     match state with
         | CoreLoweringState { substitution = substitution } -> applySubstitution(substitution)(semanticType)
 
+// The environment a `let` generalizes against, read through the current substitution: a variable
+// an enclosing binding's type was unified with since its scheme was recorded (a captured
+// parameter whose variable now stands for a constructor field's) is the environment's and must
+// not be quantified, the Hindley-Milner rule stage 0 follows by pruning the environment first.
+let recursive resolveSchemes (schemes: List(TypeScheme)) (state: CoreLoweringState) =
+    match schemes with
+        | [] -> []
+        | TypeScheme { quantified = quantified, body = body, constraints = constraints } :: rest -> TypeScheme(quantified = quantified, body = resolveType(state)(body), constraints = constraints) :: resolveSchemes(rest)(state)
+
+let resolvedBindingSchemes (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    resolveSchemes(bindingSchemes(bindings))(state)
+
 // A copy-typed value needs no heap ownership at all, so it always reports as `CopyValue` in the
 // explain report's `memory` representation, regardless of how it was produced.
 let isCopyTypeSemantic (semanticType: SemanticType) =
@@ -2122,7 +2134,7 @@ let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTe
                 emit(StoreLocal(local)(valueTemp))(state)
             in
                 let scheme =
-                    generalize(pendingOperatorScheme(storedState) :: bindingSchemes(outerBindings))(resolveType(storedState)(valueType))([])
+                    generalize(pendingOperatorScheme(storedState) :: resolvedBindingSchemes(outerBindings)(storedState))(resolveType(storedState)(valueType))([])
                 in
                     storedState
                     |> withConsumerRequest(letBodyRequest(name)(requestBody)(bodyRequest)(valueTemp)(local)(storedState))
@@ -9496,7 +9508,7 @@ let recursive addRecursiveGroupContinuationBindings members outerBindings state 
         | [] -> state
         | PreparedCoreRecursiveBinding { name = name, slot = slot, semanticType = semanticType } :: rest ->
             let scheme =
-                generalize(pendingOperatorScheme(state) :: bindingSchemes(outerBindings))(resolveType(state)(semanticType))([])
+                generalize(pendingOperatorScheme(state) :: resolvedBindingSchemes(outerBindings)(state))(resolveType(state)(semanticType))([])
             in
                 state
                 |> addBinding(name)(scheme)(CoreLocal(slot))
@@ -13108,14 +13120,30 @@ let lowerDeadRcTopLevelLet name value layout environment continuation state =
                             |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(dropperLabel))
                             |> continuation(topLevelContinuationBody)
 
-let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
+// The declaring type's own bare name in a field is shorthand for the type applied to its own
+// parameters (`Node(Int, MapTree, K, V, MapTree)` inside `MapTree(K, V)`), the language's one
+// exception to the arity rule; every other field converts as written.
+let declaringTypeName (resultType: SemanticType) =
+    match namedTypeNameOf(resultType) with
+        | Some(name) -> name
+        | None -> ""
+
+let recursive isDeclaringTypeReference (typeExpr: TypeExpr) (selfName: Str) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> isDeclaringTypeReference(inner)(selfName)
+        | TypeNamed(name) -> name == selfName
+        | _ -> false
+
+let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) (selfName: Str) (selfType: SemanticType) =
     match parameters with
         | [] -> Some([])
         | parameter :: rest ->
-            match typeExprToSemanticType(parameter)(parameterTypes) with
+            match if isDeclaringTypeReference(parameter)(selfName)
+            then Some(selfType)
+            else typeExprToSemanticType(parameter)(parameterTypes) with
                 | None -> None
                 | Some(fieldType) ->
-                    match constructorFieldSemanticTypes(rest)(parameterTypes) with
+                    match constructorFieldSemanticTypes(rest)(parameterTypes)(selfName)(selfType) with
                         | None -> None
                         | Some(restTypes) -> Some(fieldType :: restTypes)
 
@@ -13198,7 +13226,7 @@ let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int
                     |> arityMismatchMessage(typeName)(expected)
                     |> UnsupportedTypeDeclaration)
                 | None ->
-                    match constructorFieldSemanticTypes(parameters)(parameterTypes) with
+                    match constructorFieldSemanticTypes(parameters)(parameterTypes)(declaringTypeName(resultType))(resultType) with
                         | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, or one of the type's own type parameters)"))
                         | Some(fieldTypes) ->
                             Ok(CoreConstructorLayout(

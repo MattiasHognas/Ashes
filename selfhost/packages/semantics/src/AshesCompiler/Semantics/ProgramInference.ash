@@ -884,34 +884,68 @@ let recursive registerProviderOperations capabilityName capabilityType operation
                                         ProgramExpressionError(error)
                                     ))
 
+// The declaring type's own bare name in a constructor field is shorthand for the type applied to
+// its own parameters (`Node(Int, MapTree, K, V, MapTree)` inside `MapTree(K, V)`), the language's
+// one exception to the arity rule; the field is rewritten to the applied form before resolution.
+let recursive selfAppliedTypeExpr (name: Str) (parameters: List(TypeParameter)) (typeExpr: TypeExpr) =
+    match typeExpr with
+        | TypeAt(span, inner) ->
+            inner
+            |> selfAppliedTypeExpr(name)(parameters)
+            |> TypeAt(span)
+        | TypeNamed(candidate) ->
+            if candidate == name && syntaxListLength(parameters) > 0
+            then
+                parameters
+                |> typeParameterNames
+                |> TypeApplied(name)
+            else typeExpr
+        | other -> other
+and typeParameterNames (parameters: List(TypeParameter)) =
+    match parameters with
+        | [] -> []
+        | TypeParameter { name = parameterName } :: rest -> TypeNamed(parameterName) :: typeParameterNames(rest)
+
+let recursive selfAppliedTypeExprs (name: Str) (parameters: List(TypeParameter)) (typeExprs: List(TypeExpr)) =
+    match typeExprs with
+        | [] -> []
+        | typeExpr :: rest -> selfAppliedTypeExpr(name)(parameters)(typeExpr) :: selfAppliedTypeExprs(name)(parameters)(rest)
+
+let recursive selfAppliedConstructors (name: Str) (parameters: List(TypeParameter)) (constructors: List(TypeConstructor)) =
+    match constructors with
+        | [] -> []
+        | TypeConstructor { name = constructorName, parameters = fields, fieldNames = fieldNames } :: rest -> TypeConstructor(name = constructorName, parameters = selfAppliedTypeExprs(name)(parameters)(fields), fieldNames = fieldNames) :: selfAppliedConstructors(name)(parameters)(rest)
+
 let registerTypeDeclaration declaration state =
     match (declaration, state) with
-        | (TypeDecl { name = name, typeParameters = parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = symbolId, error = None }) ->
-            let typedEnvironment =
-                addInferenceTypeDefinition(symbolId)(name)(syntaxListLength(parameters))(environment)
+        | (TypeDecl { name = name, typeParameters = parameters, constructors = declaredConstructors, isRecord = _isRecord, derivingTraits = _derivingTraits }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = symbolId, error = None }) ->
+            let constructors = selfAppliedConstructors(name)(parameters)(declaredConstructors)
             in
-                match registerTypeParameters(
-                    parameters,
-                    inferenceTypeResolutionContext(typedEnvironment),
-                    supply,
-                    [],
-                    []
-                ) with
-                    | TypeParameterRegistration { context = context, semanticTypes = parameterTypes, quantified = quantified, supply = parameterSupply } ->
-                        let resultType = SemNamed(symbolId)(name)(parameterTypes)
-                        in
-                            match registerConstructors(
-                                constructors,
-                                resultType,
-                                quantified,
-                                context,
-                                typedEnvironment
-                            ) with
-                                | ConstructorRegistration { environment = constructorEnvironment, error = None } -> ProgramInferenceState(environment = constructorEnvironment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = None)
-                                | ConstructorRegistration { environment = _constructorEnvironment, error = Some(error) } ->
-                                    ProgramInferenceState(environment = environment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = Some(
-                                        ProgramTypeResolutionError(error)
-                                    ))
+                let typedEnvironment =
+                    addInferenceTypeDefinition(symbolId)(name)(syntaxListLength(parameters))(environment)
+                in
+                    match registerTypeParameters(
+                        parameters,
+                        inferenceTypeResolutionContext(typedEnvironment),
+                        supply,
+                        [],
+                        []
+                    ) with
+                        | TypeParameterRegistration { context = context, semanticTypes = parameterTypes, quantified = quantified, supply = parameterSupply } ->
+                            let resultType = SemNamed(symbolId)(name)(parameterTypes)
+                            in
+                                match registerConstructors(
+                                    constructors,
+                                    resultType,
+                                    quantified,
+                                    context,
+                                    typedEnvironment
+                                ) with
+                                    | ConstructorRegistration { environment = constructorEnvironment, error = None } -> ProgramInferenceState(environment = constructorEnvironment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = None)
+                                    | ConstructorRegistration { environment = _constructorEnvironment, error = Some(error) } ->
+                                        ProgramInferenceState(environment = environment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = Some(
+                                            ProgramTypeResolutionError(error)
+                                        ))
         | (_declaration, failedState) -> failedState
 
 let registerTypeAlias declaration state =
