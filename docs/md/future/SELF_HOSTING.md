@@ -716,10 +716,13 @@ same public behavior.
   `GetAdtTag`/`SwitchTag`; `IrText` prints `Tagless=true` as stage 0 does; the backend sizes the
   cell, skips the tag store, offsets fields from 0, and refuses a `GetAdtTag` of a tagless cell
   before emitting a function. Covered by `TaglessAdtLayoutTests.ash` and the tagless record,
-  nested, generic, tail-loop, and nullary programs in `selfhost/tests/backend/Main.ash`. Open:
-  `AllocAdtStack`/`AllocAdtToSpace`/`AllocReusing` carry the flag but are not lowered or emitted
-  yet; synthesized droppers/copiers must read `CoreConstructorLayout.tagless` and load the tag as
-  a literal; reuse-token layout exactness waits on reuse specialization.
+  nested, generic, tail-loop, and nullary programs in `selfhost/tests/backend/Main.ash`. The
+  synthesized droppers and copiers read the flag: field loads and stores carry it, the
+  deep-copy plan of a sole-constructor type never switches on a tag, and the constructor-switching
+  ADT dropper loads a tagless cell's tag as the literal 0 (stage 0's `EmitAdtTag`), checked by
+  `StructuralDroppersTests.ash`. Open: `AllocAdtStack`/`AllocAdtToSpace`/`AllocReusing` carry the
+  flag but are not lowered or emitted yet; reuse-token layout exactness waits on reuse
+  specialization.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
