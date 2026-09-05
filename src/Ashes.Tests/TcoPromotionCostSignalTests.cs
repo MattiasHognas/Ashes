@@ -319,8 +319,12 @@ public sealed class TcoPromotionCostSignalTests
     }
 
     [Test]
-    public void Unresolved_post_body_refresh_preserves_resolved_edge_runtime_type()
+    public void Back_edge_argument_type_resolves_parameter_before_post_body_refresh()
     {
+        // `bodies` is constrained by nothing in the body but the back-edge argument: unifying that
+        // argument with the parameter it becomes resolves the parameter's type at the back edge, so
+        // the post-body refresh evaluates a resolved List<Body> rather than retaining an earlier
+        // placement over an unresolved variable.
         const string source =
             """
             type Body =
@@ -354,7 +358,7 @@ public sealed class TcoPromotionCostSignalTests
 
         placement.Current.ResolutionPoint.ShouldBe(TcoPlacementResolutionPoint.PostBodyRefresh);
         placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
-        placement.Current.Reason.ShouldBe(TcoPlacementReason.EarlierPlacementRetained);
+        placement.Current.Reason.ShouldBe(TcoPlacementReason.Eligible);
         placement.Current.ResolvedType.ShouldBe("List<Body>");
         placement.Current.FirstPromotedAt.ShouldBe(TcoPlacementResolutionPoint.ResolvedBackEdge);
     }
