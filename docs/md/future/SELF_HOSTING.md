@@ -1060,7 +1060,20 @@ same public behavior.
   (`collect(n - 1)(text + suffix)(text :: acc)`) was released by the back edge while the cell
   still held it, a use-after-free the self-hosted lowering never had; the marker is now skipped
   only for the parameter's read inside its own successor
-  (`tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash`);
+  (`tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash`). FIXED in stage 0
+  (2026-09-05): a field read out of a runtime-managed record parameter (`pair.current`) stored
+  into a successor record was never retained at all — the back edge's deep copy released the
+  dying successor's borrowed child and the old parameter's structural release freed it again, a
+  crash after enough iterations; `TryResolveTcoParameterRead` now treats a heap-typed field read
+  of a loop parameter like the parameter itself in both retain paths, its own successor included
+  (`tests/tco_runtime_managed_param_field_read_into_successor.ash`). The self-hosted lowering had
+  the same gap for the string-field shape once OPT-25 placed owned-child records
+  (`State(label = s.label, ...)`, a double free); it now takes an identity `RcDup` marker for a
+  heap-typed loop-parameter read or field read stored into a constructor cell
+  (`retainLoopParameterChild`, recorded in `tcoParameterRetainSites`) and promotes the markers of
+  every parameter the frame places on the reference-counted heap at finalization
+  (`promoteTcoParameterRetains`, stage 0's `FinalizeTcoParameterAggregateRetains`), checked by
+  `tests/tco_runtime_managed_param_string_field_into_successor.ash` through both backends;
   `tco_owned_let_in_tail_argument_record.ash` and
   `tco_let_call_result_in_accumulator_record.ash`'s remaining diff from stage 0 is a
   call-argument-retention gap for a plain top-level function called from inside the loop body

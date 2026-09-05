@@ -1531,9 +1531,9 @@ public sealed partial class Lowering
     {
         for (int index = 0; index < arguments.Count; index++)
         {
-            if (arguments[index] is not Expr.Var variable
-                || Lookup(variable.Name) is not Binding.Local local
-                || _tcoCtx?.ParamSlots.Contains(local.Slot) != true)
+            // A parameter, or a heap-typed field read out of one (`pair.current`): the cell keeps
+            // a second reference to a child the parameter's own release walks at the back edge.
+            if (TryResolveTcoParameterRead(arguments[index], argumentTypes[index], out _) is not { } local)
             {
                 continue;
             }

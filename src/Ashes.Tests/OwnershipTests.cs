@@ -638,6 +638,49 @@ public sealed class OwnershipTests
             "the back edge still releases the parameter's own reference");
     }
 
+    // A field read out of a runtime-managed record loop parameter stored into the successor
+    // record is a borrow of a child the parameter owns: the back edge copies the successor's
+    // children and releases the dying successor's references to them, then releases the old
+    // parameter's own children through its structural walk, so the stored child is retained.
+    [Test]
+    public void Tco_loop_parameter_field_read_stored_into_the_successor_is_retained_for_the_cell()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type State =
+                | label: Str
+                | count: Int
+
+            type Pair =
+                | previous: State
+                | current: State
+
+            let recursive walk (n: Int) (pair: Pair) =
+                if n == 0
+                then pair
+                else walk(n - 1)(Pair(previous = State(label = Ashes.Text.fromInt(n), count = n), current = pair.current))
+
+            let final = walk(3)(Pair(previous = State(label = "a", count = 0), current = State(label = "b", count = 0)))
+
+            let current = final.current
+
+            Ashes.IO.print(current.label)
+            """);
+
+        IrFunction loop = ir.Functions.Single(function =>
+            function.Instructions.Any(inst => inst is IrInst.TextFromInt));
+        List<IrInst> instructions = loop.Instructions;
+        int successorIndex = instructions.FindLastIndex(inst => inst is IrInst.AllocAdt { FieldCount: 2 });
+        successorIndex.ShouldBeGreaterThan(0, "the loop builds the successor pair");
+        instructions.Take(successorIndex).Count(inst =>
+            inst is IrInst.RcDup { RuntimeManaged: true, MayBeEmpty: false }).ShouldBe(
+            1,
+            "the child read out of the parameter is retained before the successor stores it");
+        instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "Pair", RuntimeManaged: true }).ShouldBeTrue(
+            "the back edge still releases the parameter's own value");
+    }
+
     [Test]
     public void Directly_escaping_generic_adt_with_copy_payload_transfers_runtime_ownership()
     {

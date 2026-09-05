@@ -349,6 +349,21 @@ let expectOwnedChildRecordLoopParameterIsRuntimeManaged unit =
         |> (given (_) -> check("the predecessor and exit releases under the type name")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 2))
         |> (given (_) -> check("the exit transfers the parameter's own value to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
 
+let stringFieldIntoSuccessorSource = "type State =\n    | label: Str\n    | count: Int\n\nlet recursive step (n: Int) (s: State) =\n    if n == 0\n    then s\n    else step(n - 1)(State(label = s.label, count = s.count + n))\n\nlet final = step(10)(State(label = Ashes.Text.fromInt(12345), count = 0))\n\nAshes.IO.print(final.label)"
+
+// A string field read out of the runtime-managed record parameter and stored into its own
+// successor is retained (the marker promoted once the parameter's placement is known): the back
+// edge copies the successor's string and releases the dying successor's reference, and the old
+// parameter's structural walk releases its own, so the stored borrow needs a reference of its own.
+let expectStringFieldReadIntoSuccessorIsRetained unit =
+    stringFieldIntoSuccessorSource
+    |> loopFunctionLines("[ClosureHelper from step]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the field read is retained before the successor stores it")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("no identity marker is left behind")(countContaining("RcDup")(lines) == 1))
+        |> (given (_) -> check("the successor's own string, the predecessor's and the exit's children still release")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 3)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -440,6 +455,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectCopyAdtLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectScalarTupleLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectOwnedChildRecordLoopParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectStringFieldReadIntoSuccessorIsRetained(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

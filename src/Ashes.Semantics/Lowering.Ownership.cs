@@ -238,24 +238,62 @@ public sealed partial class Lowering
 
     private readonly List<TcoParameterAggregateRetain> _tcoParameterAggregateRetains = [];
 
+    /// <summary>
+    /// The loop parameter a stored aggregate child reads: the parameter itself (<c>s</c>), or a
+    /// field read out of it (<c>pair.current</c>, a qualified name whose module part is the
+    /// parameter's own binding rather than a module, a trait, or a capability). A field read is a
+    /// borrow of a child the parameter owns, so only a heap-typed field counts.
+    /// </summary>
+    private Binding.Local? TryResolveTcoParameterRead(Expr element, TypeRef elementType, out bool isFieldRead)
+    {
+        isFieldRead = false;
+        if (_tcoCtx is not { } tco)
+        {
+            return null;
+        }
+
+        string? ownerName = element switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.QualifiedVar qualified
+                when !CanArenaReset(Prune(elementType))
+                    && !TryGetTraitMethod(qualified, out _, out _)
+                    && !_capabilitySymbols.ContainsKey(qualified.Module)
+                => qualified.Module,
+            _ => null,
+        };
+        if (ownerName is null
+            || Lookup(ownerName) is not Binding.Local local
+            || !tco.ParamSlots.Contains(local.Slot)
+            || LookupOwnedValue(ownerName) is { PerceusPatternOwner: true })
+        {
+            return null;
+        }
+
+        isFieldRead = element is Expr.QualifiedVar;
+        return local;
+    }
+
     // A loop parameter's placement (arena or runtime-RC) is decided after its body is lowered, so
     // the retain is an RcDup marker recorded for FinalizeTcoParameterAggregateRetains. Never for a
     // parameter read inside its own successor at a tail self-call: the back edge moves the old
     // parameter's reference into the successor it builds there, so a retain would leave one
     // reference per iteration unreleased. A parameter read into a sibling parameter's successor
     // is a second reference the aggregate keeps: the back edge releases the parameter's own once
-    // its argument rebuilds the value, and the aggregate would otherwise hold a freed value.
+    // its argument rebuilds the value, and the aggregate would otherwise hold a freed value. A
+    // field read out of the parameter is retained wherever it is stored, its own successor
+    // included: the back edge copies the successor's children and releases the dying successor's
+    // references to them, and then releases the old parameter's own children through its
+    // structural walk, so a borrowed child would be freed twice.
     private int DuplicateRuntimeManagedTcoParameterForAggregate(Expr element, int elementTemp, TypeRef elementType)
     {
-        if (_tcoCtx is not { } tco
-            || element is not Expr.Var variable
-            || Lookup(variable.Name) is not Binding.Local local
-            || !tco.ParamSlots.Contains(local.Slot)
-            || _loweringTcoBackEdgeArguments && local.Slot == _loweringTcoBackEdgeArgumentSlot
-            || LookupOwnedValue(variable.Name) is { PerceusPatternOwner: true })
+        if (TryResolveTcoParameterRead(element, elementType, out bool isFieldRead) is not { } local
+            || !isFieldRead && _loweringTcoBackEdgeArguments && local.Slot == _loweringTcoBackEdgeArgumentSlot)
         {
             return elementTemp;
         }
+
+        TcoContext tco = _tcoCtx!;
 
         int duplicatedTemp = NewTemp();
         if (IsRuntimeManagedTcoParamSlot(local))
