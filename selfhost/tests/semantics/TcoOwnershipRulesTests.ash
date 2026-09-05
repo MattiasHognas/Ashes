@@ -256,7 +256,10 @@ let forwardedStrHeadSource = "let recursive last (n: Int) (xs: List(Str)) (keep:
 // owner whose type is reference-counted whatever holds it: the arm retains it right after the
 // pattern binds it (stage 0's protective duplicate), the self-call argument retains it again for
 // the successor, and the owner's own reference is released at the back edge under the resolved
-// type name. The head's list stays in the arena, so its cell walk never runs.
+// type name. That protection is what admits the head's list to the reference-counted heap even
+// though its heads outlive their arm: the list is normalized at entry, the consumed tail is
+// retained for the successor, and the old root's cell walk frees the cells the retains no longer
+// keep.
 let expectForwardedStrHeadIsProtected unit =
     forwardedStrHeadSource
     |> loopFunctionLines("[ClosureHelper from last]")
@@ -265,8 +268,8 @@ let expectForwardedStrHeadIsProtected unit =
         |> (given (_) ->
             "RcDup"
             |> countContaining
-            |> (given (count) -> check("the protective duplicate and the argument retain")(count(lines) == 2)))
-        |> (given (_) -> check("both retains are real reference-count operations")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 2))
+            |> (given (count) -> check("the protective duplicate, the argument retain and the successor retain")(count(lines) == 3)))
+        |> (given (_) -> check("all three retains are real reference-count operations")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 3))
         |> (given (_) ->
             "RuntimeManaged=true"
             |> Ashes.Text.contains(lineContaining("TypeName=String OwnerSlot=")(lines))
@@ -275,7 +278,23 @@ let expectForwardedStrHeadIsProtected unit =
             "LoadLocal"
             |> Ashes.Text.contains(lineBefore("RcDup")("")(lines))
             |> check("the pattern binds the head before it is retained"))
-        |> (given (_) -> check("the head's list stays in the arena")(countContaining("rcdrop_list")(lines) == 0)))
+        |> (given (_) -> check("the head's list is normalized to the reference-counted heap at entry")(countContainingBoth("CopyOutList")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the consumed tail is retained null-tolerantly for the successor")(countContainingBoth("RcDup")("MayBeEmpty=true")(lines) == 1))
+        |> (given (_) -> check("the old root is released through the cell walk")(countContaining("rcdrop_list")(lines) > 0)))
+
+let forwardedInnerListHeadSource = "let recursive last (n: Int) (xs: List(List(Int))) (keep: List(Int)) =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nmatch last(2)([[1], [2, 3]])([]) with\n    | [] -> Ashes.IO.print(0)\n    | first :: _ -> Ashes.IO.print(first)"
+
+// The same shape over inner-list heads keeps the list in the arena: only a string-like head is
+// protected by its pattern owner's retain, an aggregate head would need a structural release the
+// placement does not name yet, so the cell walk that would free the forwarded head never runs.
+let expectForwardedInnerListHeadKeepsListInArena unit =
+    forwardedInnerListHeadSource
+    |> loopFunctionLines("[ClosureHelper from last]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("no entry normalization of the list")(countContainingBoth("CopyOutList")("HeadCopy=InnerList")(lines) == 0))
+        |> (given (_) -> check("no cell walk over the list")(countContaining("rcdrop_list")(lines) == 0))
+        |> (given (_) -> check("no runtime-managed retain of the head")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 0)))
 
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
@@ -364,6 +383,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectGrownConsAccumulatorIsRuntimeManaged(Unit))
     |> (given (_) -> expectConsumedTailListIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedStrHeadIsProtected(Unit))
+    |> (given (_) -> expectForwardedInnerListHeadKeepsListInArena(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

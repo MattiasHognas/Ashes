@@ -10,6 +10,7 @@ import Ashes.Collection.List.map
 import AshesCompiler.Semantics.IrInstructions
 export (
     value mapInstructionTemps,
+    value mapInstructionLocals,
 )
 
 let mapFrameSaveTemps f saves =
@@ -250,3 +251,22 @@ let mapInstructionTemps f (kind: IrInstructionKind) =
         | JumpIfFalse(T0, s0) -> JumpIfFalse(f(T0))(s0)
         | SwitchTag(T0, SC0, s0) -> SwitchTag(f(T0))(SC0)(s0)
         | Return(T0) -> Return(f(T0))
+
+// `mapInstructionLocals` rewrites every local slot operand of one instruction, the arms
+// covering exactly the constructors that carry an `IrLocal` (an owner slot of -1 passes through
+// `f` like any other value, so `f` decides what a missing owner maps to); every other kind is
+// carried unchanged. A loop retiring an unused flag slot renumbers the function's locals through
+// it.
+let mapInstructionLocals f (kind: IrInstructionKind) =
+    match kind with
+        | LoadLocal(T0, l0) -> LoadLocal(T0)(f(l0))
+        | StoreLocal(l0, T0) -> StoreLocal(f(l0))(T0)
+        | ConcatStrTip(T0, T1, T2, l0, l1, b0) -> ConcatStrTip(T0)(T1)(T2)(f(l0))(f(l1))(b0)
+        | SaveStackPointer(l0) -> SaveStackPointer(f(l0))
+        | RestoreStackPointer(l0) -> RestoreStackPointer(f(l0))
+        | RcDrop(T0, s0, l0, b0, b1, m0) -> RcDrop(T0)(s0)(f(l0))(b0)(b1)(m0)
+        | TcoResetPending(n0, Ts0, Ls0) -> TcoResetPending(n0)(Ts0)(map(f)(Ls0))
+        | SaveArenaState(l0, l1, b0) -> SaveArenaState(f(l0))(f(l1))(b0)
+        | RestoreArenaState(l0, l1, l2, b0) -> RestoreArenaState(f(l0))(f(l1))(f(l2))(b0)
+        | ReclaimArenaChunks(l0, l1, b0) -> ReclaimArenaChunks(f(l0))(f(l1))(b0)
+        | other -> other

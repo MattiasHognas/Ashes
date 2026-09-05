@@ -32,6 +32,7 @@ export (
     type TcoArgumentShape(..),
     value runtimeManagedStrOrdinals,
     value tcoSelfCallShapes,
+    value escapingConsumedHeadOrdinals,
     value isTcoListShape,
 )
 
@@ -408,6 +409,13 @@ let recursive borrowedNamesMentioned (names: List(Str)) (expression: Expr) =
         | ExprAt(_span, inner) -> borrowedNamesMentioned(names)(inner)
         | ExprVar(name) -> shapeContainsName(name)(names)
         | ExprQualifiedVar(moduleName, _member) -> shapeContainsName(moduleName)(names)
+        | ExprInt(_value) -> false
+        | ExprBigInt(_value) -> false
+        | ExprUInt(_value, _bits, _text) -> false
+        | ExprFloat(_value, _text) -> false
+        | ExprString(_value) -> false
+        | ExprRune(_value) -> false
+        | ExprBool(_value) -> false
         | ExprAdd(left, right) -> borrowedNamesMentionedEither(names)(left)(right)
         | ExprSubtract(left, right) -> borrowedNamesMentionedEither(names)(left)(right)
         | ExprMultiply(left, right) -> borrowedNamesMentionedEither(names)(left)(right)
@@ -555,16 +563,17 @@ and consumedHeadsBorrowedCases (ordinal: Int) (parameters: List(Str)) (shadowed:
         | (pattern, body, _guard) :: rest ->
             (!onParameter || namesBorrowedOnly(consumedHeadNames(pattern))(false)(body)) && consumedHeadsBorrowed(ordinal)(parameters)(append(shapePatternNames(pattern)([]))(shadowed))(body) && consumedHeadsBorrowedCases(ordinal)(parameters)(shadowed)(onParameter)(rest)
 
-// A consumed tail whose matched heads may outlive their arm stays in the arena, where the cell's
-// release never frees the head.
-let recursive guardConsumedTailShapes (ordinal: Int) (parameters: List(Str)) (body: Expr) (shapes: List(TcoArgumentShape)) =
+// The parameter positions of `shapes` (a consumed tail each) whose matched heads may outlive
+// their arm. Such a list lives on the reference-counted heap only when its heads are protected
+// by their pattern owners' retains; the placement decides that from the element type.
+let recursive escapingConsumedHeadOrdinals (ordinal: Int) (parameters: List(Str)) (body: Expr) (shapes: List(TcoArgumentShape)) =
     match shapes with
         | [] -> []
         | TcoConsumedTailShape :: rest ->
-            (if consumedHeadsBorrowed(ordinal)(parameters)([])(body)
-            then TcoConsumedTailShape
-            else TcoOtherShape) :: guardConsumedTailShapes(ordinal + 1)(parameters)(body)(rest)
-        | shape :: rest -> shape :: guardConsumedTailShapes(ordinal + 1)(parameters)(body)(rest)
+            if consumedHeadsBorrowed(ordinal)(parameters)([])(body)
+            then escapingConsumedHeadOrdinals(ordinal + 1)(parameters)(body)(rest)
+            else ordinal :: escapingConsumedHeadOrdinals(ordinal + 1)(parameters)(body)(rest)
+        | _shape :: rest -> escapingConsumedHeadOrdinals(ordinal + 1)(parameters)(body)(rest)
 
 // The shape of every parameter position of the loop function `self` over `parameters` (the whole
 // curried chain, in order) with the innermost body `body`; every position is `TcoOtherShape` when
@@ -573,10 +582,7 @@ let tcoSelfCallShapes (self: Str) (parameters: List(Str)) (body: Expr) =
     match shapeWalk(self)(parameters)(body)([])([])(ShapeWalk(observed = parameters
     |> length
     |> shapeInitial, sawSelfCall = false)) with
-        | ShapeWalk { observed = observed, sawSelfCall = true } ->
-            observed
-            |> shapeResolveObserved
-            |> guardConsumedTailShapes(0)(parameters)(body)
+        | ShapeWalk { observed = observed, sawSelfCall = true } -> shapeResolveObserved(observed)
         | _ ->
             parameters
             |> length

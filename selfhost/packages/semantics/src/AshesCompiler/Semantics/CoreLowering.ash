@@ -34,6 +34,7 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
 import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
@@ -210,6 +211,7 @@ type CoreTcoLoop =
     | affineOrdinals: List(Int)
     | runtimeManagedOrdinals: List(Int)
     | argumentShapes: List(TcoArgumentShape)
+    | escapingHeadOrdinals: List(Int)
     | patternFacts: List(PatternBindingFact)
     | emitsLoop: Bool
 
@@ -318,6 +320,7 @@ type CoreLoweringState =
     | resultRcEligibility: (Int, List((Str, Bool)))
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
     | pendingTcoResets: List(CoreTcoReset)
+    | retiredLocals: List(Int)
     | recursiveDeclarationSpan: Maybe(TextSpan)
     | ownerReleasePlans: List((Int, SemanticType, OwnedReleasePlan))
     | pendingOwnerPlan: Maybe(OwnedReleasePlan)
@@ -538,6 +541,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         capabilityGlobalCount = capabilityGlobalCount,
         nextTemp = 0,
         nextLocal = 0,
+        retiredLocals = [],
         nextLambdaId = 0,
         nextLabelId = 0,
         nextStringId = 0,
@@ -3282,14 +3286,36 @@ let recursive sealOperatorDefaults label pending sealed =
         | [] -> sealed
         | (position, semanticType) :: rest -> sealOperatorDefaults(label)(rest)((Ashes.Internal.deepCopy(label), position, semanticType) :: sealed)
 
+// How many of the retired locals sit below `local`: the distance a surviving local moves down.
+let recursive retiredBelow (retired: List(Int)) (local: Int) =
+    match retired with
+        | [] -> 0
+        | slot :: rest ->
+            if slot < local
+            then 1 + retiredBelow(rest)(local)
+            else retiredBelow(rest)(local)
+
+// The locals a loop retired once its placement settled (an active flag allocated at the loop
+// entry for a list the resolved types kept in the arena) are squeezed out of the function's
+// slots: every later local moves down, exactly as if the flag had never been allocated, so the
+// numbering matches stage 0's, which decides the flag from the types it already knows at entry.
+let renumberRetiredLocals (retired: List(Int)) (instructions: List(IrInstruction)) =
+    match retired with
+        | [] -> instructions
+        | _ ->
+            Ashes.Collection.List.map((given (instruction: IrInstruction) ->
+                instruction with instruction = mapInstructionLocals(given (local: Int) -> local - retiredBelow(retired)(local))(instruction.instruction)))(instructions)
+
 let finishLiftedFunction label origin bodyState =
     match bodyState with
-        | CoreLoweringState { reversedInstructions = instructions, functions = functions, nextLocal = localCount, nextTemp = tempCount, pendingOperatorDefaults = pending, sealedOperatorDefaults = sealed } ->
+        | CoreLoweringState { reversedInstructions = instructions, functions = functions, nextLocal = localCount, nextTemp = tempCount, pendingOperatorDefaults = pending, sealedOperatorDefaults = sealed, retiredLocals = retired } ->
             let function =
                 IrFunction(
                     label = label,
-                    instructions = reverse(instructions),
-                    localCount = localCount,
+                    instructions = instructions
+                    |> reverse
+                    |> renumberRetiredLocals(retired),
+                    localCount = localCount - length(retired),
                     tempCount = tempCount,
                     hasEnvAndArgParams = true,
                     coroutine = None,
@@ -3360,7 +3386,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [])
-        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
+        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
 // A capture that a runtime-managed copy of the closure environment re-establishes by copying its
@@ -4351,19 +4377,32 @@ let recursive tcoBackEdgesAllocateRuntimeCells (ordinal: Int) (resets: List(Core
         | [] -> true
         | reset :: rest -> nthFlag(ordinal)(reset.argumentRuntime) && tcoBackEdgesAllocateRuntimeCells(ordinal)(rest)
 
+// A value that is reference-counted whatever holds it (stage 0's `IsUnconditionallyRcManagedType`):
+// an arena spine routinely holds such elements, so a pattern owner of one of these types is
+// protected even when its root parameter stays in the arena.
+let isUnconditionallyRcManagedType (semanticType: SemanticType) =
+    match semanticType with
+        | SemString -> true
+        | SemBytes -> true
+        | SemBigInt -> true
+        | _ -> false
+
 // A list-shaped loop parameter admitted to runtime-managed placement once the body's types are
 // resolved (stage 0's `EvaluateTcoRcEligibility` for a list): the resolved type is a list whose
 // element the runtime-managed accumulator layout supports and whose spine the entry copy can
 // normalize; a consumed tail only over heap elements (a list of scalars is borrowed through the
-// traversal instead), a grown accumulator only when every back edge allocated its cons cell on
-// the reference-counted heap. Answers the element type of an admitted slot.
-let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (state: CoreLoweringState) =
+// traversal instead) and, when a matched head may outlive its arm, only over string-like
+// elements, whose pattern owners retain them (an aggregate head's promoted owner would need the
+// structural release the placement does not name yet); a grown accumulator only when every back
+// edge allocated its cons cell on the reference-counted heap. Answers the element type of an
+// admitted slot.
+let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
         | Some(SemList(element)) ->
             match listHeadCopyKindOf(element)(state) with
                 | None -> None
                 | Some(_kind) ->
-                    if tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(state.pendingTcoResets) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state))
+                    if tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(state.pendingTcoResets) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) && (!containsInt(ordinal)(loop.escapingHeadOrdinals) || isUnconditionallyRcManagedType(resolveType(state)(element))))
                     then Some(element)
                     else None
         | _ -> None
@@ -4387,7 +4426,7 @@ let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: Li
                 shape = shape,
                 strManaged = containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state),
                 listElement = if isTcoListShape(shape)
-                then tcoListSlotElement(slot)(shape)(ordinal)(state)
+                then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
                 else None
             ) :: tcoManagedCandidates(ordinal + 1)(restSlots)(restShapes)(loop)(state)
         | _ -> []
@@ -4582,16 +4621,6 @@ let recursive candidateStrManaged (slot: Int) (candidates: List(TcoManagedCandid
             then strManaged
             else candidateStrManaged(slot)(rest)
 
-// A value that is reference-counted whatever holds it (stage 0's `IsUnconditionallyRcManagedType`):
-// an arena spine routinely holds such elements, so a pattern owner of one of these types is
-// protected even when its root parameter stays in the arena.
-let isUnconditionallyRcManagedType (semanticType: SemanticType) =
-    match semanticType with
-        | SemString -> true
-        | SemBytes -> true
-        | SemBigInt -> true
-        | _ -> false
-
 let patternSiteRootManaged (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) =
     match lookupRuntimeManagedListSlot(site.siteRootSlot)(managedLists) with
         | Some(_managed) -> true
@@ -4728,12 +4757,26 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> emitTcoListExitDrops(bodyTemp)(resolvesToList(semanticType)(state))(managedLists)
             |> success(bodyTemp)(semanticType)
 
+// The active flags allocated at the loop entry for list-shaped parameters the resolved types did
+// not admit: never written or read, they are retired from the function's slots.
+let recursive unusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) =
+    match pairs with
+        | [] -> []
+        | (slot, activeSlot) :: rest ->
+            match lookupRuntimeManagedListSlot(slot)(managedLists) with
+                | Some(_managed) -> unusedListActiveSlots(rest)(managedLists)
+                | None -> activeSlot :: unusedListActiveSlots(rest)(managedLists)
+
+let retireUnusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (state: CoreLoweringState) =
+    state with retiredLocals = append(state.retiredLocals)(unusedListActiveSlots(pairs)(managedLists))
+
 let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
     |> (given (candidates: List(TcoManagedCandidate)) ->
         ((given (managedLists: List((Int, Int, SemanticType))) ->
             state
+            |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)
             |> finalizePatternOwnerSites(managedLists)(candidates)
             |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)))(if anyBlockingSibling(candidates)(state)
         then []
@@ -4794,28 +4837,27 @@ let recursive nullaryConstructorNamesOf (layouts: List(CoreConstructorLayout)) =
 let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
-        if hasTailSelfCalls(collectInnermostBody(body))(name)(arity)
-        then
-            Some(CoreTcoLoop(
-                selfName = name,
-                arity = arity,
-                pendingCurried = arity - 1,
-                parameterNames = parameter :: collectLambdaParamNames([])(body),
-                affineOrdinals = body
-                |> collectInnermostBody
-                |> affineSelfAppendOrdinals(name)(parameter :: collectLambdaParamNames([])(body)),
-                runtimeManagedOrdinals = body
-                |> collectInnermostBody
-                |> runtimeManagedStrOrdinals(name)(parameter :: collectLambdaParamNames([])(body)),
-                argumentShapes = body
-                |> collectInnermostBody
-                |> tcoSelfCallShapes(name)(parameter :: collectLambdaParamNames([])(body)),
-                patternFacts = body
-                |> collectInnermostBody
-                |> patternBindingFacts(name)(parameter :: collectLambdaParamNames([])(body))(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts)),
-                emitsLoop = emitsLoop
-            ))
-        else None)
+        let parameters = parameter :: collectLambdaParamNames([])(body)
+        in
+            let innermost = collectInnermostBody(body)
+            in
+                let shapes = tcoSelfCallShapes(name)(parameters)(innermost)
+                in
+                    if hasTailSelfCalls(innermost)(name)(arity)
+                    then
+                        Some(CoreTcoLoop(
+                            selfName = name,
+                            arity = arity,
+                            pendingCurried = arity - 1,
+                            parameterNames = parameters,
+                            affineOrdinals = affineSelfAppendOrdinals(name)(parameters)(innermost),
+                            runtimeManagedOrdinals = runtimeManagedStrOrdinals(name)(parameters)(innermost),
+                            argumentShapes = shapes,
+                            escapingHeadOrdinals = escapingConsumedHeadOrdinals(0)(parameters)(innermost)(shapes),
+                            patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
+                            emitsLoop = emitsLoop
+                        ))
+                    else None)
 
 // A single recursive binding's loop is emitted as stage 0's loop; a mutual-recursion group
 // member keeps the loop context for its tail self-call arguments but stays a call until the
@@ -7883,7 +7925,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [])
-        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
+        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
