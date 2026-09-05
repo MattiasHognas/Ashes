@@ -3446,6 +3446,15 @@ let testRunSharedTcoRuntimeManagedTupleAccumulatorPlateau shipped unit =
 let testRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_owned_child_record_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_owned_child_record_accumulator_plateau_e2e")("1|19888899")
 
+// A string field read out of the runtime-managed record parameter stored into its own successor
+// is retained, so the back edge's source-child release and the old parameter's structural walk
+// do not free it twice.
+let testRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_string_field_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_string_field_into_successor_e2e")("12345|20000100000")
+
+let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
+
 let testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator")("selfhost_backend_shared_tco_runtime_managed_param_consed_into_sibling_accumulator_e2e")("17502612|3000|17505612")
 
@@ -4979,6 +4988,8 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedTupleAccumulatorPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau(shipped)
+    |> testRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor(shipped)
+    |> testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

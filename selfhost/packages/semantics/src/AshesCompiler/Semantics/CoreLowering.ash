@@ -310,6 +310,10 @@ type CoreLoweringState =
     | runtimeTemps: List((Int, RuntimeTempState))
     | runtimeOwners: List((Int, Bool))
     | patternOwnerSites: List(PatternOwnerSite)
+    // The identity duplicates of loop-parameter reads stored into constructor cells, with the
+    // parameter slot and the read's type; promoted to real retains once the frame's placements
+    // are known.
+    | tcoParameterRetainSites: List((Int, Int, SemanticType))
     | bodyRuntimeManagedByLabel: List((Str, Bool))
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
@@ -571,6 +575,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeTemps = [],
         runtimeOwners = [],
         patternOwnerSites = [],
+        tcoParameterRetainSites = [],
         bodyRuntimeManagedByLabel = [],
         runtimeNormalizedArgumentLabels = [],
         recursiveGroupNames = [],
@@ -3386,7 +3391,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [])
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
@@ -5084,6 +5089,46 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ca
         |> splicePatternOwnerDups(placed)
         |> (given (finalized: CoreLoweringState) -> finalized with patternOwnerSites = []))
 
+// A loop parameter placed on the reference-counted heap: a runtime-managed list or ADT slot, or
+// a runtime-managed `Str` candidate.
+let tcoParameterPlaced (slot: Int) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) = managedSlotResult(slot)(managedLists)(managedAdts) || candidateStrManaged(slot)(candidates)
+
+let recursive promotedRetainTemps (sites: List((Int, Int, SemanticType))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match sites with
+        | [] -> []
+        | (duplicate, slot, semanticType) :: rest ->
+            if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates)
+            then
+                (duplicate, semanticType
+                |> resolveType(state)
+                |> mayBeEmptyList) :: promotedRetainTemps(rest)(managedLists)(managedAdts)(candidates)(state)
+            else promotedRetainTemps(rest)(managedLists)(managedAdts)(candidates)(state)
+
+let recursive lookupPromotedRetain (temp: Int) (promoted: List((Int, Bool))) =
+    match promoted with
+        | [] -> None
+        | (candidate, mayBeEmpty) :: rest ->
+            if candidate == temp
+            then Some(mayBeEmpty)
+            else lookupPromotedRetain(temp)(rest)
+
+let recursive promoteRetainInstructions (instructions: List(IrInstruction)) (promoted: List((Int, Bool))) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, source, false, _mayBeEmpty) } as instruction) :: rest ->
+            (match lookupPromotedRetain(target)(promoted) with
+                | Some(mayBeEmpty) -> instruction with instruction = RcDup(target)(source)(true)(mayBeEmpty)
+                | None -> instruction) :: promoteRetainInstructions(rest)(promoted)
+        | instruction :: rest -> instruction :: promoteRetainInstructions(rest)(promoted)
+
+// Stage 0's `FinalizeTcoParameterAggregateRetains`: every loop-parameter retain marker of a
+// parameter placed on the reference-counted heap becomes a real retain, guarded for a list that
+// may be empty; the markers of an arena-placed parameter stay identities.
+let promoteTcoParameterRetains (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match promotedRetainTemps(state.tcoParameterRetainSites)(managedLists)(managedAdts)(candidates)(state) with
+        | [] -> state with tcoParameterRetainSites = []
+        | promoted -> state with reversedInstructions = promoteRetainInstructions(state.reversedInstructions)(promoted), tcoParameterRetainSites = []
+
 let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
     match tcoEntryNormalizationEntries(candidates)(managedLists)(managedAdts)(state) with
         | [] -> success(bodyTemp)(semanticType)(state)
@@ -5121,6 +5166,7 @@ let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Co
                 state
                 |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)
                 |> finalizePatternOwnerSites(managedLists)(candidates)
+                |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                 |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)))(if anyBlockingSibling(candidates)(state)
         then []
         else tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots))(if anyBlockingSibling(candidates)(state)
@@ -8270,7 +8316,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], tcoParameterRetainSites = [])
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
@@ -9044,18 +9090,62 @@ let transferSlotRequested (transferSlot: Maybe(Int)) =
         | Some(_slot) -> true
         | None -> false
 
+let parameterSlotOfName (name: Str) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot) }) ->
+            if containsInt(slot)(frame.parameterSlots)
+            then Some(slot)
+            else None
+        | _ -> None
+
+// The loop parameter a constructor argument reads: the parameter itself, or a record field read
+// out of it (`s.label`, a qualified name whose module part is the parameter's binding).
+let loopParameterReadSlot (argument: Expr) (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | None -> None
+        | Some(frame) ->
+            match unspanArgument(argument) with
+                | ExprVar(name) -> parameterSlotOfName(name)(frame)(state)
+                | ExprQualifiedVar(owner, _field) -> parameterSlotOfName(owner)(frame)(state)
+                | _ -> None
+
+// Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: a heap-typed loop parameter read, or
+// a heap-typed field read out of one, stored into a constructor cell takes a duplicate — an
+// identity marker until the loop's finalize pass turns it into a real retain for a parameter it
+// places on the reference-counted heap. The back edge copies the successor's children and
+// releases the dying successor's references to them, then releases the old parameter's own
+// children through its structural walk, so a stored borrow would be freed twice.
+let retainLoopParameterChild (argument: Expr) (originalTemp: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if temp != originalTemp || resultSurvivesReset(semanticType)(state)
+            then lowered
+            else
+                match loopParameterReadSlot(argument)(state) with
+                    | Some(slot) ->
+                        match freshTemp(state) with
+                            | FreshTemp { state = allocated, temp = duplicate } ->
+                                allocated
+                                |> emit(RcDup(duplicate)(temp)(false)(false))
+                                |> (given (marked: CoreLoweringState) -> marked with tcoParameterRetainSites = (duplicate, slot, semanticType) :: marked.tcoParameterRetainSites)
+                                |> success(duplicate)(semanticType)
+                    | None -> lowered
+        | _ -> lowered
+
 // Stage 0's `RetainEscapingConstructorArgument`: a constructor whose consumer owns the value (a
 // runtime-managed candidate, a transfer slot, or the loop body's tail position) takes a
-// pattern-owner duplicate of an argument that reads one, before the transfer retain.
+// pattern-owner duplicate of an argument that reads one, before the transfer retain; an
+// argument neither retained reads takes the loop-parameter marker.
 let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
-    match request with
-        | ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition } ->
+    match (request, lowered) with
+        | (ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition }, LoweredCoreValue { temp = originalTemp }) ->
             lowered
             |> (given (value: LoweredCoreValue) ->
                 if runtimeManaged || tailPosition || transferSlotRequested(transferSlot)
                 then duplicatePatternOwnerChild(argument)(value)
                 else value)
             |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
+            |> retainLoopParameterChild(argument)(originalTemp)
 
 let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
     match (arguments, fieldTypes) with
