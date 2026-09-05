@@ -437,6 +437,24 @@ let expectFreshListRebuildParameterIsRuntimeManaged unit =
         |> (given (_) -> check("the matched head is retained by its pattern owner")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
         |> (given (_) -> check("the predecessor and the exit release walk the list")(countContainingBoth("RcDrop")("TypeName=List RuntimeManaged=true")(lines) >= 2)))
 
+let consumedRecordHeadsEscapeSource = "type Item =\n    | name: Str\n    | weight: Int\n\ntype Best =\n    | item: Item\n    | score: Int\n\nlet recursive heaviest (items: List(Item)) (best: Best) =\n    match items with\n        | [] -> best\n        | head :: rest ->\n            if head.weight > best.score\n            then heaviest(rest)(Best(item = head, score = head.weight))\n            else heaviest(rest)(best)\n\nlet found = heaviest([Item(name = \"a\", weight = 3)])(Best(item = Item(name = \"none\", weight = 0), score = 0))\n\nAshes.IO.print(found.score)"
+
+// A consumed list of records whose matched head escapes into a sibling record accumulator is
+// admitted like a list of strings: the list is normalized at entry through the cell walk, the
+// head's pattern owner is retained once more for the successor, and its promoted release names
+// the record's structural dropper in both branches of the arm, since the release reaches the
+// record's string child.
+let expectConsumedRecordHeadsEscapeIntoAccumulator unit =
+    consumedRecordHeadsEscapeSource
+    |> loopFunctionLines("[ClosureHelper from heaviest]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the list is normalized at entry through the cell walk")(countContaining("rc_normalize_list")(lines) > 0))
+        |> (given (_) -> check("the accumulator is normalized under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the head's owner release names the structural dropper in both branches")(countContainingBoth("TypeName=Item OwnerSlot=")("StructuralDropperLabel=__rcdrop_structural")(lines) == 2))
+        |> (given (_) -> check("the head is retained by its owner and once more for the successor")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 4))
+        |> (given (_) -> check("the exit transfers the accumulator to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -533,6 +551,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectRecordListAccumulatorIsRuntimeManaged(Unit))
     |> (given (_) -> expectNonAffineStrParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectFreshListRebuildParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectConsumedRecordHeadsEscapeIntoAccumulator(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))
