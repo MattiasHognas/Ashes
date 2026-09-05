@@ -592,6 +592,14 @@ let codegenInstructionKind cx builder kind state =
                                                     Ashes.Collection.List.map(given (part) -> lookupIndexed(part)(tempEnv))(parts)
                                                 )
                                             in ((target, result) :: tempEnv, terminated)
+                        // The affine accumulator append grows its reservation in place — see
+                        // `IrCodegen.Arena`'s `emitConcatStrTip`.
+                                        | ConcatStrTip(target, left, right, resvStartSlot, resvEndSlot, managed) ->
+                                            let result =
+                                                localSlots
+                                                |> lookupIndexed(resvEndSlot)
+                                                |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))(lookupIndexed(resvStartSlot)(localSlots))
+                                            in ((target, result) :: tempEnv, terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
                         // it is exactly an alias of the same SSA value under a new temp number.

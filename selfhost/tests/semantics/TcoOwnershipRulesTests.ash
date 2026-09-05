@@ -572,9 +572,37 @@ let expectReadBuiltinKeepsOwnedResults unit =
             |> (given (_) -> check("a let-bound result is not released by its reads")(countContaining("RcDrop")(lines) == countContainingBoth("RcDrop")("OwnerSlot=")(lines)))
             |> (given (_) -> check("the let's scope releases the result it owns")(countContainingBoth("TypeName=String OwnerSlot=")("RuntimeManaged=true")(lines) > 0))))
 
+let affineStrAccumulatorSource = "let recursive accumulate (n: Int) (acc: Str) =\n    if n == 0\n    then acc\n    else accumulate(n - 1)(acc + \"x\")\n\nAshes.IO.print(accumulate(5)(\"\"))"
+
+// An affine `Str` accumulator (rebuilt only through `+` rooted at itself) grows its reservation in
+// place: the tail self-call's argument is the reservation-growing `ConcatStrTip`, flagged
+// runtime-managed once the parameter's placement is final, so the back edge stores it as the
+// successor with no predecessor release (the append consumed the old reference), restores the
+// fixed loop-entry watermark and sets the active flag; the entry copies the borrowed argument out
+// under the ownership flag, the exit transfers the value to the caller when it is the result or
+// releases it under the flag, and the loop's closure advertises a runtime-managed result.
+let expectAffineStrAccumulatorGrowsInPlace unit =
+    Unit
+    |> (given (_) ->
+        affineStrAccumulatorSource
+        |> loopFunctionLines("[ClosureHelper from accumulate]")
+        |> (given (lines) ->
+            Unit
+            |> (given (_) -> check("the append grows the reservation in place on the reference-counted heap")(countContainingBoth("ConcatStrTip")("RuntimeManaged=true")(lines) == 1))
+            |> (given (_) -> check("no copying concatenation")(countContaining("ConcatStr ")(lines) == 0))
+            |> (given (_) -> check("the entry copies the borrowed argument out under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1 && countContainingBoth("CopyOutArena")("RuntimeManaged=true")(lines) == 1))
+            |> (given (_) -> check("the back edge restores the fixed loop-entry watermark")(countContaining("RestoreArenaState")(lines) == 1 && countContaining("ReclaimArenaChunks")(lines) == 1))
+            |> (given (_) -> check("the exit's guarded release is the only release")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 1 && countContaining("rc_tco_exit_drop_inactive")(lines) > 0))
+            |> (given (_) -> check("the exit transfers the value to the caller when it is the result")(countContaining("rc_tco_exit_transfer_not_selected")(lines) > 0))))
+    |> (given (_) ->
+        affineStrAccumulatorSource
+        |> loopFunctionLines("[SourceFunction from accumulate]")
+        |> (given (lines) -> check("the loop's closure advertises a runtime-managed result")(countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")(lines) == 1)))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
+    |> (given (_) -> expectAffineStrAccumulatorGrowsInPlace(Unit))
     |> (given (_) -> expectOperandSelfCallIsNotATailCall(Unit))
     |> (given (_) -> expectLetAliasOfParameterIsNotAnOwner(Unit))
     |> (given (_) -> expectGrownConsAccumulatorIsRuntimeManaged(Unit))
