@@ -58,6 +58,10 @@ export (
     value emitArenaAllocAdt,
     value emitArenaValueAllocDynamic,
     value emitPlacedStringFromBytesAddr,
+    value emitArenaStringView,
+    value emitPlacedUnconsString,
+    value emitPlacedUnconsTuple,
+    value emitPlacedUnconsAdt,
     value emitPlacedPayloadPtr,
     value emitPlacedPayloadPtrDynamic,
     value emitPlacedStringConcatN,
@@ -375,6 +379,46 @@ let emitPlacedStringFromBytesAddr context function_ builder i64 i8 ptrType (aren
             |> (given (_) ->
                 buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(buildAdd(builder)(dest)(arenaConst(i64)(8))(name + "_bytes"))(ptrType)(name + "_bytes_ptr"), buildIntToPtr(builder)(srcBytesAddr)(ptrType)(name + "_src_ptr"), len])(3u32)(name + "_memcpy"))
             |> (given (_) -> dest))
+
+// A zero-copy view `{len|VIEW, bytesAddr}` over `len` bytes at `bytesAddr`, in a 16-byte arena
+// block behind the immortal header — stage 0's `EmitStringView`. The backing must outlive the
+// view, which the bracket that allocated the view guarantees for a substring of a live string.
+let emitArenaStringView context function_ builder i64 i8 ptrType (arena: ArenaRuntime) bytesAddr len name =
+    name
+    |> emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(arenaConst(i64)(16))
+    |> (given (viewRef) ->
+        Unit
+        |> (given (_) ->
+            storeWordAt(builder)(i64)(i8)(ptrType)(viewRef)(0)(buildOr(builder)(len)(constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 63))(false))(name + "_tagged_len"))(name + "_len"))
+        |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(viewRef)(8)(bytesAddr)(name + "_ptr"))
+        |> (given (_) -> viewRef))
+
+// The pieces of a `Text.uncons`/`unconsText` result placed by the instruction's flag, stage 0's
+// `EmitTextUncons`/`EmitTextUnconsText` split: an escaping runtime-managed result owns copied
+// strings, a reference-counted tuple, and a reference-counted option cell, while the immediate
+// arena result keeps zero-copy views over the scrutinee's bytes with its tuple and option cell in
+// the arena, reclaimed with the bracket that allocated them.
+let emitPlacedUnconsString context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType memcpyFn memcpyType (managed: Bool) bytesAddr len name =
+    if managed
+    then emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bytesAddr)(len)(name)
+    else emitArenaStringView(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bytesAddr)(len)(name)
+
+// The 16-byte tuple cell as a pointer: `unconsText`'s arena tuple carries the immortal value
+// header (`withHeader`), `uncons`'s is a plain arena block, exactly as stage 0 allocates them.
+let emitPlacedUnconsTuple context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType (managed: Bool) (withHeader: Bool) name =
+    if managed
+    then emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)(name)
+    else
+        if withHeader
+        then
+            buildIntToPtr(builder)(emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(arenaConst(i64)(16))(name))(ptrType)(name + "_ptr")
+        else
+            buildIntToPtr(builder)(emitArenaAlloc(context)(function_)(builder)(i64)(arena)(16)(name))(ptrType)(name + "_ptr")
+
+let emitPlacedUnconsAdt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType (managed: Bool) tag fieldCount name =
+    if managed
+    then emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(false)(name)
+    else emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(false)(name)
 
 // A payload of `payloadSizeBytes` bytes behind a header, placed by `managed` exactly like the
 // string producers above: `emitRcAllocPayloadPtr`'s `malloc`'d `{1, size}` cell, or an arena

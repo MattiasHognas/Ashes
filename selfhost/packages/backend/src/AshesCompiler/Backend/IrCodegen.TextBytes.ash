@@ -341,9 +341,10 @@ let emitBytesSubView builder i64 i8 ptrType mallocFn mallocType bytesRef startVa
 // `Text.unconsText(text)`: `None` for the empty string, otherwise `Some((head, rest))` where
 // `head` is the first UTF-8 scalar's bytes (its width classed from the lead byte alone, clamped
 // to one byte when the buffer is shorter than the class claims) — `EmitTextUnconsText`'s exact
-// shape, with head and rest always copied into fresh RC strings (stage 0's runtime-managed path;
-// its zero-copy arena views are an optimization this codegen's malloc stand-in does not need).
-let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType textRef =
+// shape. `placeString`, `placeTuple`, and `placeAdt` allocate the head and rest strings, the
+// tuple, and the option cells where the instruction's placement flag asked (copied
+// reference-counted strings for an escaping result, zero-copy arena views otherwise).
+let emitTextUnconsText context function_ i64 i8 ptrType builder placeString placeTuple placeAdt textRef =
     match emitStringParts(builder)(i64)(ptrType)(textRef)("text_uncons") with
         | (len, bytesAddr) ->
             let resultSlot = buildEntryAlloca(builder)(i64)("text_uncons_result")
@@ -362,7 +363,7 @@ let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocT
                                     let _ = positionBuilderAtEnd(builder)(emptyBlock)
                                     in
                                         let _ =
-                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("text_uncons_none"))(resultSlot)
+                                            buildStore(builder)(placeAdt(0)(0)("text_uncons_none"))(resultSlot)
                                         in
                                             let _ = buildBr(builder)(continueBlock)
                                             in
@@ -400,11 +401,11 @@ let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocT
                                                                                             in
                                                                                                 let tailAddr = buildAdd(builder)(bytesAddr)(headLen)("text_uncons_tail_addr")
                                                                                                 in
-                                                                                                    let headRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bytesAddr)(headLen)("text_uncons_head")
+                                                                                                    let headRef = placeString(bytesAddr)(headLen)("text_uncons_head")
                                                                                                     in
-                                                                                                        let tailRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(tailAddr)(tailLen)("text_uncons_tail")
+                                                                                                        let tailRef = placeString(tailAddr)(tailLen)("text_uncons_tail")
                                                                                                         in
-                                                                                                            let tuplePtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)("text_uncons_tuple")
+                                                                                                            let tuplePtr = placeTuple("text_uncons_tuple")
                                                                                                             in
                                                                                                                 let _ = buildStore(builder)(headRef)(tuplePtr)
                                                                                                                 in
@@ -412,7 +413,7 @@ let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocT
                                                                                                                     in
                                                                                                                         let _ = buildStore(builder)(tailRef)(tupleTailPtr)
                                                                                                                         in
-                                                                                                                            let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("text_uncons_some")
+                                                                                                                            let someValue = placeAdt(1)(1)("text_uncons_some")
                                                                                                                             in
                                                                                                                                 let somePtr = buildIntToPtr(builder)(someValue)(ptrType)("text_uncons_some_ptr")
                                                                                                                                 in
@@ -640,8 +641,9 @@ let emitRuneByteRange builder i64 value lower upper name =
 // `Text.uncons(text)`: `None` for the empty string, else `Some((rune, rest))` with the first
 // UTF-8 scalar fully validated and decoded — overlong, surrogate, and out-of-range lead/tail
 // combinations fall back to U+FFFD at width 1 (`EmitTextUncons`/`EmitDecodeFirstRune` exactly);
-// the rest is copied into a fresh RC string like `unconsText`'s tail.
-let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType textRef =
+// the rest, the tuple, and the option cells are placed by the same three allocators as
+// `emitTextUnconsText`.
+let emitTextUncons context function_ i64 i8 ptrType builder placeString placeTuple placeAdt textRef =
     match emitStringParts(builder)(i64)(ptrType)(textRef)("runeu") with
         | (len, bytesAddr) ->
             let resultSlot = buildEntryAlloca(builder)(i64)("runeu_result")
@@ -660,7 +662,7 @@ let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType 
                                     let _ = positionBuilderAtEnd(builder)(emptyBlock)
                                     in
                                         let _ =
-                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("runeu_none"))(resultSlot)
+                                            buildStore(builder)(placeAdt(0)(0)("runeu_none"))(resultSlot)
                                         in
                                             let _ = buildBr(builder)(doneBlock)
                                             in
@@ -729,9 +731,9 @@ let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType 
                                                                                                                                             in
                                                                                                                                                 let tailAddr = buildAdd(builder)(bytesAddr)(width)("runeu_tail_addr")
                                                                                                                                                 in
-                                                                                                                                                    let tailRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(tailAddr)(tailLen)("runeu_tail")
+                                                                                                                                                    let tailRef = placeString(tailAddr)(tailLen)("runeu_tail")
                                                                                                                                                     in
-                                                                                                                                                        let tuplePtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)("runeu_tuple")
+                                                                                                                                                        let tuplePtr = placeTuple("runeu_tuple")
                                                                                                                                                         in
                                                                                                                                                             let _ = buildStore(builder)(rune)(tuplePtr)
                                                                                                                                                             in
@@ -739,7 +741,7 @@ let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType 
                                                                                                                                                                 in
                                                                                                                                                                     let _ = buildStore(builder)(tailRef)(tupleTailPtr)
                                                                                                                                                                     in
-                                                                                                                                                                        let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("runeu_some")
+                                                                                                                                                                        let someValue = placeAdt(1)(1)("runeu_some")
                                                                                                                                                                         in
                                                                                                                                                                             let somePtr = buildIntToPtr(builder)(someValue)(ptrType)("runeu_some_ptr")
                                                                                                                                                                             in
