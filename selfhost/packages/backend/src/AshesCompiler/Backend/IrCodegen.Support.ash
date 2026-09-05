@@ -714,15 +714,11 @@ let recursive emitConcatCopyParts builder i64 i8 ptrType memcpyFn memcpyType des
 // bytes...}`, the SAME layout `AllocAdt`'s own runtime-managed branch and every string literal
 // global already use — `unusedAllocSize` mirrors `AllocAdt`'s own convention of recording the byte
 // size of everything after the 16-byte header, `len + bytes` for a string) for the sum of every
-// part's length, then copies each part's bytes into position. Ignores `ConcatStr`/`ConcatStrN`'s
-// own `runtimeManaged` flag rather than branching on it: `CoreLowering.ash` always constructs it
-// `false` (no ownership-placement pass exists yet to ever set it `true`), and this codegen has no
-// real scoped-arena allocator to fall back to for the `false` case either — exactly the same
-// pragmatic "always take the one path this backend can actually execute" call `AllocAdt`'s own
-// runtime-managed branch already makes, documented there for the same reason. The result is
-// therefore never freed (no drop-insertion pass targets a concatenation result yet), a leak, not a
-// correctness bug for the short-lived programs this backend currently produces. Takes already-
-// resolved `partRefs`, never `tempEnv`/raw `IrTemp`s — see `sumPartLengths` above for why.
+// part's length, then copies each part's bytes into position: the runtime-managed placement of
+// `ConcatStr`/`ConcatStrN`, released by the `RcDrop` the lowering places for it. A concatenation
+// the lowering left in the arena goes through `IrCodegen.Arena`'s `emitPlacedStringConcatN`
+// instead. Takes already-resolved `partRefs`, never `tempEnv`/raw `IrTemp`s — see
+// `sumPartLengths` above for why.
 let emitStringConcatN i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType partRefs =
     (let totalLen = sumPartLengths(builder)(i64)(ptrType)(partRefs)
     in

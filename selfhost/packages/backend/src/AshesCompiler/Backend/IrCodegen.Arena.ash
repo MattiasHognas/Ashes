@@ -56,6 +56,8 @@ export (
     value emitArenaAllocDynamic,
     value emitArenaAllocAdt,
     value emitArenaValueAllocDynamic,
+    value emitPlacedStringFromBytesAddr,
+    value emitPlacedStringConcatN,
     value emitRcAllocWord,
     value emitMoveBytes,
     value listHeadKindCode,
@@ -351,6 +353,42 @@ let emitArenaValueAllocDynamic context function_ builder i64 i8 ptrType (arena: 
             storeWordAt(builder)(i64)(i8)(ptrType)(base)(8)(arenaConst(i64)(0))(name + "_size"))
         |> (given (_) ->
             buildAdd(builder)(base)(arenaConst(i64)(16))(name)))
+
+// A fresh string of `len` bytes copied from the bytes at address word `srcBytesAddr`, placed
+// where the instruction asked: a `malloc`'d reference-counted cell when runtime-managed (a count
+// of 1, released by `RcDrop`), otherwise an arena block with the immortal header, reclaimed with
+// the bracket that allocated it — stage 0's `EmitRuntimeRcAllocDynamic` and
+// `EmitArenaValueAllocDynamic` split for a string result.
+let emitPlacedStringFromBytesAddr context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType memcpyFn memcpyType (managed: Bool) srcBytesAddr len name =
+    if managed
+    then emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(srcBytesAddr)(len)(name)
+    else
+        name
+        |> emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(buildAdd(builder)(len)(arenaConst(i64)(8))(name + "_size"))
+        |> (given (dest) ->
+            Unit
+            |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(dest)(0)(len)(name + "_len"))
+            |> (given (_) ->
+                buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(buildAdd(builder)(dest)(arenaConst(i64)(8))(name + "_bytes"))(ptrType)(name + "_bytes_ptr"), buildIntToPtr(builder)(srcBytesAddr)(ptrType)(name + "_src_ptr"), len])(3u32)(name + "_memcpy"))
+            |> (given (_) -> dest))
+
+// `ConcatStr`/`ConcatStrN` placed by the instruction's flag: `emitStringConcatN`'s
+// reference-counted cell when runtime-managed, otherwise an arena string holding every part's
+// bytes in order.
+let emitPlacedStringConcatN context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType memcpyFn memcpyType (managed: Bool) partRefs =
+    if managed
+    then emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(partRefs)
+    else
+        let totalLen = sumPartLengths(builder)(i64)(ptrType)(partRefs)
+        in
+            "str_cat_arena"
+            |> emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(buildAdd(builder)(totalLen)(arenaConst(i64)(8))("str_cat_arena_size"))
+            |> (given (dest) ->
+                Unit
+                |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(dest)(0)(totalLen)("str_cat_arena_len"))
+                |> (given (_) ->
+                    emitConcatCopyParts(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(buildIntToPtr(builder)(buildAdd(builder)(dest)(arenaConst(i64)(8))("str_cat_arena_bytes"))(ptrType)("str_cat_arena_bytes_ptr"))(constInt(i64)(0u64)(false))(partRefs))
+                |> (given (_) -> dest))
 
 // A `malloc`'d RC cell for `size` payload bytes, as the value word.
 let emitRcAllocWord builder i64 i8 mallocFn mallocType size name =
