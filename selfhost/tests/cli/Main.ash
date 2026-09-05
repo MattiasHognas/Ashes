@@ -1141,6 +1141,28 @@ let testParseCompileArgumentsOutputOption unit =
             |> (given (_) -> test.assertEqual("build/hello")(outputPath))
         | _ -> test.fail("expected -o to select the output path")
 
+let testParseCompileArgumentsDisableReuse unit =
+    match parseCompileArguments(["--debug-disable-reuse", "examples/hello.ash"]) with
+        | CompileParsedArguments(CompileArguments { inputPath = inputPath, disableReuse = disableReuse }) ->
+            inputPath
+            |> test.assertEqual("examples/hello.ash")
+            |> (given (_) -> test.assertEqual(true)(disableReuse))
+        | _ -> test.fail("expected --debug-disable-reuse to be accepted")
+
+let testParseCompileArgumentsReuseEnabledByDefault unit =
+    match parseCompileArguments(["examples/hello.ash"]) with
+        | CompileParsedArguments(CompileArguments { disableReuse = disableReuse }) -> test.assertEqual(false)(disableReuse)
+        | _ -> test.fail("expected a plain input to parse")
+
+let testParseRunArgumentsDisableReuse unit =
+    match parseRunArguments(["--debug-disable-reuse", "examples/hello.ash", "--", "a"]) with
+        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = programArguments, runDisableReuse = disableReuse }) ->
+            inputPath
+            |> test.assertEqual("examples/hello.ash")
+            |> (given (_) -> test.assertEqual(["a"])(programArguments))
+            |> (given (_) -> test.assertEqual(true)(disableReuse))
+        | _ -> test.fail("expected --debug-disable-reuse to be accepted by run")
+
 let testParseCompileArgumentsMissingOutputValue unit =
     match parseCompileArguments(["examples/hello.ash", "--out"]) with
         | CompileUsageError(message) -> test.assertEqual("Missing value for --out.")(message)
@@ -1412,6 +1434,9 @@ let run unit =
     |> testParseCompileArgumentsRejectsWrongExtension
     |> testParseCompileArgumentsAmbiguousInputs
     |> testParseCompileArgumentsOutputOption
+    |> testParseCompileArgumentsDisableReuse
+    |> testParseCompileArgumentsReuseEnabledByDefault
+    |> testParseRunArgumentsDisableReuse
     |> testParseCompileArgumentsMissingOutputValue
     |> testDefaultOutputPathDropsExtension
     |> testInputStemIsBasenameWithoutExtension

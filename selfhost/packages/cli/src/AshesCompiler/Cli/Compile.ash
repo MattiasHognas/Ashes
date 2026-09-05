@@ -65,10 +65,13 @@ export (
     value runRun,
 )
 
+// `disableReuse` is stage 0's hidden `--debug-disable-reuse`: the program is lowered with every
+// reuse token withheld, so a reuse-related miscompile can be bisected against fresh allocation.
 type CompileArguments =
     | inputPath: Str
     | outputPath: Maybe(Str)
     | explain: ExplainRequest
+    | disableReuse: Bool
 
 type CompileParse =
     | CompileHelpRequested
@@ -84,6 +87,7 @@ type RunArguments =
     | runInputPath: Str
     | programArguments: List(Str)
     | runExplain: ExplainRequest
+    | runDisableReuse: Bool
 
 type RunParse =
     | RunHelpRequested
@@ -113,23 +117,24 @@ let addExplainOption (value: Str) (explain: ExplainRequest) =
             |> Ok
         | Error(message) -> Error(message + explainValidValuesText)
 
-let recursive partitionCompileFlags args output inputs explain =
+let recursive partitionCompileFlags args output inputs explain disableReuse =
     match args with
-        | [] -> Ok((output, inputs, explain))
-        | "-o" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)
-        | "--out" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)
+        | [] -> Ok((output, inputs, explain, disableReuse))
+        | "-o" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)(disableReuse)
+        | "--out" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)(disableReuse)
         | "-o" :: [] -> Error("Missing value for -o.")
         | "--out" :: [] -> Error("Missing value for --out.")
         | "--explain" :: value :: rest ->
             match addExplainOption(value)(explain) with
                 | Error(message) -> Error(message)
-                | Ok(added) -> partitionCompileFlags(rest)(output)(inputs)(added)
+                | Ok(added) -> partitionCompileFlags(rest)(output)(inputs)(added)(disableReuse)
         | "--explain" :: [] -> Error("--explain requires a value." + explainValidValuesText)
+        | "--debug-disable-reuse" :: rest -> partitionCompileFlags(rest)(output)(inputs)(explain)(true)
         | other :: rest ->
             if isOptionLike(other)
             then Error("Unknown option '" + other + "'.")
             else
-                partitionCompileFlags(rest)(output)(append(inputs)([other]))(explain)
+                partitionCompileFlags(rest)(output)(append(inputs)([other]))(explain)(disableReuse)
 
 let checkInputPath input =
     if hasAshExtension(input)
@@ -146,14 +151,14 @@ let parseCompileArguments args =
         | "-h" :: [] -> CompileHelpRequested
         | [] -> CompileInputError("Missing input: provide a .ash file.")
         | _ ->
-            match partitionCompileFlags(args)(None)([])(explainRequestNone) with
+            match partitionCompileFlags(args)(None)([])(explainRequestNone)(false) with
                 | Error(message) -> CompileUsageError(message)
-                | Ok((_, [], _)) -> CompileInputError("Missing input: provide a .ash file.")
-                | Ok((output, input :: [], explain)) ->
+                | Ok((_, [], _, _)) -> CompileInputError("Missing input: provide a .ash file.")
+                | Ok((output, input :: [], explain, disableReuse)) ->
                     match checkInputPath(input) with
                         | Error(message) -> CompileInputError(message)
-                        | Ok(checked) -> CompileParsedArguments(CompileArguments(inputPath = checked, outputPath = output, explain = explain))
-                | Ok((_, _, _)) -> CompileUsageError("Provide exactly one input file.")
+                        | Ok(checked) -> CompileParsedArguments(CompileArguments(inputPath = checked, outputPath = output, explain = explain, disableReuse = disableReuse))
+                | Ok((_, _, _, _)) -> CompileUsageError("Provide exactly one input file.")
 
 let recursive splitProgramArguments args before =
     match args with
@@ -161,19 +166,20 @@ let recursive splitProgramArguments args before =
         | "--" :: rest -> (reverseList(before), rest)
         | other :: rest -> splitProgramArguments(rest)(other :: before)
 
-let recursive partitionRunFlags args inputs explain =
+let recursive partitionRunFlags args inputs explain disableReuse =
     match args with
-        | [] -> Ok((inputs, explain))
+        | [] -> Ok((inputs, explain, disableReuse))
         | "--explain" :: value :: rest ->
             match addExplainOption(value)(explain) with
                 | Error(message) -> Error(message)
-                | Ok(added) -> partitionRunFlags(rest)(inputs)(added)
+                | Ok(added) -> partitionRunFlags(rest)(inputs)(added)(disableReuse)
         | "--explain" :: [] -> Error("--explain requires a value." + explainValidValuesText)
+        | "--debug-disable-reuse" :: rest -> partitionRunFlags(rest)(inputs)(explain)(true)
         | other :: rest ->
             if isOptionLike(other)
             then Error("Unknown option '" + other + "'.")
             else
-                partitionRunFlags(rest)(append(inputs)([other]))(explain)
+                partitionRunFlags(rest)(append(inputs)([other]))(explain)(disableReuse)
 
 let parseRunArguments args =
     match args with
@@ -183,14 +189,14 @@ let parseRunArguments args =
         | _ ->
             match splitProgramArguments(args)([]) with
                 | (before, programArguments) ->
-                    match partitionRunFlags(before)([])(explainRequestNone) with
+                    match partitionRunFlags(before)([])(explainRequestNone)(false) with
                         | Error(message) -> RunUsageError(message)
-                        | Ok(([], _)) -> RunInputError("Missing input: provide a .ash file.")
-                        | Ok((input :: [], explain)) ->
+                        | Ok(([], _, _)) -> RunInputError("Missing input: provide a .ash file.")
+                        | Ok((input :: [], explain, disableReuse)) ->
                             match checkInputPath(input) with
                                 | Error(message) -> RunInputError(message)
-                                | Ok(checked) -> RunParsedArguments(RunArguments(runInputPath = checked, programArguments = programArguments, runExplain = explain))
-                        | Ok((_, _)) -> RunUsageError("Provide exactly one input file.")
+                                | Ok(checked) -> RunParsedArguments(RunArguments(runInputPath = checked, programArguments = programArguments, runExplain = explain, runDisableReuse = disableReuse))
+                        | Ok((_, _, _)) -> RunUsageError("Provide exactly one input file.")
 
 // `examples/hello.ash` compiles to `examples/hello`: the `.ash` suffix is dropped in place.
 let defaultOutputPath inputPath = Ashes.Text.substring(inputPath)(0)(Ashes.Text.length(inputPath) - 4)
@@ -266,8 +272,8 @@ let loadShippedModules unit =
 // The lowered program, its optimized form (the one handed to code generation), and every value's
 // placement fact lowering recorded on the way — the explain report's memory representation needs
 // that last one, correlated to the un-optimized `lowered` it was captured against.
-let lowerStitchedProgram inputPath source program =
-    match lowerCoreProgramWithSource(inputPath)(source)(program) with
+let lowerStitchedProgram reuseEnabled inputPath source program =
+    match lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(program) with
         | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements } -> Ok((lowered, optimizeIrProgram(lowered), valuePlacements))
         | CoreLoweringResult { error = Some(error) } ->
             error
@@ -275,14 +281,14 @@ let lowerStitchedProgram inputPath source program =
             |> Error
         | _ -> Error("Lowering produced no program.")
 
-let lowerFileSource inputPath source shipped =
+let lowerFileSource reuseEnabled inputPath source shipped =
     match stitchWithShippedModules(inputStem(inputPath))(inputPath)(source)(shipped) with
         | Error(error) ->
             error
             |> Ashes.Trait.Show.show
             |> Error
         | Ok(StitchedSyntaxProject { program = program } as stitched) ->
-            match lowerStitchedProgram(inputPath)(source)(program) with
+            match lowerStitchedProgram(reuseEnabled)(inputPath)(source)(program) with
                 | Error(message) -> Error(message)
                 | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
 
@@ -410,14 +416,14 @@ let emitAndLink outputPath optimized =
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
-let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) =
+let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
     match Ashes.IO.File.readText(inputPath) with
         | Error(message) -> Error("Could not read " + inputPath + ": " + message)
         | Ok(source) ->
             match loadShippedModules(Unit) with
                 | Error(message) -> Error(message)
                 | Ok(shipped) ->
-                    match lowerFileSource(inputPath)(source)(shipped) with
+                    match lowerFileSource(reuseEnabled)(inputPath)(source)(shipped) with
                         | Error(message) -> Error(message)
                         | Ok((stitched, lowered, optimized, valuePlacements)) ->
                             optimized
@@ -426,13 +432,13 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) =
 
 let runCompileWithArguments arguments =
     match arguments with
-        | CompileArguments { inputPath = inputPath, outputPath = outputPath, explain = explain } ->
+        | CompileArguments { inputPath = inputPath, outputPath = outputPath, explain = explain, disableReuse = disableReuse } ->
             let output =
                 match outputPath with
                     | Some(explicit) -> explicit
                     | None -> defaultOutputPath(inputPath)
             in
-                match compileFileToExecutable(inputPath)(output)(explain) with
+                match compileFileToExecutable(inputPath)(output)(explain)(disableReuse == false) with
                     | Error(message) -> CompileFailed(message)
                     | Ok(size) ->
                         Unit
@@ -501,11 +507,11 @@ let spawnCompiledProgram executablePath programArguments =
             |> Ashes.IO.Process.waitForExit
             |> Ok
 
-let runProgramFile inputPath programArguments (explain: ExplainRequest) =
+let runProgramFile inputPath programArguments (explain: ExplainRequest) (reuseEnabled: Bool) =
     match temporaryExecutablePath(inputPath) with
         | Error(message) -> Error(message)
         | Ok(executablePath) ->
-            match compileFileToExecutable(inputPath)(executablePath)(explain) with
+            match compileFileToExecutable(inputPath)(executablePath)(explain)(reuseEnabled) with
                 | Error(message) -> Error(message)
                 | Ok(_) -> spawnCompiledProgram(executablePath)(programArguments)
 
@@ -522,8 +528,8 @@ let runRun args =
         | RunUsageError(message) ->
             let _ = Ashes.IO.writeErrorLine(message)
             in 2
-        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = programArguments, runExplain = explain }) ->
-            match runProgramFile(inputPath)(programArguments)(explain) with
+        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = programArguments, runExplain = explain, runDisableReuse = disableReuse }) ->
+            match runProgramFile(inputPath)(programArguments)(explain)(disableReuse == false) with
                 | Error(message) ->
                     let _ = Ashes.IO.writeErrorLine(message)
                     in 1

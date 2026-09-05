@@ -79,6 +79,7 @@ export (
     value pruneDeadCaptures,
     value lowerCoreProgram,
     value lowerCoreProgramWithSource,
+    value lowerCoreProgramWithSourceAndReuse,
     value lowerCoreProgramWithSourceAndContext,
     value lowerCoreProgramWithEnvironment,
 )
@@ -317,6 +318,7 @@ type CoreLoweringState =
     | runtimeTemps: List((Int, RuntimeTempState))
     | runtimeOwners: List((Int, Bool))
     | reuseTransferredNames: List(Str)
+    | reuseEnabled: Bool
     | patternOwnerSites: List(PatternOwnerSite)
     // The temps holding a pattern owner's retained reference as a branch result, and the joins
     // every reaching branch stored one into: such a result crosses an arm's reset without a copy.
@@ -598,6 +600,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeTemps = [],
         runtimeOwners = [],
         reuseTransferredNames = [],
+        reuseEnabled = true,
         patternOwnerSites = [],
         patternOwnerResultTemps = [],
         tcoParameterRetainSites = [],
@@ -8347,10 +8350,12 @@ let reuseMatchExhaustiveAndSafe (cases: List((Pattern, Expr, Maybe(Expr)))) (sta
                         in length(caseNames) == length(required) && reuseNamesAllPresent(required)(caseNames) && reuseCaseSafetyAll(cases)(layouts)(state)
 
 // Whether the body is a match whose arms are all reuse-safe rebuilds of one type, stage 0's
-// `RuntimeReusePointerFieldsAreSafe` over the arms of an immediate match.
+// `RuntimeReusePointerFieldsAreSafe` over the arms of an immediate match. With reuse disabled
+// (`--debug-disable-reuse`) no arm publishes a token, so the admission it justifies is withheld
+// and the binding keeps the arena placement it had before reuse.
 let immediateMatchArmsReuseSafe (body: Expr) (state: CoreLoweringState) =
     match unspanArgument(body) with
-        | ExprMatch(_value, cases, _position) -> reuseMatchExhaustiveAndSafe(cases)(state)
+        | ExprMatch(_value, cases, _position) -> state.reuseEnabled && reuseMatchExhaustiveAndSafe(cases)(state)
         | _ -> false
 
 // Stage 0's `IsImmediateSafeAdtMatchUse`: the binding is matched immediately through at least
@@ -8486,6 +8491,7 @@ let reuseEligibleScrutineeName (scrutinee: Expr) (cases: List((Pattern, Expr, Ma
 let withReuseScrutinee (scrutinee: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
+        | CoreMatchPlan { state = CoreLoweringState { reuseEnabled = false } } -> plan with reuseScrutineeName = None
         | CoreMatchPlan { state = state } ->
             match reuseEligibleScrutineeName(scrutinee)(cases)(state) with
                 | Some((name, slot)) -> plan with reuseScrutineeName = Some(name), scrutineeOwner = None, state = (state with runtimeOwners = releaseRuntimeOwner(slot)(state.runtimeOwners))
@@ -13579,6 +13585,26 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 |> initialStateWithContext(constructorLayouts)(builtinLayouts)
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items))
+                |> withProgramParameterOwnership(program)
+                |> lowerCoreProgramItems(items)(trailingBody)([])(None)
+                |> buildProgram
+
+// As lowerCoreProgramWithSource, with stage 0's `LoweringConfiguration.EnableReuse` switch: with
+// `reuseEnabled` false (`--debug-disable-reuse`) no match arm publishes a reuse token and no
+// binding is admitted to the reference-counted heap on the strength of a reuse-safe rebuild, so
+// every cell is allocated fresh and released by its owner as before reuse.
+let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let trailingBody =
+                match body with
+                    | Some(expression) -> expression
+                    | None -> ExprVar("Unit")
+            in
+                Unit
+                |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
+                |> (given (state: CoreLoweringState) ->
+                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items), reuseEnabled = reuseEnabled)
                 |> withProgramParameterOwnership(program)
                 |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram

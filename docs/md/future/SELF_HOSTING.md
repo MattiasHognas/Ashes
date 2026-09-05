@@ -1535,8 +1535,17 @@ same public behavior.
   substantially larger than this slice and remain open.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
-- [ ] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
-  changes, and explanation/report instrumentation.
+- [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
+  changes, and explanation/report instrumentation. Done (2026-09-05): `--debug-disable-reuse` on
+  `compile` and `run` (stage 0's hidden flag, `LoweringConfiguration.EnableReuse`) threads
+  `reuseEnabled` into the lowering state (`lowerCoreProgramWithSourceAndReuse`); with it off
+  `withReuseScrutinee` publishes no token and `isImmediateSafeAdtMatchUse` withholds the
+  recursive-copy admission a reuse-safe rebuild justifies, so every cell allocates fresh and the
+  owner's scope-exit release stands — the placement the selfhost had before OPT-42's activation.
+  Stage 0 instead keeps publishing tokens and refuses to consume them; the IR under the flag
+  therefore differs while the program's behavior is the same. Open: optimization levels
+  (milestone 5), trait specialization (milestone 3), and the report instrumentation's reuse
+  decisions under the flag.
 - [~] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
   current public reports. Done: the report model, reporter, and formatter (`ExplainReport.ash`,
   `IrExplainReporter.ash`, `ExplainReportFormatter.ash`, `ReuseDecision.ash`), the decision
