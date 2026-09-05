@@ -3467,6 +3467,11 @@ let testRunSharedTcoRuntimeManagedStrParamNonAffinePlateau shipped unit =
 let testRunSharedTcoRuntimeManagedFreshListRebuildPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_fresh_list_rebuild_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedFreshListRebuildPlateau")("selfhost_backend_shared_tco_runtime_managed_fresh_list_rebuild_plateau_e2e")("1688898")
 
+// A consumed list of records whose matched heads escape into a sibling record accumulator: the
+// promoted pattern owner releases each head through the record's structural dropper.
+let testRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_consumed_record_heads_escape.ash"))("selfhostBackendRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape")("selfhost_backend_shared_tco_runtime_managed_consumed_record_heads_escape_e2e")("4200000")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5008,6 +5013,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedRecordListAccumulator(shipped)
     |> testRunSharedTcoRuntimeManagedStrParamNonAffinePlateau(shipped)
     |> testRunSharedTcoRuntimeManagedFreshListRebuildPlateau(shipped)
+    |> testRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

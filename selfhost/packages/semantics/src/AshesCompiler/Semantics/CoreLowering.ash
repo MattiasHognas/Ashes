@@ -211,7 +211,6 @@ type CoreTcoLoop =
     | affineOrdinals: List(Int)
     | runtimeManagedOrdinals: List(Int)
     | argumentShapes: List(TcoArgumentShape)
-    | escapingHeadOrdinals: List(Int)
     | patternFacts: List(PatternBindingFact)
     | emitsLoop: Bool
 
@@ -391,6 +390,7 @@ type CoreIfThen =
 type MatchScrutineeOwner =
     | scrutineeTypeName: Str
     | scrutineeIsList: Bool
+    | scrutineeType: SemanticType
 
 // The plan of one match: the arms lowered so far record what each stored into the result slot
 // (most recent first), the scrutinee owner every arm adopts when the scrutinee is a fresh
@@ -3546,16 +3546,21 @@ let unlocatedInstruction (kind: IrInstructionKind) (state: CoreLoweringState) = 
 // The iteration-local owners a back edge releases before its reset, each loaded back and
 // released under a runtime-managed `RcDrop` naming its slot (stage 0's `EmitOwnedValueDrop` at
 // the deferred back edge).
+// The iteration-local owners released at a back edge, stage 0's `EmitOwnedValueDrop` for each:
+// an owner whose release plan reaches past its own cell walks its owned children inline, any
+// other owner releases as one drop naming its slot.
 let recursive emitResolvedOwnedDrops (drops: List((Int, Str))) (state: CoreLoweringState) =
     match drops with
         | [] -> state
         | (slot, typeName) :: rest ->
             match freshTemp(state) with
                 | FreshTemp { state = tempState, temp = temp } ->
-                    tempState
-                    |> unlocatedInstruction(LoadLocal(temp)(slot))
-                    |> unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))
-                    |> emitResolvedOwnedDrops(rest)
+                    match unlocatedInstruction(LoadLocal(temp)(slot))(tempState) with
+                        | loaded ->
+                            emitResolvedOwnedDrops(rest)(match emitInlineOwnerRelease(temp)(slot)(loaded) with
+                                | Some(released) -> released
+                                | None ->
+                                    unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))(loaded))
 
 let recursive argumentsSurviveReset (types: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -4759,18 +4764,17 @@ let isUnconditionallyRcManagedType (semanticType: SemanticType) =
 // resolved (stage 0's `EvaluateTcoRcEligibility` for a list): the resolved type is a list whose
 // element the runtime-managed accumulator layout supports and whose spine the entry copy can
 // normalize; a consumed tail only over heap elements (a list of scalars is borrowed through the
-// traversal instead) and, when a matched head may outlive its arm, only over string-like
-// elements, whose pattern owners retain them (an aggregate head's promoted owner would need the
-// structural release the placement does not name yet); a grown accumulator only when every back
-// edge allocated its cons cell on the reference-counted heap. Answers the element type of an
-// admitted slot.
-let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+// traversal instead; a matched head that outlives its arm is retained by its pattern owner,
+// whose promoted release walks an aggregate head through its structural dropper); a grown
+// accumulator only when every back edge allocated its cons cell on the reference-counted heap.
+// Answers the element type of an admitted slot.
+let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
         | Some(SemList(element)) ->
             match argumentCopyPlanOf(SemList(element))(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(state.pendingTcoResets) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) && (!containsInt(ordinal)(loop.escapingHeadOrdinals) || isUnconditionallyRcManagedType(resolveType(state)(element))))
+                    if tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(state.pendingTcoResets) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
@@ -4847,7 +4851,7 @@ let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: Li
                     shape = shape,
                     strManaged = strManaged,
                     listElement = if isTcoListShape(shape)
-                    then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
+                    then tcoListSlotElement(slot)(shape)(ordinal)(state)
                     else None,
                     adtCopy = if strManaged
                     then None
@@ -4964,14 +4968,21 @@ let recursive isZeroConstantTemp (temp: Int) (instructions: List(IrInstruction))
         | _instruction :: rest -> isZeroConstantTemp(temp)(rest)
 
 // Whether every value a join slot is stored is a reference-counted one: a runtime-managed temp,
-// the direct read of a runtime-managed slot, or the back edge's synthetic zero.
-let recursive joinStoresAreRuntimeManaged (temps: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
+// the direct read of a runtime-managed slot, the back edge's synthetic zero, or the reload of a
+// nested join whose own stores all are (an `if` whose branches both take the back edge inside a
+// `match` arm). `visited` holds the join slots already on the walk, so a slot stored from a
+// reload of itself proves nothing.
+let recursive joinStoresAreRuntimeManaged (temps: List(Int)) (visited: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
     match temps with
         | [] -> true
         | temp :: rest ->
             (isRuntimeTemp(temp)(state) || isZeroConstantTemp(temp)(state.reversedInstructions) || (match loadedSlotOfTemp(temp)(state.reversedInstructions) with
-                | Some(slot) -> managedSlotResult(slot)(managedLists)(managedAdts)
-                | None -> false)) && joinStoresAreRuntimeManaged(rest)(managedLists)(managedAdts)(state)
+                | Some(slot) -> slotJoinIsRuntimeManaged(slot)(visited)(managedLists)(managedAdts)(state)
+                | None -> false)) && joinStoresAreRuntimeManaged(rest)(visited)(managedLists)(managedAdts)(state)
+and slotJoinIsRuntimeManaged (slot: Int) (visited: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
+    managedSlotResult(slot)(managedLists)(managedAdts) || !containsInt(slot)(visited) && (match storedTempsOfSlot(slot)(state.reversedInstructions)([]) with
+        | [] -> false
+        | temps -> joinStoresAreRuntimeManaged(temps)(slot :: visited)(managedLists)(managedAdts)(state))
 
 // A body result that is the direct read of a runtime-managed slot, or the reload of a join every
 // branch stored such a read (or a runtime-managed value) into, transfers a slot's reference to
@@ -4981,15 +4992,9 @@ let markRuntimeListResult (bodyTemp: Int) (managedLists: List((Int, Int, Semanti
     match loadedSlotOfTemp(bodyTemp)(state.reversedInstructions) with
         | None -> state
         | Some(slot) ->
-            if managedSlotResult(slot)(managedLists)(managedAdts)
+            if slotJoinIsRuntimeManaged(slot)([])(managedLists)(managedAdts)(state)
             then markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
-            else
-                match storedTempsOfSlot(slot)(state.reversedInstructions)([]) with
-                    | [] -> state
-                    | temps ->
-                        if joinStoresAreRuntimeManaged(temps)(managedLists)(managedAdts)(state)
-                        then markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
-                        else state
+            else state
 
 // Stage 0's `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops` for one list slot when the body
 // result may be one of the runtime-managed lists: the slot's value is compared with the result
@@ -5235,21 +5240,32 @@ let recursive patternOwnerAliases (instructions: List(IrInstruction)) (slot: Int
             else aliases)
         | _ :: rest -> patternOwnerAliases(rest)(slot)(aliases)
 
+// Names the structural release helper for a value of `semanticType` (stage 0's
+// `SynthesizeStructuralOwnerDropper`), synthesizing it and any ADT dropper it calls into the
+// program once per type through the state's label cache; `None` when the value's release is a
+// single allocation.
+let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
+                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> (label, (state with dropperLabels = nextCache, functions = append(functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+
 // Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
 // real retain, and the owner's release marker a real runtime-managed release under the resolved
-// type name.
-let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (typeName: Str) (mayBeEmpty: Bool) =
+// type name, naming the structural dropper of a value whose release reaches past its own cell
+// (the marker is one instruction, so an aggregate owner's walk lives behind that label).
+let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) =
     match instructions with
         | [] -> []
         | (IrInstruction { instruction = RcDup(target, source, runtimeManaged, _mayBeEmpty) } as instruction) :: rest ->
             (if containsInt(source)(aliases) && !runtimeManaged
             then instruction with instruction = RcDup(target)(source)(true)(mayBeEmpty)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)
-        | (IrInstruction { instruction = RcDrop(source, _typeName, ownerSlot, _runtimeManaged, _mayBeEmpty, dropper) } as instruction) :: rest ->
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
+        | (IrInstruction { instruction = RcDrop(source, _typeName, ownerSlot, _runtimeManaged, _mayBeEmpty, _dropper) } as instruction) :: rest ->
             (if ownerSlot == slot
             then instruction with instruction = RcDrop(source)(typeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)
-        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
+        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
 
 let recursive markRuntimeTemps (temps: List(Int)) (state: CoreLoweringState) =
     match temps with
@@ -5259,18 +5275,20 @@ let recursive markRuntimeTemps (temps: List(Int)) (state: CoreLoweringState) =
             |> markRuntimeTemp(temp)(RuntimeTransferred)
             |> markRuntimeTemps(rest)
 
+// The dropper is synthesized before the rewrite, which scans the instruction list the synthesis
+// would otherwise extend.
 let promotePatternOwnerMarkers (site: PatternOwnerSite) (state: CoreLoweringState) =
-    match (resolveType(state)(site.siteType), reverse(state.reversedInstructions)) with
-        | (resolved, instructions) ->
-            []
-            |> patternOwnerAliases(instructions)(site.siteSlot)
-            |> (given (aliases: List(Int)) ->
-                state
-                |> markRuntimeTemps(aliases)
-                |> (given (marked: CoreLoweringState) ->
-                    marked with reversedInstructions = reverse(resolved
-                    |> mayBeEmptyList
-                    |> promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(patternOwnerTypeName(resolved)(marked)))))
+    match (resolveType(state)(site.siteType), synthesizeStructuralDropperLabel(site.siteType)(state)) with
+        | (resolved, (dropper, synthesized)) ->
+            match reverse(synthesized.reversedInstructions) with
+                | instructions ->
+                    []
+                    |> patternOwnerAliases(instructions)(site.siteSlot)
+                    |> (given (aliases: List(Int)) ->
+                        synthesized
+                        |> markRuntimeTemps(aliases)
+                        |> (given (marked: CoreLoweringState) ->
+                            marked with reversedInstructions = reverse(promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
 
 let recursive promotePatternOwnerSites (sites: List(PatternOwnerSite)) (state: CoreLoweringState) =
     match sites with
@@ -5471,7 +5489,6 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             affineOrdinals = affineSelfAppendOrdinals(name)(parameters)(innermost),
                             runtimeManagedOrdinals = runtimeManagedStrOrdinals(name)(parameters)(innermost),
                             argumentShapes = shapes,
-                            escapingHeadOrdinals = escapingConsumedHeadOrdinals(0)(parameters)(innermost)(shapes),
                             patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
                             emitsLoop = emitsLoop
                         ))
@@ -7375,21 +7392,26 @@ let emitScrutineeListRelease (ownerSlot: Int) (state: CoreLoweringState) =
                                                     |> emit(StoreLocal(cursorSlot)(loadTemp))
                                                     |> emitListSpineWalkBody(cursorSlot)(loopLabel)(sharedLabel)(endLabel)(firstTemp)
 
-// The owner a match makes for its scrutinee, stage 0's `TrackRuntimeManagedMatchScrutineeOwner`
-// narrowed to the shapes whose release is one owner drop: a fresh runtime-managed string or
-// `Bytes` value, or a list over scalars, matched directly rather than read from a binding.
+// The owner a match makes for its scrutinee, stage 0's `TrackRuntimeManagedMatchScrutineeOwner`:
+// a fresh runtime-managed value of an owned type, matched directly rather than read from a
+// binding. A string or `Bytes` value releases as one owner drop, a list over scalars as a spine
+// walk, and a tuple, a named type, or a list over heap elements through the inline structural
+// walk of its release plan.
 let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType) (state: CoreLoweringState) =
     if scrutineeHasOwnerCandidate(scrutinee) && isRuntimeTemp(valueTemp)(state)
     then
         match resolveType(state)(valueType) with
-            | SemString -> Some(MatchScrutineeOwner(scrutineeTypeName = "String", scrutineeIsList = false))
-            | SemBytes -> Some(MatchScrutineeOwner(scrutineeTypeName = "Bytes", scrutineeIsList = false))
+            | SemString -> Some(MatchScrutineeOwner(scrutineeTypeName = "String", scrutineeIsList = false, scrutineeType = valueType))
+            | SemBytes -> Some(MatchScrutineeOwner(scrutineeTypeName = "Bytes", scrutineeIsList = false, scrutineeType = valueType))
             | SemList(element) ->
-                if element
+                Some(MatchScrutineeOwner(scrutineeTypeName = "List", scrutineeIsList = element
                 |> resolveType(state)
-                |> canArenaResetLayout
-                then Some(MatchScrutineeOwner(scrutineeTypeName = "List", scrutineeIsList = true))
-                else None
+                |> canArenaResetLayout, scrutineeType = valueType))
+            | SemTuple(_elements) -> Some(MatchScrutineeOwner(scrutineeTypeName = "Tuple", scrutineeIsList = false, scrutineeType = valueType))
+            | SemNamed(_symbolId, _name, _arguments) as named ->
+                match ownedTypeNameOf(named)(state.constructorLayouts) with
+                    | Some(typeName) -> Some(MatchScrutineeOwner(scrutineeTypeName = typeName, scrutineeIsList = false, scrutineeType = valueType))
+                    | None -> None
             | _ -> None
     else None
 
@@ -7553,6 +7575,46 @@ let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLowe
                 | failed -> failed
         | _ -> lower(body)(state)
 
+// The name an arm body returns through its `let` chain, when the body is a plain read.
+let recursive tailForwardedVariable (body: Expr) =
+    match body with
+        | ExprAt(_span, inner) -> tailForwardedVariable(inner)
+        | ExprVar(name) -> Some(name)
+        | ExprLet(nested, _value, nestedBody, _parameters, _annotation, _requirements) ->
+            match tailForwardedVariable(nestedBody) with
+                | Some(name) ->
+                    if name == nested
+                    then None
+                    else Some(name)
+                | None -> None
+        | _ -> None
+
+let recursive armBindingSlotOf (name: Str) (bindings: List(CoreBinding)) =
+    match bindings with
+        | [] -> None
+        | CoreBinding { name = candidate, location = CoreLocal(slot) } :: rest ->
+            if candidate == name
+            then Some(slot)
+            else armBindingSlotOf(name)(rest)
+        | _ :: rest -> armBindingSlotOf(name)(rest)
+
+// Stage 0's `TransferVariableRuntimeManagedMatchResult`: an arm that returns a binding its own
+// pattern bound as a runtime-managed owner hands the owner's one reference to the match result
+// instead of borrowing it, so the arm exit releases nothing and the result needs no copy past
+// the reset.
+let transferArmBindingResult (body: Expr) (temp: Int) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match tailForwardedVariable(body) with
+        | None -> state
+        | Some(name) ->
+            match state.bindings
+            |> armBindings(length(state.bindings) - length(outerBindings))
+            |> armBindingSlotOf(name) with
+                | None -> state
+                | Some(slot) ->
+                    match runtimeOwnerStateOf(slot)(state) with
+                        | Some(true) -> transferRuntimeOwner(slot)(temp)(state)
+                        | _ -> state
+
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
@@ -7566,6 +7628,7 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resul
                         | (failedState, Some(error)) -> failedMatchArm(failedState)(error)
                         | (typedState, None) ->
                             match typedState
+                            |> transferArmBindingResult(body)(temp)(outerBindings)
                             |> emit(StoreLocal(resultSlot)(temp))
                             |> closeArmScope(body)(owners)(bracket)(resultSlot)(temp)(bodyType) with
                                 | (closed, finalTemp) ->
@@ -7594,22 +7657,43 @@ let armAdoptsScrutinee (pattern: Pattern) (outerBindings: List(CoreBinding)) (st
         |> armBindings(length(state.bindings) - length(outerBindings))
         |> allBindingsSurviveReset(state)
 
-// Stage 0's `TrackRuntimeManagedMatchScrutineeOwner` after the guard: the arm stores the fresh
-// scrutinee into an owner slot of its own (`$match_rc_N`), released at the arm exit like any
-// owned binding; the value temp is handed on to the slot.
+// The slot of the plain variable pattern that binds the whole scrutinee, stage 0's
+// `TryTrackWholeRuntimeManagedMatchBinding`: that binding's own slot becomes the owner instead
+// of a second slot for the same single reference.
+let wholeScrutineeBindingSlot (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
+    if patternBindsWholeScrutinee(pattern)
+    then
+        match armBindings(length(state.bindings) - length(outerBindings))(state.bindings) with
+            | CoreBinding { location = CoreLocal(slot) } :: [] -> Some(slot)
+            | _ -> None
+    else None
+
+// Hands the fresh scrutinee's reference to the owner slot: the value temp is transferred, and
+// the slot's release walks the value's owned children inline, since the plan carries the type.
+let adoptScrutineeIntoSlot (ownerSlot: Int) (valueTemp: Int) (scrutineeType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> markRuntimeTemp(valueTemp)(RuntimeTransferred)
+    |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (ownerSlot, true) :: adopted.runtimeOwners, ownerReleasePlans = (ownerSlot, scrutineeType, OwnedReleasePlan(deepUnique = false, constructorName = None)) :: adopted.ownerReleasePlans)
+
+// Stage 0's `TrackRuntimeManagedMatchScrutineeOwner` after the guard: a plain variable pattern
+// owns the fresh scrutinee through its own slot, released at the arm exit like any owned
+// binding; any other arm that adopts the scrutinee stores it into an owner slot of its own
+// (`$match_rc_N`), released the same way.
 let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pattern: Pattern) (outerBindings: List(CoreBinding)) (guarded: LoweredCoreValue) =
     match (owner, guarded) with
-        | (Some(MatchScrutineeOwner { scrutineeTypeName = typeName, scrutineeIsList = isList }), LoweredCoreValue { state = state, error = None }) ->
-            if armAdoptsScrutinee(pattern)(outerBindings)(state)
-            then
-                match freshLocal(state) with
-                    | FreshLocal { state = allocated, local = ownerSlot } ->
-                        allocated
-                        |> emit(StoreLocal(ownerSlot)(valueTemp))
-                        |> markRuntimeTemp(valueTemp)(RuntimeTransferred)
-                        |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (ownerSlot, true) :: adopted.runtimeOwners)
-                        |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)]))
-            else (guarded, [])
+        | (Some(MatchScrutineeOwner { scrutineeTypeName = typeName, scrutineeIsList = isList, scrutineeType = scrutineeType }), LoweredCoreValue { state = state, error = None }) ->
+            match wholeScrutineeBindingSlot(pattern)(outerBindings)(state) with
+                | Some(bindingSlot) -> ((guarded with state = adoptScrutineeIntoSlot(bindingSlot)(valueTemp)(scrutineeType)(state)), [])
+                | None ->
+                    if armAdoptsScrutinee(pattern)(outerBindings)(state)
+                    then
+                        match freshLocal(state) with
+                            | FreshLocal { state = allocated, local = ownerSlot } ->
+                                allocated
+                                |> emit(StoreLocal(ownerSlot)(valueTemp))
+                                |> adoptScrutineeIntoSlot(ownerSlot)(valueTemp)(scrutineeType)
+                                |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)]))
+                    else (guarded, [])
         | _ -> (guarded, [])
 
 // OPT-42 consumer hooks: hands a match's dead scrutinee cell to a same-name rebuild inside the
@@ -8560,7 +8644,11 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                         |> resolvePendingTcoResets
                         |> finishLiftedFunction(label)(origin)
                     in
-                        let restored = restoreOuterFrame(typedOuter)(finishedBody)
+                        let restored =
+                            finishedBody
+                            |> restoreOuterFrame(typedOuter)
+                            |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(typedBody))
+                            |> recordReturnedClosureLabel(label)(bodyTemp)(typedBody.reversedInstructions)
                         in
                             match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
                                 | (closureState, closureTemp) ->
@@ -8579,19 +8667,23 @@ let sugarChainBody (body: Expr) (declarationSpan: Maybe(TextSpan)) =
             else ExprAt(TextSpan(start = start, end = start + 1))(body)
         | _ -> body
 
-let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower state =
+// A recursive member is a known callee like a let-bound lambda: its label is remembered under
+// its name, so a call through the name can consult the member's recorded body placement.
+let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
     match prepared with
         | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, parameterType = parameterType } ->
-            state
-            |> sourceFunctionOrigin(label)(sourceFunctionOriginFor(name)(state))
-            |> (given (origin) ->
-                state
-                |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
-                |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
-                |> enterTcoLoopBody(label)(parameter)
-                |> withLoopBodyRequest(functionBodyRequest(body)(state))
-                |> lower(sugarChainBody(body)(state.recursiveDeclarationSpan))
-                |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(state))
+            match (state with letLambdaLabels = (name, label) :: state.letLambdaLabels) with
+                | labeled ->
+                    labeled
+                    |> sourceFunctionOrigin(label)(sourceFunctionOriginFor(name)(labeled))
+                    |> (given (origin) ->
+                        labeled
+                        |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
+                        |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
+                        |> enterTcoLoopBody(label)(parameter)
+                        |> withLoopBodyRequest(functionBodyRequest(body)(labeled))
+                        |> lower(sugarChainBody(body)(labeled.recursiveDeclarationSpan))
+                        |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(labeled))
 
 let preparedSelfBinding environmentSize prepared =
     match prepared with
@@ -8657,6 +8749,7 @@ let prepareRecursiveMember name value state =
             )
         | (Some((parameter, body)), CoreLoweringState { nextLambdaId = lambdaId }) ->
             state
+            |> recordLetLambda(name)(value)
             |> freshLocal
             |> allocatePreparedRecursiveMember(name)(parameter)(body)(lambdaId)
 
@@ -12253,16 +12346,6 @@ let directSingleArgRcConstructorLayout (expr: Expr) (constructorLayouts: List(Co
                         | _ -> None
                 | _ -> None
         | _ -> None
-
-// Names the structural release helper for a value of `semanticType` (stage 0's
-// `SynthesizeStructuralOwnerDropper`), synthesizing it and any ADT dropper it calls into the
-// program once per type through the state's label cache; `None` when the value's release is a
-// single allocation.
-let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
-    match state with
-        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> (label, (state with dropperLabels = nextCache, functions = append(functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
 // Called only once the caller has confirmed `value` is a direct, fully-saturating call to a
 // field-carrying constructor and `name` is provably dead. Skips `finishLetValue`'s local-slot/

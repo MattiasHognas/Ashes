@@ -907,10 +907,10 @@ same public behavior.
   the shared-cell `rcdrop_list` walk, transfer-checked against a list-typed result whose direct
   read of a slot also marks the function's result runtime-managed. Verified at 200000 iterations
   by `tests/tco_runtime_managed_list_accumulator_plateau.ash` through the backend suite and by
-  `TcoOwnershipRulesTests.ash`. A consumed list whose string-like heads outlive their arm (a
-  head forwarded to another parameter) is admitted too, its heads protected by their pattern
-  owners' retains (`escapingConsumedHeadOrdinals` reports the positions, the placement admits
-  them over `Str`/`Bytes`/`BigInt` elements only); the active flag a list-shaped parameter gets
+  `TcoOwnershipRulesTests.ash`. A consumed list whose heads outlive their arm (a head forwarded
+  to another parameter) is admitted too, its heads protected by their pattern owners' retains
+  (string-like heads first, aggregate heads once the promoted release named the structural
+  dropper, see OPT-25's note); the active flag a list-shaped parameter gets
   at the loop entry is retired from the function's slots when the resolved types keep the list
   in the arena, so the numbering stays stage 0's. A single-constructor copy ADT parameter (every
   field a scalar, stage 0's `CanCopyOutAdt`) is placed on the reference-counted heap too: its
@@ -973,12 +973,29 @@ same public behavior.
   (`tests/tco_runtime_managed_fresh_list_rebuild_plateau.ash`, 22 MB to 5.6 MB). A
   body result that reloads an
   `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
-  result runtime-managed, as a direct read did. Open: multi-constructor ADT parameters (stage 0
+  result runtime-managed, as a direct read did, through nested joins as well (an `if` whose
+  branches both take the back edge inside a `match` arm). A consumed list whose matched
+  aggregate heads escape their arm is admitted like one over strings: the head's promoted
+  pattern-owner release names the record's structural dropper (`synthesizeStructuralDropperLabel`
+  in `promotePatternOwnerMarkers`, stage 0's `SynthesizeStructuralOwnerDropper`), so the release
+  reaches the record's string child, and the escaping-head guard and its borrow walk are gone
+  (`tests/tco_runtime_managed_consumed_record_heads_escape.ash`). Three gaps on the caller's side
+  surfaced with it and are closed: a recursive binding is now a known callee (recorded as a
+  let-lambda with its label, its body placement, and its returned-closure chain, so a call
+  through the name reads the loop's `ReturnsRuntimeManaged` bit statically, as stage 0's
+  `TryGetCompiledFunctionResultRuntimeManaged` does); a fresh runtime-managed tuple, record, or
+  heap-element list matched directly is owned by the arm (stage 0's
+  `TrackRuntimeManagedMatchScrutineeOwner`, a plain variable pattern owning it through its own
+  slot and handing its reference on when returned, `TryTrackWholeRuntimeManagedMatchBinding` and
+  `TransferVariableRuntimeManagedMatchResult`); and the iteration-local owners released at a back
+  edge walk their owned children inline (stage 0's `EmitOwnedValueDrop`) instead of dropping the
+  cell alone. Open: multi-constructor ADT parameters (stage 0
   keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations),
-  escaping aggregate heads of a consumed list (a promoted aggregate owner needs the structural
-  release the placement does not name yet), the
+  iterations), a matched head returned as the loop's own result beside a literal arm (the join
+  is not uniformly runtime-managed in either compiler, so the retained head is never released:
+  stage 0 leaks 127 MB over three hundred thousand `find` calls on string heads, the self-hosted
+  lowering 19 MB), the
   runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
   paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine
@@ -1331,10 +1348,9 @@ same public behavior.
   promotes the markers of a binder whose root parameter is runtime-managed or whose own type is
   `Str`/`Bytes`/`BigInt` to real retains and releases and splices stage 0's protective duplicate
   right after the pattern (`PatternBindingOwnershipTests.ash`, `TcoOwnershipRulesTests.ash`).
-  Open: a runtime-managed root with an aggregate-typed escaping binder would need the structural
-  dropper label on the promoted release, and the consumed-tail guard still keeps a list whose
-  heads escape in the arena where stage 0 admits it to the reference-counted heap (the OPT-25
-  tail).
+  A runtime-managed root with an aggregate-typed escaping binder names the structural dropper
+  on the promoted release, and the consumed-tail guard over escaping heads is gone (see OPT-25's
+  note).
 - [x] **OPT-39** Release the RC-managed result of a call consumed only by a read-only builtin once nothing
   else owns it. Three facts must stay consistent: the release fires only for freshly-produced
   arguments; an if/match join keeps "newly produced" only when every arm was fresh; a let-scope's

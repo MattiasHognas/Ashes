@@ -248,16 +248,26 @@ let recursive countLinesContainingBoth (first: Str) (second: Str) (lines: List(S
             then 1 + countLinesContainingBoth(first)(second)(rest)
             else countLinesContainingBoth(first)(second)(rest)
 
-// An arm whose pattern binds the whole scrutinee, or a heap value out of it, does not take the
-// owner: the binding may leave the arm as its result, so only the binding's own release remains,
-// and the scrutinee is not stored to a runtime-managed owner slot.
-let expectWholeBindingArmTakesNoScrutineeOwner unit =
+// An arm whose pattern binds the whole scrutinee owns it through that binding's own slot
+// (stage 0's `TryTrackWholeRuntimeManagedMatchBinding`): returned as the arm's result, the
+// binding hands its one reference to the match, so the arm releases nothing and the result
+// crosses the arm's reset without a copy.
+let expectWholeBindingArmOwnsItsScrutineeAndHandsItOn unit =
     shoutSource(Unit) + "let described =\n    match shout(7) with\n        | other -> other\n\n0"
     |> dumpSource
     |> expectLine("    StoreLocal            Slot=11 Source=5")
-    |> expectLine("    RcDrop                SourceTemp=5 TypeName=String OwnerSlot=11")
-    |> countLinesContainingBoth("OwnerSlot=11")("RuntimeManaged=true")
+    |> expectNoLine("    RcDrop                SourceTemp=5 TypeName=String OwnerSlot=11")
+    |> expectNoLine("    CopyOutArena          DestTemp=9 SrcTemp=7 RuntimeManaged=true Purpose=RcNormalization")
+    |> countLinesContaining("OwnerSlot=11")
     |> test.assertEqual(0)
+
+// A plain variable pattern over a fresh record scrutinee owns it the same way, and an arm that
+// reads a field out of it releases the record through the inline walk at the arm exit.
+let expectWholeBindingArmReleasesAFreshRecordInline unit =
+    shapeTypes(Unit) + "let make n = Pair(left = n, right = n + 1)\n\nlet total =\n    match make(3) with\n        | pair -> pair.left + pair.right\n\n0"
+    |> dumpSource
+    |> countLinesContainingBoth("TypeName=Pair OwnerSlot=")("RuntimeManaged=true")
+    |> test.assertEqual(1)
 
 let returnArmMatch unit =
     ExprMatch(
@@ -325,7 +335,8 @@ let runMatchArmScopeTests unit =
     |> expectMatchJoinOfFreshArmsIsRuntimeManaged
     |> expectLiteralStringArmIsNormalizedBesideAFreshStringArm
     |> expectRuntimeManagedListScrutineeWalksItsSpineAtTheArmExit
-    |> expectWholeBindingArmTakesNoScrutineeOwner
+    |> expectWholeBindingArmOwnsItsScrutineeAndHandsItOn
+    |> expectWholeBindingArmReleasesAFreshRecordInline
     |> expectArmResetsAreGuardedByLivePostsUnderAHandle
     |> expectArmResetsAreUnguardedWithoutACapability
     |> (given (_) -> Ashes.IO.print("all self-hosted match arm scope tests passed"))
