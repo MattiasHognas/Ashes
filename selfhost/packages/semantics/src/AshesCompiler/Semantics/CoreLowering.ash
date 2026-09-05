@@ -370,6 +370,7 @@ type CoreIfThen =
     | resultSlot: Int
     | endLabel: Str
     | thenType: SemanticType
+    | thenArm: MatchArmResult
     | error: Maybe(CoreLoweringError)
 
 // The owner an arm makes for a fresh runtime-managed scrutinee, stage 0's `$match_rc_N`: the
@@ -5951,6 +5952,39 @@ let prepareIfPlan loweredCondition =
             |> bindType(SemBool)(conditionType)
             |> prepareTypedIfPlan(conditionTemp)
 
+let resultTypeIsList (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemList(_element) -> true
+        | _ -> false
+
+let tempIsNewlyProduced (temp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false
+
+// What a branch stored into its join slot: a reference-counted value when its final temp is one,
+// or when it is the empty list literal of a list-typed join; newly produced only when the temp
+// itself was freshly produced.
+let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    MatchArmResult(
+        armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
+        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state)
+    )
+
+let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false)
+
+// Stage 0's `MarkRuntimeManagedMatchResult` and `MarkUniformRuntimeManagedResult`: a join's
+// reloaded value is a reference-counted value when every branch stored one, and newly produced
+// only when every branch's was, so a consuming read (a concat operand, a byte length, a print)
+// releases it as it would have released each branch's value without the join. One borrowed or
+// unknown branch makes the join a transferred value: the merged value may then be a live
+// binding's, and releasing it would free memory still in use.
+let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
+        | (true, true) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
+        | (true, false) -> markRuntimeTemp(resultTemp)(RuntimeTransferred)(state)
+        | (false, _) -> state
+
 let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
     match plan with
         | CoreIfPlan { state = failedState, error = Some(error) } ->
@@ -5959,6 +5993,7 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
                 resultSlot = -1,
                 endLabel = "",
                 thenType = SemNever,
+                thenArm = unknownArmResult,
                 error = Some(error)
             )
         | CoreIfPlan { state = thenState, resultSlot = resultSlot, elseLabel = elseLabel, endLabel = endLabel, error = None } ->
@@ -5971,6 +6006,7 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
                         resultSlot = resultSlot,
                         endLabel = endLabel,
                         thenType = SemNever,
+                        thenArm = unknownArmResult,
                         error = Some(error)
                     )
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = semanticType, error = None } ->
@@ -5982,13 +6018,14 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
                         resultSlot = resultSlot,
                         endLabel = endLabel,
                         thenType = semanticType,
+                        thenArm = matchArmResultOf(thenBranch)(temp)(semanticType)(resultState),
                         error = None
                     )
 
 let finishIfElseBranch elseBranch (request: ConsumerRequest) lower loweredThen =
     match loweredThen with
         | CoreIfThen { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | CoreIfThen { state = elseState, resultSlot = resultSlot, endLabel = endLabel, thenType = thenType, error = None } ->
+        | CoreIfThen { state = elseState, resultSlot = resultSlot, endLabel = endLabel, thenType = thenType, thenArm = thenArm, error = None } ->
             match lower(elseBranch)(withConsumerRequest((request with expectedType = Some(thenType)))(elseState)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = elseType, error = None } ->
@@ -6001,6 +6038,7 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) lower loweredThen =
                                     |> emit(StoreLocal(resultSlot)(temp))
                                     |> emit(Label(endLabel))
                                     |> emit(LoadLocal(target)(resultSlot))
+                                    |> markControlFlowJoin(target)([thenArm, matchArmResultOf(elseBranch)(temp)(elseType)(typedState)])
                                     |> success(target)(resolveType(typedState)(thenType))
 
 // The then branch inherits the context's expected type; the else branch is expected to have the
@@ -6854,25 +6892,6 @@ let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLowe
                 | failed -> failed
         | _ -> lower(body)(state)
 
-let resultTypeIsList (resultType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemList(_element) -> true
-        | _ -> false
-
-let tempIsNewlyProduced (temp: Int) (state: CoreLoweringState) =
-    match runtimeTempStateOf(temp)(state) with
-        | Some(RuntimeNewlyProduced) -> true
-        | _ -> false
-
-// What an arm stored into the match slot: a reference-counted value when its final temp is one,
-// or when it is the empty list literal of a list-typed join; newly produced only when the temp
-// itself was freshly produced.
-let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    MatchArmResult(
-        armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
-        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state)
-    )
-
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
@@ -7311,14 +7330,6 @@ let prepareMatchPlan loweredValue =
             |> freshType
             |> prepareMatchResultType(valueTemp)(valueType)
 
-// Stage 0's `MarkRuntimeManagedMatchResult`: the join's reloaded value is a reference-counted
-// value when every arm stored one, newly produced only when every arm's was.
-let markMatchJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
-    match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
-        | (true, true) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
-        | (true, false) -> markRuntimeTemp(resultTemp)(RuntimeTransferred)(state)
-        | (false, _) -> state
-
 let finishMatchPlan plan =
     match plan with
         | CoreMatchPlan { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -7333,7 +7344,7 @@ let finishMatchPlan plan =
                             |> emit(StoreLocal(resultSlot)(defaultTemp))
                             |> emit(Label(endLabel))
                             |> emit(LoadLocal(resultTemp)(resultSlot))
-                            |> markMatchJoin(resultTemp)(armResults)
+                            |> markControlFlowJoin(resultTemp)(armResults)
                             |> success(resultTemp)(resolveType(resultState)(resultType))
 
 // Tag-group match dispatch. Arms whose patterns are constructors of one ADT are grouped by their

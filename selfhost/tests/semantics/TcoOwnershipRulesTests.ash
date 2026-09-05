@@ -293,6 +293,69 @@ let expectForwardedGenericHeadKeepsIdentityMarkers unit =
             |> Ashes.Text.contains(lineContaining("TypeName=PatternBinding OwnerSlot=")(lines))
             |> (given (runtime) -> check("the owner's release stays an identity marker")(runtime == false))))
 
+let recursive lineAfter (fragment: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> test.fail("no line containing " + fragment)
+        | line :: rest ->
+            if Ashes.Text.contains(line)(fragment)
+            then
+                match rest with
+                    | next :: _ -> next
+                    | [] -> ""
+            else lineAfter(fragment)(rest)
+
+let widenPrelude = "let recursive widen (n: Int) (text: Str) =\n    if n == 0\n    then text\n    else widen(n - 1)(text + text)\n\n"
+
+let readBuiltinDirectSource = widenPrelude + "let recursive loop (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else loop(n - 1)(total + Ashes.Text.byteLength(widen(6)(Ashes.Text.fromInt(n))))\n\nAshes.IO.print(loop(10)(0))"
+
+let readBuiltinJoinSource = widenPrelude + "let recursive loop (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        loop(n - 1)(total + Ashes.Text.byteLength(if n % 2 == 0\n        then widen(6)(Ashes.Text.fromInt(n))\n        else widen(5)(Ashes.Text.fromInt(n))))\n\nAshes.IO.print(loop(10)(0))"
+
+let readBuiltinBorrowedJoinSource = widenPrelude + "let recursive loop (n: Int) (text: Str) (total: Int) =\n    if n == 0\n    then total\n    else\n        loop(n - 1)(text)(total + Ashes.Text.byteLength(if n % 2 == 0\n        then widen(6)(Ashes.Text.fromInt(n))\n        else text))\n\nAshes.IO.print(loop(10)(\"ab\")(0))"
+
+let readBuiltinLetScopeSource = widenPrelude + "let recursive loop (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        let wide = widen(6)(Ashes.Text.fromInt(n))\n        in loop(n - 1)(total + Ashes.Text.byteLength(wide) + Ashes.Text.byteLength(wide))\n\nAshes.IO.print(loop(10)(0))"
+
+// The release a read-only builtin emits for the fresh reference-counted value it consumed: an
+// unowned runtime-managed `RcDrop` of the string right after the read.
+let expectReadReleasesConsumedFreshResult (label: Str) (source: Str) =
+    source
+    |> loopFunctionLines("[ClosureHelper from loop]")
+    |> lineAfter("TextByteLength")
+    |> (given (line) ->
+        Unit
+        |> (given (_) ->
+            "RcDrop"
+            |> Ashes.Text.contains(line)
+            |> check(label + ": the read releases the consumed result"))
+        |> (given (_) ->
+            "TypeName=String RuntimeManaged=true"
+            |> Ashes.Text.contains(line)
+            |> check(label + ": the release is a runtime-managed string drop"))
+        |> (given (_) -> check(label + ": the released value has no owner")(Ashes.Text.contains(line)("OwnerSlot=") == false)))
+
+// OPT-39: a read-only builtin consuming the fresh result of a call releases it right after the
+// read, straight from the call and through an if join whose every branch produced a fresh value.
+let expectReadBuiltinReleasesFreshCallResult unit =
+    Unit
+    |> (given (_) -> expectReadReleasesConsumedFreshResult("direct")(readBuiltinDirectSource))
+    |> (given (_) -> expectReadReleasesConsumedFreshResult("join")(readBuiltinJoinSource))
+
+// A join with one borrowed branch (the loop's own parameter) is a transferred value the read
+// must not release, and a let-bound result is owned by its scope, whose exit release covers it.
+let expectReadBuiltinKeepsOwnedResults unit =
+    Unit
+    |> (given (_) ->
+        readBuiltinBorrowedJoinSource
+        |> loopFunctionLines("[ClosureHelper from loop]")
+        |> lineAfter("TextByteLength")
+        |> (given (line) -> check("a borrowed branch keeps the join unreleased")(Ashes.Text.contains(line)("RcDrop") == false)))
+    |> (given (_) ->
+        readBuiltinLetScopeSource
+        |> loopFunctionLines("[ClosureHelper from loop]")
+        |> (given (lines) ->
+            Unit
+            |> (given (_) -> check("a let-bound result is not released by its reads")(countContaining("RcDrop")(lines) == countContainingBoth("RcDrop")("OwnerSlot=")(lines)))
+            |> (given (_) -> check("the let's scope releases the result it owns")(countContainingBoth("TypeName=String OwnerSlot=")("RuntimeManaged=true")(lines) > 0))))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -302,4 +365,6 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectConsumedTailListIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedStrHeadIsProtected(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
+    |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
+    |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))

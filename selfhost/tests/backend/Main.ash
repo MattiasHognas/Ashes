@@ -3414,6 +3414,13 @@ let testRunSharedTcoRuntimeManagedListAccumulatorPlateau shipped unit =
 let testRunSharedTcoPatternHeadForwardedToOtherParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_pattern_head_forwarded_to_other_parameter.ash"))("selfhostBackendRunSharedTcoPatternHeadForwardedToOtherParameter")("selfhost_backend_shared_tco_pattern_head_forwarded_to_other_parameter_e2e")("110288|174288|2000200020002000200020002000200020002000200020002000200020002000")
 
+// A read-only builtin consuming a fresh reference-counted call result (OPT-39): released right
+// after the read straight from the call and through an if join of fresh branches, kept when one
+// branch is the loop's borrowed parameter or when a let scope owns the result, each for 20000
+// iterations so a double release shows up as a crash or a wrong total.
+let testRunSharedRcReleaseReadBuiltinJoinResult shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/rc_release_read_builtin_join_result.ash"))("selfhostBackendRunSharedRcReleaseReadBuiltinJoinResult")("selfhost_backend_shared_rc_release_read_builtin_join_result_e2e")("5689216|4266976|7964736|11378432")
+
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
 // jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
 // linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
@@ -4938,6 +4945,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedStrAccumulatorPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedListAccumulatorPlateau(shipped)
     |> testRunSharedTcoPatternHeadForwardedToOtherParameter(shipped)
+    |> testRunSharedRcReleaseReadBuiltinJoinResult(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

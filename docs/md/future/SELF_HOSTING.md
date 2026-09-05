@@ -1225,10 +1225,19 @@ same public behavior.
   dropper label on the promoted release, and the consumed-tail guard still keeps a list whose
   heads escape in the arena where stage 0 admits it to the reference-counted heap (the OPT-25
   tail).
-- [ ] **OPT-39** Release the RC-managed result of a call consumed only by a read-only builtin once nothing
+- [x] **OPT-39** Release the RC-managed result of a call consumed only by a read-only builtin once nothing
   else owns it. Three facts must stay consistent: the release fires only for freshly-produced
   arguments; an if/match join keeps "newly produced" only when every arm was fresh; a let-scope's
-  save/reload preserves the fact across the reload. Needs a long-running plateau test.
+  save/reload preserves the fact across the reload. Needs a long-running plateau test. Shipped:
+  stage 0 releases the consumed result in all three shapes and its
+  `Linux_backend_llvm_read_builtin_consumed_call_result_memory_should_plateau` test holds the RSS
+  flat over 200000 iterations; the self-hosted lowering emits the same `RcDrop` after the read
+  for a direct call result and for an `if`/`match` join of fresh branches, keeps a join with a
+  borrowed branch and a let-owned result unreleased (the owner's scope-exit drop covers it), and
+  the shared `tests/rc_release_read_builtin_join_result.ash` runs all four shapes through both
+  backends. The self-hosted binaries' RSS does not plateau yet because the self-hosted backend
+  still allocates every string result with `malloc` regardless of the runtime-managed flag (the
+  CG-4 arena tail), so the plateau test stays stage-0-only until that lands.
 - [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
