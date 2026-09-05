@@ -702,7 +702,12 @@ same public behavior.
   containment, unsupported child drop layout, unresolved type, unsupported outer-cell reuse).
   Deferred to reuse specialization: the borrowed-view projection of a capability. The reuse flags
   now have a first consumer (OPT-42's ordinary match-arm path), gated on a still-open producer gap
-  — see OPT-42's own note.
+  — see OPT-42's own note. FIXED (2026-09-05): every cycle guard on the classification walks keyed
+  on the symbol id alone, and the lowering's own type layer names every declared type with id 0,
+  so a nested named type (a record of records, a record holding a resource-bearing record) looked
+  like a cycle back into its parent: nested records were never admitted to the record layout, and
+  resource or unresolved-type containment through a nested type was missed. The guards now key
+  on the id and name together (`heapPathContains`), as the constructor lookup already did.
 - [~] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
   carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
   synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
@@ -923,6 +928,17 @@ same public behavior.
   the children, `rc_drop_shared`, the cell), as stage 0's
   `EmitRuntimeManagedTcoConstructorDeepCopy` and `EmitRuntimeManagedAdtDrop` do
   (`tests/tco_runtime_managed_owned_child_record_accumulator_plateau.ash`, 145 MB to 5.6 MB). A
+  record of records takes the same path once the classification admits it (see OPT-23's fix),
+  with the nested cells copied recursively
+  (`tests/tco_runtime_managed_param_field_read_into_successor.ash`, 30 MB to 5.6 MB). FIXED in
+  both compilers (2026-09-05): the back edge released every owned child of the dying successor as
+  a reference-counted cell, but a child the construction built as a fresh literal
+  (`Pair(previous = State(...), ...)`) is an arena cell with no header — stage 0 decremented
+  whatever word preceded it and the self-hosted backend handed the pointer to `free`. The successor's
+  argument expression now reaches the back edge (`PendingTcoReset.ArgExpressions`,
+  `CoreTcoReset.argumentExpressions`), and a literal child releases only the references it holds,
+  recursively through nested constructor, record, tuple, list and cons literals
+  (`TryEmitRuntimeManagedTcoLiteralChildrenRelease`, `emitLiteralChildrenRelease`). A
   body result that reloads an
   `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
   result runtime-managed, as a direct read did. Open: multi-constructor ADT parameters (stage 0

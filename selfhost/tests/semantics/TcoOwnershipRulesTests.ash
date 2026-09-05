@@ -364,6 +364,24 @@ let expectStringFieldReadIntoSuccessorIsRetained unit =
         |> (given (_) -> check("no identity marker is left behind")(countContaining("RcDup")(lines) == 1))
         |> (given (_) -> check("the successor's own string, the predecessor's and the exit's children still release")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 3)))
 
+let nestedRecordLoopSource = "type State =\n    | label: Str\n    | count: Int\n\ntype Pair =\n    | previous: State\n    | current: State\n\nlet recursive walk (n: Int) (pair: Pair) =\n    if n == 0\n    then pair\n    else walk(n - 1)(Pair(previous = State(label = Ashes.Text.fromInt(n), count = n), current = pair.current))\n\nlet final = walk(3)(Pair(previous = State(label = \"a\", count = 0), current = State(label = \"b\", count = 0)))\n\nlet current = final.current\n\nAshes.IO.print(current.label)"
+
+// A record of records as a loop parameter is placed on the reference-counted heap (the
+// classification's cycle guard keys on the type's id and name together, so the nested `State`
+// is not taken for a cycle back into `Pair`), its children copy with the cell, and the back edge
+// releases only the references the dying successor holds: the retained `current` read, and the
+// string inside the fresh `previous` literal, never that literal's arena cell.
+let expectNestedRecordLoopParameterIsRuntimeManaged unit =
+    nestedRecordLoopSource
+    |> loopFunctionLines("[ClosureHelper from walk]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the field read is retained before the successor stores it")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the retained child, the predecessor's children and the exit's children release as State")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 5))
+        |> (given (_) -> check("the predecessor and exit releases under the pair's name")(countContainingBoth("RcDrop")("TypeName=Pair RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("a fresh literal child is never tested for uniqueness")(countContaining("RcIsUnique")(lines) == 7)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -456,6 +474,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectScalarTupleLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectOwnedChildRecordLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectStringFieldReadIntoSuccessorIsRetained(Unit))
+    |> (given (_) -> expectNestedRecordLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

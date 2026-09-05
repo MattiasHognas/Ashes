@@ -679,6 +679,14 @@ public sealed class OwnershipTests
         instructions.Any(inst =>
             inst is IrInst.RcDrop { TypeName: "Pair", RuntimeManaged: true }).ShouldBeTrue(
             "the back edge still releases the parameter's own value");
+        // The successor's `previous` field is a fresh record literal: an arena cell with no
+        // reference count, so the back edge releases only the string it holds, never the cell.
+        // The `State` releases left are the retained `current` child of the dying successor,
+        // the two children of the old parameter's structural walk, and the same two at the exit.
+        instructions.Count(inst =>
+            inst is IrInst.RcDrop { TypeName: "State", RuntimeManaged: true }).ShouldBe(
+            5,
+            "a fresh literal child of the successor is never released as a reference-counted cell");
     }
 
     [Test]

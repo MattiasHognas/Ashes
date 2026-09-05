@@ -554,6 +554,63 @@ let testSharedSymbolIdTypesAreToldApartByName unit =
         |> factsStructuralCopy
         |> test.assertEqual(ShallowCopy))
 
+let sharedIdRecordConstructor (typeName: Str) (fieldNames: List(Str)) (fields: List(SemanticType)) =
+    ConstructorInferenceDefinition(
+        name = typeName,
+        scheme = TypeScheme(quantified = [], body = []
+        |> SemNamed(0)(typeName)
+        |> curriedConstructorType(fields), constraints = []),
+        fieldNames = fieldNames
+    )
+
+let factsRecordAdtSupported (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { runtimeRecordAdtSupported = supported } -> supported
+
+let factsOwnedChildrenDroppable (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { ownedChildrenDroppable = droppable } -> droppable
+
+// The walks' cycle guard keys on the id and the name together: a record of records whose types
+// share symbol id 0 is a record layout with droppable children, not a cycle back into itself.
+let testNestedRecordWithSharedIdIsRecordReusable unit =
+    (let environment =
+        emptyTypeEnvironment(Unit) with constructors = [
+            sharedIdRecordConstructor("State")(["label", "count"])([SemString, SemInt]),
+            sharedIdRecordConstructor("Holder")(["inner"])([SemNamed(0)("State")([])])
+        ]
+    in
+        let facts =
+            classifyHeapLayout(SemNamed(0)("Holder")([]))(environment)
+        in
+            Unit
+            |> (given (_) ->
+                facts
+                |> factsRecordAdtSupported
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                facts
+                |> factsOwnedChildrenDroppable
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                facts
+                |> factsStructuralCopy
+                |> test.assertEqual(DeepCopy)))
+
+// A resource held by a nested record whose type shares symbol id 0 with the outer record is
+// still found by the containment walk.
+let testResourceNestedInSharedIdRecordIsDetected unit =
+    (let environment =
+        emptyTypeEnvironment(Unit) with constructors = [
+            sharedIdRecordConstructor("Inner")(["handle"])([SemNamed(0)("FileHandle")([])]),
+            sharedIdRecordConstructor("Outer")(["inner"])([SemNamed(0)("Inner")([])])
+        ]
+    in
+        environment
+        |> classifyHeapLayout(SemNamed(0)("Outer")([]))
+        |> capabilityContainsResource
+        |> test.assertEqual(true))
+
 let runHeapLayoutClassificationTests unit =
     unit
     |> testScalarIsNeverOwned
@@ -576,4 +633,6 @@ let runHeapLayoutClassificationTests unit =
     |> testUnresolvedTypeVariableIsRejectedWithUnresolvedFlag
     |> testUnresolvedTypeParameterInsideListIsDetected
     |> testSharedSymbolIdTypesAreToldApartByName
+    |> testNestedRecordWithSharedIdIsRecordReusable
+    |> testResourceNestedInSharedIdRecordIsDetected
     |> reportSuccess

@@ -1188,6 +1188,7 @@ public sealed partial class Lowering
         TcoContext Tco,
         int[] ArgTemps,
         TypeRef[] ArgTypes,
+        Expr[] ArgExpressions,
         bool[] RuntimeManagedArgResults,
         bool[] RuntimeManagedPredecessorAliases,
         bool[] PassThrough,
@@ -1447,11 +1448,8 @@ public sealed partial class Lowering
             else
             {
                 normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
-                    info.ArgTemps[i],
-                    argType,
-                    info.RuntimeManagedArgResults[i],
-                    info.RuntimeManagedPredecessorAliases[i],
-                    info.ConsumedListTail[i]);
+                    info.ArgTemps[i], argType, info.RuntimeManagedArgResults[i],
+                    info.RuntimeManagedPredecessorAliases[i], info.ConsumedListTail[i], info.ArgExpressions[i]);
             }
             bool movedListTail = argType is TypeRef.TList
                 && info.SingleFreshCons[i]
@@ -1739,7 +1737,8 @@ public sealed partial class Lowering
         TypeRef argType,
         bool alreadyRuntimeManaged,
         bool aliasesPredecessor,
-        bool consumedListTail)
+        bool consumedListTail,
+        Expr? sourceExpression = null)
     {
         if (alreadyRuntimeManaged)
         {
@@ -1786,7 +1785,7 @@ public sealed partial class Lowering
             // The arena successor dies at this back edge but OWNS the references its
             // construction dup-transferred in; the copy carries the next iteration's own, so
             // the dying original's are released (see EmitRuntimeManagedTcoConstructorDeepCopy).
-            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named, releaseAdtSourceChildren: true);
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named, releaseAdtSourceChildren: true, sourceExpression);
         }
         else
         {
@@ -1914,7 +1913,7 @@ public sealed partial class Lowering
             };
     }
 
-    private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type, bool releaseAdtSourceChildren = false)
+    private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type, bool releaseAdtSourceChildren = false, Expr? sourceExpression = null)
     {
         TypeRef valueType = Prune(type);
         if (CanArenaReset(valueType))
@@ -1967,7 +1966,7 @@ public sealed partial class Lowering
                     IrInst.CopyOutPurpose.RcNormalization));
                 break;
             case TypeRef.TNamedType named when CanRuntimeManageTcoAdt(named):
-                return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named, releaseAdtSourceChildren);
+                return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named, releaseAdtSourceChildren, sourceExpression);
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
         }
@@ -2060,7 +2059,7 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(lastSlot, cellTemp));
     }
 
-    private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named, bool releaseSourceChildren = false)
+    private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named, bool releaseSourceChildren = false, Expr? sourceExpression = null)
     {
         if (named.Symbol.Constructors.Count == 1)
         {
@@ -2068,7 +2067,8 @@ public sealed partial class Lowering
                 sourceTemp,
                 named,
                 named.Symbol.Constructors[0],
-                releaseSourceChildren);
+                releaseSourceChildren,
+                sourceExpression);
         }
 
         int resultSlot = NewLocal();
@@ -2086,7 +2086,8 @@ public sealed partial class Lowering
                 sourceTemp,
                 named,
                 named.Symbol.Constructors[i],
-                releaseSourceChildren);
+                releaseSourceChildren,
+                sourceExpression);
             Emit(new IrInst.StoreLocal(resultSlot, branchTemp));
             Emit(new IrInst.Jump(endLabel));
         }
@@ -2102,7 +2103,8 @@ public sealed partial class Lowering
         int sourceTemp,
         TypeRef.TNamedType named,
         ConstructorSymbol constructor,
-        bool releaseSourceChildren = false)
+        bool releaseSourceChildren = false,
+        Expr? sourceExpression = null)
     {
         int resultTemp = NewTemp();
         Emit(new IrInst.CopyOutArena(
@@ -2113,26 +2115,30 @@ public sealed partial class Lowering
             IrInst.CopyOutPurpose.RcNormalization));
         List<OrdinaryHeapLayoutChild> children =
             GetOwnedOrdinaryHeapChildren(named, constructor);
-        var originalChildren = new List<(int Temp, TypeRef Type)>(children.Count);
+        var originalChildren = new List<(int Temp, TypeRef Type, int Index)>(children.Count);
         foreach (OrdinaryHeapLayoutChild child in children)
         {
             int childTemp = NewTemp();
             Emit(new IrInst.GetAdtField(childTemp, sourceTemp, child.Index, IsTaglessConstructor(constructor)));
             int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, child.Type);
             Emit(new IrInst.SetAdtField(resultTemp, child.Index, copiedChild, IsTaglessConstructor(constructor)));
-            originalChildren.Add((childTemp, child.Type));
+            originalChildren.Add((childTemp, child.Type, child.Index));
         }
 
         // A dying arena source (the back-edge successor the arena reset reclaims right after this
         // copy) owns the references its construction dup-transferred into it; release them now
         // that the copy carries its own, or every iteration's copy survives one count too high.
         // Only the top level releases — a nested child's own references are handled by this
-        // release's cascading walk, not by the nested copy.
+        // release's cascading walk, not by the nested copy. A child the construction built as a
+        // fresh aggregate literal is an arena cell rather than a reference: its own retained
+        // children are released through the literal instead (see
+        // EmitRuntimeManagedTcoSourceChildRelease).
         if (releaseSourceChildren)
         {
-            foreach ((int childTemp, TypeRef childType) in originalChildren)
+            IReadOnlyList<Expr>? fieldExpressions = ConstructorFieldExpressions(sourceExpression, constructor);
+            foreach ((int childTemp, TypeRef childType, int index) in originalChildren)
             {
-                EmitRuntimeManagedTcoSourceChildRelease(childTemp, childType);
+                EmitRuntimeManagedTcoSourceChildRelease(childTemp, childType, fieldExpressions?[index]);
             }
         }
 
@@ -2140,8 +2146,123 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
-    private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType)
+    /// <summary>
+    /// The field expressions, in field order, of the constructor application or record literal
+    /// <paramref name="expression"/> builds with <paramref name="constructor"/>; null for any other
+    /// expression.
+    /// </summary>
+    private IReadOnlyList<Expr>? ConstructorFieldExpressions(Expr? expression, ConstructorSymbol constructor)
     {
+        if (expression is null
+            || !TryDescribeConstructorExpression(expression, out ConstructorSymbol? found, out List<Expr>? arguments, out _)
+            || found is null
+            || arguments is null
+            || !string.Equals(found.Name, constructor.Name, StringComparison.Ordinal)
+            || arguments.Count != constructor.Arity)
+        {
+            return null;
+        }
+
+        return arguments;
+    }
+
+    /// <summary>
+    /// A constructor application, record, tuple, list, or cons literal: built in the arena when it
+    /// is a child of a back-edge successor, so the cell carries no reference count.
+    /// </summary>
+    private bool IsFreshAggregateLiteral(Expr expression)
+        => expression is Expr.RecordLit or Expr.TupleLit or Expr.ListLit or Expr.Cons
+            || TryDescribeConstructorExpression(expression, out _, out _, out _);
+
+    /// <summary>
+    /// Releases the references a fresh aggregate literal built into the dying successor holds —
+    /// the retained loop-parameter reads, field reads, and owned bindings stored in its fields,
+    /// and, recursively, those of a nested literal — without touching the literal's own arena
+    /// cells. True when <paramref name="literal"/> matched the cell's type.
+    /// </summary>
+    private bool TryEmitRuntimeManagedTcoLiteralChildrenRelease(int cellTemp, TypeRef type, Expr literal)
+    {
+        switch (Prune(type))
+        {
+            case TypeRef.TNamedType named
+                when TryDescribeConstructorExpression(literal, out ConstructorSymbol? constructor, out List<Expr>? arguments, out _)
+                    && constructor is not null
+                    && arguments is not null:
+                foreach (OrdinaryHeapLayoutChild child in GetOwnedOrdinaryHeapChildren(named, constructor))
+                {
+                    int childTemp = NewTemp();
+                    Emit(new IrInst.GetAdtField(childTemp, cellTemp, child.Index, IsTaglessConstructor(constructor)));
+                    EmitRuntimeManagedTcoSourceChildRelease(childTemp, child.Type, arguments[child.Index]);
+                }
+
+                return true;
+            case TypeRef.TTuple tuple
+                when literal is Expr.TupleLit tupleLiteral && tupleLiteral.Elements.Count == tuple.Elements.Count:
+                for (int index = 0; index < tuple.Elements.Count; index++)
+                {
+                    if (CanArenaReset(Prune(tuple.Elements[index])))
+                    {
+                        continue;
+                    }
+
+                    int elementTemp = NewTemp();
+                    Emit(new IrInst.LoadMemOffset(elementTemp, cellTemp, index * 8));
+                    EmitRuntimeManagedTcoSourceChildRelease(elementTemp, tuple.Elements[index], tupleLiteral.Elements[index]);
+                }
+
+                return true;
+            case TypeRef.TList list when literal is Expr.ListLit listLiteral:
+                int currentTemp = cellTemp;
+                foreach (Expr element in listLiteral.Elements)
+                {
+                    EmitRuntimeManagedTcoListCellHeadRelease(currentTemp, list.Element, element);
+                    int tailTemp = NewTemp();
+                    Emit(new IrInst.LoadMemOffset(
+                        tailTemp,
+                        currentTemp,
+                        HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+                    currentTemp = tailTemp;
+                }
+
+                return true;
+            case TypeRef.TList list when literal is Expr.Cons cons:
+                EmitRuntimeManagedTcoListCellHeadRelease(cellTemp, list.Element, cons.Head);
+                int consTailTemp = NewTemp();
+                Emit(new IrInst.LoadMemOffset(
+                    consTailTemp,
+                    cellTemp,
+                    HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+                EmitRuntimeManagedTcoSourceChildRelease(consTailTemp, list, cons.Tail);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void EmitRuntimeManagedTcoListCellHeadRelease(int cellTemp, TypeRef elementType, Expr element)
+    {
+        if (CanArenaReset(Prune(elementType)))
+        {
+            return;
+        }
+
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            headTemp,
+            cellTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        EmitRuntimeManagedTcoSourceChildRelease(headTemp, elementType, element);
+    }
+
+    private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType, Expr? sourceExpression = null)
+    {
+        if (sourceExpression is not null
+            && IsFreshAggregateLiteral(sourceExpression)
+            && TryEmitRuntimeManagedTcoLiteralChildrenRelease(childTemp, childType, sourceExpression))
+        {
+            return;
+        }
+
         TypeRef pruned = Prune(childType);
         if (pruned is TypeRef.TList list)
         {
@@ -9978,6 +10099,7 @@ public sealed partial class Lowering
             tco,
             newArgTemps,
             newArgTypes,
+            collectedArgs.ToArray(),
             newArgTemps.Select(IsRuntimeManagedResultTemp).ToArray(),
             collectedArgs.Select(argument => argument is Expr.Var variable
                 && Lookup(variable.Name) is Binding.Local local
