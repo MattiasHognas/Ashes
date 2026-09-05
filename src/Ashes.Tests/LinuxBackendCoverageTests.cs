@@ -2631,6 +2631,26 @@ public sealed class LinuxBackendCoverageTests
     }
 
     /// <summary>
+    /// The record-head sibling of the search above: the empty arm builds a static record (every
+    /// field a literal), which cannot be allocated runtime-managed by placement alone, so it is built
+    /// in the arena and deep-copied to the reference-counted heap beside the retained head.
+    /// </summary>
+    [Test]
+    public async Task Linux_backend_llvm_find_loop_returning_record_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureImportedMemoryGrowthAsync(
+            BuildFindLoopRecordHeadMemoryProgram,
+            outputPerIteration: 8).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("find loop returning a record head", samples);
+    }
+
+    /// <summary>
     /// Root-cause probe for the leak above: the ADT shell built at the TCO loop's exit arm must be
     /// runtime-managed (RC) whenever it stores runtime-managed children, exactly like the equivalent
     /// tuple shape already is (see <see cref="AssertRuntimeRcTupleTcoProbe"/>'s sibling coverage).
@@ -7192,6 +7212,32 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match findLong(build(12)([]))(1) with
                         | found -> loop(count - 1)(total + Ashes.Text.byteLength(found))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildFindLoopRecordHeadMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.List
+
+            type Item =
+                | name: Str
+                | weight: Int
+
+            let recursive build (n: Int) (acc: List(Item)) =
+                if n == 0 then acc else build(n - 1)(Item(name = Ashes.Text.fromInt(n), weight = n) :: acc)
+
+            let recursive findHeavy (items: List(Item)) (limit: Int) =
+                match items with
+                    | [] -> Item(name = "none", weight = 0)
+                    | head :: rest ->
+                        if head.weight > limit then head else findHeavy(rest)(limit)
+
+            let recursive loop count total =
+                if count <= 0 then total
+                else
+                    match findHeavy(build(12)([]))(6) with
+                        | found -> loop(count - 1)(total + found.weight + Ashes.Text.byteLength(found.name))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

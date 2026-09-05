@@ -3478,6 +3478,11 @@ let testRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape shipped unit =
 let testRunSharedTcoRuntimeManagedFindStringHeadPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_find_string_head_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedFindStringHeadPlateau")("selfhost_backend_shared_tco_runtime_managed_find_string_head_plateau_e2e")("2")
 
+// The record-head sibling of the search above: the static record arm is built in the arena and
+// deep-copied to the reference-counted heap beside the retained head.
+let testRunSharedTcoRuntimeManagedFindRecordHeadPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_find_record_head_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedFindRecordHeadPlateau")("selfhost_backend_shared_tco_runtime_managed_find_record_head_plateau_e2e")("8")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5021,6 +5026,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedFreshListRebuildPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape(shipped)
     |> testRunSharedTcoRuntimeManagedFindStringHeadPlateau(shipped)
+    |> testRunSharedTcoRuntimeManagedFindRecordHeadPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

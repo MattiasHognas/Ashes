@@ -474,6 +474,25 @@ let expectFindLoopReturningStringHeadNormalizesTheLiteralArm unit =
         |> loopFunctionLines("[SourceFunction from findLong]")
         |> (given (lines) -> check("the loop's closure returns a runtime-managed result")(countContaining("ReturnsRuntimeManaged=true")(lines) == 1)))
 
+let findRecordHeadSource = "type Item =\n    | name: Str\n    | weight: Int\n\nlet recursive findHeavy (items: List(Item)) (limit: Int) =\n    match items with\n        | [] -> Item(name = \"none\", weight = 0)\n        | head :: rest ->\n            if head.weight > limit\n            then head\n            else findHeavy(rest)(limit)\n\nlet found = findHeavy([Item(name = \"a\", weight = 3)])(1)\n\nAshes.IO.print(found.weight)"
+
+// The record-head sibling of the search above: the static record arm (every field a literal)
+// cannot be allocated runtime-managed by placement alone, so it is built in the arena and
+// deep-copied to the reference-counted heap, its string child included, beside the retained
+// head, and the loop's closure advertises a runtime-managed result.
+let expectFindLoopReturningRecordHeadCopiesTheStaticArm unit =
+    findRecordHeadSource
+    |> loopFunctionLines("[ClosureHelper from findHeavy]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the static record arm is deep-copied to the reference-counted heap")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization")(lines) >= 2))
+        |> (given (_) -> check("the head's owner retains once, the branch retains once more, the tail is retained for the successor")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 3))
+        |> (given (_) -> check("the head's owner releases through the structural dropper")(countContainingBoth("TypeName=Item OwnerSlot=")("StructuralDropperLabel=__rcdrop_structural")(lines) == 2)))
+    |> (given (_) ->
+        findRecordHeadSource
+        |> loopFunctionLines("[SourceFunction from findHeavy]")
+        |> (given (lines) -> check("the loop's closure returns a runtime-managed result")(countContaining("ReturnsRuntimeManaged=true")(lines) == 1)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -572,6 +591,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectFreshListRebuildParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectConsumedRecordHeadsEscapeIntoAccumulator(Unit))
     |> (given (_) -> expectFindLoopReturningStringHeadNormalizesTheLiteralArm(Unit))
+    |> (given (_) -> expectFindLoopReturningRecordHeadCopiesTheStaticArm(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

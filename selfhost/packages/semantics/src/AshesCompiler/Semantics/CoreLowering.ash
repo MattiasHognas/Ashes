@@ -7646,9 +7646,47 @@ let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
         armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false)
     )
 
+// A constructor application whose every argument is a literal or another such application, with
+// the copy plan of its type: a value that owns nothing, built in the arena and copied to the
+// reference-counted heap beside a retained sibling arm the way a literal string arm is (stage
+// 0's `IsStaticConstructorArm`). Only a type the deep copy handles qualifies.
+let recursive staticConstructorArm (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, arguments)) ->
+            if staticConstructorArguments(arguments)(state)
+            then
+                match layoutFieldTypes(layout)(state) with
+                    | (_fieldTypes, resultType) -> argumentCopyPlanOf(resultType)(state)
+            else None
+        | None -> None
+and staticConstructorArguments (arguments: List(Expr)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> true
+        | argument :: rest -> staticConstructorArgument(argument)(state) && staticConstructorArguments(rest)(state)
+and staticConstructorArgument (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprString(_value) -> true
+        | ExprInt(_value) -> true
+        | ExprBigInt(_value) -> true
+        | ExprUInt(_value, _bits, _text) -> true
+        | ExprFloat(_value, _text) -> true
+        | ExprRune(_value) -> true
+        | ExprBool(_value) -> true
+        | other ->
+            match staticConstructorArm(other)(state) with
+                | Some(_plan) -> true
+                | None -> false
+
+let isStaticConstructorArm (expression: Expr) (state: CoreLoweringState) =
+    match staticConstructorArm(expression)(state) with
+        | Some(_plan) -> true
+        | None -> false
+
 // Stage 0's `LowerMatchArmExpression`: a literal string arm of a match whose arms are normalized
 // is copied to the reference-counted heap as an RC-normalized `CopyOutArena` of the constant,
-// the literal itself loaded at the match's own location; any other arm body lowers as usual.
+// the literal itself loaded at the match's own location; a static constructor arm is built in
+// the arena as usual and deep-copied to the reference-counted heap, its literal string children
+// included; any other arm body lowers as usual.
 let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLoweringState) =
     match (normalizeStaticStrings, staticStringArmBody(body)) with
         | (true, Some(value)) ->
@@ -7661,7 +7699,18 @@ let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLowe
                             |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
                             |> success(copyTemp)(literalType)
                 | failed -> failed
-        | _ -> lower(body)(state)
+        | _ ->
+            match (normalizeStaticStrings, staticConstructorArm(body)(state)) with
+                | (true, Some(plan)) ->
+                    match lower(body)(state) with
+                        | LoweredCoreValue { state = armState, temp = armTemp, semanticType = armType, error = None } ->
+                            match emitArgumentDeepCopy(armTemp)(plan)(armState) with
+                                | (copied, copyTemp) ->
+                                    copied
+                                    |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                                    |> success(copyTemp)(armType)
+                        | failed -> failed
+                | _ -> lower(body)(state)
 
 let recursive armBindingSlotOf (name: Str) (bindings: List(CoreBinding)) =
     match bindings with
@@ -8653,7 +8702,7 @@ let withStaticStringNormalization cases (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
         | CoreMatchPlan { state = state } ->
-            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(cases)
+            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (body: Expr) -> isStaticConstructorArm(body)(state))(cases)
 
 let lowerMatch value cases lower state =
     state
