@@ -2609,6 +2609,28 @@ public sealed class LinuxBackendCoverageTests
     }
 
     /// <summary>
+    /// A search loop over a runtime-managed list of strings that returns the matched head beside a
+    /// literal arm: the branch retains the head for the result, so the literal arm must be normalized
+    /// for the join to be uniformly runtime-managed and the caller to release the result and the list
+    /// it passed. Before the normalization saw through the `if` and the retained owner, the retained
+    /// head and the list's heads leaked on every search.
+    /// </summary>
+    [Test]
+    public async Task Linux_backend_llvm_find_loop_returning_string_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureImportedMemoryGrowthAsync(
+            BuildFindLoopStringHeadMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("find loop returning a string head", samples);
+    }
+
+    /// <summary>
     /// Root-cause probe for the leak above: the ADT shell built at the TCO loop's exit arm must be
     /// runtime-managed (RC) whenever it stores runtime-managed children, exactly like the equivalent
     /// tuple shape already is (see <see cref="AssertRuntimeRcTupleTcoProbe"/>'s sibling coverage).
@@ -7148,6 +7170,28 @@ public sealed class LinuxBackendCoverageTests
                                     match ys with
                                         | [] -> loop(count - 1)(total)
                                         | ysHead :: _ -> loop(count - 1)(total + xsHead + ysHead)
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildFindLoopStringHeadMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.List
+
+            let recursive build (n: Int) (acc: List(Str)) =
+                if n == 0 then acc else build(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive findLong (items: List(Str)) (limit: Int) =
+                match items with
+                    | [] -> "none"
+                    | head :: rest ->
+                        if Ashes.Text.byteLength(head) > limit then head else findLong(rest)(limit)
+
+            let recursive loop count total =
+                if count <= 0 then total
+                else
+                    match findLong(build(12)([]))(1) with
+                        | found -> loop(count - 1)(total + Ashes.Text.byteLength(found))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

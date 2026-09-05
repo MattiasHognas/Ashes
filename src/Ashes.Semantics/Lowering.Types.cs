@@ -248,6 +248,12 @@ public sealed partial class Lowering
             ParamPlacements.TryGetValue(slot, out TcoParamPlacementState? placement)
                 && placement.EverRuntimeManagedClosure;
 
+        // Every pattern binding the loop body extracts from a parameter, with the ownership its
+        // uses add up to; recorded before the body is lowered, so a syntactic walk over the body
+        // can ask about a binder by name.
+        public IEnumerable<PatternBindingOwnershipFact> PatternBindingOwnershipFacts =>
+            _patternBindingOwnershipByBinder.Values;
+
         public TypeRef GetRuntimeManagedType(int slot) =>
             ParamPlacements.TryGetValue(slot, out TcoParamPlacementState? placement)
                 && placement.RuntimeManagedType is { } type

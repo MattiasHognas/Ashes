@@ -989,13 +989,29 @@ same public behavior.
   slot and handing its reference on when returned, `TryTrackWholeRuntimeManagedMatchBinding` and
   `TransferVariableRuntimeManagedMatchResult`); and the iteration-local owners released at a back
   edge walk their owned children inline (stage 0's `EmitOwnedValueDrop`) instead of dropping the
-  cell alone. Open: multi-constructor ADT parameters (stage 0
+  cell alone. A matched head returned from an `if` branch inside its arm takes the pattern-owner
+  duplicate as the branch's result (stage 0's `TransferDirectRuntimeManagedBranchResult`, a
+  marker until the loop's finalize places the owner), the join every reaching branch stores such
+  a result into crosses the arm's reset without a copy (`patternOwnerResultTemps`), and the
+  literal arms beside a retained owner are normalized so the loop's result is uniformly
+  runtime-managed: a string literal arm is copied to the reference-counted heap
+  (`shouldNormalizeStaticStringArms` sees through an `if` and counts a retained owner as a fresh
+  arm and a tail self-call as a runtime-managed one; stage 0's `IsRuntimeManagedStringMatchArm`
+  does the same), and a fresh constructor arm requests the reference-counted cell
+  (`retainedPatternOwnerTerminal` is a funnel of the escaping-result reconciliation, stage 0's
+  `IsRetainedPatternOwnerTerminal` in `IsProvenFreshCallFunnelArm`). FIXED in stage 0
+  (2026-09-05) with the same rule: the string-head search leaked the retained head and, through
+  the caller's child-preserving release of a result it took for arena-placed, the list's heads as
+  well, 127 MB over three hundred thousand searches
+  (`tests/tco_runtime_managed_find_string_head_plateau.ash`,
+  `Linux_backend_llvm_find_loop_returning_string_head_memory_should_plateau`). Open: multi-constructor ADT parameters (stage 0
   keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations), a matched head returned as the loop's own result beside a literal arm (the join
-  is not uniformly runtime-managed in either compiler, so the retained head is never released:
-  stage 0 leaks 127 MB over three hundred thousand `find` calls on string heads, the self-hosted
-  lowering 19 MB), the
+  iterations), a matched head returned as the loop's own result beside a literal record arm
+  (a record literal with a string-literal field is not a fresh runtime-manageable constructor in
+  either compiler, so the join is not uniformly runtime-managed and the retained head is never
+  released: stage 0 leaks 250 MB over three hundred thousand `find` calls on record heads, the
+  self-hosted lowering 33 MB; the string-head shape is closed, see below), the
   runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
   paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine

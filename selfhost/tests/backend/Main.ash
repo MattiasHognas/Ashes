@@ -3472,6 +3472,12 @@ let testRunSharedTcoRuntimeManagedFreshListRebuildPlateau shipped unit =
 let testRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_consumed_record_heads_escape.ash"))("selfhostBackendRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape")("selfhost_backend_shared_tco_runtime_managed_consumed_record_heads_escape_e2e")("4200000")
 
+// A search loop returning the matched string head beside a literal arm: the branch retains the
+// head, the literal arm is normalized, and the caller releases the uniformly runtime-managed
+// result.
+let testRunSharedTcoRuntimeManagedFindStringHeadPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_find_string_head_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedFindStringHeadPlateau")("selfhost_backend_shared_tco_runtime_managed_find_string_head_plateau_e2e")("2")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5014,6 +5020,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedStrParamNonAffinePlateau(shipped)
     |> testRunSharedTcoRuntimeManagedFreshListRebuildPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape(shipped)
+    |> testRunSharedTcoRuntimeManagedFindStringHeadPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
