@@ -382,6 +382,26 @@ let expectNestedRecordLoopParameterIsRuntimeManaged unit =
         |> (given (_) -> check("the predecessor and exit releases under the pair's name")(countContainingBoth("RcDrop")("TypeName=Pair RuntimeManaged=true")(lines) == 2))
         |> (given (_) -> check("a fresh literal child is never tested for uniqueness")(countContaining("RcIsUnique")(lines) == 7)))
 
+let recordListAccumulatorSource = "type State =\n    | label: Str\n    | count: Int\n\nlet recursive collect (n: Int) (s: State) (acc: List(State)) =\n    if n == 0\n    then s :: acc\n    else collect(n - 1)(State(label = Ashes.Text.fromInt(n), count = s.count + 1))(s :: acc)\n\nlet items = collect(10)(State(label = \"seed\", count = 0))([])\n\nAshes.IO.print(1)"
+
+// A list accumulator over record heads is admitted with the record parameter consed into it:
+// the entry normalizes the borrowed list through the `rc_normalize_list` deep-copy loop (each
+// head copied into a fresh reference-counted cell), the record read consed at the back edge is
+// retained for the cell (the marker promoted once the parameter is placed) as the exit arm's
+// head and tail are, the back edge's cons cell lives on the reference-counted heap, and the
+// list's exit release walks its cells.
+let expectRecordListAccumulatorIsRuntimeManaged unit =
+    recordListAccumulatorSource
+    |> loopFunctionLines("[ClosureHelper from collect]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the entry normalizes the borrowed list under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the entry deep-copies the list cell by cell")(countContaining("rc_normalize_list")(lines) > 0))
+        |> (given (_) -> check("the record read is retained for the back edge's cell and the exit arm's cell")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 3))
+        |> (given (_) -> check("the exit arm's tail is retained null-tolerantly")(countContainingBoth("RcDup")("MayBeEmpty=true")(lines) == 1))
+        |> (given (_) -> check("the back edge's cons cell lives on the reference-counted heap")(countContainingBoth("Alloc ")("SizeBytes=16 RuntimeManaged=true")(lines) >= 2))
+        |> (given (_) -> check("the accumulator releases as a list")(countContainingBoth("RcDrop")("TypeName=List RuntimeManaged=true")(lines) == 2)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -475,6 +495,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectOwnedChildRecordLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectStringFieldReadIntoSuccessorIsRetained(Unit))
     |> (given (_) -> expectNestedRecordLoopParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectRecordListAccumulatorIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

@@ -3452,6 +3452,11 @@ let testRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau shipped uni
 let testRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_string_field_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_string_field_into_successor_e2e")("12345|20000100000")
 
+// A record parameter consed into a sibling list accumulator: the list is admitted over record
+// heads, and the consed read is retained for the cell.
+let testRunSharedTcoRuntimeManagedRecordListAccumulator shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_record_list_accumulator.ash"))("selfhostBackendRunSharedTcoRuntimeManagedRecordListAccumulator")("selfhost_backend_shared_tco_runtime_managed_record_list_accumulator_e2e")("1088899")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -4990,6 +4995,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor(shipped)
     |> testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor(shipped)
+    |> testRunSharedTcoRuntimeManagedRecordListAccumulator(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
