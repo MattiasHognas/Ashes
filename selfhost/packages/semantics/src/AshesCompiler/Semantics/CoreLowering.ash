@@ -316,6 +316,7 @@ type CoreLoweringState =
     | letLambdas: List((Str, List(Str), Expr))
     | runtimeTemps: List((Int, RuntimeTempState))
     | runtimeOwners: List((Int, Bool))
+    | reuseTransferredNames: List(Str)
     | patternOwnerSites: List(PatternOwnerSite)
     // The temps holding a pattern owner's retained reference as a branch result, and the joins
     // every reaching branch stored one into: such a result crosses an arm's reset without a copy.
@@ -596,6 +597,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         letLambdas = [],
         runtimeTemps = [],
         runtimeOwners = [],
+        reuseTransferredNames = [],
         patternOwnerSites = [],
         patternOwnerResultTemps = [],
         tcoParameterRetainSites = [],
@@ -1227,11 +1229,14 @@ let recursive transferRequestForwards expression =
 // An aggregate representation request reaches the forms that forward their result and the
 // aggregates that honor it: a `let` body, an `if` branch, a `match` arm, a handled body, a call
 // (a constructor application among them), a list literal, a cons cell, a tuple, and a record.
+// A bare variable keeps the aggregate flags: a bound read ignores them, and a nullary constructor
+// reference honors them the way stage 0's `LowerNullaryConstructor` takes the request.
 let recursive aggregateRequestForwards expression =
     match expression with
         | ExprAt(_span, inner) -> aggregateRequestForwards(inner)
         | ExprTuple(_) -> true
         | ExprRecord(_, _, _) -> true
+        | ExprVar(_name) -> true
         | ExprLambda(_, _, _) -> false
         | other -> expectedTypeForwards(other)
 
@@ -1935,6 +1940,13 @@ let finishOwnedRead ownedRead (patternOwner: Bool) temp semanticType state =
                         | None -> success(temp)(semanticType)(state)
                 else success(temp)(semanticType)(state)
 
+// A pattern binding of the arm that published a reuse token reads the cell the token released:
+// stage 0 aliases such a binding to the dead scrutinee owner, whose read no longer borrows.
+let recursive isReuseTransferredName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest -> candidate == name || isReuseTransferredName(name)(rest)
+
 let recursive lowerVariable name state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
@@ -1962,7 +1974,7 @@ and lowerBoundVariable binding state =
                                         false
                                     ))
                                     |> success(closureTemp)(semanticType)
-                | CoreBinding { location = CoreLocal(slot), ownedRead = ownedRead, patternOwner = patternOwner } ->
+                | CoreBinding { name = name, location = CoreLocal(slot), ownedRead = ownedRead, patternOwner = patternOwner } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
                             if transfersSlot(slot)(tempState)
@@ -1974,7 +1986,7 @@ and lowerBoundVariable binding state =
                             else
                                 tempState
                                 |> emit(LoadLocal(temp)(slot))
-                                |> finishOwnedRead(ownedRead)(patternOwnerFlag(patternOwner))(temp)(semanticType)
+                                |> finishOwnedRead(ownedRead && isReuseTransferredName(name)(tempState.reuseTransferredNames) == false)(patternOwnerFlag(patternOwner))(temp)(semanticType)
                 | CoreBinding { location = CoreEnvironment(index), ownedRead = ownedRead } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
@@ -2091,12 +2103,16 @@ let recursive isTailForwardedBindingResult (body: Expr) (name: Str) =
         | ExprLetRecursive(nested, _value, nestedBody, _parameters, _annotation, _requirements) -> nested != name && isTailForwardedBindingResult(nestedBody)(name)
         | _ -> false
 
-let letBodyRequest (name: Str) (body: Expr) (valueTemp: Int) (slot: Int) (state: CoreLoweringState) =
-    match (runtimeTempStateOf(valueTemp)(state), isTailForwardedBindingResult(body)(name)) with
-        | (Some(RuntimeNewlyProduced), true) -> consumerRequestOf(state) with transferSlot = Some(slot)
-        | _ -> consumerRequestOf(state)
+// The request the `let`'s body lowers under: `bodyRequest`, the caller's request for the body's
+// result, carrying the binding's slot as the transfer slot when the body hands the newly produced
+// value straight back. `requestBody` is the body the decision reads; the top-level `let` path lowers
+// a placeholder continuation but decides on the program's remaining body.
+let letBodyRequest (name: Str) (requestBody: Expr) (bodyRequest: ConsumerRequest) (valueTemp: Int) (slot: Int) (state: CoreLoweringState) =
+    match (runtimeTempStateOf(valueTemp)(state), isTailForwardedBindingResult(requestBody)(name)) with
+        | (Some(RuntimeNewlyProduced), true) -> bodyRequest with transferSlot = Some(slot)
+        | _ -> bodyRequest
 
-let lowerStoredLet name body lower outerBindings valueTemp valueType fresh =
+let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTemp valueType fresh =
     match fresh with
         | FreshLocal { state = state, local = local } ->
             let storedState =
@@ -2106,7 +2122,7 @@ let lowerStoredLet name body lower outerBindings valueTemp valueType fresh =
                     generalize(pendingOperatorScheme(storedState) :: bindingSchemes(outerBindings))(resolveType(storedState)(valueType))([])
                 in
                     storedState
-                    |> withConsumerRequest(letBodyRequest(name)(body)(valueTemp)(local)(storedState))
+                    |> withConsumerRequest(letBodyRequest(name)(requestBody)(bodyRequest)(valueTemp)(local)(storedState))
                     |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
                     |> addOwnedBinding(name)(scheme)(CoreLocal(local))
                     |> lower(body)
@@ -2118,7 +2134,7 @@ let finishLetValue name body lower outerBindings lowered =
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             state
             |> freshLocal
-            |> lowerStoredLet(name)(body)(lower)(outerBindings)(temp)(semanticType)
+            |> lowerStoredLet(name)(body)(body)(consumerRequestOf(state))(lower)(outerBindings)(temp)(semanticType)
 
 let recursive stripExprAt (expr: Expr) =
     match expr with
@@ -2515,13 +2531,14 @@ let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp r
                         | (closed, None) -> reloadLetResult(resultTemp)(resultSlot)(closed)
         | (None, _owned) -> (closeScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot)(state), resultTemp)
 
-// `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it.
-let finishLetValueInSlot name body lower outerBindings lowered =
+// `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it,
+// and the body's request decided by the caller from the body the binding scopes over.
+let finishLetValueInSlot name body requestBody bodyRequest lower outerBindings lowered =
     match lowered with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> (failure(failedState)(error), -1)
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match freshLocal(state) with
-                | FreshLocal { local = local } as fresh -> (lowerStoredLet(name)(body)(lower)(outerBindings)(temp)(semanticType)(fresh), local)
+                | FreshLocal { local = local } as fresh -> (lowerStoredLet(name)(body)(requestBody)(bodyRequest)(lower)(outerBindings)(temp)(semanticType)(fresh), local)
 
 // Stage 0's `IsRuntimeRcStringProducer`: `+` or a fully applied call to a builtin declared to
 // produce a fresh string — the expressions a runtime-string request can place on the
@@ -3007,48 +3024,6 @@ and anyProducesFreshTuple (arguments: List(Expr)) (state: CoreLoweringState) =
         | [] -> false
         | argument :: rest -> producesFreshTuple(argument)(state) || anyProducesFreshTuple(rest)(state)
 
-// Stage 0's `IsImmediateSafeAdtMatchUse` for a non-recursive type: the binding is matched
-// immediately through at least two arms; a self-recursive type stays on the arena path.
-let isImmediateSafeAdtMatchUse (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
-    match constructorApplicationOf(value)([])(state) with
-        | None -> false
-        | Some((layout, _arguments)) ->
-            match layoutFieldTypes(layout)(state) with
-                | (_fieldTypes, resultType) -> isImmediateAdtMatchUse(name)(body) && canRuntimeManageRecursiveCopyAdt(resultType)(state) == false
-
-// The representation a `let` asks of its aggregate value, stage 0's `TryLowerRuntimeRcRecordLet`,
-// `TryLowerRuntimeRcTupleLet`, `TryLowerRuntimeRcListLet`, and `TryLowerRuntimeRcAdtLet` in that
-// order: a record literal read only as a field receiver, matched by one constructor arm, or
-// returned directly as a fresh tree; a tuple literal returned directly; a fresh list matched
-// immediately (directly, or through a cons onto it) or returned directly; and a constructor
-// application matched immediately or returned directly as a fresh runtime-manageable value.
-let aggregateLetValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
-    (let directEscape = bodyReturnsBinding(name)(body)
-    in
-        if isRecordLiteral(value) && (isImmediateCopyUseOfRecord(name)(body) || isImmediateRecordMatchUse(name)(body) || directEscape && isFreshRuntimeManageableRecordTree(value)(state))
-        then emptyConsumerRequest with runtimeRecord = true
-        else
-            if isTupleLiteral(value) && directEscape
-            then emptyConsumerRequest with runtimeTuple = true
-            else
-                if isFreshListConstruction(value) && (isImmediateListMatchUse(name)(body) || isTailConsumedByImmediateListMatch(name)(body) || directEscape)
-                then emptyConsumerRequest with runtimeList = true
-                else
-                    if isConstructorExpression(value)(state) && (isImmediateSafeAdtMatchUse(name)(value)(body)(state) || directEscape && isFreshRuntimeManageableAdtExpression(value)(state))
-                    then emptyConsumerRequest with runtimeAdt = true
-                    else emptyConsumerRequest)
-
-// Stage 0's `TryLowerRuntimeRcStringLet`: a `let` whose value is a fresh string producer and
-// whose body either returns the binding or hands it straight to a runtime-string consumer places
-// the value on the reference-counted heap; an aggregate value is asked for its representation by
-// `aggregateLetValueRequest`; the value is otherwise lowered without a request.
-let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
-    (let directEscape = isDirectBindingResult(body)(name)
-    in
-        if isRuntimeRcStringProducer(value)(state) && (directEscape || isImmediateRuntimeStringUse(body)(name)) && (isCaptureSafeStringProducer(value)(state) || directEscape == false)
-        then emptyConsumerRequest with runtimeString = true
-        else aggregateLetValueRequest(name)(value)(body)(state))
-
 // What the scope-exit release of the binding may assume about its value, stage 0's
 // `RuntimeDeepUnique` and `RuntimeConstructor` owner facts: a fresh list literal or cons chain,
 // and a fresh constructor tree of a recursive-copy type, are the only references to their whole
@@ -3069,30 +3044,34 @@ let armOwnerReleasePlan (value: Expr) (lowered: LoweredCoreValue) =
                         | None -> None
                 in lowered with state = (state with pendingOwnerPlan = Some(OwnedReleasePlan(deepUnique = deepUnique, constructorName = constructorName)))
 
-let lowerArenaBracketedNestedLet name value body lower outerBindings state =
-    match freshLocal(state) with
-        | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
-            match freshLocal(cursorAllocated) with
-                | FreshLocal { state = endAllocated, local = endSlot } ->
-                    match endAllocated
-                    |> withConsumerRequest(letValueRequest(name)(value)(body)(state))
-                    |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
-                    |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(body))
-                    |> lower(value) with
-                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                        | LoweredCoreValue { error = None } as loweredValue ->
-                            match loweredValue
-                            |> withLoweredConsumerRequest(consumerRequestOf(state))
-                            |> armOwnerReleasePlan(value)
-                            |> finishLetValueInSlot(name)(stripChainedLetAt(body))(lower)(outerBindings) with
-                                | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
-                                | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
-                                        | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
+// Stage 0's `LowerEscapingResult`: a body that is itself a fresh string producer, or whose
+// terminal arms build a fresh runtime-manageable constructor, list, tuple, or record tree, is
+// asked to place its result on the reference-counted heap on top of the request it already
+// carries (a tuple request rides along with every aggregate request, so a tuple nested in the
+// escaping aggregate is materialized too); a body producing none of those carries its children
+// out of the scopes that own them (`WithEscapingConsumerOwnership`), so the aggregates it builds
+// retain them.
+let requestsRuntimeRepresentation (request: ConsumerRequest) =
+    match request with
+        | ConsumerRequest { runtimeString = runtimeString, runtimeAdt = runtimeAdt, runtimeList = runtimeList, runtimeRecord = runtimeRecord, runtimeTuple = runtimeTuple } -> runtimeString || runtimeAdt || runtimeList || runtimeRecord || runtimeTuple
 
-let lowerLet name value body lower state =
-    match state with
-        | CoreLoweringState { bindings = outerBindings } -> lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
+let withEscapingTransfer (request: ConsumerRequest) =
+    if requestsRuntimeRepresentation(request)
+    then request
+    else request with transfersRuntimeManagedChildren = true
+
+let escapingResultRequest (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
+    (let produced =
+        emptyConsumerRequest
+        |> (given (fresh: ConsumerRequest) -> fresh with runtimeString = isRuntimeRcStringProducer(body)(state))
+        |> (given (fresh: ConsumerRequest) -> fresh with runtimeAdt = producesFreshRuntimeManageableAdt(body)(state))
+        |> (given (fresh: ConsumerRequest) -> fresh with runtimeList = producesFreshRuntimeManageableList(body))
+        |> (given (fresh: ConsumerRequest) -> fresh with runtimeRecord = isFreshRuntimeManageableRecordTree(body)(state))
+        |> (given (fresh: ConsumerRequest) -> fresh with runtimeTuple = producesFreshTuple(body)(state) || fresh.runtimeAdt || fresh.runtimeList || fresh.runtimeRecord)
+    in
+        if requestsRuntimeRepresentation(produced)
+        then request with runtimeString = request.runtimeString || produced.runtimeString, runtimeAdt = request.runtimeAdt || produced.runtimeAdt, runtimeList = request.runtimeList || produced.runtimeList, runtimeRecord = request.runtimeRecord || produced.runtimeRecord, runtimeTuple = request.runtimeTuple || produced.runtimeTuple
+        else withEscapingTransfer(request))
 
 let recursive containsName name names =
     match names with
@@ -5042,29 +5021,8 @@ let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
         | Some(SourceFunctionOrigin { functionSourceName = name }) -> state with letLambdaLabels = (name, label) :: state.letLambdaLabels
         | None -> state
 
-// Stage 0's `LowerEscapingResult` at a function body: a body that is itself a fresh string
-// producer, or whose terminal arms build a fresh runtime-manageable constructor, list, tuple, or
-// record tree, is asked to place its result on the reference-counted heap (a tuple request rides
-// along with every aggregate request, so a tuple nested in the escaping aggregate is
-// materialized too); a body producing none of those carries its children out of the scopes
-// that own them (`WithEscapingConsumerOwnership`), so the aggregates it builds retain them.
-let requestsRuntimeRepresentation (request: ConsumerRequest) =
-    match request with
-        | ConsumerRequest { runtimeString = runtimeString, runtimeAdt = runtimeAdt, runtimeList = runtimeList, runtimeRecord = runtimeRecord, runtimeTuple = runtimeTuple } -> runtimeString || runtimeAdt || runtimeList || runtimeRecord || runtimeTuple
-
-let withEscapingTransfer (request: ConsumerRequest) =
-    if requestsRuntimeRepresentation(request)
-    then request
-    else request with transfersRuntimeManagedChildren = true
-
-let functionBodyRequest (body: Expr) (state: CoreLoweringState) =
-    emptyConsumerRequest
-    |> (given (request: ConsumerRequest) -> request with runtimeString = isRuntimeRcStringProducer(body)(state))
-    |> (given (request: ConsumerRequest) -> request with runtimeAdt = producesFreshRuntimeManageableAdt(body)(state))
-    |> (given (request: ConsumerRequest) -> request with runtimeList = producesFreshRuntimeManageableList(body))
-    |> (given (request: ConsumerRequest) -> request with runtimeRecord = isFreshRuntimeManageableRecordTree(body)(state))
-    |> (given (request: ConsumerRequest) -> request with runtimeTuple = producesFreshTuple(body)(state) || request.runtimeAdt || request.runtimeList || request.runtimeRecord)
-    |> withEscapingTransfer
+// Stage 0's `LowerEscapingResult` at a function body, from an empty request.
+let functionBodyRequest (body: Expr) (state: CoreLoweringState) = escapingResultRequest(body)(emptyConsumerRequest)(state)
 
 // Stage 0's `EmitRuntimeManagedTcoArgumentNormalization`: the hidden ownership flag says whether
 // the caller handed over a retained reference; a borrowed argument is copied into an owned value,
@@ -8340,15 +8298,28 @@ let reusePointerFieldIndices (fieldTypes: List(SemanticType)) (state: CoreLoweri
 // module produces is always consumed by the very arm that produced it, so an unconsumed
 // runtime-managed token — which would need its owned children walked and released before its
 // bookkeeping could be dropped — never arises.
+// A positional constructor records no field names; its rebuild is matched by arity alone, so
+// the expected names are stand-ins of the field count.
+let recursive reusePositionalNames (count: Int) =
+    if count <= 0
+    then []
+    else Ashes.Text.fromInt(count) :: reusePositionalNames(count - 1)
+
 let reuseCaseSafe (pattern: Pattern) (body: Expr) (layout: CoreConstructorLayout) (state: CoreLoweringState) =
-    match layout with
-        | CoreConstructorLayout { name = ctorName, fieldNames = fieldNames } ->
-            match reuseArmBodyRebuildsSameConstructor(ctorName)(fieldNames)(body) with
-                | None -> false
-                | Some(args) ->
-                    match layoutFieldTypes(layout)(state) with
-                        | (fieldTypes, _resultType) ->
-                            reuseTransferredFieldsSafe(reusePointerFieldIndices(fieldTypes)(state))(reusePatternFieldBindings(pattern))(args)
+    match (layout, layoutFieldTypes(layout)(state)) with
+        | (CoreConstructorLayout { name = ctorName, fieldNames = fieldNames }, (fieldTypes, _resultType)) ->
+            let expectedNames =
+                match fieldNames with
+                    | [] ->
+                        fieldTypes
+                        |> length
+                        |> reusePositionalNames
+                    | _ -> fieldNames
+            in
+                match reuseArmBodyRebuildsSameConstructor(ctorName)(expectedNames)(body) with
+                    | None -> false
+                    | Some(args) ->
+                        reuseTransferredFieldsSafe(reusePointerFieldIndices(fieldTypes)(state))(reusePatternFieldBindings(pattern))(args)
 
 let recursive reuseCaseSafetyAll (cases: List((Pattern, Expr, Maybe(Expr)))) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
     match (cases, layouts) with
@@ -8375,27 +8346,160 @@ let reuseMatchExhaustiveAndSafe (cases: List((Pattern, Expr, Maybe(Expr)))) (sta
                         let caseNames = constructorLayoutNames(layouts)
                         in length(caseNames) == length(required) && reuseNamesAllPresent(required)(caseNames) && reuseCaseSafetyAll(cases)(layouts)(state)
 
-// The scrutinee's own bare-variable name, when the match qualifies for OPT-42 in-place reuse:
-// already a reference-counted value (`isRuntimeTemp`), and the whole match is an exhaustive,
-// transfer-safe rebuild of one type (`reuseMatchExhaustiveAndSafe`). `None` otherwise — every
-// other match keeps allocating fresh cells exactly as before.
-let reuseEligibleScrutineeName (scrutinee: Expr) (valueTemp: Int) (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+// Whether the body is a match whose arms are all reuse-safe rebuilds of one type, stage 0's
+// `RuntimeReusePointerFieldsAreSafe` over the arms of an immediate match.
+let immediateMatchArmsReuseSafe (body: Expr) (state: CoreLoweringState) =
+    match unspanArgument(body) with
+        | ExprMatch(_value, cases, _position) -> reuseMatchExhaustiveAndSafe(cases)(state)
+        | _ -> false
+
+// Stage 0's `IsImmediateSafeAdtMatchUse`: the binding is matched immediately through at least
+// two arms; a self-recursive type is admitted only when every arm is a transfer-safe rebuild the
+// runtime reuse path consumes, and stays on the arena path otherwise.
+let isImmediateSafeAdtMatchUse (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(value)([])(state) with
+        | None -> false
+        | Some((layout, _arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (_fieldTypes, resultType) -> isImmediateAdtMatchUse(name)(body) && (canRuntimeManageRecursiveCopyAdt(resultType)(state) == false || immediateMatchArmsReuseSafe(body)(state))
+
+// The representation a `let` asks of its aggregate value, stage 0's `TryLowerRuntimeRcRecordLet`,
+// `TryLowerRuntimeRcTupleLet`, `TryLowerRuntimeRcListLet`, and `TryLowerRuntimeRcAdtLet` in that
+// order: a record literal read only as a field receiver, matched by one constructor arm, or
+// returned directly as a fresh tree; a tuple literal returned directly; a fresh list matched
+// immediately (directly, or through a cons onto it) or returned directly; and a constructor
+// application matched immediately or returned directly as a fresh runtime-manageable value.
+let aggregateLetValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    (let directEscape = bodyReturnsBinding(name)(body)
+    in
+        if isRecordLiteral(value) && (isImmediateCopyUseOfRecord(name)(body) || isImmediateRecordMatchUse(name)(body) || directEscape && isFreshRuntimeManageableRecordTree(value)(state))
+        then emptyConsumerRequest with runtimeRecord = true
+        else
+            if isTupleLiteral(value) && directEscape
+            then emptyConsumerRequest with runtimeTuple = true
+            else
+                if isFreshListConstruction(value) && (isImmediateListMatchUse(name)(body) || isTailConsumedByImmediateListMatch(name)(body) || directEscape)
+                then emptyConsumerRequest with runtimeList = true
+                else
+                    if isConstructorExpression(value)(state) && (isImmediateSafeAdtMatchUse(name)(value)(body)(state) || directEscape && isFreshRuntimeManageableAdtExpression(value)(state))
+                    then emptyConsumerRequest with runtimeAdt = true
+                    else emptyConsumerRequest)
+
+// Stage 0's `TryLowerRuntimeRcStringLet`: a `let` whose value is a fresh string producer and
+// whose body either returns the binding or hands it straight to a runtime-string consumer places
+// the value on the reference-counted heap; an aggregate value is asked for its representation by
+// `aggregateLetValueRequest`; the value is otherwise lowered without a request.
+let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    (let directEscape = isDirectBindingResult(body)(name)
+    in
+        if isRuntimeRcStringProducer(value)(state) && (directEscape || isImmediateRuntimeStringUse(body)(name)) && (isCaptureSafeStringProducer(value)(state) || directEscape == false)
+        then emptyConsumerRequest with runtimeString = true
+        else aggregateLetValueRequest(name)(value)(body)(state))
+
+// Stage 0's `LowerSequentialBindingChain`: the innermost body of a `let` chain escapes the chain
+// under `escapingResultRequest` when the chain's last binding is an ordinary `let`; a chain ending
+// in a `let recursive` lowers its body under the outer request unchanged.
+let recursive escapingChainBody (body: Expr) (lastOrdinary: Bool) =
+    match body with
+        | ExprAt(_span, inner) -> escapingChainBody(inner)(lastOrdinary)
+        | ExprLet(_name, _value, nested, _parameters, _annotation, _requirements) -> escapingChainBody(nested)(true)
+        | ExprLetRecursive(_name, _value, nested, _parameters, _annotation, _requirements) -> escapingChainBody(nested)(false)
+        | _ ->
+            if lastOrdinary
+            then Some(body)
+            else None
+
+let escapingLetBodyRequest (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
+    match escapingChainBody(body)(true) with
+        | Some(chainBody) -> escapingResultRequest(chainBody)(request)(state)
+        | None -> request
+
+// Stage 0's alias rule in `TrackLetOwnership`: `let y = x` over a binding that already owns its
+// value makes `y` an alias the original owner alone releases, so the binding owns no type name
+// of its own at the scope exit.
+let letAliasesOwnedBinding (value: Expr) (state: CoreLoweringState) =
+    match unspanArgument(value) with
+        | ExprVar(name) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { ownedRead = true }) -> true
+                | Some(CoreBinding { patternOwner = Some(_fact) }) -> true
+                | _ -> false
+        | _ -> false
+
+let letOwnedTypeName (value: Expr) (loweredValue: LoweredCoreValue) (state: CoreLoweringState) =
+    if letAliasesOwnedBinding(value)(state)
+    then None
+    else loweredValueOwnedTypeName(loweredValue)
+
+let lowerArenaBracketedNestedLet name value body lower outerBindings state =
+    match freshLocal(state) with
+        | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
+            match freshLocal(cursorAllocated) with
+                | FreshLocal { state = endAllocated, local = endSlot } ->
+                    match endAllocated
+                    |> withConsumerRequest(letValueRequest(name)(value)(body)(state))
+                    |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
+                    |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(body))
+                    |> lower(value) with
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | LoweredCoreValue { error = None } as loweredValue ->
+                            match loweredValue
+                            |> withLoweredConsumerRequest(consumerRequestOf(state))
+                            |> armOwnerReleasePlan(value)
+                            |> finishLetValueInSlot(name)(stripChainedLetAt(body))(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lower)(outerBindings) with
+                                | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
+                                | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
+                                    match closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
+                                        | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
+
+let lowerLet name value body lower state =
+    match state with
+        | CoreLoweringState { bindings = outerBindings } -> lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
+
+// Whether every arm leaves the matched cell dead: no guard, and no body mentioning the scrutinee.
+let recursive reuseCasesLeaveScrutineeDead (name: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) =
+    match cases with
+        | [] -> true
+        | (_pattern, _body, Some(_guard)) :: _rest -> false
+        | (_pattern, body, None) :: rest -> exprMentionsName(name)(body) == false && reuseCasesLeaveScrutineeDead(name)(rest)
+
+// The scrutinee's own bare-variable name, when the match qualifies for OPT-42 in-place reuse,
+// stage 0's `TryGetRuntimeManagedReuseScrutinee`: a `let` binding still owning its
+// reference-counted value (`liveRuntimeOwnerSlot`), every arm guard-free and leaving the cell
+// dead, and the whole match an exhaustive, transfer-safe rebuild of one type
+// (`reuseMatchExhaustiveAndSafe`). `None` otherwise — every other match keeps allocating fresh
+// cells exactly as before.
+let reuseEligibleScrutineeName (scrutinee: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
     match unspanArgument(scrutinee) with
         | ExprVar(name) ->
-            if isRuntimeTemp(valueTemp)(state) && reuseMatchExhaustiveAndSafe(cases)(state)
-            then Some(name)
-            else None
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(slot) ->
+                    if reuseCasesLeaveScrutineeDead(name)(cases) && reuseMatchExhaustiveAndSafe(cases)(state)
+                    then Some((name, slot))
+                    else None
+                | None -> None
         | _ -> None
 
+// A reuse-eligible scrutinee's owner hands its reference to the arms' tokens: each arm's
+// `DropReuse` releases or reuses the cell, so the binding's own scope-exit release is retired
+// and no arm adopts the scrutinee as an owner of its own.
 let withReuseScrutinee (scrutinee: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
-        | CoreMatchPlan { state = state, valueTemp = valueTemp } -> plan with reuseScrutineeName = reuseEligibleScrutineeName(scrutinee)(valueTemp)(cases)(state)
+        | CoreMatchPlan { state = state } ->
+            match reuseEligibleScrutineeName(scrutinee)(cases)(state) with
+                | Some((name, slot)) -> plan with reuseScrutineeName = Some(name), scrutineeOwner = None, state = (state with runtimeOwners = releaseRuntimeOwner(slot)(state.runtimeOwners))
+                | None -> plan with reuseScrutineeName = None
 
 // Publishes the arm's own DropReuse token when the match found a reuse-eligible scrutinee, this
 // arm's pattern names one of its constructors, and the arm's body does not mention the scrutinee
 // again (its matched cell is dead). Returns the (possibly updated) pattern result alongside the
 // token count to restore to once the arm's body is lowered, `None` when nothing was published.
+let recursive reuseFieldBindingNames (bindings: List((Int, Str))) =
+    match bindings with
+        | [] -> []
+        | (_index, name) :: rest -> name :: reuseFieldBindingNames(rest)
+
 let reuseTokenIfEligible (reuseScrutineeName: Maybe(Str)) (pattern: Pattern) (body: Expr) (valueTemp: Int) (patternResult: LoweredCorePattern) =
     match patternResult with
         | LoweredCorePattern { error = Some(_error) } -> (patternResult, None)
@@ -8431,7 +8535,8 @@ let reuseTokenIfEligible (reuseScrutineeName: Maybe(Str)) (pattern: Pattern) (bo
                                                     (LoweredCorePattern(
                                                         state = allocatedState
                                                         |> emit(DropReuse(tokenTemp)(valueTemp)(arity)(true))
-                                                        |> (given (published: CoreLoweringState) -> published with reuseTokens = token :: published.reuseTokens),
+                                                        |> (given (published: CoreLoweringState) ->
+                                                            published with reuseTokens = token :: published.reuseTokens, reuseTransferredNames = reuseFieldBindingNames(reusePatternFieldBindings(pattern))),
                                                         error = None
                                                     ), Some(tokensBefore))
 
@@ -8455,7 +8560,7 @@ let reuseTruncateArmTokens (tokensBefore: Maybe(Int)) (armResult: LoweredMatchAr
         | (Some(before), LoweredMatchArm { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, armResult = matchArmResult }) ->
             LoweredMatchArm(
                 lowered = LoweredCoreValue(
-                    state = (state with reuseTokens = reuseTruncateTo(before)(state.reuseTokens)),
+                    state = (state with reuseTokens = reuseTruncateTo(before)(state.reuseTokens), reuseTransferredNames = []),
                     temp = temp,
                     semanticType = semanticType,
                     error = None
@@ -9964,25 +10069,25 @@ let recursive reuseApplyTransferredChildren (index: Int) (pointerIndices: List(I
                 match reuseApplyTransferredChildren(index + 1)(pointerIndices)(tokenTemp)(rest)(state) with
                     | (finalState, restTemps) -> (finalState, fieldTemp :: restTemps)
 
+// The cell's temp is taken before the transferred children are guarded, stage 0's order.
 let allocateReusedConstructorCell (token: CoreReuseToken) (tag: Int) (fieldCount: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (temps: List(Int)) (state: CoreLoweringState) =
-    match layoutFieldTypes(layout)(state) with
-        | (fieldTypes, _fieldsResultType) ->
-            match reuseApplyTransferredChildren(0)(reusePointerFieldIndices(fieldTypes)(state))(token.temp)(temps)(state) with
+    match (layoutFieldTypes(layout)(state), freshTemp(state)) with
+        | ((fieldTypes, _fieldsResultType), FreshTemp { state = allocatedState, temp = resultTemp }) ->
+            match reuseApplyTransferredChildren(0)(reusePointerFieldIndices(fieldTypes)(allocatedState))(token.temp)(temps)(allocatedState) with
                 | (transferredState, transferredTemps) ->
-                    match freshTemp(transferredState) with
-                        | FreshTemp { state = allocatedState, temp = resultTemp } ->
-                            allocatedState
-                            |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(true)(false)(tagless))
-                            |> emitAdtFields(resultTemp)(0)(tagless)(transferredTemps)
-                            |> markAggregateRuntimeManaged(resultTemp)(true)
-                            |> success(resultTemp)(resolveType(allocatedState)(resultType))
+                    transferredState
+                    |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(true)(false)(tagless))
+                    |> emitAdtFields(resultTemp)(0)(tagless)(transferredTemps)
+                    |> markAggregateRuntimeManaged(resultTemp)(true)
+                    |> success(resultTemp)(resolveType(transferredState)(resultType))
 
+// A live token of the rebuilt constructor's layout is consumed whatever the consumer's own
+// placement request: the token was published by the arm that matched this same constructor
+// (`reuseCaseSafe`), and its cell keeps the matched value's reference-counted placement.
 let allocateOrReuseConstructorCell (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
     (let fieldCount = coreListLength(temps)
     in
-        match if runtimeManaged
-        then reuseConsumeToken(ctorName)(fieldCount)(tagless)(state)
-        else None with
+        match reuseConsumeToken(ctorName)(fieldCount)(tagless)(state) with
             | Some((token, consumedState)) -> allocateReusedConstructorCell(token)(tag)(fieldCount)(tagless)(layout)(resultType)(temps)(consumedState)
             | None ->
                 match freshTemp(state) with
@@ -11530,9 +11635,13 @@ let lowerCoreBigInt digits state =
         emitCoreBigIntConstant(parseDecimalDigits(digits)(0))(state)
     else lowerCoreLargeBigInt(digits)(state)
 
+// A bare nullary constructor is placed under the consumer's request like any application, stage
+// 0's `LowerNullaryConstructor`: a runtime-managed parent's `Nil` field lands on the
+// reference-counted heap with it.
 let finishCoreConstructorReference layout lower state =
     if constructorArity(layout) == 0
-    then lowerConstructor(layout)([])(emptyConsumerRequest)(lower)(state)
+    then
+        lowerConstructor(layout)([])(consumerRequestOf(state))(lower)(state)
     else
         lower(constructorLambda(layout))(state)
 
@@ -12737,11 +12846,12 @@ let lowerArenaBracketedTopLevelLet name value remainingBody environment continua
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
                             match loweredValue
+                            |> withLoweredConsumerRequest(consumerRequestOf(saved))
                             |> armOwnerReleasePlan(rewrittenValue)
-                            |> finishLetValueInSlot(name)(topLevelContinuationBody)(continuation)(outerBindings) with
+                            |> finishLetValueInSlot(name)(topLevelContinuationBody)(remainingBody)(escapingLetBodyRequest(remainingBody)(consumerRequestOf(saved))(saved))(continuation)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
+                                    match closeOwnedLetBracket(letOwnedTypeName(rewrittenValue)(loweredValue)(saved))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
                                         | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
