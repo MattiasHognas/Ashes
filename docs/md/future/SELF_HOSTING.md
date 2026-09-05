@@ -914,11 +914,16 @@ same public behavior.
   active flag before the loop-entry watermark is restored, and the exit transfers the value to
   the caller when it is the body's result or releases it; a loop that rebuilt a record every
   iteration went from 50.7 MB to 5.6 MB of RSS at three million iterations
-  (`tests/tco_runtime_managed_record_accumulator_plateau.ash`). A body result that reloads an
+  (`tests/tco_runtime_managed_record_accumulator_plateau.ash`). A tuple of scalars takes the same
+  placement under the type name `Tuple`
+  (`tests/tco_runtime_managed_tuple_accumulator_plateau.ash`, 50.7 MB to 5.6 MB). A body result that reloads an
   `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
-  result runtime-managed, as a direct read did. Open: tuple-typed, multi-constructor and
-  owned-child ADT parameters (the deep copy over children and the type's dropper at the back
-  edge), freshly rebuilt lists, lists over heads without a spine copy (the `rc_normalize_list` deep copy),
+  result runtime-managed, as a direct read did. Open: multi-constructor ADT parameters (stage 0
+  keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
+  doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
+  iterations), owned-child ADT parameters (the child deep copies, the source children's release
+  and the type's structural release at the back edge; 145 MB for a record with a string field),
+  freshly rebuilt lists, lists over heads without a spine copy (the `rc_normalize_list` deep copy),
   escaping aggregate heads of a consumed list (a promoted aggregate owner needs the structural
   release the placement does not name yet), the runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset

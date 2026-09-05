@@ -3436,6 +3436,11 @@ let testRunSharedEscapingTupleBorrowedStateString shipped unit =
 let testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_record_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedRecordAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_record_accumulator_plateau_e2e")("4500004500000")
 
+// A tuple of scalars as a loop parameter on the reference-counted heap (OPT-25), the record's
+// placement under the type name `Tuple`, run for three million iterations at a flat plateau.
+let testRunSharedTcoRuntimeManagedTupleAccumulatorPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_tuple_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedTupleAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_tuple_accumulator_plateau_e2e")("4500001500003")
+
 let testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator")("selfhost_backend_shared_tco_runtime_managed_param_consed_into_sibling_accumulator_e2e")("17502612|3000|17505612")
 
@@ -4967,6 +4972,7 @@ let run shipped =
     |> testRunSharedEscapingTupleBorrowedStateString(shipped)
     |> testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator(shipped)
     |> testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau(shipped)
+    |> testRunSharedTcoRuntimeManagedTupleAccumulatorPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
