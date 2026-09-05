@@ -265,6 +265,55 @@ let expectFunctionPlacementMarksTheFunction unit =
         |> placeFunctionLifetimes)
     |> (given (function_: IrFunction) -> test.assertEqual(true)(function_.lifetimesPlaced))
 
+// A branch that jumps straight to a join while its fallthrough path reads the owner and releases
+// it before reaching the same join cannot drop at the join's entry (the fallthrough path would
+// release twice); the branch's edge gets its own drop block instead.
+let expectLiveBranchIntoDroppedJoinGetsEdgeBlock unit =
+    [
+        1
+        |> StoreLocal(2)
+        |> instruction,
+        1
+        |> LoadConstInt(7)
+        |> instruction,
+        "join_0"
+        |> JumpIfFalse(7)
+        |> instruction,
+        2
+        |> LoadLocal(2)
+        |> instruction,
+        2
+        |> GetAdtTag(4)
+        |> instruction,
+        instruction(Jump("join_0")),
+        instruction(Label("join_0")),
+        2
+        |> LoadLocal(5)
+        |> instruction,
+        anchor(2),
+        0
+        |> LoadConstInt(6)
+        |> instruction,
+        instruction(Return(6))
+    ]
+    |> (given (instructions) -> placeInstructionLifetimesIn("lambda_0")(instructions)(12))
+    |> formatted
+    |> test.assertEqual([
+        "    StoreLocal            Slot=2 Source=1",
+        "    LoadConstInt          Target=7 Value=1",
+        "    JumpIfFalse           CondTemp=7 Target=lambda_0_rc_edge_2_0",
+        "    LoadLocal             Target=2 Slot=2",
+        "    GetAdtTag             Target=4 Ptr=2",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
+        "    Jump                  Target=join_0",
+        "  join_0:",
+        "    LoadConstInt          Target=6 Value=0",
+        "    Return                Source=6",
+        "  lambda_0_rc_edge_2_0:",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
+        "    Jump                  Target=join_0"
+    ])
+
 let reportPlacementSuccess unit = Ashes.IO.print("all self-hosted lifetime placement tests passed")
 
 let runPerceusLifetimePlacementTests unit =
@@ -272,6 +321,7 @@ let runPerceusLifetimePlacementTests unit =
     |> expectAnchorMovesToLastUse
     |> expectUnusedOwnerDropsAtDefinition
     |> expectLiveBranchPredecessorGetsEntryDrop
+    |> expectLiveBranchIntoDroppedJoinGetsEdgeBlock
     |> expectBorrowedCallArgumentIsDuplicated
     |> expectTwoAnchorsLeaveInstructionsUnchanged
     |> expectPlacedFunctionIsNotPlacedAgain

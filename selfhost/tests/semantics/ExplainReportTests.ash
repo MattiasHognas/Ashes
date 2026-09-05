@@ -161,33 +161,6 @@ let recursive scopedRewrite (targetNames: List(Str)) transform (inBlock: Bool) (
                     |> append(transform(line))
                 else line :: scopedRewrite(targetNames)(transform)(inBlock)(rest)
 
-// A pattern-extracted component (a record field or an ADT constructor's argument) is not tracked
-// as reaching its parameter (see `analyzeMatchArmsReach` in OwnershipInference.ash): the result
-// reads as fresh with no alias, rather than the whole-set reach stage 0 reports.
-let componentReachLostLine (paramName: Str) (line: Str) =
-    match line with
-        | "    fresh:    no" -> ["    fresh:    yes"]
-        | "    aliases:" -> ["    aliases:  (none)"]
-        | _ ->
-            if line == "      - " + paramName
-            then []
-            else [line]
-
-let componentReachNotTracked (targetNames: List(Str)) (paramName: Str) (text: Str) =
-    rewriteLines(scopedRewrite(targetNames)(componentReachLostLine(paramName))(false))(text)
-
-let componentReachNotTrackedReason = "result-reach through a destructured pattern component is not tracked (documented in analyzeMatchArmsReach), so an extracted field does not mark its parameter reached"
-
-// The memory report's condensed ownership line carries the same component-reach gap as
-// `componentReachLostLine`, just rendered as a single "result fresh:" line with no aliases list.
-let componentReachLostInMemoryLine (line: Str) =
-    match line with
-        | "    result fresh: no" -> ["    result fresh: yes"]
-        | _ -> [line]
-
-let componentReachNotTrackedInMemory (targetNames: List(Str)) (text: Str) =
-    rewriteLines(scopedRewrite(targetNames)(componentReachLostInMemoryLine)(false))(text)
-
 // Result reach is computed one function at a time, with no whole-program fixpoint: a callee's own
 // poisoned (unmodelled) result reach does not propagate into a caller that returns a value built
 // from calling it, so the caller reads as an ordinary (non-whole) reach of its own parameter
@@ -448,29 +421,17 @@ let checkMutualRecursion unit =
 
 let checkRecordPattern unit =
     unit
-    |> (given (_) ->
-        "p"
-        |> componentReachNotTracked(["describe"])
-        |> checkKnownDifference("record_pattern")(ExplainOwnership)("ownership")(componentReachNotTrackedReason))
+    |> (given (_) -> checkFixture("record_pattern")(ExplainOwnership)("ownership"))
     |> (given (_) -> checkFixture("record_pattern")(ExplainRc)("rc"))
     |> (given (_) -> checkFixture("record_pattern")(ExplainReuse)("reuse"))
-    |> (given (_) ->
-        ["describe"]
-        |> componentReachNotTrackedInMemory
-        |> checkKnownDifference("record_pattern")(ExplainMemory)("memory")(componentReachNotTrackedReason))
+    |> (given (_) -> checkFixture("record_pattern")(ExplainMemory)("memory"))
 
 let checkTagGroupArmBrackets unit =
     unit
-    |> (given (_) ->
-        "token"
-        |> componentReachNotTracked(["weight"])
-        |> checkKnownDifference("tag_group_arm_brackets")(ExplainOwnership)("ownership")(componentReachNotTrackedReason))
+    |> (given (_) -> checkFixture("tag_group_arm_brackets")(ExplainOwnership)("ownership"))
     |> (given (_) -> checkFixture("tag_group_arm_brackets")(ExplainRc)("rc"))
     |> (given (_) -> checkFixture("tag_group_arm_brackets")(ExplainReuse)("reuse"))
-    |> (given (_) ->
-        ["weight"]
-        |> componentReachNotTrackedInMemory
-        |> checkKnownDifference("tag_group_arm_brackets")(ExplainMemory)("memory")(componentReachNotTrackedReason))
+    |> (given (_) -> checkFixture("tag_group_arm_brackets")(ExplainMemory)("memory"))
 
 // The same last-write-wins representation gap as the TCO loop fixtures, at the scale these three
 // functions' own arena-reset/RC-retain joins reach: each function's representation block moves

@@ -470,8 +470,9 @@ let constructorLetProgramSource unit = "type Option(a) =\n    | NoVal\n    | Has
 // This is the `pattern_match` parity fixture's source. The owned read of `value` borrows, and
 // because the top-level scope owns that binding the program result is spilled to a slot across
 // the closing restore. The binding's `RcDrop` marker is placed at its last use on every path:
-// after the field read in the matching arm, after the tag read in the second arm, and at the
-// entry of the arm cleanup that no longer reads it.
+// after the field read in the matching arm, after the tag read in the second arm, and on the
+// edge from the second arm's null test into the arm cleanup, which the tag test also reaches
+// after its own drop, so that edge gets its own drop block rather than the cleanup's entry.
 let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
     Unit
     |> constructorLetProgramSource
@@ -515,7 +516,7 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10",
         "    LoadConstInt          Target=13 Value=0",
         "    CmpIntNe              Target=14 Left=3 Right=13",
-        "    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_4",
+        "    JumpIfFalse           CondTemp=14 Target=_start_main_rc_edge_2_4",
         "    GetAdtTag             Target=15 Ptr=3",
         "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
         "    LoadConstInt          Target=17 Value=0",
@@ -527,7 +528,6 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11",
         "    Jump                  Target=match_end_0",
         "  match_arm_cleanup_4:",
-        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
         "    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12",
         "    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12",
         "    Jump                  Target=match_none_1",
@@ -541,13 +541,16 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=14",
         "    LoadLocal             Target=22 Slot=13",
         "    Return                Source=22",
+        "  _start_main_rc_edge_2_4:",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
+        "    Jump                  Target=match_arm_cleanup_4",
         ""
     ])
 
-// The same cell escaping as the program's result is not arena-confined, so the chain stays
-// unbracketed: an arena reset would free the value being returned.
 // The same cell escaping as the program's result is bracketed like every other `let`, but its
-// window is never reset: the result would not survive it. Stage 0 emits exactly this shape.
+// window is never reset: the result would not survive it. The returned alias is the binding's
+// last use, and a use whose "after" is unreachable places the drop before the return. Stage 0
+// emits exactly this shape.
 let expectEscapingConstructorLetIsBracketedButNeverReset unit =
     "type Option(a) =\n    | NoVal\n    | HasVal(a)\n\nlet value = HasVal(42)\n\nvalue"
     |> dumpSource
@@ -566,8 +569,8 @@ let expectEscapingConstructorLetIsBracketedButNeverReset unit =
         "    Borrow                Target=3 SourceTemp=2",
         "    StoreLocal            Slot=3 Source=3",
         "    LoadLocal             Target=5 Slot=3",
-        "    Return                Source=5",
         "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
+        "    Return                Source=5",
         ""
     ])
 

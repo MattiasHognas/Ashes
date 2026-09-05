@@ -176,8 +176,8 @@ let testParameterReachingResult unit =
 
 // `reverse`'s shape: the result re-conses the matched head onto the accumulator and returns the
 // accumulator on the empty arm. The accumulator is reached whole; the list parameter is reached
-// only through its destructured head and tail, which this walk does not track at all (arm bodies
-// are analyzed under the unchanged environment), so it is neither reached nor reached whole.
+// only through its destructured head (a component entry under `values/0`), so it is reached but
+// not reached whole, and the head and tail are distinct components of one parameter, no sharing.
 let testDestructuredParameterIsNotReachedWhole unit =
     (let consArm = (PatternCons(PatternVar("head"))(PatternVar("tail")), ExprCons(ExprVar("head"))(ExprVar("reversed")), None)
     in
@@ -201,9 +201,14 @@ let testDestructuredParameterIsNotReachedWhole unit =
                                         |> resultReachesParameterWhole(facts)
                                         |> test.assertEqual(false)
                                     in
-                                        "values"
-                                        |> resultReachesParameter(facts)
-                                        |> test.assertEqual(false))
+                                        let _ =
+                                            "values"
+                                            |> resultReachesParameter(facts)
+                                            |> test.assertEqual(true)
+                                        in
+                                            facts
+                                            |> isResultPoisoned
+                                            |> test.assertEqual(false))
 
 let testConditionalBranchReachingResult unit =
     (let body = ExprIf(ExprVar("cond"))(ExprVar("a"))(ExprVar("b"))

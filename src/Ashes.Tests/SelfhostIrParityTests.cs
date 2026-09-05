@@ -18,6 +18,8 @@ public sealed class SelfhostIrParityTests
     [Arguments("closure_capture")]
     [Arguments("pattern_match")]
     [Arguments("mutual_recursion")]
+    [Arguments("heap_result_list")]
+    [Arguments("match_list_scrutinee_drop")]
     public async Task Stage_zero_lowering_matches_shared_lowered_ir_fixture(string fixtureName)
     {
         string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "SelfhostIrParity");

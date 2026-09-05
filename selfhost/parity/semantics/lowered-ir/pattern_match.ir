@@ -36,7 +36,7 @@ function _start_main  [ProgramEntry]
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     LoadConstInt          Target=13 Value=0   (pattern_match.ash:7:1)
     CmpIntNe              Target=14 Left=3 Right=13   (pattern_match.ash:7:1)
-    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_4   (pattern_match.ash:7:1)
+    JumpIfFalse           CondTemp=14 Target=_start_main_rc_edge_2_4   (pattern_match.ash:7:1)
     GetAdtTag             Target=15 Ptr=3   (pattern_match.ash:7:1)
     RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2
     LoadConstInt          Target=17 Value=0   (pattern_match.ash:7:1)
@@ -48,7 +48,6 @@ function _start_main  [ProgramEntry]
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
     Jump                  Target=match_end_0   (pattern_match.ash:7:1)
   match_arm_cleanup_4:
-    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12
     Jump                  Target=match_none_1   (pattern_match.ash:7:1)
@@ -62,4 +61,7 @@ function _start_main  [ProgramEntry]
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=14
     LoadLocal             Target=22 Slot=13
     Return                Source=22
+  _start_main_rc_edge_2_4:
+    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2
+    Jump                  Target=match_arm_cleanup_4
 

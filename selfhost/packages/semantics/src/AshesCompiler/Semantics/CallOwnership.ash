@@ -27,6 +27,7 @@ export (
     value parameterAtIndex,
     value calleeParameterBorrows,
     value calleeResultReachesArgument,
+    value calleeResultReachesArgumentWhole,
     value innermostStageLabel,
     value compiledResultRuntimeManaged,
     value calleeSaturatedAndEligible,
@@ -147,21 +148,42 @@ let calleeParameterBorrows (facts: Maybe(CoreCalleeFacts)) (index: Int) =
         | Some(CoreCalleeFacts { ownership = ownership }) -> parameterAtIndex(index)(ownership) == Borrowed
         | None -> false
 
+// The parameter's own entry and its component entries (`items/0`) together.
 let recursive reachCountOf (parameter: Str) (entries: List(ParameterReachEntry)) =
     match entries with
         | [] -> 0
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
-            if name == parameter
-            then count
+            if name == parameter || Ashes.Text.startsWith(name)(parameter + "/")
+            then count + reachCountOf(parameter)(rest)
             else reachCountOf(parameter)(rest)
 
-// Stage 0's `ResultReaches`: the callee's result may alias the parameter at this position. The
-// ported reach analysis records every reach as a whole-value reach, so `ResultReachesWhole` is
-// the same fact.
+// Stage 0's `ResultReaches`: the callee's result may alias the parameter at this position, whole
+// or through one of its components (a matched head or field kept in the result).
 let calleeResultReachesArgument (facts: Maybe(CoreCalleeFacts)) (index: Int) =
     match facts with
         | Some(CoreCalleeFacts { parameters = parameters, reach = ResultReachState { counts = counts } }) ->
             match parameterNameAt(index)(parameters) with
                 | Some(parameter) -> reachCountOf(parameter)(counts) > 0
+                | None -> false
+        | None -> false
+
+// The parameter's own entry alone: a whole-value reach.
+let recursive wholeReachCountOf (parameter: Str) (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> 0
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            if name == parameter
+            then count + wholeReachCountOf(parameter)(rest)
+            else wholeReachCountOf(parameter)(rest)
+
+// Stage 0's `ResultReachesWhole`: the callee's result may keep the parameter's value itself (a
+// curry stage that stores it into the value it returns), so a fresh argument moves into the
+// callee outright; a callee that keeps only destructured parts of it does not take the whole
+// value, and the caller's release of the spine stays.
+let calleeResultReachesArgumentWhole (facts: Maybe(CoreCalleeFacts)) (index: Int) =
+    match facts with
+        | Some(CoreCalleeFacts { parameters = parameters, reach = ResultReachState { counts = counts } }) ->
+            match parameterNameAt(index)(parameters) with
+                | Some(parameter) -> wholeReachCountOf(parameter)(counts) > 0
                 | None -> false
         | None -> false
