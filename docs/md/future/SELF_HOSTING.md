@@ -949,7 +949,17 @@ same public behavior.
   read is placed on the reference-counted heap as it is lowered (`loopParameterIsRuntimeManaged`,
   the frame's later demotion never reclaims the arena at the back edge, so an early placement
   never dangles). The loop's lowered IR matches stage 0's
-  (`tests/tco_runtime_managed_record_list_accumulator.ash`). A
+  (`tests/tco_runtime_managed_record_list_accumulator.ash`). A `Str` parameter the affine
+  analysis declines (read a second time outside its own successor, or rebuilt from a producer
+  not rooted at it) is placed by its type through the same ADT-slot machinery as stage 0's
+  `IsRcEligibleScalarTupleOrAdtType` places it: its cell plan is the one-piece string copy, its
+  fresh successor is asked for a reference-counted string (`tailSelfCallStringSuccessor`) so
+  the back edge stores it directly, the old value is released under the active flag, and the
+  exit transfers or releases it; the affine in-place append keeps its own path
+  (`tests/tco_runtime_managed_str_param_non_affine_plateau.ash`, and
+  `tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash` now takes the
+  reference-counted path). Tuple literal elements take the loop-parameter retain marker too
+  (stage 0's `RetainRuntimeManagedTupleChildren`). A
   body result that reloads an
   `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
   result runtime-managed, as a direct read did. Open: multi-constructor ADT parameters (stage 0
@@ -957,9 +967,7 @@ same public behavior.
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
   iterations), freshly rebuilt lists,
   escaping aggregate heads of a consumed list (a promoted aggregate owner needs the structural
-  release the placement does not name yet), a `Str` parameter read a second time outside its own
-  successor (`collect(n - 1)(text + suffix)(text :: acc)`: the affine analysis declines the
-  parameter and the frame stays on the arena path, where stage 0 retains the read), the
+  release the placement does not name yet), the
   runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
   paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine

@@ -4108,6 +4108,7 @@ let emitGuardedAdtRelease emitter (labelName: Str) (activeSlot: Int) (cellTemp: 
 // and every owned child (stage 0's `EmitRuntimeManagedTcoDeepCopy`).
 let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
+        | SemString -> LeafArgumentCopy(-1)
         | SemTuple(elements) -> ShallowAdtArgumentCopy(8 * length(elements))
         | SemNamed(_symbolId, name, _arguments) as named ->
             match argumentCopyPlanOf(named)(state) with
@@ -4804,6 +4805,7 @@ let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringSta
                 if length(elements) > 0 && allScalarElements(elements)(state)
                 then Some((tuple, "Tuple"))
                 else None
+            | Some(SemString) -> Some((SemString, "String"))
             | _ -> None
 
 let tcoAdtSlotAdmitted (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
@@ -4826,16 +4828,20 @@ type TcoManagedCandidate =
 let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (slots, shapes) with
         | (slot :: restSlots, shape :: restShapes) ->
-            TcoManagedCandidate(
-                ordinal = ordinal,
-                slot = slot,
-                shape = shape,
-                strManaged = containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state),
-                listElement = if isTcoListShape(shape)
-                then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
-                else None,
-                adtCopy = tcoAdtSlotCopy(slot)(shape)(state)
-            ) :: tcoManagedCandidates(ordinal + 1)(restSlots)(restShapes)(loop)(state)
+            (let strManaged = containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            in
+                TcoManagedCandidate(
+                    ordinal = ordinal,
+                    slot = slot,
+                    shape = shape,
+                    strManaged = strManaged,
+                    listElement = if isTcoListShape(shape)
+                    then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
+                    else None,
+                    adtCopy = if strManaged
+                    then None
+                    else tcoAdtSlotCopy(slot)(shape)(state)
+                )) :: tcoManagedCandidates(ordinal + 1)(restSlots)(restShapes)(loop)(state)
         | _ -> []
 
 let candidateListManaged (candidate: TcoManagedCandidate) =
@@ -5141,6 +5147,7 @@ let emitTcoAdtExitDrops (bodyTemp: Int) (bodyTypeName: Maybe(Str)) (entries: Lis
 let resolvedTypeName (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemNamed(_symbolId, name, _arguments) -> Some(name)
+        | SemString -> Some("String")
         | _ -> None
 
 let recursive anyEntryOnSlot (slot: Int) (entries: List((Int, ArgumentCopyPlan, Maybe(Int)))) =
@@ -8907,11 +8914,17 @@ let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticTy
                 | None -> (state, temp)
         | _ -> (state, temp)
 
+// Stage 0's `RetainRuntimeManagedTupleChildren`: a tuple element read from a live owner or a
+// loop parameter is retained for the cell.
 let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (elements, temps, semanticTypes) with
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
             match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
-                | (retained, retainedTemp) -> retainAggregateChildTemps(restElements)(restTemps)(restTypes)(retained)(retainedTemp :: reversed)
+                | (retained, retainedTemp) ->
+                    match retained
+                    |> success(retainedTemp)(semanticType)
+                    |> retainLoopParameterChild(element)(temp) with
+                        | LoweredCoreValue { state = marked, temp = markedTemp } -> retainAggregateChildTemps(restElements)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
 // The request each tuple element is lowered under, stage 0's `LowerTupleElement`: the tuple's
@@ -11556,7 +11569,16 @@ let failedTailSelfCallArguments state error =
 // the children transfer, and — for a parameter every self-call grows by one cons cell (stage 0's
 // `AffineConsList` request, `OwnedRuntime(List)`) — a runtime list, so the cell is allocated on
 // the reference-counted heap owning its head when the head is runtime-manageable.
-let tailSelfCallArgumentRequest (parameterType: SemanticType) (shape: TcoArgumentShape) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape))(state)
+// A fresh string producer rebuilding a `Str` parameter the frame places by type (not through the
+// affine in-place append) is asked for a reference-counted string, stage 0's runtime string
+// request for a runtime-managed parameter's successor: the back edge then stores it as the
+// parameter's own value instead of copying it out of the arena.
+let tailSelfCallArgumentRequest (parameterType: SemanticType) (shape: TcoArgumentShape) (runtimeString: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString))(state)
+
+let tailSelfCallStringSuccessor (argument: Expr) (slot: Maybe(Int)) (ordinal: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match slot with
+        | Some(parameterSlot) -> shape != TcoPassThroughShape && !containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(parameterSlot)(state) && isFreshStringChild(argument)(state)
+        | None -> false
 
 let recursive restArgumentShapes (shapes: List(TcoArgumentShape)) =
     match shapes with
@@ -11581,7 +11603,7 @@ let restSlotsOf (slots: List(Int)) =
         | _slot :: rest -> rest
         | [] -> []
 
-let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(Int)) (shapes: List(TcoArgumentShape)) functionType lower (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
+let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (ordinal: Int) (loop: CoreTcoLoop) functionType lower (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
     match arguments with
         | [] ->
             CoreTailSelfCallArguments(
@@ -11594,13 +11616,13 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
             match ensureFunctionType(functionType)(state) with
                 | FunctionTypeResolution { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
                 | FunctionTypeResolution { state = functionState, argumentType = parameterType, resultType = resultType, error = None } ->
-                    match retainTransferredChild(argument)(true)(duplicatePatternOwnerChild(argument)(lower(argument)(tailSelfCallArgumentRequest(parameterType)(headArgumentShape(shapes))((functionState with backEdgeArgumentSlot = headSlotOf(slots)))))) with
+                    match retainTransferredChild(argument)(true)(duplicatePatternOwnerChild(argument)(lower(argument)(tailSelfCallArgumentRequest(parameterType)(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))((functionState with backEdgeArgumentSlot = headSlotOf(slots)))))) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedTailSelfCallArguments((failedState with backEdgeArgumentSlot = None))(error)
                         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
                             match bindType(parameterType)(argumentType)((argumentState with backEdgeArgumentSlot = None)) with
                                 | (failedState, Some(error)) -> failedTailSelfCallArguments(failedState)(error)
                                 | (typedState, None) ->
-                                    lowerTailSelfCallArguments(rest)(restSlotsOf(slots))(restArgumentShapes(shapes))(resultType)(lower)(typedState)(argumentTemp :: reversedTemps)(argumentType :: reversedTypes)
+                                    lowerTailSelfCallArguments(rest)(restSlotsOf(slots))(restArgumentShapes(shapes))(ordinal + 1)(loop)(resultType)(lower)(typedState)(argumentTemp :: reversedTemps)(argumentType :: reversedTypes)
 
 let recursive loadOldParameters (slots: List(Int)) (state: CoreLoweringState) (reversedTemps: List(Int)) =
     match slots with
@@ -11716,7 +11738,7 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
         | Some(binding) ->
             match instantiateBinding(binding)(state) with
                 | InstantiatedBinding { state = instantiatedState, semanticType = functionType } ->
-                    match lowerTailSelfCallArguments(spine.arguments)(frame.parameterSlots)(loop.argumentShapes)(functionType)(lower)(instantiatedState)([])([]) with
+                    match lowerTailSelfCallArguments(spine.arguments)(frame.parameterSlots)(loop.argumentShapes)(0)(loop)(functionType)(lower)(instantiatedState)([])([]) with
                         | CoreTailSelfCallArguments { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
                             argumentState
