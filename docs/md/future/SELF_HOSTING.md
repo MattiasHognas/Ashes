@@ -1157,10 +1157,21 @@ same public behavior.
   selfhost: OPT-42's ordinary match-arm reuse path never inlines a helper call into an arm (no
   `InlineCall`/`_inliningInProgress` family is ported), so there is nothing for this check to gate
   yet — it becomes relevant once helper inlining or fold specialization lands.
-- [ ] **OPT-34** Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
+- [x] **OPT-34** Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
   rather than clone the string elements of an escaping arena tuple — threading a large string
   through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
-  `Bytes` view to sidestep this; the general cost remains).
+  `Bytes` view to sidestep this; the general cost remains). Shipped: the per-rebuild copy came
+  from `MaterializeEscapingArenaTupleElements` cloning every string binding placed into an
+  arena-shell tuple, including one bound out of the borrowed parameter, whose release is an arena
+  identity marker. Stage 0 now clones only a string whose owner really releases it (a
+  runtime-managed let or match owner, a stable pattern owner, or an untracked binding); a
+  borrowed parameter part is carried as is, since the parameter outlives the call and the call
+  boundary copies the escaping result out as a whole. A 128 KB state string threaded through
+  20000 rebuilds went from 0.49 s to under 10 ms; the shared
+  `tests/escaping_tuple_borrowed_state_string.ash` runs the carried and the still-cloned shapes
+  through both backends. The self-hosted lowering never had the clone. Admitting the tuple itself
+  to runtime-RC placement (a list-of-records element needs a synthesized list dropper over record
+  heads and a runtime-managed cons for the rebuilt list) stays open as a later placement widening.
 - [x] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
   caller can prove the aggregate is reference-counted (accessor shape:
   `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call). Root cause: an

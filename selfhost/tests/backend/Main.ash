@@ -3421,6 +3421,12 @@ let testRunSharedTcoPatternHeadForwardedToOtherParameter shipped unit =
 let testRunSharedRcReleaseReadBuiltinJoinResult shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/rc_release_read_builtin_join_result.ash"))("selfhostBackendRunSharedRcReleaseReadBuiltinJoinResult")("selfhost_backend_shared_rc_release_read_builtin_join_result_e2e")("5689216|4266976|7964736|11378432")
 
+// A large string threaded through an arena-shell state tuple (OPT-34): the helper rebuilding the
+// tuple carries the borrowed parameter's string as is, and a let-owned fresh string placed into the
+// same shape survives its owner's release, each for 20000 steps.
+let testRunSharedEscapingTupleBorrowedStateString shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/escaping_tuple_borrowed_state_string.ash"))("selfhostBackendRunSharedEscapingTupleBorrowedStateString")("selfhost_backend_shared_escaping_tuple_borrowed_state_string_e2e")("131072|640000|42")
+
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
 // jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
 // linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
@@ -4946,6 +4952,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedListAccumulatorPlateau(shipped)
     |> testRunSharedTcoPatternHeadForwardedToOtherParameter(shipped)
     |> testRunSharedRcReleaseReadBuiltinJoinResult(shipped)
+    |> testRunSharedEscapingTupleBorrowedStateString(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
