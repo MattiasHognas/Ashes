@@ -596,8 +596,51 @@ let expectFailedOperandReportsItsOwnError unit =
         | UnknownLoweringBinding(name) -> test.assertEqual("missing")(name)
         | other -> test.fail("expected UnknownLoweringBinding, got " + Ashes.Trait.Show.show(other))
 
+// The record-update reuse program: a `let`-owned copy ADT matched by an exhaustive rebuild.
+let reuseRecordUpdateSource = "type Counter =\n    | count: Int\n    | total: Int\n\nlet counter = Counter(count = 0, total = 0)\n\nmatch counter with\n    | Counter(count, total) -> Counter(count = count + 1, total = total + count)\n"
+
+let loweredWithReuse (reuseEnabled: Bool) (source: Str) =
+    match source
+    |> parsedProgram
+    |> lowerCoreProgramWithSourceAndReuse(reuseEnabled)("reuse.ash")(source) with
+        | CoreLoweringResult { program = Some(program), error = None } ->
+            None
+            |> formatIr(program)(LoweredIr)
+            |> Ashes.Text.join("\n")
+        | CoreLoweringResult { error = Some(error) } -> test.fail("program lowering failed: " + Ashes.Trait.Show.show(error))
+        | _ -> test.fail("program lowering produced no program")
+
+// Stage 0's `--debug-disable-reuse` (`LoweringConfiguration.EnableReuse`): with reuse enabled
+// the match arm releases the owned scrutinee into a token and rebuilds in place; with it
+// disabled no token exists, the rebuild allocates fresh, and the owner's own release remains.
+let expectDisabledReuseWithholdsTokens unit =
+    (let enabled = loweredWithReuse(true)(reuseRecordUpdateSource)
+    in
+        let disabled = loweredWithReuse(false)(reuseRecordUpdateSource)
+        in
+            "DropReuse"
+            |> Ashes.Text.contains(enabled)
+            |> test.assertEqual(true)
+            |> (given (_) ->
+                "AllocReusing"
+                |> Ashes.Text.contains(enabled)
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                "DropReuse"
+                |> Ashes.Text.contains(disabled)
+                |> test.assertEqual(false))
+            |> (given (_) ->
+                "AllocReusing"
+                |> Ashes.Text.contains(disabled)
+                |> test.assertEqual(false))
+            |> (given (_) ->
+                "TypeName=Counter OwnerSlot=2 RuntimeManaged=true"
+                |> Ashes.Text.contains(disabled)
+                |> test.assertEqual(true)))
+
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectDisabledReuseWithholdsTokens
     |> expectFieldAccessOnUnresolvedReceiverResolvesByUniqueField
     |> expectAmbiguousFieldAccessStaysUnresolved
     |> expectFailedOperandReportsItsOwnError
