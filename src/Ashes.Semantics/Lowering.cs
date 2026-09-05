@@ -13017,7 +13017,10 @@ public sealed partial class Lowering
         // not runtime-manageable. Copy only finite String-bearing elements that borrow a live RC
         // owner before lexical cleanup releases it. Recursive graphs, lists, and Bytes views remain
         // on their existing placement paths; cloning those here would turn hot tuple returns into
-        // unbounded per-call copies.
+        // unbounded per-call copies. A string bound out of a borrowed parameter has no release of
+        // its own (its marker is an arena identity), so the tuple carries the string itself: the
+        // parameter outlives the call, and the call boundary copies the escaping result out as a
+        // whole. Cloning it would copy a state string threaded through such a tuple on every call.
         if (runtimeManaged
             || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple))
         {
@@ -13135,16 +13138,26 @@ public sealed partial class Lowering
         TypeRef type)
     {
         return IsFiniteStringAggregateType(type, new HashSet<TypeSymbol>())
-            && (expression is Expr.Var && Prune(type) is TypeRef.TStr
+            && (expression is Expr.Var variable && Prune(type) is TypeRef.TStr
+                    && StringBindingOwnerReleasesValue(variable.Name)
                 || ExpressionContainsStringBinding(expression));
     }
+
+    // Whether the owner of a string binding releases the value when its scope ends, so a tuple that
+    // carries the binding out of that scope needs a copy of its own. A binding tracked as an arena
+    // identity marker (a part of a borrowed parameter, or a let over an arena producer) releases
+    // nothing; a runtime-managed owner, a stable pattern owner whose representation settles later,
+    // and a binding this function does not track at all are all taken as releasing.
+    private bool StringBindingOwnerReleasesValue(string name)
+        => LookupOwnedValue(name) is not { RuntimeManaged: false, PerceusPatternOwner: false };
 
     private bool ExpressionContainsStringBinding(Expr expression)
     {
         if (expression is Expr.Var variable)
         {
             return Lookup(variable.Name) is { } binding
-                && Prune(binding.Type) is TypeRef.TStr;
+                && Prune(binding.Type) is TypeRef.TStr
+                && StringBindingOwnerReleasesValue(variable.Name);
         }
 
         if (expression is Expr.TupleLit tuple)

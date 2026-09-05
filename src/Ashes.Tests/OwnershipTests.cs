@@ -544,6 +544,70 @@ public sealed class OwnershipTests
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
+    // A tuple with a list-of-records element falls back to an arena shell. A string bound out of the
+    // borrowed parameter has no release of its own, so the rebuilt tuple carries it as is; cloning it
+    // per call would copy a state string threaded through the tuple on every step.
+    [Test]
+    public void Escaping_arena_tuple_carries_a_string_bound_from_a_borrowed_parameter_without_a_clone()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Entry =
+                | key: Str
+                | count: Int
+
+            let step (n: Int) (state: (Str, List(Entry))) =
+                match state with
+                    | (text, entries) -> (text, Entry(key = Ashes.Text.fromInt(n), count = n) :: entries)
+
+            Ashes.IO.print(1)
+            """);
+
+        IrFunction step = ir.Functions.Single(function =>
+            function.Instructions.Any(inst => inst is IrInst.AllocAdt));
+        step.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+            "the tuple stays an arena shell around the list of records");
+        step.Instructions.Any(inst =>
+            inst is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone }).ShouldBeFalse(
+            "the borrowed parameter's string is carried, not cloned");
+        step.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeFalse(
+            "a borrowed parameter part has no release of its own");
+    }
+
+    // The same tuple shape around a let-owned fresh string still copies it: the let's scope-exit
+    // release would otherwise free the string the escaping tuple holds.
+    [Test]
+    public void Escaping_arena_tuple_still_clones_a_string_owned_by_a_released_let()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Entry =
+                | key: Str
+                | count: Int
+
+            let mk (n: Int) = Ashes.Text.fromInt(n) + "!"
+
+            let fresh (n: Int) (state: (Str, List(Entry))) =
+                match state with
+                    | (_text, entries) ->
+                        let label = mk(n)
+                        in (label, Entry(key = label, count = n) :: entries)
+
+            match fresh(1)(("a", [])) with
+                | (text, _) -> Ashes.IO.print(text)
+            """);
+
+        IrFunction fresh = ir.Functions.Single(function =>
+            function.Instructions.Any(inst => inst is IrInst.AllocAdt));
+        fresh.Instructions.Any(inst =>
+            inst is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone }).ShouldBeTrue(
+            "the let-owned string is cloned before its scope releases it");
+        fresh.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true, OwnerSlot: >= 0 }).ShouldBeTrue(
+            "the let still releases its own reference");
+    }
+
     [Test]
     public void Directly_escaping_generic_adt_with_copy_payload_transfers_runtime_ownership()
     {
