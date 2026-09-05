@@ -1462,6 +1462,16 @@ same public behavior.
   `unconsText` in a non-tail recursion, so a 15 KB string cost 121 MB of tail copies held by
   the nested frames and now costs 9 MB, and
   `tests/tco_loop_moves_split_line_into_accumulator.ash` runs in 11.6 MB instead of 124 MB.
+  That recursion also overflowed the stack — the self-hosted `fmt` segfaulted on every source
+  above roughly 90 KB, stage 0's own binaries above roughly 250 KB — so `Ashes.Text.length`,
+  `take`, and `drop` now walk the bytes with an index (`countCodepoints`, `cpByteOffset`) and
+  slice; regression `tests/text_length_take_drop_large_string.ash`. What remains is the frame
+  size: this backend emits at LLVM optimization level none, so a call frame is about four times
+  stage 0's, and `Collection.List.map`/`filter`/`append` (one frame per element by design, the
+  shape the reuse optimizer relies on) overflow the 8 MB machine stack at about 100000 elements
+  against stage 0's 400000. The self-hosted `fmt` therefore still faults on the three sources
+  whose token lists pass that bound (`TypeInference.ash`, `ProgramInference.ash`,
+  `OwnershipInference.ash`); optimization-level selection is milestone 5's first item.
 - [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require

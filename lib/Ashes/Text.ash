@@ -5,26 +5,24 @@ let fromRunes runes =
             | head :: tail -> go(tail)(output + Ashes.Rune.toText(head))
     in go(runes)(""))
 
-let recursive length text =
-    match Ashes.Text.unconsText(text) with
-        | None -> 0
-        | Some((_head, tail)) -> 1 + length(tail)
-
-let recursive drop text count =
-    if count <= 0
-    then text
+let recursive countCodepoints bytes i limit acc =
+    if i >= limit
+    then acc
     else
-        match Ashes.Text.unconsText(text) with
-            | None -> ""
-            | Some((_head, tail)) -> drop(tail)(count - 1)
+        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+        in
+            let isStart =
+                if b < 128
+                then true
+                else b >= 192
+            in
+                countCodepoints(bytes)(i + 1)(limit)(if isStart
+                then acc + 1
+                else acc)
 
-let recursive take text count =
-    if count <= 0
-    then ""
-    else
-        match Ashes.Text.unconsText(text) with
-            | None -> ""
-            | Some((head, tail)) -> head + take(tail)(count - 1)
+let length text =
+    (let bytes = Ashes.Byte.fromText(text)
+    in countCodepoints(bytes)(0)(Ashes.Byte.length(bytes))(0))
 
 let recursive cpByteOffset bytes i cpSeen targetCp limit =
     if i >= limit
@@ -60,20 +58,21 @@ let substring text start count =
                         let byteEnd = cpByteOffset(bytes)(0)(0)(start + count)(limit)
                         in Ashes.Byte.subText(bytes)(byteStart)(byteEnd - byteStart)
 
-let recursive countCodepoints bytes i limit acc =
-    if i >= limit
-    then acc
+let drop text count =
+    if count <= 0
+    then text
     else
-        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+        let bytes = Ashes.Byte.fromText(text)
         in
-            let isStart =
-                if b < 128
-                then true
-                else b >= 192
+            let limit = Ashes.Byte.length(bytes)
             in
-                countCodepoints(bytes)(i + 1)(limit)(if isStart
-                then acc + 1
-                else acc)
+                let byteStart = cpByteOffset(bytes)(0)(0)(count)(limit)
+                in Ashes.Byte.subText(bytes)(byteStart)(limit - byteStart)
+
+let take text count =
+    if count <= 0
+    then ""
+    else substring(text)(0)(count)
 
 let recursive byteFind tb needle from tlen nlen firstByte =
     (let idx = Ashes.Byte.indexOf(tb)(firstByte)(from)
