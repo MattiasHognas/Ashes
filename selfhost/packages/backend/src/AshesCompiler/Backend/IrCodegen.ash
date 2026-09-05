@@ -502,10 +502,11 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(rune)
                                             |> emitRuneToText(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)) :: tempEnv, terminated)
-                                        | TextFromInt(target, value, _managed) ->
+                                        | TextFromInt(target, value, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(value)
-                                            |> emitTextFromInt(context)(function_)(i64)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                            |> emitTextFromInt(context)(function_)(i64)(builder)(given (srcBytesAddr) ->
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("from_int"))) :: tempEnv, terminated)
                                         | TextByteLength(target, text) ->
                                             ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupIndexed(text)(tempEnv))("text_byte_length")) :: tempEnv, terminated)
                                         | BytesLength(target, bytes) ->
@@ -576,15 +577,15 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(value)
                                             |> emitTextToHex(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
-                                        | ConcatStr(target, left, right, _managed) ->
+                                        | ConcatStr(target, left, right, managed) ->
                                             let result =
-                                                emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(
+                                                emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(
                                                     [lookupIndexed(left)(tempEnv), lookupIndexed(right)(tempEnv)]
                                                 )
                                             in ((target, result) :: tempEnv, terminated)
-                                        | ConcatStrN(target, parts, _managed) ->
+                                        | ConcatStrN(target, parts, managed) ->
                                             let result =
-                                                emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(
+                                                emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(
                                                     Ashes.Collection.List.map(given (part) -> lookupIndexed(part)(tempEnv))(parts)
                                                 )
                                             in ((target, result) :: tempEnv, terminated)

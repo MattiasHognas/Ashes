@@ -1261,9 +1261,10 @@ same public behavior.
   for a direct call result and for an `if`/`match` join of fresh branches, keeps a join with a
   borrowed branch and a let-owned result unreleased (the owner's scope-exit drop covers it), and
   the shared `tests/rc_release_read_builtin_join_result.ash` runs all four shapes through both
-  backends. The self-hosted binaries' RSS does not plateau yet because the self-hosted backend
-  still allocates every string result with `malloc` regardless of the runtime-managed flag (the
-  CG-4 arena tail), so the plateau test stays stage-0-only until that lands.
+  backends. The self-hosted binaries plateau too since the backend places `ConcatStr`/
+  `ConcatStrN`/`TextFromInt` results by their runtime-managed flag (CG-4): the direct, join,
+  let-scope and discarded-result probes run 200000 iterations in 5.6 MB of RSS, down from 55 to
+  190 MB when every string result was a `malloc` that nothing freed.
 - [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
@@ -1382,8 +1383,12 @@ same public behavior.
   memory-offset ops), real `match`/pattern compilation (null guard, tag compare, field
   extraction, guards, or-patterns, and tag-grouped `SwitchTag` dispatch), native `musttail`
   tail calls fused through join chains, string literals/printing/equality/concatenation
-  (`.rodata`-backed immortal-header globals; length-check-then-`memcmp`; one `malloc`'d result
-  with per-part `memcpy`), `PrintInt`/`PrintBool`/`PanicStr` over the raw `write` syscall, and
+  (`.rodata`-backed immortal-header globals; length-check-then-`memcmp`; one result with
+  per-part `memcpy`, placed by the instruction's runtime-managed flag: a `malloc`'d
+  reference-counted cell the lowering's `RcDrop` frees, or an arena block with the immortal
+  header the bracket reclaims — `ConcatStr`, `ConcatStrN` and `TextFromInt` today; `BytesAppend`,
+  `RuneToText`, the float, slicing, UTF-8 and I/O producers still `malloc` unconditionally and
+  leak their arena-placed results), `PrintInt`/`PrintBool`/`PanicStr` over the raw `write` syscall, and
   the builtin surface tracked under "Object parsing and executable linking". The entry function
   lowers `Return` to the raw `exit` syscall plus `unreachable` (`e_entry` contract — the process
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by

@@ -52,11 +52,10 @@ export (
 )
 
 // `TextFromInt`'s finish: the same prologue/zero/digit/sign phases as `PrintInt` (the phase
-// helpers above), with the write-syscall phase replaced by allocating a fresh RC heap string —
-// `{i64 count, i64 size, i64 len, bytes}`, `emitStringConcatN`'s exact layout — and copying the
-// filled tail of the digit buffer into it. Returns the payload pointer (`header + 16`) as the
-// universal `i64` value word, exactly as `ConcatStr` does.
-let emitTextFromInt context function_ i64 builder mallocFn mallocType memcpyFn memcpyType value =
+// helpers above), with the write-syscall phase replaced by handing the filled tail of the digit
+// buffer (its address word and byte count) to `place`, which allocates the string where the
+// instruction's placement asks and answers the universal `i64` value word.
+let emitTextFromInt context function_ i64 builder place value =
     (let i8 = int8Type(context)
     in
         let printState = printIntPrologue(builder)(i64)(i8)(value)
@@ -80,33 +79,13 @@ let emitTextFromInt context function_ i64 builder mallocFn mallocType memcpyFn m
                                         in
                                             let dataPtr = buildGEP(builder)(printState.bufferType)(printState.buffer)([constInt(i64)(0u64)(false), startIndex])(2u32)("from_int_data_ptr")
                                             in
-                                                let totalSize =
-                                                    buildAdd(builder)(count)(constInt(i64)(24u64)(false))("from_int_total_size")
+                                                let result =
+                                                    place(buildPtrToInt(builder)(dataPtr)(i64)("from_int_data_addr"))(count)
                                                 in
-                                                    let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("from_int_header")
+                                                    let _ = buildBr(builder)(blocks.continueBlock)
                                                     in
-                                                        let _ =
-                                                            buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
-                                                        in
-                                                            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("from_int_size_ptr")
-                                                            in
-                                                                let _ =
-                                                                    buildStore(builder)(buildAdd(builder)(count)(constInt(i64)(8u64)(false))("from_int_size_value"))(sizePtr)
-                                                                in
-                                                                    let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("from_int_payload_ptr")
-                                                                    in
-                                                                        let _ = buildStore(builder)(count)(payloadPtr)
-                                                                        in
-                                                                            let destBytesPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("from_int_dest_bytes_ptr")
-                                                                            in
-                                                                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, dataPtr, count])(3u32)("from_int_memcpy")
-                                                                                in
-                                                                                    let result = buildPtrToInt(builder)(payloadPtr)(i64)("from_int_result")
-                                                                                    in
-                                                                                        let _ = buildBr(builder)(blocks.continueBlock)
-                                                                                        in
-                                                                                            let _ = positionBuilderAtEnd(builder)(blocks.continueBlock)
-                                                                                            in result)
+                                                        let _ = positionBuilderAtEnd(builder)(blocks.continueBlock)
+                                                        in result)
 
 // `Bytes.get`'s out-of-bounds exit: the fixed message plus newline written from a stack buffer via
 // the raw `write` syscall, then exit `1` — the same fixed-ASCII-line shape `emitPrintBoolBranch`
