@@ -46,6 +46,7 @@ type TcoArgumentShape =
     | TcoPassThroughShape
     | TcoGrownConsShape
     | TcoConsumedTailShape
+    | TcoFreshListShape
     | TcoOtherShape
     deriving {Eq, Show}
 
@@ -288,6 +289,13 @@ let shapeMerge (observed: Maybe(TcoArgumentShape)) (local: TcoArgumentShape) =
             then Some(previous)
             else Some(TcoOtherShape)
 
+// A list built fresh in the argument itself: a list literal, or a cons chain ending in one.
+let recursive shapeIsFreshList (expression: Expr) =
+    match shapeUnspan(expression) with
+        | ExprList(_elements, _isMultiline) -> true
+        | ExprCons(_head, tail) -> shapeIsFreshList(tail)
+        | _ -> false
+
 let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
     match shapeUnspan(argument) with
         | ExprVar(name) ->
@@ -303,7 +311,11 @@ let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwn
                     if shapeResolveParameter(name)(shadowed)(parameters) == Some(index)
                     then TcoGrownConsShape
                     else TcoOtherShape
-                | _ -> TcoOtherShape
+                | rest ->
+                    if shapeIsFreshList(rest)
+                    then TcoFreshListShape
+                    else TcoOtherShape
+        | ExprList(_elements, _isMultiline) -> TcoFreshListShape
         | _ -> TcoOtherShape
 
 let recursive shapeObserveArguments (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) (observed: List(Maybe(TcoArgumentShape))) =
