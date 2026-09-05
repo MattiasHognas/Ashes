@@ -296,6 +296,23 @@ let expectForwardedInnerListHeadKeepsListInArena unit =
         |> (given (_) -> check("no cell walk over the list")(countContaining("rcdrop_list")(lines) == 0))
         |> (given (_) -> check("no runtime-managed retain of the head")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 0)))
 
+let copyAdtLoopSource = "type Counter =\n    | count: Int\n    | total: Int\n\nlet recursive bump (n: Int) (c: Counter) =\n    if n == 0\n    then c\n    else bump(n - 1)(Counter(count = c.count + 1, total = c.total + n))\n\nlet bumped = bump(10)(Counter(count = 0, total = 0))\n\nAshes.IO.print(bumped.count)"
+
+// OPT-25: a single-constructor record loop parameter lives on the reference-counted heap: the
+// borrowed argument is copied out under the caller's ownership flag at entry, each back edge
+// copies the fresh arena cell out before the iteration's allocations are reclaimed and releases
+// the predecessor, and the exit transfers the parameter's own value to the caller or releases it.
+let expectCopyAdtLoopParameterIsRuntimeManaged unit =
+    copyAdtLoopSource
+    |> loopFunctionLines("[ClosureHelper from bump]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the entry copy and the back-edge copy of the cell")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the predecessor and exit releases under the type name")(countContainingBoth("RcDrop")("TypeName=Counter RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the back edge restores the loop-entry watermark")(countContaining("RestoreArenaState")(lines) == 1))
+        |> (given (_) -> check("the exit transfers the parameter's own value to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -384,6 +401,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectConsumedTailListIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedStrHeadIsProtected(Unit))
     |> (given (_) -> expectForwardedInnerListHeadKeepsListInArena(Unit))
+    |> (given (_) -> expectCopyAdtLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))
