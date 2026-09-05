@@ -402,6 +402,24 @@ let expectRecordListAccumulatorIsRuntimeManaged unit =
         |> (given (_) -> check("the back edge's cons cell lives on the reference-counted heap")(countContainingBoth("Alloc ")("SizeBytes=16 RuntimeManaged=true")(lines) >= 2))
         |> (given (_) -> check("the accumulator releases as a list")(countContainingBoth("RcDrop")("TypeName=List RuntimeManaged=true")(lines) == 2)))
 
+let nonAffineStrParameterSource = "let recursive collect (n: Int) (text: Str) (acc: List(Str)) =\n    if n == 0\n    then acc\n    else collect(n - 1)(text + Ashes.Text.fromInt(n))(text :: acc)\n\nlet items = collect(10)(\"seed\")([])\n\nAshes.IO.print(1)"
+
+// A `Str` parameter read a second time outside its own successor is placed on the
+// reference-counted heap by its type, not through the affine in-place append: the captured
+// string is copied out at entry, the successor concatenation is placed on the reference-counted
+// heap (the back edge stores it as the parameter's own value), the read consed into the sibling
+// accumulator is retained for the cell, and the back edge releases the parameter's old value.
+let expectNonAffineStrParameterIsRuntimeManaged unit =
+    nonAffineStrParameterSource
+    |> loopFunctionLines("[ClosureHelper from collect]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the successor concatenation lives on the reference-counted heap")(countContainingBoth("ConcatStr")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the consed read is retained for the accumulator's cell")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the accumulator's cons cell lives on the reference-counted heap")(countContainingBoth("Alloc ")("SizeBytes=16 RuntimeManaged=true")(lines) >= 1))
+        |> (given (_) -> check("the back edge releases the parameter's old value and the exits release the rest")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) >= 3))
+        |> (given (_) -> check("the entry copies the captured string out")(countContainingBoth("CopyOutArena")("RuntimeManaged=true")(lines) >= 1)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -496,6 +514,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectStringFieldReadIntoSuccessorIsRetained(Unit))
     |> (given (_) -> expectNestedRecordLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectRecordListAccumulatorIsRuntimeManaged(Unit))
+    |> (given (_) -> expectNonAffineStrParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

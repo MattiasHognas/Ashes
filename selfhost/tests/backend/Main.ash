@@ -3457,6 +3457,11 @@ let testRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor shipped unit =
 let testRunSharedTcoRuntimeManagedRecordListAccumulator shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_record_list_accumulator.ash"))("selfhostBackendRunSharedTcoRuntimeManagedRecordListAccumulator")("selfhost_backend_shared_tco_runtime_managed_record_list_accumulator_e2e")("1088899")
 
+// A string parameter rebuilt from a fresh producer and read again in a sibling argument is
+// placed on the reference-counted heap by its type.
+let testRunSharedTcoRuntimeManagedStrParamNonAffinePlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_str_param_non_affine_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedStrParamNonAffinePlateau")("selfhost_backend_shared_tco_runtime_managed_str_param_non_affine_plateau_e2e")("3")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -4996,6 +5001,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedParamStringFieldIntoSuccessor(shipped)
     |> testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor(shipped)
     |> testRunSharedTcoRuntimeManagedRecordListAccumulator(shipped)
+    |> testRunSharedTcoRuntimeManagedStrParamNonAffinePlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
