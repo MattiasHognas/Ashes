@@ -3441,6 +3441,11 @@ let testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau shipped unit =
 let testRunSharedTcoRuntimeManagedTupleAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_tuple_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedTupleAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_tuple_accumulator_plateau_e2e")("4500001500003")
 
+// A record with a string field as a loop parameter: the child copies with the cell at entry and
+// at every back edge, and the releases walk the cell's children.
+let testRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_owned_child_record_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_owned_child_record_accumulator_plateau_e2e")("1|19888899")
+
 let testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator")("selfhost_backend_shared_tco_runtime_managed_param_consed_into_sibling_accumulator_e2e")("17502612|3000|17505612")
 
@@ -4973,6 +4978,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator(shipped)
     |> testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedTupleAccumulatorPlateau(shipped)
+    |> testRunSharedTcoRuntimeManagedOwnedChildRecordAccumulatorPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

@@ -329,6 +329,26 @@ let expectScalarTupleLoopParameterIsRuntimeManaged unit =
         |> (given (_) -> check("the predecessor and exit releases under the tuple's name")(countContainingBoth("RcDrop")("TypeName=Tuple RuntimeManaged=true")(lines) == 2))
         |> (given (_) -> check("a scalar result never transfers the cell")(countContaining("rc_tco_exit_transfer")(lines) == 0)))
 
+let ownedChildRecordLoopSource = "type State =\n    | label: Str\n    | count: Int\n\nlet recursive step (n: Int) (s: State) =\n    if n == 0\n    then s\n    else step(n - 1)(State(label = Ashes.Text.fromInt(n), count = s.count + Ashes.Text.byteLength(s.label)))\n\nlet final = step(10)(State(label = \"seed\", count = 0))\n\nAshes.IO.print(final.label)"
+
+// A record with a string field as a loop parameter copies its child with the cell: the entry
+// copy and the back-edge copy each copy the cell and then the string out of it, the back edge
+// releases the dying successor's own string, and the predecessor and exit releases walk the
+// cell's owned children under a uniqueness test before dropping the cell.
+let expectOwnedChildRecordLoopParameterIsRuntimeManaged unit =
+    ownedChildRecordLoopSource
+    |> loopFunctionLines("[ClosureHelper from step]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the entry copy and the back-edge copy of the cell")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the string child copies out with each cell copy")(countContainingBoth("CopyOutArena")("SrcTemp")(lines) == 4))
+        |> (given (_) -> check("the copied child is stored into the copy twice")(countContainingBoth("SetAdtField")("FieldIndex=0")(lines) >= 2))
+        |> (given (_) -> check("the successor's own string, the predecessor's and the exit's children release as strings")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 3))
+        |> (given (_) -> check("the children release under a uniqueness test")(countContaining("RcIsUnique")(lines) == 2))
+        |> (given (_) -> check("the predecessor and exit releases under the type name")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the exit transfers the parameter's own value to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -419,6 +439,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectForwardedInnerListHeadKeepsListInArena(Unit))
     |> (given (_) -> expectCopyAdtLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectScalarTupleLoopParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectOwnedChildRecordLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

@@ -916,14 +916,19 @@ same public behavior.
   iteration went from 50.7 MB to 5.6 MB of RSS at three million iterations
   (`tests/tco_runtime_managed_record_accumulator_plateau.ash`). A tuple of scalars takes the same
   placement under the type name `Tuple`
-  (`tests/tco_runtime_managed_tuple_accumulator_plateau.ash`, 50.7 MB to 5.6 MB). A body result that reloads an
+  (`tests/tco_runtime_managed_tuple_accumulator_plateau.ash`, 50.7 MB to 5.6 MB). A record with
+  owned children (a `Str` field) copies its children with the cell at entry and at every back
+  edge, releases the dying arena successor's own child references after the copy, and releases
+  the predecessor and the exit value through the cell's inline structural walk (`RcIsUnique`,
+  the children, `rc_drop_shared`, the cell), as stage 0's
+  `EmitRuntimeManagedTcoConstructorDeepCopy` and `EmitRuntimeManagedAdtDrop` do
+  (`tests/tco_runtime_managed_owned_child_record_accumulator_plateau.ash`, 145 MB to 5.6 MB). A
+  body result that reloads an
   `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
   result runtime-managed, as a direct read did. Open: multi-constructor ADT parameters (stage 0
   keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations), owned-child ADT parameters (the child deep copies, the source children's release
-  and the type's structural release at the back edge; 145 MB for a record with a string field),
-  freshly rebuilt lists, lists over heads without a spine copy (the `rc_normalize_list` deep copy),
+  iterations), freshly rebuilt lists, lists over heads without a spine copy (the `rc_normalize_list` deep copy),
   escaping aggregate heads of a consumed list (a promoted aggregate owner needs the structural
   release the placement does not name yet), the runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
