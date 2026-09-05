@@ -902,9 +902,15 @@ same public behavior.
   the shared-cell `rcdrop_list` walk, transfer-checked against a list-typed result whose direct
   read of a slot also marks the function's result runtime-managed. Verified at 200000 iterations
   by `tests/tco_runtime_managed_list_accumulator_plateau.ash` through the backend suite and by
-  `TcoOwnershipRulesTests.ash`. Open: ADT- and tuple-typed parameters, freshly rebuilt lists,
-  lists over heads without a spine copy (the `rc_normalize_list` deep copy), escaping heads of a
-  consumed list (stage 0's pattern-owner protective duplicate), the runtime-managed reset and
+  `TcoOwnershipRulesTests.ash`. A consumed list whose string-like heads outlive their arm (a
+  head forwarded to another parameter) is admitted too, its heads protected by their pattern
+  owners' retains (`escapingConsumedHeadOrdinals` reports the positions, the placement admits
+  them over `Str`/`Bytes`/`BigInt` elements only); the active flag a list-shaped parameter gets
+  at the loop entry is retired from the function's slots when the resolved types keep the list
+  in the arena, so the numbering stays stage 0's. Open: ADT- and tuple-typed parameters, freshly
+  rebuilt lists, lists over heads without a spine copy (the `rc_normalize_list` deep copy),
+  escaping aggregate heads of a consumed list (a promoted aggregate owner needs the structural
+  release the placement does not name yet), the runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
   paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine
   string reservations — a loop over such parameters is emitted without a back-edge reset), the
