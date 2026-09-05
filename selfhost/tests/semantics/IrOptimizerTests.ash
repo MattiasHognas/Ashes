@@ -218,6 +218,55 @@ let testDevirtualizeClosure unit =
                 | IrInstruction { instruction = LoadConstInt(0, 0) } :: IrInstruction { instruction = LoadConstInt(2, 5) } :: IrInstruction { instruction = CallKnown(3, "helper_target", 0, 2, -1, false) } :: IrInstruction { instruction = Return(3) } :: [] -> Unit
                 | _ -> test.fail("testDevirtualizeClosure failed"))
 
+let recursive hasInstructionKind instructions (accepts: IrInstructionKind -> Bool) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = instruction } :: rest -> accepts(instruction) || hasInstructionKind(rest)(accepts)
+
+// A closure helper's argument slot 1 is written by the call itself and once more by a loop's
+// back edge, so a call through a load of that slot must stay indirect: resolving it to the
+// back edge's MakeClosure would name an environment temp defined only after the call.
+let testDevirtualizeClosureLeavesParameterSlotStoredAtBackEdge unit =
+    (let fn =
+        makeFunction("lambda_2")(
+            [
+                1
+                |> LoadLocal(0)
+                |> makeInstruction,
+                5
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                -1
+                |> CallClosure(2)(0)(1)
+                |> makeInstruction,
+                0
+                |> LoadConstInt(3)
+                |> makeInstruction,
+                false
+                |> MakeClosure(4)("helper_target")(3)(0)(false)(false)
+                |> makeInstruction,
+                4
+                |> StoreLocal(1)
+                |> makeInstruction,
+                makeInstruction(Return(2))
+            ]
+        )(
+            2
+        )(
+            5
+        )(
+            true
+        )
+    in
+        let optFn = optimizeIrFunction(fn)
+        in
+            if hasInstructionKind(optFn.instructions)(given (instruction) ->
+                match instruction with
+                    | CallClosure(_, _, _, _) -> true
+                    | _ -> false)
+            then Unit
+            else test.fail("testDevirtualizeClosureLeavesParameterSlotStoredAtBackEdge: the call through the twice-written parameter slot must stay a CallClosure"))
+
 let testRedundantArenaBrackets unit =
     (let fn =
         makeFunction("_start_main")(
@@ -2692,6 +2741,7 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))
     |> (given (_) -> testDevirtualizeClosure(Unit))
+    |> (given (_) -> testDevirtualizeClosureLeavesParameterSlotStoredAtBackEdge(Unit))
     |> (given (_) -> testRedundantArenaBrackets(Unit))
     |> (given (_) -> testRedundantBracketWithDetachedReclaim(Unit))
     |> (given (_) -> testCompileTimeEvaluation(Unit))

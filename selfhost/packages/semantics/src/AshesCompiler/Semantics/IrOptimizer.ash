@@ -430,10 +430,23 @@ let recursive collectClosureTempsWithDropper instructions acc =
             else collectClosureTempsWithDropper(tail)(acc)
         | _ :: tail -> collectClosureTempsWithDropper(tail)(acc)
 
-let collectClosureDefinitionFacts instructions =
+// A function's environment and argument arrive in slots 0 and 1 with no StoreLocal of their
+// own; each counts as one store, so a slot a loop's back edge writes once more is not a
+// single-store slot and a load before that write is never resolved to the closure it stores.
+let parameterSlotsOf (fn: IrFunction) =
+    if fn.hasEnvAndArgParams
+    then [0, 1]
+    else []
+
+let recursive implicitParameterStores (slots: List(Int)) =
+    match slots with
+        | [] -> []
+        | slot :: rest -> (slot, 1) :: implicitParameterStores(rest)
+
+let collectClosureDefinitionFacts (parameterSlots: List(Int)) instructions =
     (let defCounts = countDefinitions(instructions)([])
     in
-        match countStoresBySlot(instructions)([])([]) with
+        match countStoresBySlot(instructions)(implicitParameterStores(parameterSlots))([]) with
             | (storeCounts, storeSources) ->
                 ClosureDefinitionFacts(
                     defCounts = defCounts,
@@ -521,8 +534,8 @@ let recursive devirtualizeKnownClosureCallsPass (facts: ClosureDefinitionFacts) 
                 | None -> devirtualizeKnownClosureCallsPass(facts)(tail)(deadLoads)(irInst :: acc)
         | head :: tail -> devirtualizeKnownClosureCallsPass(facts)(tail)(deadLoads)(head :: acc)
 
-let devirtualizeKnownClosureCalls instructions =
-    (let facts = collectClosureDefinitionFacts(instructions)
+let devirtualizeKnownClosureCalls (parameterSlots: List(Int)) instructions =
+    (let facts = collectClosureDefinitionFacts(parameterSlots)(instructions)
     in
         match devirtualizeKnownClosureCallsPass(facts)(instructions)([])([]) with
             | (rewritten, []) -> rewritten
@@ -1962,7 +1975,7 @@ let recursive collectCaptureSites (functions: List(IrFunction)) sites unresolvab
     match functions with
         | [] -> (sites, unresolvable)
         | fn :: tail ->
-            match collectCaptureSitesInBody(fn.instructions)(collectEnvironmentStores(fn.instructions)([]))(fn.label)(collectClosureDefinitionFacts(fn.instructions))(sites)(unresolvable) with
+            match collectCaptureSitesInBody(fn.instructions)(collectEnvironmentStores(fn.instructions)([]))(fn.label)(collectClosureDefinitionFacts(parameterSlotsOf(fn))(fn.instructions))(sites)(unresolvable) with
                 | (nextSites, nextUnresolvable) -> collectCaptureSites(tail)(nextSites)(nextUnresolvable)
 
 // The sites grouped by the (label, word) pair they fill.
@@ -2522,7 +2535,7 @@ let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
         in
             let insts2 = fuseAdjacentRuntimeRcPairs(insts1)
             in
-                let insts3 = devirtualizeKnownClosureCalls(insts2)
+                let insts3 = devirtualizeKnownClosureCalls(parameterSlotsOf(fn))(insts2)
                 in
                     let insts4 = foldConstants(insts3)
                     in
