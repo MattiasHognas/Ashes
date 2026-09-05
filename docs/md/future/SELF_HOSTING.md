@@ -959,13 +959,24 @@ same public behavior.
   (`tests/tco_runtime_managed_str_param_non_affine_plateau.ash`, and
   `tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash` now takes the
   reference-counted path). Tuple literal elements take the loop-parameter retain marker too
-  (stage 0's `RetainRuntimeManagedTupleChildren`). A
+  (stage 0's `RetainRuntimeManagedTupleChildren`). A list parameter rebuilt as a fresh literal
+  at every back edge (`step(n - 1)([fromInt(n), head])`, stage 0's `FreshListRebuild` fact) has
+  its own self-call shape (`TcoFreshListShape`: a list literal, or a cons chain ending in one)
+  and takes the ADT-slot placement under the type name `List`: the entry normalization and the
+  back-edge copy are the list's own copy plan (`CopyOutList` over string or scalar heads, the
+  cell-by-cell walk over record heads), the old value releases through the list walk, and a
+  pattern owner extracted from such a parameter is placed by the ADT-slot entries as well
+  (`patternSiteRootManaged`). A divergence fixed on the way: the self-hosted list-literal
+  lowering took a pattern-owner duplicate at every element, which stage 0 takes only at tuple
+  elements, constructor arguments, cons parts and tail-call arguments, so a matched head consed
+  into a copied-out literal leaked one reference per iteration
+  (`tests/tco_runtime_managed_fresh_list_rebuild_plateau.ash`, 22 MB to 5.6 MB). A
   body result that reloads an
   `if`/`match` join every branch stored a runtime-managed slot's read into marks the function's
   result runtime-managed, as a direct read did. Open: multi-constructor ADT parameters (stage 0
   keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations), freshly rebuilt lists,
+  iterations),
   escaping aggregate heads of a consumed list (a promoted aggregate owner needs the structural
   release the placement does not name yet), the
   runtime-managed reset and
@@ -1166,8 +1177,8 @@ same public behavior.
   ports, and its `pascalCaseCharacters`/`continuePascalCase` pair is mutual recursion, milestone
   5's OPT-19), so it stays out of the parity runner. A `List`- or ADT-typed loop parameter (the
   OPT-26 and OPT-29 fixtures proper) follows OPT-25's list shapes for a grown or consumed `List`
-  (the operand fixture's `acc` is now a runtime-managed list) and stays open for an ADT, waiting on OPT-25's aggregate-shaped
-  tail above.
+  (the operand fixture's `acc` is now a runtime-managed list), and an ADT parameter follows
+  OPT-25's copy-ADT, tuple, owned-child and nested-record placements (#866 to #870).
 - [~] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:
@@ -1179,8 +1190,10 @@ same public behavior.
   arena cons cell retains its owned tail null-tolerantly (`retainConsTail`); the
   `aggregate_children_retain` fixture (a tuple, a list literal, and a cons of `let`-owned
   strings and lists escaping their functions) matches stage 0 byte for byte and runs through the
-  backend suite. Open: the loop-parameter retain marker and its finalization (the TCO loop
-  lowering), and the pattern-owner duplicate of OPT-26. Related interim narrowing: the
+  backend suite. The loop-parameter retain marker and its finalization are ported (#869, #871,
+  #872: an identity `RcDup` marker for a loop-parameter read or field read stored into a
+  constructor, cons, list-literal or tuple cell, promoted to a real retain once the frame places
+  the parameter). Open: the pattern-owner duplicate of OPT-26. Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per

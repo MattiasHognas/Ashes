@@ -3462,6 +3462,11 @@ let testRunSharedTcoRuntimeManagedRecordListAccumulator shipped unit =
 let testRunSharedTcoRuntimeManagedStrParamNonAffinePlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_str_param_non_affine_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedStrParamNonAffinePlateau")("selfhost_backend_shared_tco_runtime_managed_str_param_non_affine_plateau_e2e")("3")
 
+// A list parameter rebuilt as a fresh literal every iteration: the back edge copies the arena
+// literal out and the matched head is retained by its pattern owner.
+let testRunSharedTcoRuntimeManagedFreshListRebuildPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_fresh_list_rebuild_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedFreshListRebuildPlateau")("selfhost_backend_shared_tco_runtime_managed_fresh_list_rebuild_plateau_e2e")("1688898")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5002,6 +5007,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor(shipped)
     |> testRunSharedTcoRuntimeManagedRecordListAccumulator(shipped)
     |> testRunSharedTcoRuntimeManagedStrParamNonAffinePlateau(shipped)
+    |> testRunSharedTcoRuntimeManagedFreshListRebuildPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

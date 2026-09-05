@@ -420,6 +420,23 @@ let expectNonAffineStrParameterIsRuntimeManaged unit =
         |> (given (_) -> check("the back edge releases the parameter's old value and the exits release the rest")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) >= 3))
         |> (given (_) -> check("the entry copies the captured string out")(countContainingBoth("CopyOutArena")("RuntimeManaged=true")(lines) >= 1)))
 
+let freshListRebuildSource = "let recursive step (n: Int) (items: List(Str)) (total: Int) =\n    match items with\n        | head :: _rest ->\n            if n == 0\n            then total\n            else step(n - 1)([Ashes.Text.fromInt(n), head])(total + Ashes.Text.byteLength(head))\n        | [] -> total\n\nAshes.IO.print(Ashes.Text.fromInt(step(10)([\"seed\"])(0)))"
+
+// A list parameter rebuilt as a fresh literal at every back edge takes the ADT-slot placement
+// under the type name `List`: the borrowed list is normalized at entry under the ownership flag,
+// the back edge copies the fresh arena literal out with its string heads and releases the
+// predecessor through the list walk, and the matched head consed into the literal is retained
+// by its pattern owner once the root parameter is placed.
+let expectFreshListRebuildParameterIsRuntimeManaged unit =
+    freshListRebuildSource
+    |> loopFunctionLines("[ClosureHelper from step]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the list is a captured parameter, copied out unconditionally at entry")(countContaining("LoadArgumentOwnership")(lines) == 0))
+        |> (given (_) -> check("the entry copy and the back-edge copy of the list")(countContainingBoth("CopyOutList")("HeadCopy=String RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the matched head is retained by its pattern owner")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the predecessor and the exit release walk the list")(countContainingBoth("RcDrop")("TypeName=List RuntimeManaged=true")(lines) >= 2)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -515,6 +532,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectNestedRecordLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectRecordListAccumulatorIsRuntimeManaged(Unit))
     |> (given (_) -> expectNonAffineStrParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectFreshListRebuildParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

@@ -4109,6 +4109,10 @@ let emitGuardedAdtRelease emitter (labelName: Str) (activeSlot: Int) (cellTemp: 
 let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> LeafArgumentCopy(-1)
+        | SemList(_element) as list ->
+            match argumentCopyPlanOf(list)(state) with
+                | Some(plan) -> plan
+                | None -> ScalarArgumentCopy
         | SemTuple(elements) -> ShallowAdtArgumentCopy(8 * length(elements))
         | SemNamed(_symbolId, name, _arguments) as named ->
             match argumentCopyPlanOf(named)(state) with
@@ -4806,6 +4810,13 @@ let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringSta
                 then Some((tuple, "Tuple"))
                 else None
             | Some(SemString) -> Some((SemString, "String"))
+            | Some(SemList(element) as list) ->
+                if shape == TcoFreshListShape && tcoListElementSupported(element)(state)
+                then
+                    match argumentCopyPlanOf(list)(state) with
+                        | Some(_plan) -> Some((list, "List"))
+                        | None -> None
+                else None
             | _ -> None
 
 let tcoAdtSlotAdmitted (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
@@ -5148,6 +5159,7 @@ let resolvedTypeName (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemNamed(_symbolId, name, _arguments) -> Some(name)
         | SemString -> Some("String")
+        | SemList(_element) -> Some("List")
         | _ -> None
 
 let recursive anyEntryOnSlot (slot: Int) (entries: List((Int, ArgumentCopyPlan, Maybe(Int)))) =
@@ -5181,27 +5193,27 @@ let recursive candidateStrManaged (slot: Int) (candidates: List(TcoManagedCandid
             then strManaged
             else candidateStrManaged(slot)(rest)
 
-let patternSiteRootManaged (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) =
-    match lookupRuntimeManagedListSlot(site.siteRootSlot)(managedLists) with
-        | Some(_managed) -> true
-        | None -> candidateStrManaged(site.siteRootSlot)(candidates)
+// A pattern owner's root parameter placed on the reference-counted heap: a runtime-managed list
+// slot, an ADT-style slot (a record, a tuple, a string, or a freshly rebuilt list), or a
+// runtime-managed `Str` candidate.
+let patternSiteRootManaged (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) = managedSlotResult(site.siteRootSlot)(managedLists)(managedAdts) || candidateStrManaged(site.siteRootSlot)(candidates)
 
 // Stage 0's `ResolvePatternBindingPlacementOutcome`: a copy-typed binding owns nothing; a
 // binding whose root parameter lives on the reference-counted heap, or whose own type is
 // reference-counted whatever holds it, gets its protective owner; any other binding of an
 // arena-placed root keeps its identity markers.
-let patternSitePlaced (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+let patternSitePlaced (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     site.siteType
     |> resolveType(state)
-    |> (given (resolved: SemanticType) -> !resultSurvivesReset(resolved)(state) && (patternSiteRootManaged(site)(managedLists)(candidates) || isUnconditionallyRcManagedType(resolved)))
+    |> (given (resolved: SemanticType) -> !resultSurvivesReset(resolved)(state) && (patternSiteRootManaged(site)(managedLists)(managedAdts)(candidates) || isUnconditionallyRcManagedType(resolved)))
 
-let recursive placedPatternOwnerSites (sites: List(PatternOwnerSite)) (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+let recursive placedPatternOwnerSites (sites: List(PatternOwnerSite)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     match sites with
         | [] -> []
         | site :: rest ->
-            if patternSitePlaced(site)(managedLists)(candidates)(state)
-            then site :: placedPatternOwnerSites(rest)(managedLists)(candidates)(state)
-            else placedPatternOwnerSites(rest)(managedLists)(candidates)(state)
+            if patternSitePlaced(site)(managedLists)(managedAdts)(candidates)(state)
+            then site :: placedPatternOwnerSites(rest)(managedLists)(managedAdts)(candidates)(state)
+            else placedPatternOwnerSites(rest)(managedLists)(managedAdts)(candidates)(state)
 
 // The temps aliasing a pattern owner's slot value, in the function's instruction order: every
 // load of the slot, and every borrow or duplicate of an alias (a temp is defined before it is
@@ -5295,9 +5307,9 @@ let recursive splicePatternOwnerDups (sites: List(PatternOwnerSite)) (state: Cor
 
 // Stage 0's `FinalizePerceusPatternBindingOwners`, run once the loop's parameter placements are
 // known and before the entry normalization is spliced in below every site.
-let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     state
-    |> placedPatternOwnerSites(state.patternOwnerSites)(managedLists)(candidates)
+    |> placedPatternOwnerSites(state.patternOwnerSites)(managedLists)(managedAdts)(candidates)
     |> (given (placed: List(PatternOwnerSite)) ->
         state
         |> promotePatternOwnerSites(placed)
@@ -5380,7 +5392,7 @@ let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Co
             given (managedAdts: List((Int, Int, SemanticType, Str))) ->
                 state
                 |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)
-                |> finalizePatternOwnerSites(managedLists)(candidates)
+                |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                 |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                 |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)))(if anyBlockingSibling(candidates)(state)
         then []
@@ -9138,8 +9150,7 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
             match state
             |> withConsumerRequest(listElementRequest(request)(Some(elementType))(transfers)(expression)(state))
             |> lower(expression)
-            |> retainListElement(request)(transfers)(expression)
-            |> duplicatePatternOwnerChild(expression) with
+            |> retainListElement(request)(transfers)(expression) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
                     match bindType(elementType)(headType)(valueState) with
