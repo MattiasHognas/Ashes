@@ -3483,6 +3483,11 @@ let testRunSharedTcoRuntimeManagedFindStringHeadPlateau shipped unit =
 let testRunSharedTcoRuntimeManagedFindRecordHeadPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_find_record_head_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedFindRecordHeadPlateau")("selfhost_backend_shared_tco_runtime_managed_find_record_head_plateau_e2e")("8")
 
+// A multi-constructor variant loop parameter stays in the arena and is carried across the back
+// edge by the fixed-watermark compaction through its synthesized copier.
+let testRunSharedTcoArenaVariantAccumulatorPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_arena_variant_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoArenaVariantAccumulatorPlateau")("selfhost_backend_shared_tco_arena_variant_accumulator_plateau_e2e")("500499")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5027,6 +5032,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedConsumedRecordHeadsEscape(shipped)
     |> testRunSharedTcoRuntimeManagedFindStringHeadPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedFindRecordHeadPlateau(shipped)
+    |> testRunSharedTcoArenaVariantAccumulatorPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

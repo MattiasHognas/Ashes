@@ -1030,12 +1030,38 @@ same public behavior.
   0's `IsStaticConstructorArm` in `LowerMatchArmExpression` through
   `EmitRuntimeManagedTcoDeepCopy`); the record-head search runs at 5.6 MB through both compilers
   (250 MB and 33 MB before, `tests/tco_runtime_managed_find_record_head_plateau.ash`,
-  `Linux_backend_llvm_find_loop_returning_record_head_memory_should_plateau`). Open: multi-constructor ADT parameters (stage 0
-  keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
-  doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations), and the copy-out reset
-  paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, arena
-  string reservations — a loop over such parameters is emitted without a back-edge reset), the
+  `Linux_backend_llvm_find_loop_returning_record_head_memory_should_plateau`). A loop parameter
+  the reference-counted placement does not admit (a multi-constructor variant, a big integer, a
+  tuple or ADT with heap children) stays in the arena and takes stage 0's fixed-watermark
+  compaction at the back edge (`emitArenaTcoReset`, stage 0's `EmitTcoBackEdgeArenaBlock` past
+  the runtime-managed reset): the per-iteration watermark is restored when every argument
+  survives a reset on its own (a scalar, a resource handle, or the loop's own unchanged value,
+  `TcoBackEdgeTryEmitPlainReset`), and otherwise, when every heap argument has a whole-value copy
+  (a string or big integer by size, a same-arity scalar-field ADT by its cell, a deep-copyable
+  ADT or tuple through its clone; a list keeps the arena), the compaction runs under stage 0's
+  threshold (`emitCompactionCheck`: the arena grew past twice the live size recorded in the
+  compaction-size slot plus 4096 bytes, or the cursor left the watermark's chunk): every heap
+  argument is copied up above the cursor, a deep clone twice (`emitCompactionUpCopies`), the
+  arena is reset to the fixed loop-entry watermark with an arena string reservation's slots
+  zeroed, the copies are copied down onto the watermark (an affine arena string re-reserving
+  through an empty in-place append) and stored (`emitCompactionDownCopies`), the chunks above
+  are reclaimed, and the live size is recorded, or the watermark rebased to the new chunk's
+  allocation start read from the chunk footer when the copy crossed a chunk
+  (`emitCompactionRecord`). The deep clone is `StructuralCopiers.ash`'s `synthesizeDeepCopy`
+  (stage 0's `EmitDeepCopy`): a string or bytes value copies by its length, a tuple is rebuilt
+  element by element, a list over scalar, string or scalar-list heads copies through the
+  cons-chain copy, a list over deep-copyable heads clones cell by cell through a synthesized
+  `__deepcopy_list_N` copier (stage 0's `EmitListDeepCopierBody`), and a named type calls its
+  synthesized `__deepcopy_N` copier (`AdtDeepCopier`, cached per pretty type beside the
+  droppers) through a closure whose environment holds the closure itself, the copier switching
+  on the constructor tag, allocating a fresh cell of the same constructor, and copying every
+  field, a field of the type itself through the self-closure.
+  `tests/tco_arena_variant_accumulator_plateau.ash` (a
+  `Empty | Filled(Int, Int)` parameter over three million iterations) went from 75 MB to 5.6 MB
+  through the self-hosted compiler (stage 0: 4.1 MB), its back edge matching stage 0's text up
+  to the reuse-specialization and dead retention-flag blocks stage 0 still emits around it.
+  Open: the single-cell list copies under the advancing watermark (a
+  `head :: <accumulator>` list the runtime-managed placement declines keeps the arena), the
   resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
