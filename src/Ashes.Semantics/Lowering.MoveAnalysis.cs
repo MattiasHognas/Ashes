@@ -3649,8 +3649,8 @@ public sealed partial class Lowering
             case Expr.Var v:
                 return ResultReachVar(v, env);
 
-            case Expr.QualifiedVar:
-                return ReachPoisoned(ResultReachCause.GlobalOrTopLevelReach);
+            case Expr.QualifiedVar qualified:
+                return ResultReachQualifiedVar(qualified, env);
 
             // Control flow: the returned value is one of the arms; the scrutinee/condition is not part
             // of the returned value (but a match's scrutinee reach flows into its pattern bindings).
@@ -3685,12 +3685,14 @@ public sealed partial class Lowering
                 return SumReach(t.Elements, env, scope);
             case Expr.RecordLit rec:
                 return ResultReachRecordLit(rec, env, scope);
+            case Expr.RecordUpdate update:
+                return ResultReachRecordUpdate(update, env, scope);
 
             case Expr.Call:
                 return CallReach(e, env, scope);
 
             default:
-                // Unmodeled node (Lambda, Await, RecordUpdate, Result pipes, …): not provably confined.
+                // Unmodeled node (Lambda, Await, Result pipes, …): not provably confined.
                 return ReachPoisoned();
         }
     }
@@ -3732,6 +3734,63 @@ public sealed partial class Lowering
             _maValueRhs.ContainsKey(v.Name)
                 ? ResultReachCause.GlobalOrTopLevelReach
                 : ResultReachCause.ConservativeUnknown);
+    }
+
+    // A dotted name whose first segment is a bound local reads a field of that binding's value, so the
+    // result reaches whatever the binding reaches, through the named field's own sub-cell (one path
+    // segment per dotted segment, so a field of a field nests deeper). Any other dotted name is a
+    // module member: a global reach.
+    private static ResultReachState ResultReachQualifiedVar(
+        Expr.QualifiedVar qualified,
+        Dictionary<string, ResultReachState> env)
+    {
+        string[] segments = qualified.Module.Split('.');
+        if (!env.TryGetValue(segments[0], out ResultReachState bound))
+        {
+            return ReachPoisoned(ResultReachCause.GlobalOrTopLevelReach);
+        }
+
+        ResultReachState reach = bound;
+        for (int i = 1; i < segments.Length; i++)
+        {
+            reach = ExtendPathsNamed(reach, segments[i]);
+        }
+
+        return ExtendPathsNamed(reach, qualified.Name);
+    }
+
+    // Extends every token in a reach by a heap field named <paramref name="field"/>: the sub-cell a field
+    // read of that name yields. A field named by a pattern is addressed by its index instead, so the same
+    // field reached both ways is not recognized as one cell; two reads of the same name are.
+    private static ResultReachState ExtendPathsNamed(
+        ResultReachState r,
+        string field)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (k, v) in r.Counts)
+        {
+            counts[k + "/" + field] = v;
+        }
+
+        return new ResultReachState(counts, r.Causes);
+    }
+
+    // A record update builds a fresh cell whose updated fields hold their new values whole (each value's
+    // reach sums, exactly as a record literal's fields do) and whose other fields alias the target's own
+    // fields: the target reaches the result only through its components, never as itself, so a caller
+    // that hands the target over still releases its cell while retaining what the result kept of it.
+    private ResultReachState ResultReachRecordUpdate(
+        Expr.RecordUpdate update,
+        Dictionary<string, ResultReachState> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        var acc = ExtendPathsComponent(ResultReach(update.Target, env, scope));
+        foreach ((_, Expr value) in update.Updates)
+        {
+            acc = ReachSum(acc, ResultReach(value, env, scope));
+        }
+
+        return acc;
     }
 
     private ResultReachState ResultReachRecordLit(
