@@ -35,6 +35,7 @@ import AshesCompiler.Semantics.TaglessAdtLayout.adtAllocationSizeBytes
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
+import AshesCompiler.Backend.IrCodegen.Rc.emitRuntimeRcDrop
 import Ashes.Number.UInt
 export (
     type ArenaRuntime(..),
@@ -60,6 +61,7 @@ export (
     value emitPlacedPayloadPtr,
     value emitPlacedPayloadPtrDynamic,
     value emitPlacedStringConcatN,
+    value emitConcatStrTip,
     value emitRcAllocWord,
     value emitMoveBytes,
     value listHeadKindCode,
@@ -409,6 +411,79 @@ let emitPlacedStringConcatN context function_ builder i64 i8 ptrType (arena: Are
                 |> (given (_) ->
                     emitConcatCopyParts(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(buildIntToPtr(builder)(buildAdd(builder)(dest)(arenaConst(i64)(8))("str_cat_arena_bytes"))(ptrType)("str_cat_arena_bytes_ptr"))(constInt(i64)(0u64)(false))(partRefs))
                 |> (given (_) -> dest))
+
+// The fallback path of `emitConcatStrTip` below: a fresh allocation of twice the result's size
+// holding both operands' bytes, recorded as the new reservation. A reference-counted
+// reservation's header records the aligned size the reservation spans, so the payload is that
+// whole span; the arena block is aligned the same way.
+let emitConcatStrTipFallback context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType freeFn freeType memcpyFn memcpyType (managed: Bool) leftRef leftLen leftBytes rightLen rightBytes resvStartSlot resvEndSlot resultSlot =
+    (let total = buildAdd(builder)(leftLen)(rightLen)("csr_fb_total")
+    in
+        let allocSize =
+            alignArenaSizeDynamic(builder)(i64)(buildAdd(builder)(buildMul(builder)(total)(arenaConst(i64)(2))("csr_fb_2x"))(arenaConst(i64)(8))("csr_fb_size"))("csr_fb_rsz")
+        in
+            let dest =
+                if managed
+                then
+                    buildPtrToInt(builder)(emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(allocSize)("rc_csr_fb"))(i64)("rc_csr_fb_word")
+                else emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(allocSize)("csr_fb")
+            in
+                let destBytes =
+                    buildAdd(builder)(dest)(arenaConst(i64)(8))("csr_fb_d8")
+                in
+                    Unit
+                    |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(dest)(0)(total)("csr_fb_hdr"))
+                    |> (given (_) -> buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(destBytes)(ptrType)("csr_fb_dbytes"), buildIntToPtr(builder)(leftBytes)(ptrType)("csr_fb_lbytes"), leftLen])(3u32)("csr_fb_lcopy"))
+                    |> (given (_) ->
+                        buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(buildAdd(builder)(destBytes)(leftLen)("csr_fb_dtail_i"))(ptrType)("csr_fb_dtail"), buildIntToPtr(builder)(rightBytes)(ptrType)("csr_fb_rbytes"), rightLen])(3u32)("csr_fb_rcopy"))
+                    |> (given (_) ->
+                        if managed
+                        then emitRuntimeRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(leftRef)
+                        else Unit)
+                    |> (given (_) -> buildStore(builder)(dest)(resvStartSlot))
+                    |> (given (_) ->
+                        buildStore(builder)(buildAdd(builder)(dest)(allocSize)("csr_fb_rend"))(resvEndSlot))
+                    |> (given (_) -> buildStore(builder)(dest)(resultSlot)))
+
+// The reservation-growing string append of an affine TCO accumulator (`ConcatStrTip`, stage 0's
+// `EmitConcatStrTip`): when the left operand is the string recorded in the reservation start slot
+// and the appended bytes fit below the reservation end, the right operand's bytes are copied onto
+// the accumulator's end and only its length word grows; otherwise the two are concatenated into
+// a fresh allocation with doubling headroom (twice the result's size), placed by the flag on the
+// reference-counted heap or in the arena, the old reference-counted accumulator released, and the
+// new bounds recorded in the slots. `resvStartSlot`/`resvEndSlot` are the slots' allocas.
+let emitConcatStrTip context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType freeFn freeType memcpyFn memcpyType (managed: Bool) leftRef rightRef resvStartSlot resvEndSlot =
+    match (appendBasicBlock(context)(function_)("csr_extend"), appendBasicBlock(context)(function_)("csr_fallback"), appendBasicBlock(context)(function_)("csr_done")) with
+        | (extendBlock, fallbackBlock, doneBlock) ->
+            match (buildEntryAlloca(builder)(i64)("csr_result"), emitStringParts(builder)(i64)(ptrType)(leftRef)("csr_left"), emitStringParts(builder)(i64)(ptrType)(rightRef)("csr_right")) with
+                | (resultSlot, (leftLen, leftBytes), (rightLen, rightBytes)) ->
+                    let accEnd =
+                        buildAdd(builder)(buildAdd(builder)(leftRef)(arenaConst(i64)(8))("csr_l8"))(leftLen)("csr_acc_end")
+                    in
+                        let reservationStart = buildLoad(builder)(i64)(resvStartSlot)("csr_rstart")
+                        in
+                            let reservationEnd = buildLoad(builder)(i64)(resvEndSlot)("csr_rend")
+                            in
+                                let isOurs =
+                                    buildAnd(builder)(buildICmp(builder)(intPredicateEq)(leftRef)(reservationStart)("csr_identity"))(buildICmp(builder)(intPredicateNe)(reservationStart)(arenaConst(i64)(0))("csr_nonzero"))("csr_ours")
+                                in
+                                    let fits =
+                                        buildICmp(builder)(intPredicateUle)(buildAdd(builder)(accEnd)(rightLen)("csr_new_end"))(reservationEnd)("csr_fits")
+                                    in
+                                        Unit
+                                        |> (given (_) ->
+                                            buildCondBr(builder)(buildAnd(builder)(isOurs)(fits)("csr_extendable"))(extendBlock)(fallbackBlock))
+                                        |> (given (_) -> positionBuilderAtEnd(builder)(extendBlock))
+                                        |> (given (_) -> buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(accEnd)(ptrType)("csr_ext_dest"), buildIntToPtr(builder)(rightBytes)(ptrType)("csr_ext_rbytes"), rightLen])(3u32)("csr_ext_copy"))
+                                        |> (given (_) ->
+                                            storeWordAt(builder)(i64)(i8)(ptrType)(leftRef)(0)(buildAdd(builder)(leftLen)(rightLen)("csr_ext_len"))("csr_ext_hdr"))
+                                        |> (given (_) -> buildStore(builder)(leftRef)(resultSlot))
+                                        |> (given (_) -> buildBr(builder)(doneBlock))
+                                        |> (given (_) -> positionBuilderAtEnd(builder)(fallbackBlock))
+                                        |> (given (_) -> emitConcatStrTipFallback(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)(leftRef)(leftLen)(leftBytes)(rightLen)(rightBytes)(resvStartSlot)(resvEndSlot)(resultSlot))
+                                        |> (given (_) -> buildBr(builder)(doneBlock))
+                                        |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
+                                        |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("csr_final"))
 
 // A `malloc`'d RC cell for `size` payload bytes, as the value word.
 let emitRcAllocWord builder i64 i8 mallocFn mallocType size name =

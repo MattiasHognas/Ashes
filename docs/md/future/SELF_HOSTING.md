@@ -877,15 +877,32 @@ same public behavior.
   `CoreLowering.ash` splices the entry normalization at the recorded loop-entry point once the
   whole body's types resolve (the function's own direct argument reads the caller's hidden
   ownership flag via `LoadArgumentOwnership`, stage 0's `EmitRuntimeManagedTcoArgumentNormalization`;
-  a captured chain parameter is always copied, stage 0's `EmitRuntimeManagedTcoParamCopy`), the
-  back edge releases the predecessor's own reference unless the argument is that same parameter
-  unchanged (`tcoBackEdgeDropStrPredecessors`; no active-flag locals — placement is a single
-  whole-function decision here, not iteration-conditional, so there is nothing for a flag to
-  track), and the exit compares the loop's returned value against the parameter's own current
-  value at runtime and releases only when they differ (the transferred-reference case). Verified
-  crash- and leak-free at 200000 iterations
-  (`tests/tco_runtime_managed_str_accumulator_plateau.ash`, run through the backend suite next to
-  a 200000-element `List(Str)` consumed through its own pattern-owned tail). A `List`-typed
+  a captured chain parameter is always copied, stage 0's `EmitRuntimeManagedTcoParamCopy`) and
+  sets the slot's active flag; the tail self-call's own `+` chain rooted at the parameter is
+  armed (`affineAppendContextFor`, stage 0's `LowerCallTcoArmAffineStringArg`) so the
+  concatenation is the reservation-growing `ConcatStrTip` over the loop's reservation slot pair,
+  promoted to `RuntimeManaged=true` once the parameter's placement is final
+  (`promoteAffineAppends`, stage 0's `PromoteRuntimeManagedStringConcats`); the back edge takes
+  the runtime-managed reset for a `Str`-only loop as well (the in-place append consumed the
+  predecessor's reference, so nothing is released; any other successor is copied out to the
+  reference-counted heap and the predecessor released under the active flag; the fixed
+  loop-entry watermark is restored and the successor stored with its flag set), and the exit
+  transfer-checks the slot against the loop's result under the flag, the copy-ADT slots' own
+  check, with the loop's closure advertising a runtime-managed result. The backend grows the
+  reservation in place when the left operand is the recorded reservation and the bytes fit,
+  and otherwise concatenates into a fresh doubling-headroom allocation placed by the flag,
+  releasing the old reference-counted accumulator and recording the new bounds
+  (`emitConcatStrTip`, stage 0's `EmitConcatStrTip`). The accumulator's loop function of
+  `tests/tco_runtime_managed_str_accumulator_plateau.ash` matches stage 0's text; run through
+  the backend suite next to a 200000-element `List(Str)` consumed through its own pattern-owned
+  tail, the fixture went from 19.8 GB of RSS and 1.1 s (every append copied the whole
+  accumulator into the arena, no back-edge reset) to 47 MB and 0.01 s. A single-parameter loop
+  (`let recursive loop n = ...`) now runs the same placement finalization as a curried one (its
+  body is entered straight from the recursive binding, which used to finish without it, leaving
+  every active flag unretired and unnormalized). Open here: the `let`-bound append form
+  (`let acc2 = acc + rhs in loop(n - 1)(acc2)`, OPT-13's arming; the successor is copied out at
+  the back edge instead) and an append whose operand types are still unresolved when it is
+  lowered (the deferred add seals to a copying `ConcatStr`). A `List`-typed
   parameter is placed the same way in two self-call shapes (`TcoRuntimeManagedParams.ash`'s
   `tcoSelfCallShapes`, stage 0's `TcoSelfCallArgumentShape` walk over the loop body's `if`
   branches, `match` arms, and `let` bodies): grown by one cons cell per iteration onto the
@@ -1016,10 +1033,8 @@ same public behavior.
   `Linux_backend_llvm_find_loop_returning_record_head_memory_should_plateau`). Open: multi-constructor ADT parameters (stage 0
   keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations), the
-  runtime-managed reset and
-  active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
-  paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine
+  iterations), and the copy-out reset
+  paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, arena
   string reservations — a loop over such parameters is emitted without a back-edge reset), the
   resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
