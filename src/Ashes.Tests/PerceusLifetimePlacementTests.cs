@@ -148,6 +148,41 @@ public sealed class PerceusLifetimePlacementTests
     }
 
     [Test]
+    public void Live_branch_into_a_join_another_path_already_dropped_gets_its_own_drop_block()
+    {
+        // The test block branches straight to the join while its fallthrough path reads the owner
+        // and drops it after that read before jumping to the same join; an entry drop at the join
+        // would run twice on the fallthrough path.
+        var function = Function([
+            new IrInst.LoadConstStr(0, "text"),
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadConstBool(1, true),
+            new IrInst.JumpIfFalse(1, "join"),
+            new IrInst.LoadLocal(2, 0),
+            new IrInst.Borrow(3, 2),
+            new IrInst.PrintStr(3),
+            new IrInst.Jump("join"),
+            new IrInst.Label("join"),
+            new IrInst.LoadConstInt(4, 0),
+            new IrInst.LoadLocal(5, 0),
+            new IrInst.RcDrop(5, "String", 0),
+            new IrInst.Return(4),
+        ], tempCount: 6);
+
+        IrFunction placed = PerceusLifetimePlacement.Place(function);
+
+        int printIndex = placed.Instructions.FindIndex(instruction => instruction is IrInst.PrintStr);
+        placed.Instructions[printIndex + 1].ShouldBeOfType<IrInst.RcDrop>();
+        placed.Instructions.Any(instruction => instruction is IrInst.JumpIfFalse { Target: "test_rc_edge_0_0" }).ShouldBeTrue();
+        int edgeLabel = placed.Instructions.FindIndex(instruction => instruction is IrInst.Label { Name: "test_rc_edge_0_0" });
+        placed.Instructions[edgeLabel + 1].ShouldBeOfType<IrInst.RcDrop>();
+        placed.Instructions[edgeLabel + 2].ShouldBe(new IrInst.Jump("join"));
+        int joinLabel = placed.Instructions.FindIndex(instruction => instruction is IrInst.Label { Name: "join" });
+        placed.Instructions[joinLabel + 1].ShouldBeOfType<IrInst.LoadConstInt>();
+        placed.Instructions.Count(instruction => instruction is IrInst.RcDrop).ShouldBe(2);
+    }
+
+    [Test]
     public void Recursive_match_arm_does_not_place_owner_drop_on_sibling_path()
     {
         var function = Function([

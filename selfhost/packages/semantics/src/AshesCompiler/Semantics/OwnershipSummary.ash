@@ -188,8 +188,8 @@ let recursive findParameterReach entries param =
         | entry :: rest ->
             match entry with
                 | ParameterReachEntry { parameterName = name, reachCount = count } ->
-                    if name == param
-                    then count
+                    if name == param || Ashes.Text.startsWith(name)(param + "/")
+                    then count + findParameterReach(rest)(param)
                     else findParameterReach(rest)(param)
 
 let resultReachesParameter facts param =

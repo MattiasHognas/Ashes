@@ -135,8 +135,14 @@ internal static class PerceusLifetimePlacement
         }
 
         ComputeLiveness(blocks, region);
+        var retargets = new Dictionary<int, IrInst>();
         Dictionary<int, List<IrInst>> insertions = CollectInsertions(
-            instructions, blocks, region, definitionBlock, owner, anchor, borrowedArgumentCalls, ref tempCount);
+            instructions, blocks, region, definitionBlock, owner, ownerSlot, anchor, functionLabel, borrowedArgumentCalls, retargets, ref tempCount);
+
+        foreach ((int index, IrInst replacement) in retargets)
+        {
+            instructions[index] = replacement;
+        }
 
         foreach ((int index, List<IrInst> added) in insertions.OrderByDescending(pair => pair.Key))
         {
@@ -201,8 +207,11 @@ internal static class PerceusLifetimePlacement
         HashSet<int> region,
         int definitionBlock,
         OwnerRegion owner,
+        int ownerSlot,
         IrInst.RcDrop anchor,
+        string functionLabel,
         IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls,
+        Dictionary<int, IrInst> retargets,
         ref int tempCount)
     {
         var insertions = new Dictionary<int, List<IrInst>>();
@@ -221,10 +230,23 @@ internal static class PerceusLifetimePlacement
             }
             else if (!block.LiveIn && HasLiveBranchPredecessor(blocks, region, blockIndex))
             {
-                int entryIndex = block.Start < instructions.Count && instructions[block.Start] is IrInst.Label
-                    ? block.Start + 1
-                    : block.Start;
-                AddInsertion(insertions, entryIndex, placedDrop);
+                if (AllPredecessorsLiveOut(blocks, region, blockIndex))
+                {
+                    int entryIndex = block.Start < instructions.Count && instructions[block.Start] is IrInst.Label
+                        ? block.Start + 1
+                        : block.Start;
+                    AddInsertion(insertions, entryIndex, placedDrop);
+                }
+                else
+                {
+                    foreach (int predecessor in block.Predecessors)
+                    {
+                        if (IsLiveBranch(blocks, region, predecessor))
+                        {
+                            SplitLiveEdge(instructions, blocks, predecessor, blockIndex, placedDrop, functionLabel, ownerSlot, retargets, insertions);
+                        }
+                    }
+                }
             }
 
             AddCallDups(instructions, block, anchor.RuntimeManaged, anchor.MayBeEmpty, borrowedArgumentCalls, ref tempCount, insertions);
@@ -233,8 +255,84 @@ internal static class PerceusLifetimePlacement
         return insertions;
     }
 
+    // A join that some predecessor reaches without the owner (a branch whose own path already
+    // released it, or a block outside the region) cannot drop at its entry: the drop would run
+    // twice on that path. The live branch's edge gets its own block instead — its explicit
+    // target rewritten to a fresh label whose block drops and jumps on to the join — and a
+    // fallthrough edge drops right before the join's label, which only that predecessor reaches.
+    private static void SplitLiveEdge(
+        List<IrInst> instructions,
+        List<Block> blocks,
+        int predecessorIndex,
+        int joinIndex,
+        IrInst.RcDrop placedDrop,
+        string functionLabel,
+        int ownerSlot,
+        Dictionary<int, IrInst> retargets,
+        Dictionary<int, List<IrInst>> insertions)
+    {
+        Block predecessor = blocks[predecessorIndex];
+        Block join = blocks[joinIndex];
+        string? joinLabel = join.Start < instructions.Count && instructions[join.Start] is IrInst.Label label ? label.Name : null;
+        if (joinLabel is null)
+        {
+            AddInsertion(insertions, join.Start, placedDrop);
+            return;
+        }
+
+        string edgeLabel = $"{functionLabel}_rc_edge_{ownerSlot}_{predecessorIndex}";
+        int terminatorIndex = predecessor.End - 1;
+        bool retargeted = false;
+        switch (instructions[terminatorIndex])
+        {
+            case IrInst.Jump jump when string.Equals(jump.Target, joinLabel, StringComparison.Ordinal):
+                retargets[terminatorIndex] = jump with { Target = edgeLabel };
+                retargeted = true;
+                break;
+            case IrInst.JumpIfFalse jumpIfFalse when string.Equals(jumpIfFalse.Target, joinLabel, StringComparison.Ordinal):
+                retargets[terminatorIndex] = jumpIfFalse with { Target = edgeLabel };
+                retargeted = true;
+                break;
+            case IrInst.SwitchTag switchTag when string.Equals(switchTag.DefaultLabel, joinLabel, StringComparison.Ordinal)
+                || switchTag.Cases.Any(c => string.Equals(c.Label, joinLabel, StringComparison.Ordinal)):
+                retargets[terminatorIndex] = switchTag with
+                {
+                    Cases = [.. switchTag.Cases.Select(c => string.Equals(c.Label, joinLabel, StringComparison.Ordinal) ? (c.Tag, edgeLabel) : c)],
+                    DefaultLabel = string.Equals(switchTag.DefaultLabel, joinLabel, StringComparison.Ordinal) ? edgeLabel : switchTag.DefaultLabel,
+                };
+                retargeted = true;
+                break;
+        }
+
+        if (retargeted)
+        {
+            AddInsertion(insertions, instructions.Count, new IrInst.Label(edgeLabel));
+            AddInsertion(insertions, instructions.Count, placedDrop);
+            AddInsertion(insertions, instructions.Count, new IrInst.Jump(joinLabel));
+        }
+
+        if (predecessorIndex + 1 == joinIndex && instructions[terminatorIndex] is not IrInst.Jump and not IrInst.SwitchTag and not IrInst.Return)
+        {
+            AddInsertion(insertions, join.Start, placedDrop);
+        }
+    }
+
+    private static bool IsLiveBranch(List<Block> blocks, HashSet<int> region, int blockIndex)
+        => region.Contains(blockIndex) && blocks[blockIndex].Successors.Count > 1 && blocks[blockIndex].LiveOut;
+
+    private static bool AllPredecessorsLiveOut(List<Block> blocks, HashSet<int> region, int blockIndex)
+        => blocks[blockIndex].Predecessors.All(predecessor => region.Contains(predecessor) && blocks[predecessor].LiveOut);
+
     private static int LifetimeInsertionIndex(List<IrInst> instructions, int lastUse)
     {
+        // A returned alias (an escaping cell or call result that embeds the owner) is a use whose
+        // "after" is unreachable; the drop goes before the return, where lowering's escape handling
+        // has already retained or copied what the result keeps.
+        if (instructions[lastUse] is IrInst.Return)
+        {
+            return lastUse;
+        }
+
         int insertionIndex = lastUse + 1;
         if (IsArenaCopyOut(instructions[lastUse])
             && insertionIndex < instructions.Count
@@ -296,30 +394,6 @@ internal static class PerceusLifetimePlacement
         }
     }
 
-    private static HashSet<int> CollectAppliedClosureTemps(List<IrInst> instructions, List<Block> blocks, HashSet<int> region)
-    {
-        var applied = new HashSet<int>();
-        foreach (int blockIndex in region)
-        {
-            Block block = blocks[blockIndex];
-            for (int i = block.Start; i < block.End; i++)
-            {
-                switch (instructions[i])
-                {
-                    case IrInst.CallClosure call:
-                        applied.Add(call.ClosureTemp);
-                        break;
-                    case IrInst.CallKnown known:
-                        // A devirtualized stage receives the previous stage's result as its environment.
-                        applied.Add(known.EnvTemp);
-                        break;
-                }
-            }
-        }
-
-        return applied;
-    }
-
     private static HashSet<int> CollectOwnerAliases(
         List<IrInst> instructions,
         List<Block> blocks,
@@ -335,22 +409,20 @@ internal static class PerceusLifetimePlacement
             }
         }
 
-        // Follow aliases to a fixpoint through Borrow; a local slot that only holds an alias
-        // (StoreLocal then LoadLocal — the conditional runtime-argument retain routes a borrowed owner
-        // through a fresh slot); a closure env that captured an alias (StoreMemOffset of an alias then
-        // MakeClosure over that env); and a PARTIAL application (CallClosure(f, alias) whose result is
-        // itself applied again, so the returned closure captured the alias). A transient closure holds
-        // the borrow in its arena/stack env until applied, so the owner must stay live until that
-        // application — else its drop lands right after the capture, a use-after-free (benign for a
-        // recycled small string, a segfault for an OS-backed >4 KiB string). Every later stage of a
-        // curried chain copies the captured alias into the environment of the closure it returns, so
-        // applying an alias-holding closure (by CallClosure, or by CallKnown over an alias-holding
-        // environment) yields an alias too while that result is applied again; the final application
-        // is a plain use. All only lengthen liveness, so the drop lands after the last real use, never
-        // earlier.
-        HashSet<int> partialApplicationResults = CollectAppliedClosureTemps(instructions, blocks, region);
-        var aliasHoldingSlots = new HashSet<int>();
-        var aliasHoldingEnvs = new HashSet<int>();
+        // Follow aliases to a fixpoint through Borrow; a local slot that holds an alias (StoreLocal
+        // then a LoadLocal the store can reach — the conditional runtime-argument retain routes a
+        // borrowed owner through a fresh slot); an arena cell that embeds an alias without a reference of its own
+        // (StoreMemOffset of an alias into a list literal's cons cell, a tuple, or a closure env),
+        // a closure made over such an env, and the result of a call that receives an alias as its
+        // argument, closure, or environment. A transient closure holds the borrow in its arena/stack
+        // env until applied, so the owner must stay live until that application; a callee's result
+        // may carry the argument's pointer out (a curried stage's returned closure captured it, a
+        // list-building loop consed a matched head into the list it returns), so the owner must stay
+        // live until the result's last use — its copy-out past the call window reads the pointer.
+        // Else the drop lands right after the capture or the call, a use-after-free (benign for a
+        // recycled small string, a segfault for an OS-backed >4 KiB string). All only lengthen
+        // liveness, so the drop lands after the last real use, never earlier.
+        var aliasStores = new HashSet<AliasStore>();
         bool changed = true;
         while (changed)
         {
@@ -360,8 +432,7 @@ internal static class PerceusLifetimePlacement
                 Block block = blocks[blockIndex];
                 for (int i = block.Start; i < block.End; i++)
                 {
-                    changed |= PropagateAlias(
-                        instructions[i], aliases, aliasHoldingSlots, aliasHoldingEnvs, partialApplicationResults);
+                    changed |= PropagateAlias(instructions[i], i, block, aliases, aliasStores);
                 }
             }
         }
@@ -369,38 +440,53 @@ internal static class PerceusLifetimePlacement
         return aliases;
     }
 
-    // One propagation step over a single instruction; returns whether it discovered a new alias,
-    // alias-holding slot, or alias-holding environment.
-    private static bool PropagateAlias(
-        IrInst instruction,
-        HashSet<int> aliases,
-        HashSet<int> aliasHoldingSlots,
-        HashSet<int> aliasHoldingEnvs,
-        HashSet<int> partialApplicationResults)
+    // One propagation step over a single instruction; returns whether it discovered a new alias or
+    // alias-holding store.
+    private static bool PropagateAlias(IrInst instruction, int index, Block block, HashSet<int> aliases, HashSet<AliasStore> aliasStores)
     {
         switch (instruction)
         {
             case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
                 return aliases.Add(borrow.Target);
             case IrInst.StoreLocal store when aliases.Contains(store.Source):
-                return aliasHoldingSlots.Add(store.Slot);
-            case IrInst.LoadLocal load when aliasHoldingSlots.Contains(load.Slot):
+                return aliasStores.Add(new AliasStore(store.Slot, index, block.Start, block.End));
+            case IrInst.LoadLocal load when LoadSeesAliasStore(aliasStores, load.Slot, index, block):
                 return aliases.Add(load.Target);
-            case IrInst.StoreMemOffset envStore when aliases.Contains(envStore.Source):
-                return aliasHoldingEnvs.Add(envStore.BasePtr);
-            case IrInst.MakeClosure mc when aliasHoldingEnvs.Contains(mc.EnvPtrTemp):
+            case IrInst.StoreMemOffset cellStore when aliases.Contains(cellStore.Source):
+                return aliases.Add(cellStore.BasePtr);
+            case IrInst.MakeClosure mc when aliases.Contains(mc.EnvPtrTemp):
                 return aliases.Add(mc.Target);
-            case IrInst.MakeClosureStack mcs when aliasHoldingEnvs.Contains(mcs.EnvPtrTemp):
+            case IrInst.MakeClosureStack mcs when aliases.Contains(mcs.EnvPtrTemp):
                 return aliases.Add(mcs.Target);
-            case IrInst.CallClosure call when partialApplicationResults.Contains(call.Target)
-                && (aliases.Contains(call.ArgTemp) || aliases.Contains(call.ClosureTemp)):
+            case IrInst.CallClosure call when aliases.Contains(call.ArgTemp) || aliases.Contains(call.ClosureTemp):
                 return aliases.Add(call.Target);
-            case IrInst.CallKnown known when partialApplicationResults.Contains(known.Target)
-                && (aliases.Contains(known.ArgTemp) || aliasHoldingEnvs.Contains(known.EnvTemp)):
+            case IrInst.CallKnown known when aliases.Contains(known.ArgTemp) || aliases.Contains(known.EnvTemp):
                 return aliases.Add(known.Target);
             default:
                 return false;
         }
+    }
+
+    // A load reads an alias out of its slot only past a store of one: a store later in the load's
+    // own block is a different value (a loop parameter's successor stored after the old value was
+    // read for its release walk), while a store in any other block may reach the load.
+    private static bool LoadSeesAliasStore(HashSet<AliasStore> aliasStores, int slot, int loadIndex, Block block)
+    {
+        foreach (AliasStore store in aliasStores)
+        {
+            if (store.Slot != slot)
+            {
+                continue;
+            }
+
+            bool sameBlock = store.BlockStart == block.Start && store.BlockEnd == block.End;
+            if (!sameBlock || store.Index < loadIndex)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static List<int> FindOwnerUses(
@@ -558,4 +644,7 @@ internal static class PerceusLifetimePlacement
     }
 
     private sealed record OwnerRegion(int DefinitionIndex, int BoundaryIndex, int DefinitionTemp);
+
+    // A `StoreLocal` of an alias into a slot, with the block it sits in.
+    private sealed record AliasStore(int Slot, int Index, int BlockStart, int BlockEnd);
 }

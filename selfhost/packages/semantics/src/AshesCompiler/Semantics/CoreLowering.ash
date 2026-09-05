@@ -6426,9 +6426,14 @@ let calleeNormalizesArgument (facts: Maybe(CoreCalleeFacts)) (index: Int) (state
 // callee's result may keep alive past the call.
 let argumentMayReachResult (facts: Maybe(CoreCalleeFacts)) (index: Int) (argumentTemp: Int) (state: CoreLoweringState) = isRuntimeTemp(argumentTemp)(state) && calleeResultReachesArgument(facts)(index)
 
+// Stage 0's `CalleeResultMayKeepParameterWhole`: the argument holds a reference-counted value
+// the callee's result may keep whole.
+let argumentReachesResultWhole (facts: Maybe(CoreCalleeFacts)) (index: Int) (argumentTemp: Int) (state: CoreLoweringState) = isRuntimeTemp(argumentTemp)(state) && calleeResultReachesArgumentWhole(facts)(index)
+
 // Stage 0's `TransfersFreshRuntimeArgument`: a fresh argument moves into a callee that
-// normalizes it on entry or whose result keeps it, so the caller neither retains nor releases it.
-let transfersFreshArgument facts index argument argumentTemp state = calleeParameterBorrows(facts)(index) == false && isFreshRuntimeArgument(argument)(argumentTemp)(state) && (calleeNormalizesArgument(facts)(index)(state) || argumentMayReachResult(facts)(index)(argumentTemp)(state))
+// normalizes it on entry or whose result keeps it whole, so the caller neither retains nor
+// releases it; a callee keeping only destructured parts leaves the caller's spine release.
+let transfersFreshArgument facts index argument argumentTemp state = calleeParameterBorrows(facts)(index) == false && isFreshRuntimeArgument(argument)(argumentTemp)(state) && (calleeNormalizesArgument(facts)(index)(state) || argumentReachesResultWhole(facts)(index)(argumentTemp)(state))
 
 // One application's hand-off decisions, stage 0's `LowerAppliedClosureCall` facts.
 type CoreArgumentHandOff =

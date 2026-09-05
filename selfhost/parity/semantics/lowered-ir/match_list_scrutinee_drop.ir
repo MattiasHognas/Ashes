@@ -52,7 +52,7 @@ function _start_main  [ProgramEntry]
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     LoadConstInt          Target=21 Value=0   (match_list_scrutinee_drop.ash:12:12)
     CmpIntNe              Target=22 Left=5 Right=21   (match_list_scrutinee_drop.ash:12:12)
-    JumpIfFalse           CondTemp=22 Target=match_arm_cleanup_4   (match_list_scrutinee_drop.ash:12:12)
+    JumpIfFalse           CondTemp=22 Target=_start_main_rc_edge_2_4   (match_list_scrutinee_drop.ash:12:12)
     GetAdtTag             Target=23 Ptr=5   (match_list_scrutinee_drop.ash:12:12)
     RcDrop                SourceTemp=3 TypeName=Shape OwnerSlot=2
     LoadConstInt          Target=25 Value=0   (match_list_scrutinee_drop.ash:12:12)
@@ -62,7 +62,6 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=5 Source=26   (match_list_scrutinee_drop.ash:12:12)
     Jump                  Target=match_end_0   (match_list_scrutinee_drop.ash:12:12)
   match_arm_cleanup_4:
-    RcDrop                SourceTemp=3 TypeName=Shape OwnerSlot=2
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
     Jump                  Target=match_none_1   (match_list_scrutinee_drop.ash:12:12)
@@ -151,4 +150,7 @@ function _start_main  [ProgramEntry]
     CopyOutArena          DestTemp=54 SrcTemp=52 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=32
     Return                Source=54
+  _start_main_rc_edge_2_4:
+    RcDrop                SourceTemp=3 TypeName=Shape OwnerSlot=2
+    Jump                  Target=match_arm_cleanup_4
 

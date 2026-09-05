@@ -751,7 +751,23 @@ same public behavior.
   (`closeOwnedLetBracket`) and anchors the release at the scope exit; the ported
   `PerceusLifetimePlacement` (over `IrControlFlowGraph`) re-inserts each drop at the control-flow
   precise last use per block, with compensating `RcDup`s for borrowed closure arguments and
-  record-field stores. Tagged constructor patterns on the linear path guard the tag test with
+  record-field stores. Both compilers follow the owner through the same aliases: `Borrow`, a slot
+  holding an alias (only for loads a store of the alias can reach: a load earlier in the store's
+  own block reads the previous value, the loop parameter a back edge releases before storing its
+  successor), an arena cell that embeds an alias without a reference of its own (a list
+  literal's cons cell, a tuple, a closure environment), a closure made over such an environment,
+  and the result of a call that receives an alias as its argument, closure, or environment (the
+  callee may carry the pointer out, and the copy-out past the call window reads it). Before the
+  cell and call-result rules the drop of a `let`-owned string embedded in a list literal landed
+  right after the store, before the consuming call or the copy-out of its result — silent for a
+  recycled small string, a segfault for an OS-backed one of 4 KiB or more (`Text.join` over a
+  built line); regression `tests/list_literal_keeps_built_string_alive_across_call.ash`. A join
+  block that some predecessor reaches without the owner (a path that already released it) no
+  longer takes the drop at its entry, which ran twice on that path; the live branch's edge gets
+  its own block (`<function>_rc_edge_<slot>_<block>`: drop, then jump to the join) — the
+  `pattern_match` fixture's second arm cleanup now shows that block, and the widened aliasing
+  had otherwise double-freed a runtime-managed string in the CLI test suite's tree rendering.
+  Tagged constructor patterns on the linear path guard the tag test with
   `ptr != 0` in stage 0's temp order; the tag-group path binds fields under the switch without
   either. Closures carry stage 0's origins (`SourceFunction from <let name>`, `ClosureHelper` with
   the `lambda:<start>:<length>:<param>` discriminator, anonymous helpers), a scalar-capture
@@ -1277,6 +1293,18 @@ same public behavior.
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per
   kept part, 507 MB → 8.2 MB on the consumed-tuple-head plateau workload).
+  The selfhost's result-reach analysis now records component reach like stage 0's `values/0`
+  entries: a `match` arm binds each pattern variable to the scrutinee's reach at its component
+  path (`bindPatternReach`: cons head/tail, tuple and constructor positions, record fields, `as`
+  aliases, or-patterns), so a callee that keeps a destructured part of a parameter reaches that
+  parameter through a component rather than poisoning the state or missing it. The
+  consumed-argument rules split on it (`calleeResultReachesArgument` sums the whole and
+  component entries; `calleeResultReachesArgumentWhole` the whole entry alone): a fresh argument
+  moves into the callee only when the result may keep the value itself, while a component reach
+  keeps the caller's spine release with its children preserved. Before the split the destructured
+  case was a poisoned state whose transfer freed the moved-out lines
+  (`tests/tco_loop_moves_split_line_into_accumulator.ash` printed a freed count,
+  `tests/escaping_tuple_nested_adt_lifetime.ash` a clobbered payload).
   FIXED concrete instance (root-caused and closed 2026-09-02): a TCO arm rebuilding its state ADT
   around a pattern-extracted list field dup-transferred the binding's ownership into the fresh
   ARENA successor, and the back-edge normalization copied the aggregate without releasing the
@@ -1496,10 +1524,9 @@ same public behavior.
   memory report's dispatch-wrapper representation block also wait on recursive-group lowering
   parity. Separately, `closure_capture`'s ownership report does not trace a top-level binding
   aliasing a curried partial application back to the outer function's own second parameter, so its
-  call site looks under-applied, and result-reach through a destructured pattern component
-  (`analyzeMatchArmsReach`) is not tracked, so `record_pattern` and `tag_group_arm_brackets` read a
-  pattern-extracted field as fresh rather than reaching its parameter, in both the ownership and
-  memory reports; both are also pinned as known differences.
+  call site looks under-applied; it is also pinned as a known difference. Result-reach through a
+  destructured pattern component is tracked since the component-reach port, so `record_pattern`
+  and `tag_group_arm_brackets` match stage 0 in every report.
 
 #### LLVM code generation and runtime integration
 

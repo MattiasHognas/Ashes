@@ -831,6 +831,65 @@ let recursive registerTopLevelItems (items: List(TopLevelItem)) (acc: List((Str,
 let topLevelFunctions (program: ProgramSyntax) = registerTopLevelItems(program.items)([])
 
 // --- Result Reachability Analysis for an Expression ---
+// A component of a bound value's reach (stage 0's `ExtendPaths`): the parent's entries under the
+// component's own path (`items/0`), so two distinct components of one parameter stay disjoint
+// siblings (rebuilding a value from its own parts is no sharing) while the same component used
+// twice still sums to a shared reach.
+let recursive componentEntries (index: Int) (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> []
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest -> ParameterReachEntry(parameterName = name + "/" + Ashes.Text.fromInt(index), reachCount = count) :: componentEntries(index)(rest)
+
+let componentReach (index: Int) (parent: ResultReachState) =
+    match parent with
+        | ResultReachState { counts = counts } -> parent with counts = componentEntries(index)(counts)
+
+// Whether a bare pattern name is a data constructor rather than a binder: constructors are
+// capitalized, binders never are.
+let patternNameIsConstructor (name: Str) =
+    Ashes.Text.length(name) > 0 && Ashes.Text.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ")(Ashes.Text.substring(name)(0)(1))
+
+// Stage 0's `BindPatternPaths`: every binder of the pattern bound to its component of the
+// scrutinee's reach, a whole-value binder to the scrutinee's reach itself.
+let recursive bindPatternReach (pattern: Pattern) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
+    match pattern with
+        | PatternAt(_span, inner) -> bindPatternReach(inner)(parent)(env)
+        | PatternVar(name) ->
+            if patternNameIsConstructor(name)
+            then env
+            else (name, parent) :: env
+        | PatternAs(inner, name) -> (name, parent) :: bindPatternReach(inner)(parent)(env)
+        | PatternCons(head, tail) ->
+            env
+            |> bindPatternReach(head)(componentReach(0)(parent))
+            |> bindPatternReach(tail)(componentReach(1)(parent))
+        | PatternTuple(elements) -> bindPatternComponents(elements)(0)(parent)(env)
+        | PatternConstructor(_constructor, fields) -> bindPatternComponents(fields)(0)(parent)(env)
+        | PatternRecord(_record, fields) -> bindRecordPatternComponents(fields)(0)(parent)(env)
+        | PatternOr(alternatives) -> bindPatternAlternatives(alternatives)(parent)(env)
+        | _ -> env
+and bindPatternComponents (patterns: List(Pattern)) (index: Int) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
+    match patterns with
+        | [] -> env
+        | pattern :: rest ->
+            env
+            |> bindPatternReach(pattern)(componentReach(index)(parent))
+            |> bindPatternComponents(rest)(index + 1)(parent)
+and bindRecordPatternComponents (fields: List((Str, Pattern))) (index: Int) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
+    match fields with
+        | [] -> env
+        | (_field, pattern) :: rest ->
+            env
+            |> bindPatternReach(pattern)(componentReach(index)(parent))
+            |> bindRecordPatternComponents(rest)(index + 1)(parent)
+and bindPatternAlternatives (alternatives: List(Pattern)) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
+    match alternatives with
+        | [] -> env
+        | alternative :: rest ->
+            env
+            |> bindPatternReach(alternative)(parent)
+            |> bindPatternAlternatives(rest)(parent)
+
 let recursive lookupEnv (name: Str) (env: List((Str, ResultReachState))) =
     match env with
         | [] -> None
@@ -888,7 +947,8 @@ let recursive analyzeExprReach (expr: Expr) (env: List((Str, ResultReachState)))
                     |> analyzeExprReach(arg)
                     |> reachSum(analyzeExprReach(func)(env))
                 | _ -> reachPoisoned(UnmodelledReach)
-        | ExprMatch(_scrutinee, arms, _defaultArm) -> analyzeMatchArmsReach(arms)(env)
+        | ExprMatch(scrutinee, arms, _defaultArm) ->
+            analyzeMatchArmsReach(arms)(analyzeExprReach(scrutinee)(env))(env)
         | ExprTuple(elements) -> analyzeExprListSumReach(elements)(env)
         | ExprList(elements, _isMultiline) -> analyzeExprListSumReach(elements)(env)
         | ExprCons(head, tail) ->
@@ -955,15 +1015,21 @@ and analyzeRecordFieldsSumReach (fields: List((Str, Expr))) (env: List((Str, Res
                     in
                         let rest = analyzeRecordFieldsSumReach(tail)(env)
                         in reachSum(e)(rest)
-and analyzeMatchArmsReach (arms: List((Pattern, Expr, Maybe(Expr)))) (env: List((Str, ResultReachState))) =
+// Each arm is analyzed with its pattern's binders bound to the scrutinee's reach (stage 0's
+// `MatchReach`): a matched head or field is the only way a parameter's component reaches the
+// result, so an arm that keeps one in its result reaches the parameter through it.
+and analyzeMatchArmsReach (arms: List((Pattern, Expr, Maybe(Expr)))) (scrutineeReach: ResultReachState) (env: List((Str, ResultReachState))) =
     match arms with
         | [] -> reachBottom(Unit)
         | arm :: tail ->
             match arm with
-                | (_pat, body, _guard) ->
-                    let armReach = analyzeExprReach(body)(env)
+                | (pattern, body, _guard) ->
+                    let armReach =
+                        env
+                        |> bindPatternReach(pattern)(scrutineeReach)
+                        |> analyzeExprReach(body)
                     in
-                        let restReach = analyzeMatchArmsReach(tail)(env)
+                        let restReach = analyzeMatchArmsReach(tail)(scrutineeReach)(env)
                         in reachJoin(armReach)(restReach)
 
 // --- Parameter Ownership Classification & Summary Construction ---
@@ -1001,16 +1067,16 @@ let recursive lookupProvenance (name: Str) (provMap: List((Str, FunctionResultPr
                     then Some(v)
                     else lookupProvenance(name)(rest)
 
-// Every parameter this walk reaches is reached whole: reach flows only through a parameter's own
-// variable (and `let` aliases of it) — `analyzeMatchArmsReach` analyzes each arm under the
-// unchanged environment, so a pattern-bound name (a matched head or field, the only way to reach
-// a parameter's component) carries no reach at all. Stage 0 additionally tracks component paths
-// ("values/0") and keeps whole and component reach apart; until that path model is ported the
-// whole set is exactly the reached set, and a component-only reach is simply absent.
+// The parameters this walk reaches whole: an entry under a parameter's own name. A pattern-bound
+// head or field reaches its parameter's component under a path entry (`items/0`, stage 0's
+// "values/0"), which counts as a reach but not as a whole reach.
 let recursive reachedParameterNames (entries: List(ParameterReachEntry)) =
     match entries with
         | [] -> []
-        | ParameterReachEntry { parameterName = name } :: rest -> name :: reachedParameterNames(rest)
+        | ParameterReachEntry { parameterName = name } :: rest ->
+            if Ashes.Text.contains(name)("/")
+            then reachedParameterNames(rest)
+            else name :: reachedParameterNames(rest)
 
 let inferFunctionOwnershipWith (sig: FunctionSignature) (provMap: List((Str, FunctionResultProvenance))) (paramOwnership: List((Str, ParameterOwnership))) =
     match sig with
