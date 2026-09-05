@@ -3430,6 +3430,12 @@ let testRunSharedEscapingTupleBorrowedStateString shipped unit =
 // A runtime-managed string loop parameter consed into a sibling accumulator at the tail
 // self-call: the cell retains it before the back edge releases the parameter's old reference,
 // and a churn loop reuses freed cells so a missing retain shows up as a wrong total or a crash.
+// A single-constructor record loop parameter on the reference-counted heap (OPT-25): the entry
+// copy under the ownership flag, the back-edge copy-out and predecessor release, and the exit
+// transfer, run for three million iterations at a flat plateau.
+let testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_record_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedRecordAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_record_accumulator_plateau_e2e")("4500004500000")
+
 let testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator")("selfhost_backend_shared_tco_runtime_managed_param_consed_into_sibling_accumulator_e2e")("17502612|3000|17505612")
 
@@ -4960,6 +4966,7 @@ let run shipped =
     |> testRunSharedRcReleaseReadBuiltinJoinResult(shipped)
     |> testRunSharedEscapingTupleBorrowedStateString(shipped)
     |> testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator(shipped)
+    |> testRunSharedTcoRuntimeManagedRecordAccumulatorPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

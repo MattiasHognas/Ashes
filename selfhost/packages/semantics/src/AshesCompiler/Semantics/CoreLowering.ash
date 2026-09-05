@@ -243,6 +243,7 @@ type CoreTcoLoopFrame =
     | entrySpliceCount: Int
     | listActiveSlots: List((Int, Int))
     | runtimeManagedListSlots: List((Int, Int, SemanticType))
+    | runtimeManagedAdtSlots: List((Int, Int, Int, Str))
 
 // A pattern owner joined to its emitted slot (stage 0's `PatternBindingPlacementSite`): the
 // binder's slot, the loop parameter slot it was extracted from, the instruction count right
@@ -3606,10 +3607,20 @@ type TcoResetArgument =
     | argumentRuntime: Bool
     | shape: TcoArgumentShape
     | managedList: Maybe((Int, SemanticType))
+    | managedAdt: Maybe((Int, Int, Str))
 
-let recursive tcoResetArguments (ordinal: Int) (slots: List(Int)) (types: List(SemanticType)) (temps: List(Int)) (oldTemps: List(Int)) (runtime: List(Bool)) (shapes: List(TcoArgumentShape)) (managed: List((Int, Int, SemanticType))) =
+// The active flag, cell size and type name of a runtime-managed copy-ADT slot.
+let recursive lookupRuntimeManagedAdtSlot (slot: Int) (entries: List((Int, Int, Int, Str))) =
+    match entries with
+        | [] -> None
+        | (candidate, activeSlot, sizeBytes, typeName) :: rest ->
+            if candidate == slot
+            then Some((activeSlot, sizeBytes, typeName))
+            else lookupRuntimeManagedAdtSlot(slot)(rest)
+
+let recursive tcoResetArguments (ordinal: Int) (slots: List(Int)) (types: List(SemanticType)) (temps: List(Int)) (oldTemps: List(Int)) (runtime: List(Bool)) (shapes: List(TcoArgumentShape)) (managed: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) =
     match (slots, types, temps, oldTemps, runtime, shapes) with
-        | (slot :: restSlots, argumentType :: restTypes, temp :: restTemps, oldTemp :: restOld, isRuntime :: restRuntime, shape :: restShapes) -> TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = isRuntime, shape = shape, managedList = lookupRuntimeManagedListSlot(slot)(managed)) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(managed)
+        | (slot :: restSlots, argumentType :: restTypes, temp :: restTemps, oldTemp :: restOld, isRuntime :: restRuntime, shape :: restShapes) -> TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = isRuntime, shape = shape, managedList = lookupRuntimeManagedListSlot(slot)(managed), managedAdt = lookupRuntimeManagedAdtSlot(slot)(managedAdts)) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(managed)(managedAdts)
         | _ -> []
 
 let isResourceHandle (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -3642,12 +3653,20 @@ let recursive anyManagedListArgument (arguments: List(TcoResetArgument)) =
     match arguments with
         | [] -> false
         | TcoResetArgument { managedList = Some(_managed) } :: _rest -> true
+        | TcoResetArgument { managedAdt = Some(_managed) } :: _rest -> true
         | _argument :: rest -> anyManagedListArgument(rest)
+
+// A runtime-managed copy-ADT slot survives a reset: its successor is copied out to the
+// reference-counted heap before the iteration's arena allocations go.
+let managedAdtArgumentCanReset (argument: TcoResetArgument) =
+    match argument.managedAdt with
+        | Some(_managed) -> true
+        | None -> false
 
 let recursive allResetArgumentsCanReset (loop: CoreTcoLoop) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match arguments with
         | [] -> true
-        | argument :: rest -> tcoResetArgumentCanReset(loop)(argument)(state) && allResetArgumentsCanReset(loop)(rest)(state)
+        | argument :: rest -> (tcoResetArgumentCanReset(loop)(argument)(state) || managedAdtArgumentCanReset(argument)) && allResetArgumentsCanReset(loop)(rest)(state)
 
 let tcoBackEdgeCanEmitRuntimeManagedReset (loop: CoreTcoLoop) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = anyManagedListArgument(arguments) && allResetArgumentsCanReset(loop)(arguments)(state)
 
@@ -3688,6 +3707,19 @@ let emitGuardedListRelease emitter (labelName: Str) (activeSlot: Int) (listTemp:
                     |> emitInlineListRelease(emitter)(listTemp)(elementType)
                     |> emitter(Label(skipLabel))
 
+// The release of a runtime-managed copy-ADT slot's old value under its active flag: one `RcDrop`
+// of the cell under the type's name.
+let emitGuardedAdtRelease emitter (labelName: Str) (activeSlot: Int) (cellTemp: Int) (typeName: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = activeTemp } ->
+            match freshLabel(labelName)(allocated) with
+                | FreshLabel { state = labelState, label = skipLabel } ->
+                    labelState
+                    |> emitter(LoadLocal(activeTemp)(activeSlot))
+                    |> emitter(JumpIfFalse(activeTemp)(skipLabel))
+                    |> emitter(RcDrop(cellTemp)(typeName)(-1)(true)(false)(None))
+                    |> emitter(Label(skipLabel))
+
 // Stage 0's `TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs` for the list slots: the
 // pattern-bound tail of a consumed list is retained for the successor (null-tolerant, the tail
 // may be the empty list), a fresh runtime-managed cons cell already owns its reference, and a
@@ -3704,6 +3736,19 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                     |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                     |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
         | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoGrownConsShape, parameterSlot = slot, argumentTemp = temp } :: rest -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
+        | TcoResetArgument { managedAdt = Some((activeSlot, sizeBytes, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime } :: rest ->
+            if shape == TcoPassThroughShape
+            then normalizeRuntimeManagedBackEdgeArguments(rest)(reversedStores)(state)
+            else
+                if isRuntime
+                then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
+                else
+                    match freshTemp(state) with
+                        | FreshTemp { state = allocated, temp = copyTemp } ->
+                            allocated
+                            |> unlocatedInstruction(CopyOutArena(copyTemp)(temp)(sizeBytes)(true)(RcNormalization)(None))
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)
         | _argument :: rest -> normalizeRuntimeManagedBackEdgeArguments(rest)(reversedStores)(state)
 
 // The old root of a consumed list is released once its tail is retained for the successor
@@ -3716,6 +3761,13 @@ let recursive dropRuntimeManagedBackEdgePredecessors (arguments: List(TcoResetAr
             state
             |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
             |> dropRuntimeManagedBackEdgePredecessors(rest)
+        | TcoResetArgument { managedAdt = Some((activeSlot, _sizeBytes, typeName)), shape = shape, oldTemp = oldTemp } :: rest ->
+            if shape == TcoPassThroughShape
+            then dropRuntimeManagedBackEdgePredecessors(rest)(state)
+            else
+                state
+                |> emitGuardedAdtRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(typeName)
+                |> dropRuntimeManagedBackEdgePredecessors(rest)
         | _argument :: rest -> dropRuntimeManagedBackEdgePredecessors(rest)(state)
 
 let recursive emitRuntimeManagedBackEdgeStores (stores: List((Int, Int, Int))) (state: CoreLoweringState) =
@@ -3750,8 +3802,8 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
 let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
     match (state.tcoLoopFrame, state.tcoLoop) with
         | (Some(frame), Some(loop)) ->
-            frame.runtimeManagedListSlots
-            |> tcoResetArguments(0)(frame.parameterSlots)(reset.argumentTypes)(reset.argumentTemps)(reset.oldTemps)(reset.argumentRuntime)(loop.argumentShapes)
+            frame.runtimeManagedAdtSlots
+            |> tcoResetArguments(0)(frame.parameterSlots)(reset.argumentTypes)(reset.argumentTemps)(reset.oldTemps)(reset.argumentRuntime)(loop.argumentShapes)(frame.runtimeManagedListSlots)
             |> (given (arguments: List(TcoResetArgument)) ->
                 if tcoBackEdgeCanEmitRuntimeManagedReset(loop)(arguments)(state)
                 then emitRuntimeManagedTcoReset(reset)(arguments)(state)
@@ -4407,15 +4459,40 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loo
                     else None
         | _ -> None
 
+// A single-constructor copy-ADT loop parameter (every field a scalar, stage 0's `CanCopyOutAdt`
+// under `IsRcEligibleScalarTupleOrAdtType`) admitted to runtime-managed placement: its cell
+// copies out whole at entry and at every back edge, and its release is one `RcDrop` under the
+// type's name. Answers the cell's size and the type name.
+let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
+    if isTcoListShape(shape) || shape == TcoPassThroughShape
+    then None
+    else
+        match slotResolvedType(slot)(state.bindings)(state) with
+            | Some(SemNamed(_symbolId, name, _arguments) as named) ->
+                match (constructorLayoutsOfType(name)(state.constructorLayouts), heapFactsOf(named)(state)) with
+                    | (_layout :: [], HeapLayoutFacts { structuralCopy = ShallowCopy }) ->
+                        if isResourceHandle(named)(state)
+                        then None
+                        else Some((shallowAdtCopySizeBytes(name)(state), name))
+                    | _ -> None
+            | _ -> None
+
+let tcoAdtSlotAdmitted (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
+    match tcoAdtSlotCopy(slot)(shape)(state) with
+        | Some(_copy) -> true
+        | None -> false
+
 // One loop parameter's placement facts once the body is lowered: whether the affine-append
-// analysis and its resolved type admit it as a runtime-managed `Str`, and the element type when
-// its self-call shape and resolved type admit it as a runtime-managed list.
+// analysis and its resolved type admit it as a runtime-managed `Str`, the element type when
+// its self-call shape and resolved type admit it as a runtime-managed list, and the cell size
+// and type name when its resolved type admits it as a runtime-managed copy ADT.
 type TcoManagedCandidate =
     | ordinal: Int
     | slot: Int
     | shape: TcoArgumentShape
     | strManaged: Bool
     | listElement: Maybe(SemanticType)
+    | adtCopy: Maybe((Int, Str))
 
 let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (slots, shapes) with
@@ -4427,13 +4504,19 @@ let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: Li
                 strManaged = containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state),
                 listElement = if isTcoListShape(shape)
                 then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
-                else None
+                else None,
+                adtCopy = tcoAdtSlotCopy(slot)(shape)(state)
             ) :: tcoManagedCandidates(ordinal + 1)(restSlots)(restShapes)(loop)(state)
         | _ -> []
 
 let candidateListManaged (candidate: TcoManagedCandidate) =
     match candidate.listElement with
         | Some(_element) -> true
+        | None -> false
+
+let candidateAdtManaged (candidate: TcoManagedCandidate) =
+    match candidate.adtCopy with
+        | Some(_copy) -> true
         | None -> false
 
 // Stage 0's `IsPermanentlyBlockingTcoParam`: a sibling that keeps the frame's per-iteration
@@ -4444,7 +4527,7 @@ let tcoParameterBlocksFrame (candidate: TcoManagedCandidate) (state: CoreLowerin
     match slotResolvedType(candidate.slot)(state.bindings)(state) with
         | None -> false
         | Some(SemFunction(_argument, _result, _row)) -> false
-        | Some(resolved) -> !candidate.strManaged && !candidateListManaged(candidate) && !resultSurvivesReset(resolved)(state) && !isResourceHandle(resolved)(state) && candidate.shape != TcoPassThroughShape && !consumedScalarListTail(resolved)(candidate.shape)(state)
+        | Some(resolved) -> !candidate.strManaged && !candidateListManaged(candidate) && !candidateAdtManaged(candidate) && !resultSurvivesReset(resolved)(state) && !isResourceHandle(resolved)(state) && candidate.shape != TcoPassThroughShape && !consumedScalarListTail(resolved)(candidate.shape)(state)
 
 let recursive anyBlockingSibling (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     match candidates with
@@ -4468,6 +4551,15 @@ let recursive tcoRuntimeManagedListSlotsOf (candidates: List(TcoManagedCandidate
                 | None -> tcoRuntimeManagedListSlotsOf(rest)(activeSlots)
         | _candidate :: rest -> tcoRuntimeManagedListSlotsOf(rest)(activeSlots)
 
+let recursive tcoRuntimeManagedAdtSlotsOf (candidates: List(TcoManagedCandidate)) (activeSlots: List((Int, Int))) =
+    match candidates with
+        | [] -> []
+        | TcoManagedCandidate { slot = slot, adtCopy = Some((sizeBytes, typeName)) } :: rest ->
+            match lookupListActiveSlot(slot)(activeSlots) with
+                | Some(activeSlot) -> (slot, activeSlot, sizeBytes, typeName) :: tcoRuntimeManagedAdtSlotsOf(rest)(activeSlots)
+                | None -> tcoRuntimeManagedAdtSlotsOf(rest)(activeSlots)
+        | _candidate :: rest -> tcoRuntimeManagedAdtSlotsOf(rest)(activeSlots)
+
 let recursive tcoStrSlotsOf (candidates: List(TcoManagedCandidate)) =
     match candidates with
         | [] -> []
@@ -4475,18 +4567,20 @@ let recursive tcoStrSlotsOf (candidates: List(TcoManagedCandidate)) =
         | _candidate :: rest -> tcoStrSlotsOf(rest)
 
 // The entry normalization of every runtime-managed parameter, in parameter order: a `Str` copies
-// out as one allocation, a list copies its spine with its heads and sets its active flag.
-let recursive tcoEntryNormalizationEntries (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (state: CoreLoweringState) =
+// out as one allocation, a list copies its spine with its heads and sets its active flag, and a
+// copy ADT copies its cell whole and sets its active flag.
+let recursive tcoEntryNormalizationEntries (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) (state: CoreLoweringState) =
     match candidates with
         | [] -> []
         | candidate :: rest ->
-            match (candidate.strManaged, lookupRuntimeManagedListSlot(candidate.slot)(managedLists)) with
-                | (true, _managed) -> (candidate.slot, LeafArgumentCopy(-1), None) :: tcoEntryNormalizationEntries(rest)(managedLists)(state)
-                | (false, Some((activeSlot, element))) ->
+            match (candidate.strManaged, lookupRuntimeManagedListSlot(candidate.slot)(managedLists), lookupRuntimeManagedAdtSlot(candidate.slot)(managedAdts)) with
+                | (true, _managed, _adt) -> (candidate.slot, LeafArgumentCopy(-1), None) :: tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
+                | (false, Some((activeSlot, element)), _adt) ->
                     match listHeadCopyKindOf(element)(state) with
-                        | Some(kind) -> (candidate.slot, ListHeadArgumentCopy(kind), Some(activeSlot)) :: tcoEntryNormalizationEntries(rest)(managedLists)(state)
-                        | None -> tcoEntryNormalizationEntries(rest)(managedLists)(state)
-                | _ -> tcoEntryNormalizationEntries(rest)(managedLists)(state)
+                        | Some(kind) -> (candidate.slot, ListHeadArgumentCopy(kind), Some(activeSlot)) :: tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
+                        | None -> tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
+                | (false, None, Some((activeSlot, sizeBytes, _typeName))) -> (candidate.slot, ShallowAdtArgumentCopy(sizeBytes), Some(activeSlot)) :: tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
+                | _ -> tcoEntryNormalizationEntries(rest)(managedLists)(managedAdts)(state)
 
 let recursive loadedSlotOfTemp (temp: Int) (instructions: List(IrInstruction)) =
     match instructions with
@@ -4500,13 +4594,56 @@ let recursive loadedSlotOfTemp (temp: Int) (instructions: List(IrInstruction)) =
 // A body result that is the direct read of a runtime-managed list slot transfers that slot's
 // reference to the caller (the exit check below skips its drop), so the function's result is a
 // reference-counted value and the closure carrying it says so.
-let markRuntimeListResult (bodyTemp: Int) (managedLists: List((Int, Int, SemanticType))) (state: CoreLoweringState) =
+let managedSlotResult (slot: Int) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) =
+    match (lookupRuntimeManagedListSlot(slot)(managedLists), lookupRuntimeManagedAdtSlot(slot)(managedAdts)) with
+        | (Some(_managed), _adt) -> true
+        | (None, Some(_adt)) -> true
+        | _ -> false
+
+let recursive storedTempsOfSlot (slot: Int) (instructions: List(IrInstruction)) (found: List(Int)) =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = StoreLocal(target, temp) } :: rest ->
+            storedTempsOfSlot(slot)(rest)(if target == slot
+            then temp :: found
+            else found)
+        | _instruction :: rest -> storedTempsOfSlot(slot)(rest)(found)
+
+// The back edge's synthetic zero (`emitBackEdgeDummy`): a join store that never runs and owns
+// nothing.
+let recursive isZeroConstantTemp (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadConstInt(target, value) } :: rest -> target == temp && value == 0 || isZeroConstantTemp(temp)(rest)
+        | _instruction :: rest -> isZeroConstantTemp(temp)(rest)
+
+// Whether every value a join slot is stored is a reference-counted one: a runtime-managed temp,
+// the direct read of a runtime-managed slot, or the back edge's synthetic zero.
+let recursive joinStoresAreRuntimeManaged (temps: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) (state: CoreLoweringState) =
+    match temps with
+        | [] -> true
+        | temp :: rest ->
+            (isRuntimeTemp(temp)(state) || isZeroConstantTemp(temp)(state.reversedInstructions) || (match loadedSlotOfTemp(temp)(state.reversedInstructions) with
+                | Some(slot) -> managedSlotResult(slot)(managedLists)(managedAdts)
+                | None -> false)) && joinStoresAreRuntimeManaged(rest)(managedLists)(managedAdts)(state)
+
+// A body result that is the direct read of a runtime-managed slot, or the reload of a join every
+// branch stored such a read (or a runtime-managed value) into, transfers a slot's reference to
+// the caller (the exit check skips its drop), so the function's result is a reference-counted
+// value and the closure carrying it says so.
+let markRuntimeListResult (bodyTemp: Int) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) (state: CoreLoweringState) =
     match loadedSlotOfTemp(bodyTemp)(state.reversedInstructions) with
         | None -> state
         | Some(slot) ->
-            match lookupRuntimeManagedListSlot(slot)(managedLists) with
-                | Some(_managed) -> markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
-                | None -> state
+            if managedSlotResult(slot)(managedLists)(managedAdts)
+            then markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
+            else
+                match storedTempsOfSlot(slot)(state.reversedInstructions)([]) with
+                    | [] -> state
+                    | temps ->
+                        if joinStoresAreRuntimeManaged(temps)(managedLists)(managedAdts)(state)
+                        then markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
+                        else state
 
 // Stage 0's `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops` for one list slot when the body
 // result may be one of the runtime-managed lists: the slot's value is compared with the result
@@ -4589,6 +4726,93 @@ let emitTcoListExitDrops (bodyTemp: Int) (bodyIsList: Bool) (entries: List((Int,
                                 |> emit(StoreLocal(transferSelectedSlot)(zeroTemp))
                                 |> emitTcoListExitDropsWith(bodyTemp)(Some((transferSelectedSlot, zeroTemp)))(entries)
             else emitTcoListExitDropsWith(bodyTemp)(None)(entries)(state)
+
+// The exit transfer check of one runtime-managed copy-ADT slot, the list check's shape with the
+// cell's own release: the slot's value is compared with the body result and, when they match
+// and no earlier slot already transferred, the reference goes to the caller instead of being
+// released.
+let emitTcoAdtExitTransferCheck (bodyTemp: Int) (transferSelectedSlot: Int) (zeroTemp: Int) (slot: Int) (activeSlot: Int) (typeName: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = sourceState, temp = sourceTemp } ->
+            match freshTemp(sourceState) with
+                | FreshTemp { state = activeState, temp = activeTemp } ->
+                    match freshTemp(activeState) with
+                        | FreshTemp { state = matchesState, temp = matchesTemp } ->
+                            match freshTemp(matchesState) with
+                                | FreshTemp { state = selectedState, temp = selectedTemp } ->
+                                    match freshTemp(selectedState) with
+                                        | FreshTemp { state = availableState, temp = availableTemp } ->
+                                            match freshTemp(availableState) with
+                                                | FreshTemp { state = activeMatchState, temp = activeMatchTemp } ->
+                                                    match freshTemp(activeMatchState) with
+                                                        | FreshTemp { state = canTransferState, temp = canTransferTemp } ->
+                                                            match freshLabel("rc_tco_exit_transfer_not_selected")(canTransferState) with
+                                                                | FreshLabel { state = dropLabelState, label = dropLabel } ->
+                                                                    match freshLabel("rc_tco_exit_transfer_done")(dropLabelState) with
+                                                                        | FreshLabel { state = doneLabelState, label = doneLabel } ->
+                                                                            match freshTemp(doneLabelState) with
+                                                                                | FreshTemp { state = oneState, temp = oneTemp } ->
+                                                                                    oneState
+                                                                                    |> emit(LoadLocal(sourceTemp)(slot))
+                                                                                    |> emit(LoadLocal(activeTemp)(activeSlot))
+                                                                                    |> emit(CmpIntEq(matchesTemp)(sourceTemp)(bodyTemp))
+                                                                                    |> emit(LoadLocal(selectedTemp)(transferSelectedSlot))
+                                                                                    |> emit(CmpIntEq(availableTemp)(selectedTemp)(zeroTemp))
+                                                                                    |> emit(AndInt(activeMatchTemp)(activeTemp)(matchesTemp))
+                                                                                    |> emit(AndInt(canTransferTemp)(activeMatchTemp)(availableTemp))
+                                                                                    |> emit(JumpIfFalse(canTransferTemp)(dropLabel))
+                                                                                    |> emit(LoadConstInt(oneTemp)(1))
+                                                                                    |> emit(StoreLocal(transferSelectedSlot)(oneTemp))
+                                                                                    |> emit(Jump(doneLabel))
+                                                                                    |> emit(Label(dropLabel))
+                                                                                    |> emitGuardedAdtRelease(emit)("rc_tco_exit_drop_inactive")(activeSlot)(sourceTemp)(typeName)
+                                                                                    |> emit(Label(doneLabel))
+
+let emitTcoAdtExitDrop (slot: Int) (activeSlot: Int) (typeName: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = sourceState, temp = sourceTemp } ->
+            sourceState
+            |> emit(LoadLocal(sourceTemp)(slot))
+            |> emitGuardedAdtRelease(emit)("rc_tco_exit_drop_inactive")(activeSlot)(sourceTemp)(typeName)
+
+let recursive emitTcoAdtExitDropsWith (bodyTemp: Int) (bodyTypeName: Maybe(Str)) (transfer: Maybe((Int, Int))) (entries: List((Int, Int, Int, Str))) (state: CoreLoweringState) =
+    match entries with
+        | [] -> state
+        | (slot, activeSlot, _sizeBytes, typeName) :: rest ->
+            match (transfer, bodyTypeName == Some(typeName)) with
+                | (Some((transferSelectedSlot, zeroTemp)), true) ->
+                    state
+                    |> emitTcoAdtExitTransferCheck(bodyTemp)(transferSelectedSlot)(zeroTemp)(slot)(activeSlot)(typeName)
+                    |> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(transfer)(rest)
+                | _ ->
+                    state
+                    |> emitTcoAdtExitDrop(slot)(activeSlot)(typeName)
+                    |> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(transfer)(rest)
+
+// The exit releases of the runtime-managed copy-ADT slots, right before the function's own
+// `Return`: a body result of a slot's own type may be that slot's value, so such a slot is
+// transfer-checked against it; every other slot releases under its active flag.
+let emitTcoAdtExitDrops (bodyTemp: Int) (bodyTypeName: Maybe(Str)) (entries: List((Int, Int, Int, Str))) (state: CoreLoweringState) =
+    match entries with
+        | [] -> state
+        | _entries ->
+            match bodyTypeName with
+                | Some(_name) ->
+                    match freshLocal(state) with
+                        | FreshLocal { state = slotState, local = transferSelectedSlot } ->
+                            match freshTemp(slotState) with
+                                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                    zeroState
+                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                    |> emit(StoreLocal(transferSelectedSlot)(zeroTemp))
+                                    |> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(Some((transferSelectedSlot, zeroTemp)))(entries)
+                | None -> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(None)(entries)(state)
+
+// The name of the body's resolved named type, when it has one.
+let resolvedTypeName (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, _arguments) -> Some(name)
+        | _ -> None
 
 let recursive anyEntryOnSlot (slot: Int) (entries: List((Int, ArgumentCopyPlan, Maybe(Int)))) =
     match entries with
@@ -4744,43 +4968,48 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ca
         |> splicePatternOwnerDups(placed)
         |> (given (finalized: CoreLoweringState) -> finalized with patternOwnerSites = []))
 
-let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (state: CoreLoweringState) =
-    match tcoEntryNormalizationEntries(candidates)(managedLists)(state) with
+let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) (state: CoreLoweringState) =
+    match tcoEntryNormalizationEntries(candidates)(managedLists)(managedAdts)(state) with
         | [] -> success(bodyTemp)(semanticType)(state)
         | entries ->
             state
-            |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = Some((frame with runtimeManagedListSlots = managedLists)))
-            |> markRuntimeListResult(bodyTemp)(managedLists)
+            |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = Some((frame with runtimeManagedListSlots = managedLists, runtimeManagedAdtSlots = managedAdts)))
+            |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)
             |> recordTcoNormalizedArgumentLabel(label)(entries)
             |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
             |> emitTcoExitDrops(resolvesToStr(semanticType)(state))(bodyTemp)(tcoStrSlotsOf(candidates))
             |> emitTcoListExitDrops(bodyTemp)(resolvesToList(semanticType)(state))(managedLists)
+            |> emitTcoAdtExitDrops(bodyTemp)(resolvedTypeName(semanticType)(state))(managedAdts)
             |> success(bodyTemp)(semanticType)
 
-// The active flags allocated at the loop entry for list-shaped parameters the resolved types did
-// not admit: never written or read, they are retired from the function's slots.
-let recursive unusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) =
+// The active flags allocated at the loop entry for list-shaped and copy-ADT parameters the
+// resolved types did not admit: never written or read, they are retired from the function's
+// slots.
+let recursive unusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) =
     match pairs with
         | [] -> []
         | (slot, activeSlot) :: rest ->
-            match lookupRuntimeManagedListSlot(slot)(managedLists) with
-                | Some(_managed) -> unusedListActiveSlots(rest)(managedLists)
-                | None -> activeSlot :: unusedListActiveSlots(rest)(managedLists)
+            match (lookupRuntimeManagedListSlot(slot)(managedLists), lookupRuntimeManagedAdtSlot(slot)(managedAdts)) with
+                | (None, None) -> activeSlot :: unusedListActiveSlots(rest)(managedLists)(managedAdts)
+                | _ -> unusedListActiveSlots(rest)(managedLists)(managedAdts)
 
-let retireUnusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (state: CoreLoweringState) =
-    state with retiredLocals = append(state.retiredLocals)(unusedListActiveSlots(pairs)(managedLists))
+let retireUnusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, Int, Str))) (state: CoreLoweringState) =
+    state with retiredLocals = append(state.retiredLocals)(unusedListActiveSlots(pairs)(managedLists)(managedAdts))
 
 let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
     |> (given (candidates: List(TcoManagedCandidate)) ->
         ((given (managedLists: List((Int, Int, SemanticType))) ->
-            state
-            |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)
-            |> finalizePatternOwnerSites(managedLists)(candidates)
-            |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)))(if anyBlockingSibling(candidates)(state)
+            given (managedAdts: List((Int, Int, Int, Str))) ->
+                state
+                |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)
+                |> finalizePatternOwnerSites(managedLists)(candidates)
+                |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)))(if anyBlockingSibling(candidates)(state)
         then []
-        else tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots)))
+        else tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots))(if anyBlockingSibling(candidates)(state)
+        then []
+        else tcoRuntimeManagedAdtSlotsOf(candidates)(frame.listActiveSlots)))
 
 // Runs once the loop body's whole lowering has resolved every parameter's type: splices the
 // entry normalization in at the recorded loop-entry point and emits the exit drops right before
@@ -4947,7 +5176,8 @@ let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (f
                             ownerDepth = entered.nextLocal,
                             entrySpliceCount = entrySpliceCount,
                             listActiveSlots = listActiveSlots,
-                            runtimeManagedListSlots = []
+                            runtimeManagedListSlots = [],
+                            runtimeManagedAdtSlots = []
                         )))
 
 // The active-flag local of every parameter whose self-call shape may place a list on the
@@ -4957,7 +5187,7 @@ let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (f
 let recursive allocateListActiveSlots (shapes: List(TcoArgumentShape)) (slots: List(Int)) (state: CoreLoweringState) =
     match (shapes, slots) with
         | (shape :: restShapes, slot :: restSlots) ->
-            if isTcoListShape(shape)
+            if isTcoListShape(shape) || tcoAdtSlotAdmitted(slot)(shape)(state)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = allocated, local = activeSlot } ->
