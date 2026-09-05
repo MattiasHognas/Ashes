@@ -1034,7 +1034,13 @@ same public behavior.
   (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
   (`DuplicateRuntimeManagedTcoParameterForAggregate`) for a `List`- or ADT-typed loop parameter,
   waiting on pattern owners (a grown or consumed `List` parameter is now placed runtime-managed
-  under OPT-25's shape rules, an ADT parameter is not);
+  under OPT-25's shape rules, an ADT parameter is not). FIXED in stage 0 (2026-09-05): the
+  loop-parameter retain marker was skipped for every read inside a tail self-call's arguments,
+  so a runtime-managed `Str` parameter consed into a sibling accumulator
+  (`collect(n - 1)(text + suffix)(text :: acc)`) was released by the back edge while the cell
+  still held it, a use-after-free the self-hosted lowering never had; the marker is now skipped
+  only for the parameter's read inside its own successor
+  (`tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash`);
   `tco_owned_let_in_tail_argument_record.ash` and
   `tco_let_call_result_in_accumulator_record.ash`'s remaining diff from stage 0 is a
   call-argument-retention gap for a plain top-level function called from inside the loop body

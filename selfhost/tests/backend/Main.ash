@@ -3427,6 +3427,12 @@ let testRunSharedRcReleaseReadBuiltinJoinResult shipped unit =
 let testRunSharedEscapingTupleBorrowedStateString shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/escaping_tuple_borrowed_state_string.ash"))("selfhostBackendRunSharedEscapingTupleBorrowedStateString")("selfhost_backend_shared_escaping_tuple_borrowed_state_string_e2e")("131072|640000|42")
 
+// A runtime-managed string loop parameter consed into a sibling accumulator at the tail
+// self-call: the cell retains it before the back edge releases the parameter's old reference,
+// and a churn loop reuses freed cells so a missing retain shows up as a wrong total or a crash.
+let testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_consed_into_sibling_accumulator.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator")("selfhost_backend_shared_tco_runtime_managed_param_consed_into_sibling_accumulator_e2e")("17502612|3000|17505612")
+
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
 // jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
 // linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
@@ -4953,6 +4959,7 @@ let run shipped =
     |> testRunSharedTcoPatternHeadForwardedToOtherParameter(shipped)
     |> testRunSharedRcReleaseReadBuiltinJoinResult(shipped)
     |> testRunSharedEscapingTupleBorrowedStateString(shipped)
+    |> testRunSharedTcoRuntimeManagedParamConsedIntoSiblingAccumulator(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
