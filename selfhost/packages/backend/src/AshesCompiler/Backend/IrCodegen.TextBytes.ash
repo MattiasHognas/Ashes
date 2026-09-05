@@ -757,8 +757,8 @@ let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType 
 
 // `Byte.singleton(byte)`: a one-byte RC Bytes value — length word 1, the byte truncated into the
 // first data slot (`EmitBytesSingleton`).
-let emitBytesSingleton builder i64 i8 mallocFn mallocType byteVal =
-    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)("bytes_singleton")
+let emitBytesSingleton builder i64 i8 allocate byteVal =
+    (let payloadPtr = allocate(16)("bytes_singleton")
     in
         let _ =
             buildStore(builder)(constInt(i64)(1u64)(false))(payloadPtr)
@@ -822,40 +822,28 @@ let emitBytesHash context function_ i64 i8 ptrType builder bytesRef =
 
 // `Byte.appendByte(bytes)(byte)`: a fresh RC Bytes one byte longer — old payload copied, the new
 // byte truncated into the last slot (`EmitBytesAppendByte`).
-let emitBytesAppendByte builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bytesRef byteVal =
+let emitBytesAppendByte builder i64 i8 ptrType allocateDynamic memcpyFn memcpyType bytesRef byteVal =
     match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_appb") with
         | (oldLen, srcAddr) ->
             let newLen =
                 buildAdd(builder)(oldLen)(constInt(i64)(1u64)(false))("bytes_appb_new_len")
             in
-                let totalSize =
-                    buildAdd(builder)(newLen)(constInt(i64)(24u64)(false))("bytes_appb_total")
+                let payloadPtr =
+                    allocateDynamic(buildAdd(builder)(newLen)(constInt(i64)(8u64)(false))("bytes_appb_size"))("bytes_appb")
                 in
-                    let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("bytes_appb_header")
+                    let _ = buildStore(builder)(newLen)(payloadPtr)
                     in
-                        let _ =
-                            buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                        let destBytesPtr = gepBytes(builder)(i64)(i8)(payloadPtr)(8)("bytes_appb_dest")
                         in
-                            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bytes_appb_size_ptr")
+                            let srcPtr = buildIntToPtr(builder)(srcAddr)(ptrType)("bytes_appb_src")
                             in
-                                let _ =
-                                    buildStore(builder)(buildAdd(builder)(newLen)(constInt(i64)(8u64)(false))("bytes_appb_size"))(sizePtr)
+                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, srcPtr, oldLen])(3u32)("bytes_appb_copy")
                                 in
-                                    let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bytes_appb_payload")
+                                    let newBytePtr = buildGEP(builder)(i8)(destBytesPtr)([oldLen])(1u32)("bytes_appb_new_ptr")
                                     in
-                                        let _ = buildStore(builder)(newLen)(payloadPtr)
-                                        in
-                                            let destBytesPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_appb_dest")
-                                            in
-                                                let srcPtr = buildIntToPtr(builder)(srcAddr)(ptrType)("bytes_appb_src")
-                                                in
-                                                    let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, srcPtr, oldLen])(3u32)("bytes_appb_copy")
-                                                    in
-                                                        let newBytePtr = buildGEP(builder)(i8)(destBytesPtr)([oldLen])(1u32)("bytes_appb_new_ptr")
-                                                        in
-                                                            let _ =
-                                                                buildStore(builder)(buildTrunc(builder)(byteVal)(i8)("bytes_appb_byte"))(newBytePtr)
-                                                            in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_appb_result")
+                                        let _ =
+                                            buildStore(builder)(buildTrunc(builder)(byteVal)(i8)("bytes_appb_byte"))(newBytePtr)
+                                        in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_appb_result")
 
 // `Byte.allocate`'s invalid-length exit: fixed ASCII line and exit 1, the same stack-buffer
 // `write` shape as `emitBytesGetPanicMessage`.
@@ -880,7 +868,7 @@ let emitBytesAllocatePanicMessage builder i64 i8 =
 
 // `Byte.allocate(length)`: bounds guard, then a fresh zero-filled RC Bytes of exactly `length`
 // data bytes (`EmitBytesAllocate`, with the memset replaced by a plain store loop).
-let emitBytesAllocate context function_ i64 i8 builder mallocFn mallocType lengthVal =
+let emitBytesAllocate context function_ i64 i8 builder allocateDynamic lengthVal =
     (let negative =
         buildICmp(builder)(intPredicateSlt)(lengthVal)(constInt(i64)(0u64)(false))("bytes_allocate_negative")
     in
@@ -901,60 +889,48 @@ let emitBytesAllocate context function_ i64 i8 builder mallocFn mallocType lengt
                                 in
                                     let _ = positionBuilderAtEnd(builder)(okBlock)
                                     in
-                                        let totalSize =
-                                            buildAdd(builder)(lengthVal)(constInt(i64)(24u64)(false))("bytes_allocate_total")
+                                        let payloadPtr =
+                                            allocateDynamic(buildAdd(builder)(lengthVal)(constInt(i64)(8u64)(false))("bytes_allocate_size"))("bytes_allocate")
                                         in
-                                            let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("bytes_allocate_header")
+                                            let _ = buildStore(builder)(lengthVal)(payloadPtr)
                                             in
-                                                let _ =
-                                                    buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                                                let dataPtr = gepBytes(builder)(i64)(i8)(payloadPtr)(8)("bytes_allocate_data")
                                                 in
-                                                    let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bytes_allocate_size_ptr")
+                                                    let idxSlot = buildEntryAlloca(builder)(i64)("bytes_allocate_idx")
                                                     in
                                                         let _ =
-                                                            buildStore(builder)(buildAdd(builder)(lengthVal)(constInt(i64)(8u64)(false))("bytes_allocate_size"))(sizePtr)
+                                                            buildStore(builder)(constInt(i64)(0u64)(false))(idxSlot)
                                                         in
-                                                            let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bytes_allocate_payload")
+                                                            let fillCheckBlock = appendBasicBlock(context)(function_)("bytes_allocate_fill_check")
                                                             in
-                                                                let _ = buildStore(builder)(lengthVal)(payloadPtr)
+                                                                let fillBodyBlock = appendBasicBlock(context)(function_)("bytes_allocate_fill_body")
                                                                 in
-                                                                    let dataPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_allocate_data")
+                                                                    let doneBlock = appendBasicBlock(context)(function_)("bytes_allocate_done")
                                                                     in
-                                                                        let idxSlot = buildEntryAlloca(builder)(i64)("bytes_allocate_idx")
+                                                                        let _ = buildBr(builder)(fillCheckBlock)
                                                                         in
-                                                                            let _ =
-                                                                                buildStore(builder)(constInt(i64)(0u64)(false))(idxSlot)
+                                                                            let _ = positionBuilderAtEnd(builder)(fillCheckBlock)
                                                                             in
-                                                                                let fillCheckBlock = appendBasicBlock(context)(function_)("bytes_allocate_fill_check")
+                                                                                let idx = buildLoad(builder)(i64)(idxSlot)("bytes_allocate_idx_value")
                                                                                 in
-                                                                                    let fillBodyBlock = appendBasicBlock(context)(function_)("bytes_allocate_fill_body")
+                                                                                    let more = buildICmp(builder)(intPredicateUlt)(idx)(lengthVal)("bytes_allocate_more")
                                                                                     in
-                                                                                        let doneBlock = appendBasicBlock(context)(function_)("bytes_allocate_done")
+                                                                                        let _ = buildCondBr(builder)(more)(fillBodyBlock)(doneBlock)
                                                                                         in
-                                                                                            let _ = buildBr(builder)(fillCheckBlock)
+                                                                                            let _ = positionBuilderAtEnd(builder)(fillBodyBlock)
                                                                                             in
-                                                                                                let _ = positionBuilderAtEnd(builder)(fillCheckBlock)
+                                                                                                let elemPtr = buildGEP(builder)(i8)(dataPtr)([idx])(1u32)("bytes_allocate_elem")
                                                                                                 in
-                                                                                                    let idx = buildLoad(builder)(i64)(idxSlot)("bytes_allocate_idx_value")
+                                                                                                    let _ =
+                                                                                                        buildStore(builder)(buildTrunc(builder)(constInt(i64)(0u64)(false))(i8)("bytes_allocate_zero"))(elemPtr)
                                                                                                     in
-                                                                                                        let more = buildICmp(builder)(intPredicateUlt)(idx)(lengthVal)("bytes_allocate_more")
+                                                                                                        let _ =
+                                                                                                            buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bytes_allocate_idx_next"))(idxSlot)
                                                                                                         in
-                                                                                                            let _ = buildCondBr(builder)(more)(fillBodyBlock)(doneBlock)
+                                                                                                            let _ = buildBr(builder)(fillCheckBlock)
                                                                                                             in
-                                                                                                                let _ = positionBuilderAtEnd(builder)(fillBodyBlock)
-                                                                                                                in
-                                                                                                                    let elemPtr = buildGEP(builder)(i8)(dataPtr)([idx])(1u32)("bytes_allocate_elem")
-                                                                                                                    in
-                                                                                                                        let _ =
-                                                                                                                            buildStore(builder)(buildTrunc(builder)(constInt(i64)(0u64)(false))(i8)("bytes_allocate_zero"))(elemPtr)
-                                                                                                                        in
-                                                                                                                            let _ =
-                                                                                                                                buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bytes_allocate_idx_next"))(idxSlot)
-                                                                                                                            in
-                                                                                                                                let _ = buildBr(builder)(fillCheckBlock)
-                                                                                                                                in
-                                                                                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
-                                                                                                                                    in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_allocate_result"))
+                                                                                                                let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_allocate_result"))
 
 // `Byte.fromList(list)`: two passes over the cons cells — count, then allocate and fill each
 // byte in order (`EmitBytesFromList`'s exact shape; cons layout head at 0, tail at 8, nil = 0).
@@ -1105,8 +1081,8 @@ let emitBytesPanicLine builder i64 i8 codes =
                             |> emitLinuxProcessExitWithCode(builder)(i64))
 
 // `Byte.empty(Unit)`: a zero-length RC Bytes value (`EmitBytesEmpty`).
-let emitBytesEmpty builder i64 i8 mallocFn mallocType =
-    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(8)("bytes_empty")
+let emitBytesEmpty builder i64 i8 allocate =
+    (let payloadPtr = allocate(8)("bytes_empty")
     in
         let _ =
             buildStore(builder)(constInt(i64)(0u64)(false))(payloadPtr)
@@ -1134,8 +1110,8 @@ let recursive emitBytesLeStores builder i64 i8 dataPtr baseOffset value width in
 
 // `Byte.u16Le`/`u32Le`/`u64Le`: a fresh `width`-byte RC Bytes value holding the little-endian
 // encoding (`EmitBytesU16Le`'s exact shape, parameterized over the width).
-let emitBytesUnsignedLe builder i64 i8 mallocFn mallocType width value name =
-    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)(name)
+let emitBytesUnsignedLe builder i64 i8 allocate width value name =
+    (let payloadPtr = allocate(16)(name)
     in
         let _ =
             buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(width))(false))(payloadPtr)
@@ -1980,7 +1956,7 @@ let emitRuneStoreByte builder i64 i8 bytesPtr index value name =
 // four-byte payload so the straight-line stores never address past the allocation, with the
 // logical length being the selected width; `EmitRuneToText`/`EmitRuneStoreUtf8`'s exact select
 // chains.
-let emitRuneToText builder i64 i8 ptrType mallocFn mallocType rune =
+let emitRuneToText builder i64 i8 allocate rune =
     (let widthThreeOrFour =
         buildSelect(builder)(buildICmp(builder)(intPredicateUlt)(rune)(constInt(i64)(65536u64)(false))("rune_text_three"))(constInt(i64)(3u64)(false))(constInt(i64)(4u64)(false))("rune_text_width34")
     in
@@ -1990,7 +1966,7 @@ let emitRuneToText builder i64 i8 ptrType mallocFn mallocType rune =
             let width =
                 buildSelect(builder)(buildICmp(builder)(intPredicateUlt)(rune)(constInt(i64)(128u64)(false))("rune_text_ascii"))(constInt(i64)(1u64)(false))(widthTwoOrMore)("rune_text_width")
             in
-                let textPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(12)("rune_text")
+                let textPtr = allocate(12)("rune_text")
                 in
                     let _ = buildStore(builder)(width)(textPtr)
                     in
