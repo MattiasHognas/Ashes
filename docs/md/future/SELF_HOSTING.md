@@ -465,7 +465,10 @@ same public behavior.
   coherence and evidence resolution. Function, pointer, task, unbound-variable, and non-regular
   recursive fields are rejected. A stitched-program declaration context also rejects builtin and
   declared resources, opaque external types, capabilities, and transparent aliases to unsupported
-  fields independently of declaration or module order. Physical dictionary and method lowering remains.
+  fields independently of declaration or module order. Physical dictionary and method lowering remains;
+  until it lands, the selfhost rejects `==` on a list of a `deriving {Eq}` record
+  (`tests/reuse_specialization_declines_unreachable_helper.ash`, `CoreOperatorTypeMismatch` on
+  `List(Live)`), the one shared fixture that needs a derived implementation at run time.
 
 #### Modules, projects, externals, and whole-program semantics
 
@@ -1478,7 +1481,17 @@ same public behavior.
 - [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
-  them. Open: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
+  them. Done (2026-09-06): a generic callee's deep-copied list result shares nothing with the
+  call's consumed arguments, so stage 0 releases them with their elements after the copy instead
+  of spine-only (`resultDeepCopied` through `LowerCallRestoreArena` to
+  `LowerCallDropConsumedRuntimeArguments`); `tests/generic_append_map_churn_plateau.ash` leaked
+  every record and string once per iteration before (32.8 MB at 200000 iterations, 8.2 MB at
+  20000). Still open on the same fixture: a parameter that always reaches the result is copied
+  into an owned value at entry (`LowerLambdaCoreNormalizeAlwaysReturnedParameter`) but the fresh
+  record storing it stays arena-placed, so the owned copy is orphaned when the caller copies the
+  record out (about 23 bytes per `map` call in stage 0, and the same shape in the selfhost, which
+  also lacks the generic deep-copy path entirely, so its growth is larger). The owned parameter
+  must count as a fresh owned child of the record it is stored into. Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
   an aggregate is never retained at the store. For a runtime-RC aggregate that retain would be
   balanced by its dropper and is the Perceus-correct rule; for an arena aggregate (the self-hosted
   lowering's emitted instruction records, say) there is no dropper to balance it, so the arena
