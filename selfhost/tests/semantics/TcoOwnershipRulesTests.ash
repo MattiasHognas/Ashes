@@ -313,6 +313,22 @@ let expectCopyAdtLoopParameterIsRuntimeManaged unit =
         |> (given (_) -> check("the back edge restores the loop-entry watermark")(countContaining("RestoreArenaState")(lines) == 1))
         |> (given (_) -> check("the exit transfers the parameter's own value to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
 
+let scalarTupleLoopSource = "let recursive step (n: Int) (s: (Int, Int)) =\n    match s with\n        | (a, b) ->\n            if n == 0\n            then a + b\n            else step(n - 1)((b, a + n))\n\nAshes.IO.print(step(10)((1, 2)))"
+
+// A tuple of scalars as a loop parameter takes the record's placement under the type name
+// `Tuple`: the entry copy under the ownership flag, the back-edge copy of the fresh cell, and
+// the two releases; the body's scalar result never transfers the cell, so the exit release is
+// unconditional under the active flag.
+let expectScalarTupleLoopParameterIsRuntimeManaged unit =
+    scalarTupleLoopSource
+    |> loopFunctionLines("[ClosureHelper from step]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the entry copy and the back-edge copy of the cell")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the predecessor and exit releases under the tuple's name")(countContainingBoth("RcDrop")("TypeName=Tuple RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("a scalar result never transfers the cell")(countContaining("rc_tco_exit_transfer")(lines) == 0)))
+
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 
 // The same shape over an unresolved element type keeps its markers as identities: the argument
@@ -402,6 +418,7 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectForwardedStrHeadIsProtected(Unit))
     |> (given (_) -> expectForwardedInnerListHeadKeepsListInArena(Unit))
     |> (given (_) -> expectCopyAdtLoopParameterIsRuntimeManaged(Unit))
+    |> (given (_) -> expectScalarTupleLoopParameterIsRuntimeManaged(Unit))
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))

@@ -4459,10 +4459,15 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loo
                     else None
         | _ -> None
 
+let recursive allScalarElements (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest -> resultSurvivesReset(element)(state) && allScalarElements(rest)(state)
+
 // A single-constructor copy-ADT loop parameter (every field a scalar, stage 0's `CanCopyOutAdt`
-// under `IsRcEligibleScalarTupleOrAdtType`) admitted to runtime-managed placement: its cell
-// copies out whole at entry and at every back edge, and its release is one `RcDrop` under the
-// type's name. Answers the cell's size and the type name.
+// under `IsRcEligibleScalarTupleOrAdtType`) or a tuple of scalars admitted to runtime-managed
+// placement: its cell copies out whole at entry and at every back edge, and its release is one
+// `RcDrop` under the type's name (`Tuple` for a tuple). Answers the cell's size and that name.
 let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
     if isTcoListShape(shape) || shape == TcoPassThroughShape
     then None
@@ -4475,6 +4480,10 @@ let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringSta
                         then None
                         else Some((shallowAdtCopySizeBytes(name)(state), name))
                     | _ -> None
+            | Some(SemTuple(elements)) ->
+                if length(elements) > 0 && allScalarElements(elements)(state)
+                then Some((8 * length(elements), "Tuple"))
+                else None
             | _ -> None
 
 let tcoAdtSlotAdmitted (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
