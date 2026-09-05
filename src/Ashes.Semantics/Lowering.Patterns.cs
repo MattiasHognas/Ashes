@@ -177,7 +177,7 @@ public sealed partial class Lowering
     // for the join to be uniformly runtime-managed and the retained reference to be released.
     private bool IsRuntimeManagedStringMatchArm(Expr expression, out bool fresh)
     {
-        if (expression is Expr.StrLit)
+        if (expression is Expr.StrLit || IsStaticConstructorArm(expression, out _))
         {
             fresh = false;
             return true;
@@ -211,6 +211,50 @@ public sealed partial class Lowering
         fresh = false;
         return false;
     }
+
+    /// <summary>
+    /// A constructor application whose every argument is a literal or another such application: a
+    /// value that owns nothing, allocated in the arena, and copied to the reference-counted heap
+    /// beside a retained sibling arm the way a literal string arm is, so the join stays uniformly
+    /// runtime-managed. Only a type the runtime-managed deep copy handles qualifies.
+    /// </summary>
+    private bool IsStaticConstructorArm(Expr expression, out TypeRef.TNamedType? type)
+    {
+        type = null;
+        if (!IsTopCellFreshAdtConstruction(
+                expression,
+                out ConstructorSymbol? constructor,
+                out List<Expr>? arguments,
+                out TypeRef.TNamedType? resultType)
+            || constructor is null
+            || arguments is null
+            || resultType is null
+            || !CanRuntimeManageTcoAdt(resultType))
+        {
+            return false;
+        }
+
+        foreach (Expr argument in arguments)
+        {
+            if (!IsStaticConstructorArgument(argument))
+            {
+                return false;
+            }
+        }
+
+        type = resultType;
+        return true;
+    }
+
+    private bool IsStaticConstructorArgument(Expr argument)
+        => argument is Expr.StrLit
+            or Expr.IntLit
+            or Expr.BigIntLit
+            or Expr.UIntLit
+            or Expr.FloatLit
+            or Expr.RuneLit
+            or Expr.BoolLit
+            || IsStaticConstructorArm(argument, out _);
 
     /// <summary>
     /// A bare read of a pattern binding extracted from a runtime-managed loop parameter whose
@@ -812,6 +856,17 @@ public sealed partial class Lowering
                 IrInst.CopyOutPurpose.RcNormalization));
             MarkRuntimeManagedTemp(resultTemp);
             return (resultTemp, sourceType);
+        }
+
+        // A static constructor arm is built in the arena as usual and deep-copied to the
+        // reference-counted heap, its literal string children included, so the arm joins a retained
+        // sibling uniformly.
+        if (normalizeStaticStringArm
+            && IsStaticConstructorArm(body, out TypeRef.TNamedType? staticType)
+            && staticType is not null)
+        {
+            var (arenaTemp, arenaType) = LowerExpr(body, request).AsPair();
+            return (EmitRuntimeManagedTcoDeepCopy(arenaTemp, staticType), arenaType);
         }
 
         return LowerExpr(body, request).AsPair();

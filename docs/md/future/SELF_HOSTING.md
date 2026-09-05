@@ -1004,14 +1004,19 @@ same public behavior.
   the caller's child-preserving release of a result it took for arena-placed, the list's heads as
   well, 127 MB over three hundred thousand searches
   (`tests/tco_runtime_managed_find_string_head_plateau.ash`,
-  `Linux_backend_llvm_find_loop_returning_string_head_memory_should_plateau`). Open: multi-constructor ADT parameters (stage 0
+  `Linux_backend_llvm_find_loop_returning_string_head_memory_should_plateau`). A static
+  constructor arm (every argument a literal, or another such application: `Item(name = "none",
+  weight = 0)`) is a value that owns nothing, which placement deliberately keeps in the arena
+  (`Directly_escaping_adt_with_literal_string_child_remains_arena_managed`), so beside a
+  retained head it is built in the arena as usual and deep-copied to the reference-counted heap
+  the way a literal string arm is copied (`staticConstructorArm` in `lowerMatchArmBody`, stage
+  0's `IsStaticConstructorArm` in `LowerMatchArmExpression` through
+  `EmitRuntimeManagedTcoDeepCopy`); the record-head search runs at 5.6 MB through both compilers
+  (250 MB and 33 MB before, `tests/tco_runtime_managed_find_record_head_plateau.ash`,
+  `Linux_backend_llvm_find_loop_returning_record_head_memory_should_plateau`). Open: multi-constructor ADT parameters (stage 0
   keeps those in the arena under its fixed-watermark compaction, the `__deepcopy_N` copiers at
   doubling thresholds; the self-hosted loop still grows the arena, 75 MB at three million
-  iterations), a matched head returned as the loop's own result beside a literal record arm
-  (a record literal with a string-literal field is not a fresh runtime-manageable constructor in
-  either compiler, so the join is not uniformly runtime-managed and the retained head is never
-  released: stage 0 leaks 250 MB over three hundred thousand `find` calls on record heads, the
-  self-hosted lowering 33 MB; the string-head shape is closed, see below), the
+  iterations), the
   runtime-managed reset and
   active flags for a loop whose only runtime-managed parameters are `Str`, and the copy-out reset
   paths for arena aggregates (fixed-watermark compaction, the two-phase up/down copies, affine

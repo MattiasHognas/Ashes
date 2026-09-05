@@ -44,40 +44,40 @@ let combineStringArms (left: Maybe(Bool)) (right: Maybe(Bool)) =
         | (Some(leftFresh), Some(rightFresh)) -> Some(leftFresh || rightFresh)
         | _ -> None
 
-// Stage 0's `IsRuntimeManagedStringMatchArm`: a literal string is runtime-managed but not
-// fresh, a fresh string producer is both, a `let` chain is what its body is when that body is
-// fresh, an `if` is what both its branches are, and a funnel arm (a tail self-call, which never
-// reaches the join) is runtime-managed but not fresh. `Some(fresh)` for a runtime-managed string
-// arm, `None` for any other arm.
-let recursive runtimeManagedStringArm (isFreshStringProducer: Expr -> Bool) (isFunnel: Expr -> Bool) (body: Expr) =
+// Stage 0's `IsRuntimeManagedStringMatchArm`: a literal string or a static constructor (every
+// argument a literal) is runtime-managed but not fresh, a fresh string producer is both, a
+// `let` chain is what its body is when that body is fresh, an `if` is what both its branches
+// are, and a funnel arm (a tail self-call, which never reaches the join) is runtime-managed but
+// not fresh. `Some(fresh)` for a runtime-managed arm, `None` for any other arm.
+let recursive runtimeManagedStringArm (isFreshStringProducer: Expr -> Bool) (isFunnel: Expr -> Bool) (isStaticConstructor: Expr -> Bool) (body: Expr) =
     match unspanned(body) with
         | ExprString(_value) -> Some(false)
         | ExprLet(_name, _value, letBody, _parameters, _annotation, _requirements) ->
-            match runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(letBody) with
+            match runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(letBody) with
                 | Some(true) -> Some(true)
                 | _ -> None
-        | ExprIf(_condition, thenBranch, elseBranch) -> combineStringArms(runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(thenBranch))(runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(elseBranch))
+        | ExprIf(_condition, thenBranch, elseBranch) -> combineStringArms(runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(thenBranch))(runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(elseBranch))
         | other ->
             if isFreshStringProducer(other)
             then Some(true)
             else
-                if isFunnel(other)
+                if isFunnel(other) || isStaticConstructor(other)
                 then Some(false)
                 else None
 
-let recursive normalizeStaticStringArmsFrom (isFreshStringProducer: Expr -> Bool) (isFunnel: Expr -> Bool) (cases: List((Pattern, Expr, Maybe(Expr)))) (anyFresh: Bool) =
+let recursive normalizeStaticStringArmsFrom (isFreshStringProducer: Expr -> Bool) (isFunnel: Expr -> Bool) (isStaticConstructor: Expr -> Bool) (cases: List((Pattern, Expr, Maybe(Expr)))) (anyFresh: Bool) =
     match cases with
         | [] -> anyFresh
         | (_pattern, _body, Some(_guard)) :: _rest -> false
         | (_pattern, body, None) :: rest ->
-            match runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(body) with
-                | Some(fresh) -> normalizeStaticStringArmsFrom(isFreshStringProducer)(isFunnel)(rest)(anyFresh || fresh)
+            match runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(body) with
+                | Some(fresh) -> normalizeStaticStringArmsFrom(isFreshStringProducer)(isFunnel)(isStaticConstructor)(rest)(anyFresh || fresh)
                 | None -> false
 
 // Stage 0's `ShouldNormalizeStaticStringMatchArms`: every arm is guard-free and produces a
-// runtime-managed string, and at least one produces a fresh one, so the literal arms are copied
+// runtime-managed value, and at least one produces a fresh one, so the literal arms are copied
 // to the reference-counted heap and the join is uniformly runtime-managed.
-let shouldNormalizeStaticStringArms (isFreshStringProducer: Expr -> Bool) (isFunnel: Expr -> Bool) (cases: List((Pattern, Expr, Maybe(Expr)))) = normalizeStaticStringArmsFrom(isFreshStringProducer)(isFunnel)(cases)(false)
+let shouldNormalizeStaticStringArms (isFreshStringProducer: Expr -> Bool) (isFunnel: Expr -> Bool) (isStaticConstructor: Expr -> Bool) (cases: List((Pattern, Expr, Maybe(Expr)))) = normalizeStaticStringArmsFrom(isFreshStringProducer)(isFunnel)(isStaticConstructor)(cases)(false)
 
 // The literal an arm body is, when the whole body is one string literal.
 let staticStringArmBody (body: Expr) =
