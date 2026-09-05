@@ -44,6 +44,7 @@ import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.ResultReach.resultAlwaysReachesVariable
 import AshesCompiler.Semantics.StructuralDroppers
+import AshesCompiler.Semantics.StructuralCopiers
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TcoAffineAppend.affineSelfAppendOrdinals
@@ -4619,6 +4620,278 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                     |> emitRuntimeManagedBackEdgeStores(stores)
                     |> unlocatedInstruction(ReclaimArenaChunks(reset.fixedEndSlot)(preRestoreSlot)(false))
 
+// What carries an arena loop parameter's successor across the back edge's reset, stage 0's
+// `GetTcoCopyOutKind` without the list shapes (a list parameter is placed on the reference-counted
+// heap by its self-call shape or keeps the arena): a string copies by its length, a big integer by
+// its limb count, a same-arity scalar-field ADT by its cell size, and a deep-copyable ADT or tuple
+// through the synthesized clone.
+type TcoCompactionCopy =
+    | TcoNoCompactionCopy
+    | TcoShallowCompactionCopy(Int)
+    | TcoDeepCompactionCopy
+
+let tcoCompactionCopyOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> TcoShallowCompactionCopy(-1)
+        | SemBigInt -> TcoShallowCompactionCopy(copyOutBigIntSize)
+        | SemTuple(_elements) as tuple ->
+            match heapFactsOf(tuple)(state) with
+                | HeapLayoutFacts { arenaDeepCopySupported = true } -> TcoDeepCompactionCopy
+                | _ -> TcoNoCompactionCopy
+        | SemNamed(_symbolId, name, _arguments) as named ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
+                    state
+                    |> shallowAdtCopySizeBytes(name)
+                    |> TcoShallowCompactionCopy
+                | HeapLayoutFacts { arenaDeepCopySupported = true } -> TcoDeepCompactionCopy
+                | _ -> TcoNoCompactionCopy
+        | _ -> TcoNoCompactionCopy
+
+let hasCompactionCopy (copy: TcoCompactionCopy) =
+    match copy with
+        | TcoNoCompactionCopy -> false
+        | _ -> true
+
+let argumentTypeResolved (argument: TcoResetArgument) (state: CoreLoweringState) =
+    match resolveType(state)(argument.argumentType) with
+        | SemVariable(_id) -> false
+        | _ -> true
+
+// An argument that needs no copy at the reset: a scalar, a resource handle, or the loop's own
+// unchanged value, which sits below the watermark (stage 0's `ArgResetSafe`); an argument whose
+// type is still unresolved is never reset-safe.
+let compactionArgumentSurvives (argument: TcoResetArgument) (state: CoreLoweringState) = resultSurvivesReset(argument.argumentType)(state) || argumentTypeResolved(argument)(state) && (isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape)
+
+let recursive allArgumentsSurvivePlainReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> true
+        | argument :: rest -> compactionArgumentSurvives(argument)(state) && allArgumentsSurvivePlainReset(rest)(state)
+
+// Stage 0's `TcoBackEdgeAllArgsCopyable` and `TcoBackEdgeUseFixedWatermark` together: every
+// argument survives the reset on its own or has a whole-value copy, and no argument is a list
+// (the single-cell list copies under the advancing watermark are not ported).
+let recursive allArgumentsCompactable (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> true
+        | argument :: rest ->
+            (compactionArgumentSurvives(argument)(state) || (match resolveType(state)(argument.argumentType) with
+                | SemList(_element) -> false
+                | _ ->
+                    state
+                    |> tcoCompactionCopyOf(argument.argumentType)
+                    |> hasCompactionCopy)) && allArgumentsCompactable(rest)(state)
+
+// The inline clone of an arena value (stage 0's `EmitDeepCopy`), its copier functions synthesized
+// into the program once per type; answers the temp holding the clone.
+let emitTcoDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
+
+let emitCompactionShallowCopy (sourceTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = destTemp } ->
+            (unlocatedInstruction(CopyOutArena(destTemp)(sourceTemp)(sizeBytes)(false)(ArenaTcoCompaction)(None))(allocated), destTemp)
+
+let nextCompactionLabel (prefix: Str) (state: CoreLoweringState) = (prefix + "_" + Ashes.Text.fromInt(state.nextLambdaId), (state with nextLambdaId = state.nextLambdaId + 1))
+
+// `count` consecutive temps, answering the first.
+let reserveResetTemps (count: Int) (state: CoreLoweringState) = (state.nextTemp, (state with nextTemp = state.nextTemp + count))
+
+// Stage 0's `TcoBackEdgeNetReservationSpans`: an arena string reservation is live capacity, not
+// garbage, so its span is netted out of the growth before the threshold test.
+let recursive netReservationSpans (arguments: List(TcoResetArgument)) (reservations: List((Int, Int, Int))) (growthTemp: Int) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> (state, growthTemp)
+        | argument :: rest ->
+            match lookupAffineReservation(argument.parameterSlot)(reservations) with
+                | Some((reservationStart, reservationEnd)) ->
+                    if argument.argumentRuntime
+                    then netReservationSpans(rest)(reservations)(growthTemp)(state)
+                    else
+                        match reserveResetTemps(4)(state) with
+                            | (startTemp, allocated) ->
+                                allocated
+                                |> unlocatedInstruction(LoadLocal(startTemp)(reservationStart))
+                                |> unlocatedInstruction(LoadLocal(startTemp + 1)(reservationEnd))
+                                |> unlocatedInstruction(SubInt(startTemp + 2)(startTemp + 1)(startTemp))
+                                |> unlocatedInstruction(SubInt(startTemp + 3)(growthTemp)(startTemp + 2))
+                                |> netReservationSpans(rest)(reservations)(startTemp + 3)
+                | None -> netReservationSpans(rest)(reservations)(growthTemp)(state)
+
+// Stage 0's `TcoBackEdgeEmitCompactionCheck`: the whole accumulator is copied only once the arena
+// has grown past twice the live size recorded at the last compaction plus slack, or the cursor
+// left the watermark's chunk; every other back edge keeps allocating above the watermark.
+// Answers the skip label the compaction ends with.
+let emitCompactionCheck (frame: CoreTcoLoopFrame) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = cursorState, local = currentCursorSlot } ->
+            match freshLocal(cursorState) with
+                | FreshLocal { state = endState, local = currentEndSlot } ->
+                    match reserveResetTemps(3)(endState) with
+                        | (currentTemp, growthState) ->
+                            match growthState
+                            |> unlocatedInstruction(SaveArenaState(currentCursorSlot)(currentEndSlot)(false))
+                            |> unlocatedInstruction(LoadLocal(currentTemp)(currentCursorSlot))
+                            |> unlocatedInstruction(LoadLocal(currentTemp + 1)(frame.fixedCursorSlot))
+                            |> unlocatedInstruction(SubInt(currentTemp + 2)(currentTemp)(currentTemp + 1))
+                            |> netReservationSpans(arguments)(frame.affineReservationSlots)(currentTemp + 2) with
+                                | (nettedState, growthTemp) ->
+                                    match reserveResetTemps(10)(nettedState) with
+                                        | (liveTemp, thresholdState) ->
+                                            match nextCompactionLabel("tco_compact_skip")(thresholdState) with
+                                                | (skipLabel, labeledState) ->
+                                                    labeledState
+                                                    |> unlocatedInstruction(LoadLocal(liveTemp)(frame.compactionSizeSlot))
+                                                    |> unlocatedInstruction(LoadConstInt(liveTemp + 1)(1))
+                                                    |> unlocatedInstruction(ShlInt(liveTemp + 2)(liveTemp)(liveTemp + 1))
+                                                    |> unlocatedInstruction(LoadConstInt(liveTemp + 3)(4096))
+                                                    |> unlocatedInstruction(AddInt(liveTemp + 4)(liveTemp + 2)(liveTemp + 3))
+                                                    |> unlocatedInstruction(CmpIntGt(liveTemp + 5)(growthTemp)(liveTemp + 4))
+                                                    |> unlocatedInstruction(LoadLocal(liveTemp + 6)(frame.fixedEndSlot))
+                                                    |> unlocatedInstruction(LoadLocal(liveTemp + 7)(currentEndSlot))
+                                                    |> unlocatedInstruction(CmpIntNe(liveTemp + 8)(liveTemp + 7)(liveTemp + 6))
+                                                    |> unlocatedInstruction(OrInt(liveTemp + 9)(liveTemp + 5)(liveTemp + 8))
+                                                    |> unlocatedInstruction(JumpIfFalse(liveTemp + 9)(skipLabel))
+                                                    |> (given (checked: CoreLoweringState) -> (checked, skipLabel))
+
+// Phase A of stage 0's two-pass copy-out: every heap argument is copied up above the current
+// cursor, a deep clone twice (the second clone starts a full clone above the watermark, so the
+// down copy never overlaps its source), so the reset below cannot reclaim its bytes.
+let recursive emitCompactionUpCopies (arguments: List(TcoResetArgument)) (state: CoreLoweringState) (reversedCopies: List((TcoResetArgument, Int, TcoCompactionCopy))) =
+    match arguments with
+        | [] -> (state, reverse(reversedCopies))
+        | argument :: rest ->
+            if compactionArgumentSurvives(argument)(state)
+            then emitCompactionUpCopies(rest)(state)(reversedCopies)
+            else
+                match tcoCompactionCopyOf(argument.argumentType)(state) with
+                    | TcoNoCompactionCopy -> emitCompactionUpCopies(rest)(state)(reversedCopies)
+                    | TcoDeepCompactionCopy ->
+                        match emitTcoDeepCopy(argument.argumentTemp)(argument.argumentType)(state) with
+                            | (firstState, firstTemp) ->
+                                match emitTcoDeepCopy(firstTemp)(argument.argumentType)(firstState) with
+                                    | (secondState, secondTemp) -> emitCompactionUpCopies(rest)(secondState)((argument, secondTemp, TcoDeepCompactionCopy) :: reversedCopies)
+                    | TcoShallowCompactionCopy(sizeBytes) ->
+                        match emitCompactionShallowCopy(argument.argumentTemp)(sizeBytes)(state) with
+                            | (copied, upTemp) -> emitCompactionUpCopies(rest)(copied)((argument, upTemp, TcoShallowCompactionCopy(sizeBytes)) :: reversedCopies)
+
+// An affine string accumulator's down copy reserves (an in-place append of the empty string: the
+// slots were just zeroed, so the fallback reserves twice the size and records fresh bounds), so
+// the accumulator and its headroom sit exactly where the rebase puts the watermark.
+let emitCompactionReservingCopy (upTemp: Int) (reservationStart: Int) (reservationEnd: Int) (state: CoreLoweringState) =
+    match internString("")(state) with
+        | StringInterning { state = interned, label = emptyLabel } ->
+            match reserveResetTemps(2)(interned) with
+                | (emptyTemp, allocated) ->
+                    allocated
+                    |> unlocatedInstruction(LoadConstStr(emptyTemp)(emptyLabel))
+                    |> unlocatedInstruction(ConcatStrTip(emptyTemp + 1)(upTemp)(emptyTemp)(reservationStart)(reservationEnd)(false))
+                    |> (given (reserved: CoreLoweringState) -> (reserved, emptyTemp + 1))
+
+// Phase B: each up copy is copied down to the watermark and stored into its parameter slot.
+let recursive emitCompactionDownCopies (copies: List((TcoResetArgument, Int, TcoCompactionCopy))) (reservations: List((Int, Int, Int))) (state: CoreLoweringState) =
+    match copies with
+        | [] -> state
+        | (argument, upTemp, copy) :: rest ->
+            match (copy, lookupAffineReservation(argument.parameterSlot)(reservations)) with
+                | (TcoDeepCompactionCopy, _reservation) ->
+                    match emitTcoDeepCopy(upTemp)(argument.argumentType)(state) with
+                        | (copied, downTemp) ->
+                            copied
+                            |> unlocatedInstruction(StoreLocal(argument.parameterSlot)(downTemp))
+                            |> emitCompactionDownCopies(rest)(reservations)
+                | (TcoShallowCompactionCopy(-1), Some((reservationStart, reservationEnd))) ->
+                    match emitCompactionReservingCopy(upTemp)(reservationStart)(reservationEnd)(state) with
+                        | (reserved, downTemp) ->
+                            reserved
+                            |> unlocatedInstruction(StoreLocal(argument.parameterSlot)(downTemp))
+                            |> emitCompactionDownCopies(rest)(reservations)
+                | (TcoShallowCompactionCopy(sizeBytes), _reservation) ->
+                    match emitCompactionShallowCopy(upTemp)(sizeBytes)(state) with
+                        | (copied, downTemp) ->
+                            copied
+                            |> unlocatedInstruction(StoreLocal(argument.parameterSlot)(downTemp))
+                            |> emitCompactionDownCopies(rest)(reservations)
+                | (TcoNoCompactionCopy, _reservation) -> emitCompactionDownCopies(rest)(reservations)(state)
+
+// Stage 0's `TcoBackEdgeEmitCompactionRecord`: the compacted live size is recorded for the next
+// threshold, or, when the down copy overflowed into a new chunk, the fixed watermark is rebased to
+// that chunk's allocation start (read from the chunk footer, which holds the chunk's base) and the
+// live size restarts there.
+let emitCompactionRecord (frame: CoreTcoLoopFrame) (skipLabel: Str) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = cursorState, local = afterCursorSlot } ->
+            match freshLocal(cursorState) with
+                | FreshLocal { state = endState, local = afterEndSlot } ->
+                    match reserveResetTemps(10)(endState) with
+                        | (afterTemp, tempState) ->
+                            match nextCompactionLabel("tco_compact_rebase")(tempState) with
+                                | (rebaseLabel, rebaseState) ->
+                                    match nextCompactionLabel("tco_compact_recorded")(rebaseState) with
+                                        | (recordedLabel, labeledState) ->
+                                            labeledState
+                                            |> unlocatedInstruction(SaveArenaState(afterCursorSlot)(afterEndSlot)(false))
+                                            |> unlocatedInstruction(LoadLocal(afterTemp)(afterCursorSlot))
+                                            |> unlocatedInstruction(LoadLocal(afterTemp + 1)(frame.fixedCursorSlot))
+                                            |> unlocatedInstruction(SubInt(afterTemp + 2)(afterTemp)(afterTemp + 1))
+                                            |> unlocatedInstruction(LoadLocal(afterTemp + 3)(afterEndSlot))
+                                            |> unlocatedInstruction(LoadLocal(afterTemp + 4)(frame.fixedEndSlot))
+                                            |> unlocatedInstruction(CmpIntEq(afterTemp + 5)(afterTemp + 3)(afterTemp + 4))
+                                            |> unlocatedInstruction(JumpIfFalse(afterTemp + 5)(rebaseLabel))
+                                            |> unlocatedInstruction(StoreLocal(frame.compactionSizeSlot)(afterTemp + 2))
+                                            |> unlocatedInstruction(Jump(recordedLabel))
+                                            |> unlocatedInstruction(Label(rebaseLabel))
+                                            |> unlocatedInstruction(LoadMemOffset(afterTemp + 6)(afterTemp + 3)(0))
+                                            |> unlocatedInstruction(LoadConstInt(afterTemp + 7)(8))
+                                            |> unlocatedInstruction(AddInt(afterTemp + 8)(afterTemp + 6)(afterTemp + 7))
+                                            |> unlocatedInstruction(StoreLocal(frame.fixedCursorSlot)(afterTemp + 8))
+                                            |> unlocatedInstruction(StoreLocal(frame.fixedEndSlot)(afterTemp + 3))
+                                            |> unlocatedInstruction(SubInt(afterTemp + 9)(afterTemp)(afterTemp + 8))
+                                            |> unlocatedInstruction(StoreLocal(frame.compactionSizeSlot)(afterTemp + 9))
+                                            |> unlocatedInstruction(Label(recordedLabel))
+                                            |> unlocatedInstruction(Label(skipLabel))
+
+// Stage 0's `EmitTcoBackEdgeArenaBlock` beyond the plain reset: the amortized fixed-watermark
+// compaction of a loop whose heap arguments all have a whole-value copy. Under the threshold check
+// the heap arguments are copied up above the cursor, the arena is reset to the fixed loop-entry
+// watermark (the arena reservations of an arena string successor zeroed), the copies are copied
+// down onto the watermark and stored into their slots, the chunks above are reclaimed, and the
+// live size is recorded.
+let emitCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(TcoResetArgument)) (preRestoreSlot: Int) (state: CoreLoweringState) =
+    match emitCompactionCheck(frame)(arguments)(state) with
+        | (checked, skipLabel) ->
+            match emitCompactionUpCopies(arguments)(checked)([]) with
+                | (copiedUp, copies) ->
+                    copiedUp
+                    |> unlocatedInstruction(RestoreArenaState(frame.fixedCursorSlot)(frame.fixedEndSlot)(preRestoreSlot)(false))
+                    |> emitReservationZeroing(arguments)
+                    |> emitCompactionDownCopies(copies)(frame.affineReservationSlots)
+                    |> unlocatedInstruction(ReclaimArenaChunks(frame.fixedEndSlot)(preRestoreSlot)(false))
+                    |> emitCompactionRecord(frame)(skipLabel)
+
+// The back edge of a loop the runtime-managed reset does not admit: the iteration-local owners
+// are released, then the per-iteration watermark is restored when every argument survives a reset
+// on its own (stage 0's `TcoBackEdgeTryEmitPlainReset`), the fixed watermark compacted when every
+// heap argument has a whole-value copy, and the iteration's allocations left in place otherwise.
+let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = preRestoreSlot } ->
+            allocated
+            |> emitResolvedOwnedDrops(reset.ownedDrops)
+            |> (given (released: CoreLoweringState) ->
+                if allArgumentsSurvivePlainReset(arguments)(released)
+                then
+                    released
+                    |> unlocatedInstruction(RestoreArenaState(reset.arenaCursorSlot)(reset.arenaEndSlot)(preRestoreSlot)(false))
+                    |> unlocatedInstruction(ReclaimArenaChunks(reset.arenaEndSlot)(preRestoreSlot)(false))
+                else
+                    if allArgumentsCompactable(arguments)(released)
+                    then emitCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
+                    else released)
+
 let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
     match (state.tcoLoopFrame, state.tcoLoop) with
         | (Some(frame), Some(loop)) ->
@@ -4630,7 +4903,7 @@ let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
                 else
                     state
                     |> dropStrBackEdgePredecessors(arguments)
-                    |> emitPlainTcoReset(reset))
+                    |> emitArenaTcoReset(reset)(frame)(arguments))
         | _ -> emitPlainTcoReset(reset)(state)
 
 let recursive lookupTcoReset (resetId: Int) (resets: List(CoreTcoReset)) =

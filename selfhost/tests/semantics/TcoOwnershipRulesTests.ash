@@ -599,10 +599,39 @@ let expectAffineStrAccumulatorGrowsInPlace unit =
         |> loopFunctionLines("[SourceFunction from accumulate]")
         |> (given (lines) -> check("the loop's closure advertises a runtime-managed result")(countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")(lines) == 1)))
 
+let arenaVariantAccumulatorSource = "type Slot =\n    | Empty\n    | Filled(Int, Int)\n\nlet recursive step (n: Int) (s: Slot) =\n    if n == 0\n    then\n        match s with\n            | Empty -> 0\n            | Filled(a, b) -> a + b\n    else\n        step(n - 1)(match s with\n            | Empty -> Filled(n, 1)\n            | Filled(a, b) -> Filled(a + 1, b + n))\n\nAshes.IO.print(Ashes.Text.fromInt(step(10)(Empty)))"
+
+// A multi-constructor variant parameter stays in the arena and takes stage 0's fixed-watermark
+// compaction at the back edge: under the growth threshold check (twice the recorded live size
+// plus slack, or a crossed chunk) the successor is cloned twice above the cursor through the
+// type's synthesized copier, the arena is reset to the loop-entry watermark, the clone is copied
+// down onto it and stored, the chunks above are reclaimed, and the live size is recorded or the
+// watermark rebased into a new chunk. The copier switches on the constructor tag and rebuilds
+// each cell field by field.
+let expectVariantParameterCompactsTheArena unit =
+    Unit
+    |> (given (_) ->
+        arenaVariantAccumulatorSource
+        |> loopFunctionLines("[ClosureHelper from step]")
+        |> (given (lines) ->
+            Unit
+            |> (given (_) -> check("the back edge tests the compaction threshold")(countContaining("tco_compact_skip")(lines) == 2 && countContaining("Value=4096")(lines) == 1))
+            |> (given (_) -> check("the successor is cloned twice up and once down")(countContainingBoth("MakeClosure")("FuncLabel=__deepcopy_")(lines) == 3))
+            |> (given (_) -> check("the arena is reset to the fixed loop-entry watermark")(countContainingBoth("RestoreArenaState")("CursorLocalSlot=3 EndLocalSlot=4")(lines) == 1))
+            |> (given (_) -> check("the live size is recorded or the watermark rebased")(countContaining("tco_compact_rebase")(lines) == 2 && countContaining("tco_compact_recorded")(lines) == 2))))
+    |> (given (_) ->
+        arenaVariantAccumulatorSource
+        |> loopFunctionLines("[AdtDeepCopier]")
+        |> (given (lines) ->
+            Unit
+            |> (given (_) -> check("the copier switches on the constructor tag")(countContaining("SwitchTag")(lines) == 1 && countContaining("LoadEnv")(lines) == 1))
+            |> (given (_) -> check("the copier rebuilds each constructor's cell")(countContaining("AllocAdt")(lines) == 2 && countContaining("StoreMemOffset")(lines) == 2))))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
     |> (given (_) -> expectAffineStrAccumulatorGrowsInPlace(Unit))
+    |> (given (_) -> expectVariantParameterCompactsTheArena(Unit))
     |> (given (_) -> expectOperandSelfCallIsNotATailCall(Unit))
     |> (given (_) -> expectLetAliasOfParameterIsNotAnOwner(Unit))
     |> (given (_) -> expectGrownConsAccumulatorIsRuntimeManaged(Unit))
