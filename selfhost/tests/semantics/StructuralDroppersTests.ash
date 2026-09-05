@@ -317,6 +317,51 @@ let noDropperDescription (synthesis: DropperSynthesis) =
         | DropperSynthesis { label = label, functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
             "label=" + Ashes.Trait.Show.show(label) + " functions=" + Ashes.Text.fromInt(length(functions)) + " nextLambda=" + Ashes.Text.fromInt(nextLambdaId) + " nextLabel=" + Ashes.Text.fromInt(nextLabelId)
 
+// The constructor-switching dropper of a sole-constructor type reads no tag word (the cell has
+// none): the tag is the literal 0, and the one constructor's block releases the fields through
+// their tagless loads, exactly as stage 0's `EmitAdtTag` does.
+let expectTaglessAdtDropperLoadsTheTagAsALiteral unit =
+    Unit
+    |> dropperTestEnvironment
+    |> (given (environment) ->
+        adtDropperFor(namedType("Found")(environment))(0)(7)(environment))
+    |> describeSynthesis
+    |> test.assertEqual([
+        "synthesis Some(\"__rcdrop_0\") nextLambda=1 nextLabel=12",
+        "function __rcdrop_0 locals=3 temps=11 env-and-arg",
+        "origin RuntimeManagedAdtDropperOrigin TypeFunctionOwner Found Found",
+        "    LoadLocal             Target=0 Slot=1",
+        "    RcIsUnique            Target=1 SourceTemp=0",
+        "    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_7",
+        "    LoadConstInt          Target=2 Value=0",
+        "    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=rcdrop_shared_7",
+        "  rcdrop_ctor_8:",
+        "    GetAdtField           Target=3 Ptr=0 FieldIndex=0 Tagless=true",
+        "    StoreLocal            Slot=2 Source=3",
+        "  rcdrop_list_9:",
+        "    LoadLocal             Target=4 Slot=2",
+        "    LoadConstInt          Target=5 Value=0",
+        "    CmpIntNe              Target=6 Left=4 Right=5",
+        "    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_11",
+        "    RcIsUnique            Target=7 SourceTemp=4",
+        "    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_10",
+        "    LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=8",
+        "    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true",
+        "    StoreLocal            Slot=2 Source=8",
+        "    Jump                  Target=rcdrop_list_9",
+        "  rcdrop_list_shared_10:",
+        "    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true",
+        "    Jump                  Target=rcdrop_list_end_11",
+        "  rcdrop_list_end_11:",
+        "    GetAdtField           Target=9 Ptr=0 FieldIndex=1 Tagless=true",
+        "    RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true",
+        "    Jump                  Target=rcdrop_shared_7",
+        "  rcdrop_shared_7:",
+        "    RcDrop                SourceTemp=0 TypeName=Found RuntimeManaged=true",
+        "    LoadConstInt          Target=10 Value=0",
+        "    Return                Source=10"
+    ])
+
 // A string, a record of scalars, or a tuple of scalars owns at most one allocation: no helper is
 // named, nothing is synthesized, and no counter is consumed.
 let expectSingleAllocationNeedsNoHelper unit =
@@ -431,6 +476,7 @@ let runStructuralDroppersTests unit =
     |> expectTupleWithListMatchesStageZero
     |> expectRecursiveAdtDropperMatchesStageZero
     |> expectOwnedChildAdtDropperMatchesStageZero
+    |> expectTaglessAdtDropperLoadsTheTagAsALiteral
     |> expectSingleAllocationNeedsNoHelper
     |> expectDropperIsSynthesizedOncePerType
     |> expectStructuralDropperCallsNestedAdtDropper

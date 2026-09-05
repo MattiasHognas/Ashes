@@ -407,6 +407,15 @@ let emitListSharedExit (currentTemp: Int) (sharedLabel: Str) (endLabel: Str) (bo
     |> emitDropper(Jump(endLabel))
     |> emitDropper(Label(endLabel))
 
+// Stage 0's `EmitAdtTag`: the constructor tag of a cell, read from its tag word, or loaded as the
+// literal tag of the sole constructor when the type's cell carries no tag word.
+let emitConstructorTagRead (tagTemp: Int) (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
+    if typeIsTagless(named)(body)
+    then
+        emitDropper(LoadConstInt(tagTemp)(0))(body)
+    else
+        emitDropper(GetAdtTag(tagTemp)(valueTemp))(body)
+
 // Releases a runtime-managed child by its type: a tuple or list is walked, a named type dropped
 // by constructor, and a string-like leaf released as one allocation. A unique list cell releases
 // an owned head before continuing through its tail; a shared cell keeps head and tail and is only
@@ -532,7 +541,7 @@ and emitConstructorSwitch (valueTemp: Int) (named: SemanticType) (sharedLabel: S
     match freshDropperTemp(body) with
         | (tagTemp, tagBody) ->
             match tagBody
-            |> emitDropper(GetAdtTag(tagTemp)(valueTemp))
+            |> emitConstructorTagRead(tagTemp)(valueTemp)(named)
             |> allocateConstructorLabels(namedTypeConstructors(named)(body)) with
                 | (blocks, blocksBody) ->
                     blocksBody
