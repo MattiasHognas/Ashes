@@ -3407,6 +3407,13 @@ let testRunSharedTcoRuntimeManagedStrAccumulatorPlateau shipped unit =
 let testRunSharedTcoRuntimeManagedListAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_list_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedListAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_list_accumulator_plateau_e2e")("200000|1088895|200000")
 
+// A list head forwarded by name to a different loop parameter (stage 0's OPT-38 shape): the
+// pattern owner's protective retain and back-edge release keep the string alive across the
+// runtime-managed `keep` parameter's predecessor drop; without them the strings of the list were
+// freed while the list still held them, and the churn below reused their cells.
+let testRunSharedTcoPatternHeadForwardedToOtherParameter shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_pattern_head_forwarded_to_other_parameter.ash"))("selfhostBackendRunSharedTcoPatternHeadForwardedToOtherParameter")("selfhost_backend_shared_tco_pattern_head_forwarded_to_other_parameter_e2e")("110288|174288|2000200020002000200020002000200020002000200020002000200020002000")
+
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
 // jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
 // linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
@@ -4930,6 +4937,7 @@ let run shipped =
     |> testRunSharedTcoOwnedLetInOperandSelfCall(shipped)
     |> testRunSharedTcoRuntimeManagedStrAccumulatorPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedListAccumulatorPlateau(shipped)
+    |> testRunSharedTcoPatternHeadForwardedToOtherParameter(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

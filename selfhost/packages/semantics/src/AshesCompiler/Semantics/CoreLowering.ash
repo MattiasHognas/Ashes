@@ -47,6 +47,7 @@ import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TcoAffineAppend.affineSelfAppendOrdinals
 import AshesCompiler.Semantics.TcoRuntimeManagedParams
+import AshesCompiler.Semantics.PatternBindingOwnership
 import AshesCompiler.Semantics.TcoAnalysis.collectInnermostBody
 import AshesCompiler.Semantics.TcoAnalysis.collectLambdaParamNames
 import AshesCompiler.Semantics.TcoAnalysis.countLambdaArity
@@ -141,12 +142,17 @@ type CoreBindingLocation =
 // `ownedRead` marks a `let` or pattern binding, whose reads borrow when the binding's resolved
 // type is heap-represented (see `finishOwnedRead`), and a capture of such a binding borrows the
 // same way (stage 0 finds the owner by name through the closure); a parameter or recursive
-// self-reference is not owned by its reader and loads plainly.
+// self-reference is not owned by its reader and loads plainly. A pattern binding whose
+// pre-lowering ownership fact says it keeps a reference of its own past its arm (stage 0's
+// Perceus pattern owner) carries that fact: its reads borrow whatever its type, a tail self-call
+// argument or aggregate child reading it takes a protective duplicate, and the loop's finalize
+// pass decides whether those markers become real reference-count operations.
 type CoreBinding =
     | name: Str
     | scheme: TypeScheme
     | location: CoreBindingLocation
     | ownedRead: Bool
+    | patternOwner: Maybe(PatternBindingFact)
 
 // What the context asks of the next expression lowered, stage 0's `LoweredValueRequest`: the type
 // it expects, whether it wants a fresh string placed on the reference-counted heap rather than in
@@ -204,6 +210,7 @@ type CoreTcoLoop =
     | affineOrdinals: List(Int)
     | runtimeManagedOrdinals: List(Int)
     | argumentShapes: List(TcoArgumentShape)
+    | patternFacts: List(PatternBindingFact)
     | emitsLoop: Bool
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
@@ -234,6 +241,17 @@ type CoreTcoLoopFrame =
     | entrySpliceCount: Int
     | listActiveSlots: List((Int, Int))
     | runtimeManagedListSlots: List((Int, Int, SemanticType))
+
+// A pattern owner joined to its emitted slot (stage 0's `PatternBindingPlacementSite`): the
+// binder's slot, the loop parameter slot it was extracted from, the instruction count right
+// after its arm's pattern was lowered (where a protective duplicate is spliced in once the root
+// parameter's placement is known), its type, and its fact.
+type PatternOwnerSite =
+    | siteSlot: Int
+    | siteRootSlot: Int
+    | siteInsertCount: Int
+    | siteType: SemanticType
+    | siteFact: PatternBindingFact
 
 // A back edge awaiting its arena block (stage 0's `PendingTcoReset`): the argument types decide
 // the reset once the whole body is lowered, after the iteration-local owners are released. The
@@ -288,6 +306,7 @@ type CoreLoweringState =
     | letLambdas: List((Str, List(Str), Expr))
     | runtimeTemps: List((Int, RuntimeTempState))
     | runtimeOwners: List((Int, Bool))
+    | patternOwnerSites: List(PatternOwnerSite)
     | bodyRuntimeManagedByLabel: List((Str, Bool))
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
@@ -545,6 +564,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         letLambdas = [],
         runtimeTemps = [],
         runtimeOwners = [],
+        patternOwnerSites = [],
         bodyRuntimeManagedByLabel = [],
         runtimeNormalizedArgumentLabels = [],
         recursiveGroupNames = [],
@@ -1440,6 +1460,13 @@ let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreCo
                 | None -> Some(name)
         | _ -> None
 
+// The type name a pattern owner releases under: its owned type name, or stage 0's
+// `PatternBinding` for a binding whose type is a copy type or still unresolved.
+let patternOwnerTypeName (resolved: SemanticType) (state: CoreLoweringState) =
+    match ownedTypeNameOf(resolved)(state.constructorLayouts) with
+        | Some(typeName) -> typeName
+        | None -> "PatternBinding"
+
 // The compiler-provided resource types (§16 of the language reference) the lowering tracks.
 let isResourceTypeName (name: Str) = name == "FileHandle" || name == "Process"
 
@@ -1816,20 +1843,60 @@ let retainTransferredChild (child: Expr) (transfers: Bool) (lowered: LoweredCore
                 | None -> lowered
         | _ -> lowered
 
-let finishOwnedRead ownedRead temp semanticType state =
+// The pattern owner fact a name reads, when its binding is one.
+let patternOwnerBinding (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { patternOwner = Some(fact) }) -> Some(fact)
+        | _ -> None
+
+let patternOwnerFlag (fact: Maybe(PatternBindingFact)) =
+    match fact with
+        | Some(_fact) -> true
+        | None -> false
+
+// Stage 0's `DuplicatePerceusPatternOwnerForAggregate`: a tail self-call argument or aggregate
+// child that reads a pattern owner takes a duplicate of that read — an identity marker until the
+// loop's finalize pass turns it into a real retain for a pattern owner it places on the
+// reference-counted heap.
+let duplicatePatternOwnerTemp (child: Expr) (temp: Int) (state: CoreLoweringState) =
+    match unspanArgument(child) with
+        | ExprVar(name) ->
+            match patternOwnerBinding(name)(state) with
+                | Some(_fact) ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = allocated, temp = duplicate } ->
+                            (emit(RcDup(duplicate)(temp)(false)(false))(allocated), duplicate)
+                | None -> (state, temp)
+        | _ -> (state, temp)
+
+let duplicatePatternOwnerChild (child: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match duplicatePatternOwnerTemp(child)(temp)(state) with
+                | (duplicated, duplicate) -> success(duplicate)(semanticType)(duplicated)
+        | _ -> lowered
+
+let emitBorrowedRead temp semanticType state =
+    match freshTemp(state) with
+        | FreshTemp { state = borrowState, temp = borrowTemp } ->
+            borrowState
+            |> emit(Borrow(borrowTemp)(temp))
+            |> success(borrowTemp)(semanticType)
+
+// A pattern owner's read borrows whatever its type (stage 0's `LowerVar` borrows every binding
+// it finds an ownership entry for); any other owned binding borrows once its type is heap-represented.
+let finishOwnedRead ownedRead (patternOwner: Bool) temp semanticType state =
     match state with
         | CoreLoweringState { constructorLayouts = layouts } ->
-            if ownedRead
-            then
-                match ownedTypeNameOf(resolveType(state)(semanticType))(layouts) with
-                    | Some(_typeName) ->
-                        match freshTemp(state) with
-                            | FreshTemp { state = borrowState, temp = borrowTemp } ->
-                                borrowState
-                                |> emit(Borrow(borrowTemp)(temp))
-                                |> success(borrowTemp)(semanticType)
-                    | None -> success(temp)(semanticType)(state)
-            else success(temp)(semanticType)(state)
+            if patternOwner
+            then emitBorrowedRead(temp)(semanticType)(state)
+            else
+                if ownedRead
+                then
+                    match ownedTypeNameOf(resolveType(state)(semanticType))(layouts) with
+                        | Some(_typeName) -> emitBorrowedRead(temp)(semanticType)(state)
+                        | None -> success(temp)(semanticType)(state)
+                else success(temp)(semanticType)(state)
 
 let recursive lowerVariable name state =
     match state with
@@ -1858,7 +1925,7 @@ and lowerBoundVariable binding state =
                                         false
                                     ))
                                     |> success(closureTemp)(semanticType)
-                | CoreBinding { location = CoreLocal(slot), ownedRead = ownedRead } ->
+                | CoreBinding { location = CoreLocal(slot), ownedRead = ownedRead, patternOwner = patternOwner } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
                             if transfersSlot(slot)(tempState)
@@ -1870,24 +1937,32 @@ and lowerBoundVariable binding state =
                             else
                                 tempState
                                 |> emit(LoadLocal(temp)(slot))
-                                |> finishOwnedRead(ownedRead)(temp)(semanticType)
+                                |> finishOwnedRead(ownedRead)(patternOwnerFlag(patternOwner))(temp)(semanticType)
                 | CoreBinding { location = CoreEnvironment(index), ownedRead = ownedRead } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
                             tempState
                             |> emit(LoadEnv(temp)(index))
-                            |> finishOwnedRead(ownedRead)(temp)(semanticType)
+                            |> finishOwnedRead(ownedRead)(false)(temp)(semanticType)
 
 let addBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false)
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternOwner = None)
             in state with bindings = binding :: bindings
 
 let addOwnedBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true)
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = None)
+            in state with bindings = binding :: bindings
+
+// A pattern binding that owns a protective reference of its own (stage 0's
+// `TrackPerceusPatternBindingOwners`): read like an owned binding, and carrying its fact.
+let addPatternOwnerBinding name scheme location (fact: PatternBindingFact) state =
+    match state with
+        | CoreLoweringState { bindings = bindings } ->
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = Some(fact))
             in state with bindings = binding :: bindings
 
 let restoreBindings bindings (state: CoreLoweringState) = state with bindings = bindings
@@ -3198,7 +3273,7 @@ let recursive capturedScope captures index =
     match captures with
         | [] -> []
         | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead)
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternOwner = None)
             in binding :: capturedScope(rest)(index + 1)
 
 let recursive sealOperatorDefaults label pending sealed =
@@ -3271,7 +3346,8 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
             name = parameter,
             scheme = emptyScheme(parameterType),
             location = CoreLocal(1),
-            ownedRead = false
+            ownedRead = false,
+            patternOwner = None
         ) :: capturedScope(captures)(0)
     in
         state
@@ -3282,7 +3358,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [])
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
@@ -4497,22 +4573,168 @@ let resolvesToList (semanticType: SemanticType) (state: CoreLoweringState) =
         | SemList(_element) -> true
         | _ -> false
 
+let recursive candidateStrManaged (slot: Int) (candidates: List(TcoManagedCandidate)) =
+    match candidates with
+        | [] -> false
+        | TcoManagedCandidate { slot = candidate, strManaged = strManaged } :: rest ->
+            if candidate == slot
+            then strManaged
+            else candidateStrManaged(slot)(rest)
+
+// A value that is reference-counted whatever holds it (stage 0's `IsUnconditionallyRcManagedType`):
+// an arena spine routinely holds such elements, so a pattern owner of one of these types is
+// protected even when its root parameter stays in the arena.
+let isUnconditionallyRcManagedType (semanticType: SemanticType) =
+    match semanticType with
+        | SemString -> true
+        | SemBytes -> true
+        | SemBigInt -> true
+        | _ -> false
+
+let patternSiteRootManaged (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) =
+    match lookupRuntimeManagedListSlot(site.siteRootSlot)(managedLists) with
+        | Some(_managed) -> true
+        | None -> candidateStrManaged(site.siteRootSlot)(candidates)
+
+// Stage 0's `ResolvePatternBindingPlacementOutcome`: a copy-typed binding owns nothing; a
+// binding whose root parameter lives on the reference-counted heap, or whose own type is
+// reference-counted whatever holds it, gets its protective owner; any other binding of an
+// arena-placed root keeps its identity markers.
+let patternSitePlaced (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    site.siteType
+    |> resolveType(state)
+    |> (given (resolved: SemanticType) -> !resultSurvivesReset(resolved)(state) && (patternSiteRootManaged(site)(managedLists)(candidates) || isUnconditionallyRcManagedType(resolved)))
+
+let recursive placedPatternOwnerSites (sites: List(PatternOwnerSite)) (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match sites with
+        | [] -> []
+        | site :: rest ->
+            if patternSitePlaced(site)(managedLists)(candidates)(state)
+            then site :: placedPatternOwnerSites(rest)(managedLists)(candidates)(state)
+            else placedPatternOwnerSites(rest)(managedLists)(candidates)(state)
+
+// The temps aliasing a pattern owner's slot value, in the function's instruction order: every
+// load of the slot, and every borrow or duplicate of an alias (a temp is defined before it is
+// read, so one forward pass sees every alias).
+let recursive patternOwnerAliases (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) =
+    match instructions with
+        | [] -> aliases
+        | IrInstruction { instruction = LoadLocal(target, loaded) } :: rest ->
+            patternOwnerAliases(rest)(slot)(if loaded == slot
+            then target :: aliases
+            else aliases)
+        | IrInstruction { instruction = Borrow(target, source) } :: rest ->
+            patternOwnerAliases(rest)(slot)(if containsInt(source)(aliases)
+            then target :: aliases
+            else aliases)
+        | IrInstruction { instruction = RcDup(target, source, _runtimeManaged, _mayBeEmpty) } :: rest ->
+            patternOwnerAliases(rest)(slot)(if containsInt(source)(aliases)
+            then target :: aliases
+            else aliases)
+        | _ :: rest -> patternOwnerAliases(rest)(slot)(aliases)
+
+// Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
+// real retain, and the owner's release marker a real runtime-managed release under the resolved
+// type name.
+let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (typeName: Str) (mayBeEmpty: Bool) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, source, runtimeManaged, _mayBeEmpty) } as instruction) :: rest ->
+            (if containsInt(source)(aliases) && !runtimeManaged
+            then instruction with instruction = RcDup(target)(source)(true)(mayBeEmpty)
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)
+        | (IrInstruction { instruction = RcDrop(source, _typeName, ownerSlot, _runtimeManaged, _mayBeEmpty, dropper) } as instruction) :: rest ->
+            (if ownerSlot == slot
+            then instruction with instruction = RcDrop(source)(typeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)
+        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)
+
+let recursive markRuntimeTemps (temps: List(Int)) (state: CoreLoweringState) =
+    match temps with
+        | [] -> state
+        | temp :: rest ->
+            state
+            |> markRuntimeTemp(temp)(RuntimeTransferred)
+            |> markRuntimeTemps(rest)
+
+let promotePatternOwnerMarkers (site: PatternOwnerSite) (state: CoreLoweringState) =
+    match (resolveType(state)(site.siteType), reverse(state.reversedInstructions)) with
+        | (resolved, instructions) ->
+            []
+            |> patternOwnerAliases(instructions)(site.siteSlot)
+            |> (given (aliases: List(Int)) ->
+                state
+                |> markRuntimeTemps(aliases)
+                |> (given (marked: CoreLoweringState) ->
+                    marked with reversedInstructions = reverse(resolved
+                    |> mayBeEmptyList
+                    |> promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(patternOwnerTypeName(resolved)(marked)))))
+
+let recursive promotePatternOwnerSites (sites: List(PatternOwnerSite)) (state: CoreLoweringState) =
+    match sites with
+        | [] -> state
+        | site :: rest ->
+            state
+            |> promotePatternOwnerMarkers(site)
+            |> promotePatternOwnerSites(rest)
+
+// Stage 0's `EmitPerceusPatternBindingOwnerDup`, spliced in right after the arm's pattern: the
+// slot is reloaded, retained, and rebound to the retained reference.
+let splicePatternOwnerDup (site: PatternOwnerSite) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = valueState, temp = valueTemp } ->
+            match freshTemp(valueState) with
+                | FreshTemp { state = protectedState, temp = protectedTemp } ->
+                    (protectedState with reversedInstructions = [])
+                    |> emit(LoadLocal(valueTemp)(site.siteSlot))
+                    |> unlocatedInstruction(site.siteType
+                    |> resolveType(state)
+                    |> mayBeEmptyList
+                    |> RcDup(protectedTemp)(valueTemp)(true))
+                    |> emit(StoreLocal(site.siteSlot)(protectedTemp))
+                    |> (given (generated: CoreLoweringState) -> generated with reversedInstructions = spliceGeneratedInstructions(length(state.reversedInstructions) - site.siteInsertCount)([])(state.reversedInstructions)(generated.reversedInstructions))
+
+// The sites are spliced most recent first, so an earlier site's count still names its own point.
+let recursive splicePatternOwnerDups (sites: List(PatternOwnerSite)) (state: CoreLoweringState) =
+    match sites with
+        | [] -> state
+        | site :: rest ->
+            state
+            |> splicePatternOwnerDup(site)
+            |> splicePatternOwnerDups(rest)
+
+// Stage 0's `FinalizePerceusPatternBindingOwners`, run once the loop's parameter placements are
+// known and before the entry normalization is spliced in below every site.
+let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    state
+    |> placedPatternOwnerSites(state.patternOwnerSites)(managedLists)(candidates)
+    |> (given (placed: List(PatternOwnerSite)) ->
+        state
+        |> promotePatternOwnerSites(placed)
+        |> splicePatternOwnerDups(placed)
+        |> (given (finalized: CoreLoweringState) -> finalized with patternOwnerSites = []))
+
+let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (state: CoreLoweringState) =
+    match tcoEntryNormalizationEntries(candidates)(managedLists)(state) with
+        | [] -> success(bodyTemp)(semanticType)(state)
+        | entries ->
+            state
+            |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = Some((frame with runtimeManagedListSlots = managedLists)))
+            |> markRuntimeListResult(bodyTemp)(managedLists)
+            |> recordTcoNormalizedArgumentLabel(label)(entries)
+            |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
+            |> emitTcoExitDrops(resolvesToStr(semanticType)(state))(bodyTemp)(tcoStrSlotsOf(candidates))
+            |> emitTcoListExitDrops(bodyTemp)(resolvesToList(semanticType)(state))(managedLists)
+            |> success(bodyTemp)(semanticType)
+
 let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
     |> (given (candidates: List(TcoManagedCandidate)) ->
         ((given (managedLists: List((Int, Int, SemanticType))) ->
-            match tcoEntryNormalizationEntries(candidates)(managedLists)(state) with
-                | [] -> success(bodyTemp)(semanticType)(state)
-                | entries ->
-                    state
-                    |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = Some((frame with runtimeManagedListSlots = managedLists)))
-                    |> markRuntimeListResult(bodyTemp)(managedLists)
-                    |> recordTcoNormalizedArgumentLabel(label)(entries)
-                    |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-                    |> emitTcoExitDrops(resolvesToStr(semanticType)(state))(bodyTemp)(tcoStrSlotsOf(candidates))
-                    |> emitTcoListExitDrops(bodyTemp)(resolvesToList(semanticType)(state))(managedLists)
-                    |> success(bodyTemp)(semanticType)))(if anyBlockingSibling(candidates)(state)
+            state
+            |> finalizePatternOwnerSites(managedLists)(candidates)
+            |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)))(if anyBlockingSibling(candidates)(state)
         then []
         else tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots)))
 
@@ -4556,7 +4778,19 @@ let recursive tcoBackEdgeDropStrPredecessors (slots: List(Int)) (arguments: List
 // Stage 0's `TcoContext`: a recursive binding whose innermost lambda body has a tail self-call
 // applying every parameter is lowered as a TCO loop over that innermost body; the curried
 // lambdas between the binding and the body are entered on the way.
-let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) =
+let recursive constructorNamesOf (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { name = name } :: rest -> name :: constructorNamesOf(rest)
+
+// The constructors a bare pattern name tests rather than binds (`isNullaryConstructorPatternName`).
+let recursive nullaryConstructorNamesOf (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { scheme = TypeScheme { body = SemFunction(_, _, _) } } :: rest -> nullaryConstructorNamesOf(rest)
+        | CoreConstructorLayout { name = name } :: rest -> name :: nullaryConstructorNamesOf(rest)
+
+let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
         if hasTailSelfCalls(collectInnermostBody(body))(name)(arity)
@@ -4575,6 +4809,9 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                 argumentShapes = body
                 |> collectInnermostBody
                 |> tcoSelfCallShapes(name)(parameter :: collectLambdaParamNames([])(body)),
+                patternFacts = body
+                |> collectInnermostBody
+                |> patternBindingFacts(name)(parameter :: collectLambdaParamNames([])(body))(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts)),
                 emitsLoop = emitsLoop
             ))
         else None)
@@ -4582,7 +4819,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
 // A single recursive binding's loop is emitted as stage 0's loop; a mutual-recursion group
 // member keeps the loop context for its tail self-call arguments but stays a call until the
 // group dispatch is ported.
-let enterRecursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) = state with tcoLoop = recursiveTcoLoop(name)(parameter)(body)(emitsLoop)
+let enterRecursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) = state with tcoLoop = recursiveTcoLoop(name)(parameter)(body)(emitsLoop)(state.constructorLayouts)
 
 let recursive isChainParameterName (name: Str) (names: List(Str)) =
     match names with
@@ -5824,48 +6061,74 @@ let isNullaryConstructorPatternName (name: Str) state =
         | Some(_) -> true
         | None -> false
 
-let recursive prepareCorePatternBindings pending seen state =
+// The pattern owner fact a binder under the span key `key` carries inside the active loop body:
+// the loop function's classified fact for that binder, when it needs a protective reference. A
+// binder the syntax tree carries no span for (key -1) matches no fact.
+let patternOwnerFactFor (key: Int) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop) with
+        | (Some(_frame), Some(loop)) ->
+            if key < 0
+            then None
+            else
+                match lookupPatternBindingFact(key)(loop.patternFacts) with
+                    | Some(fact) ->
+                        if patternFactRequiresProtection(fact)
+                        then Some(fact)
+                        else None
+                    | None -> None
+        | _ -> None
+
+let bindPreparedPatternName (name: Str) (key: Int) (state: CoreLoweringState) =
+    match freshType(state) with
+        | FreshType { state = typedState, semanticType = semanticType } ->
+            match freshLocal(typedState) with
+                | FreshLocal { state = localState, local = local } ->
+                    match patternOwnerFactFor(key)(localState) with
+                        | Some(fact) ->
+                            addPatternOwnerBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(fact)(localState)
+                        | None ->
+                            addOwnedBinding(name)(emptyScheme(semanticType))(CoreLocal(local))(localState)
+
+let recursive unkeyedPatterns (patterns: List(Pattern)) =
+    match patterns with
+        | [] -> []
+        | pattern :: rest -> (-1, pattern) :: unkeyedPatterns(rest)
+
+// Every binder is prepared under the start offset of its nearest enclosing `PatternAt`, the key
+// the loop function's pattern-binding facts are recorded by.
+let recursive prepareCorePatternBindings (pending: List((Int, Pattern))) seen state =
     match pending with
         | [] -> state
-        | pattern :: rest ->
+        | (key, pattern) :: rest ->
             match pattern with
-                | PatternAt(_span, inner) -> prepareCorePatternBindings(inner :: rest)(seen)(state)
+                | PatternAt(TextSpan { start = start }, inner) -> prepareCorePatternBindings((start, inner) :: rest)(seen)(state)
                 | PatternVar(name) ->
-                    if containsName(name)(seen)
+                    if containsName(name)(seen) || isNullaryConstructorPatternName(name)(state)
                     then prepareCorePatternBindings(rest)(seen)(state)
                     else
-                        if isNullaryConstructorPatternName(name)(state)
-                        then prepareCorePatternBindings(rest)(seen)(state)
-                        else
-                            match freshType(state) with
-                                | FreshType { state = typedState, semanticType = semanticType } ->
-                                    match freshLocal(typedState) with
-                                        | FreshLocal { state = localState, local = local } ->
-                                            localState
-                                            |> addOwnedBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
-                                            |> prepareCorePatternBindings(rest)(name :: seen)
-                | PatternCons(head, tail) -> prepareCorePatternBindings(head :: tail :: rest)(seen)(state)
+                        state
+                        |> bindPreparedPatternName(name)(key)
+                        |> prepareCorePatternBindings(rest)(name :: seen)
+                | PatternCons(head, tail) -> prepareCorePatternBindings((-1, head) :: (-1, tail) :: rest)(seen)(state)
                 | PatternTuple(elements) ->
-                    prepareCorePatternBindings(append(elements)(rest))(seen)(state)
+                    prepareCorePatternBindings(append(unkeyedPatterns(elements))(rest))(seen)(state)
                 | PatternConstructor(_name, elements) ->
-                    prepareCorePatternBindings(append(elements)(rest))(seen)(state)
+                    prepareCorePatternBindings(append(unkeyedPatterns(elements))(rest))(seen)(state)
                 | PatternRecord(_name, fields) ->
-                    prepareCorePatternBindings(append(coreRecordPatterns(fields))(rest))(seen)(state)
+                    prepareCorePatternBindings(append(fields
+                    |> coreRecordPatterns
+                    |> unkeyedPatterns)(rest))(seen)(state)
                 | PatternAs(inner, name) ->
                     if containsName(name)(seen)
-                    then prepareCorePatternBindings(inner :: rest)(seen)(state)
+                    then prepareCorePatternBindings((-1, inner) :: rest)(seen)(state)
                     else
-                        match freshType(state) with
-                            | FreshType { state = typedState, semanticType = semanticType } ->
-                                match freshLocal(typedState) with
-                                    | FreshLocal { state = localState, local = local } ->
-                                        localState
-                                        |> addOwnedBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
-                                        |> prepareCorePatternBindings(inner :: rest)(name :: seen)
-                | PatternOr(first :: _alternatives) -> prepareCorePatternBindings(first :: rest)(seen)(state)
+                        state
+                        |> bindPreparedPatternName(name)(key)
+                        |> prepareCorePatternBindings((-1, inner) :: rest)(name :: seen)
+                | PatternOr(first :: _alternatives) -> prepareCorePatternBindings((key, first) :: rest)(seen)(state)
                 | _ -> prepareCorePatternBindings(rest)(seen)(state)
 
-let preparePattern pattern state = prepareCorePatternBindings([pattern])([])(state)
+let preparePattern pattern state = prepareCorePatternBindings([(-1, pattern)])([])(state)
 
 let lowerPatternVariable name valueTemp valueType state =
     match state with
@@ -6436,13 +6699,20 @@ let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType
 // owned type name. A binding whose type is still unresolved once the pattern is lowered owns
 // nothing. The arm that matched a fresh runtime-managed scrutinee owns it too, by the owner slot
 // it stored it in, its type name, and whether the release walks a list spine.
+// A pattern owner (stage 0's Perceus pattern owner) is released under the owned type name its
+// binding type resolves to by the arm's exit, or `PatternBinding` while it is unresolved.
 type ArmOwner =
     | ArmResourceOwner(Str, Int, Str)
     | ArmHeapOwner(Int, Str)
     | ArmScrutineeOwner(Int, Str, Bool)
+    | ArmPatternOwner(Int, SemanticType)
 
 let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
     match binding with
+        | CoreBinding { location = CoreLocal(slot), patternOwner = Some(_fact), scheme = TypeScheme { body = bindingType } } ->
+            bindingType
+            |> ArmPatternOwner(slot)
+            |> Some
         | CoreBinding { name = name, location = CoreLocal(slot), ownedRead = true, scheme = TypeScheme { body = bindingType } } ->
             bindingType
             |> resolveType(state)
@@ -6491,6 +6761,7 @@ let armOwnerAlive (body: Expr) (state: CoreLoweringState) owner =
     match owner with
         | ArmHeapOwner(_slot, _typeName) -> true
         | ArmScrutineeOwner(_slot, _typeName, _isList) -> true
+        | ArmPatternOwner(_slot, _bindingType) -> true
         | ArmResourceOwner(name, slot, _typeName) ->
             match resourceStateOf(slot)(state) with
                 | Some(_kind) -> false
@@ -6514,6 +6785,10 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
         | ArmHeapOwner(slot, typeName) :: rest ->
             state
             |> emitOwnedLetRelease(typeName)(slot)
+            |> emitArmOwnerReleases(body)(rest)
+        | ArmPatternOwner(slot, bindingType) :: rest ->
+            state
+            |> emitOwnedLetRelease(patternOwnerTypeName(resolveType(state)(bindingType))(state))(slot)
             |> emitArmOwnerReleases(body)(rest)
         | ArmScrutineeOwner(slot, _typeName, true) :: rest ->
             state
@@ -6835,8 +7110,44 @@ let reuseTruncateArmTokens (tokensBefore: Maybe(Int)) (armResult: LoweredMatchAr
 // The guard and body of an arm whose pattern is lowered. The guard lowers through `guardLower`
 // and the body through `bodyLower`; the capability-operation arms hand in different ones. The
 // arm's owners are the pattern's, then the scrutinee owner when the arm adopts one.
+let recursive slotAtOrdinal (ordinal: Int) (slots: List(Int)) =
+    match slots with
+        | [] -> None
+        | slot :: rest ->
+            if ordinal == 0
+            then Some(slot)
+            else slotAtOrdinal(ordinal - 1)(rest)
+
+let recursive patternOwnerSitesOf (frame: CoreTcoLoopFrame) (insertCount: Int) (sites: List(PatternOwnerSite)) (bindings: List(CoreBinding)) =
+    match bindings with
+        | [] -> sites
+        | CoreBinding { location = CoreLocal(slot), patternOwner = Some(fact), scheme = TypeScheme { body = bindingType } } :: rest ->
+            match slotAtOrdinal(fact.rootParameterOrdinal)(frame.parameterSlots) with
+                | Some(rootSlot) -> patternOwnerSitesOf(frame)(insertCount)(PatternOwnerSite(siteSlot = slot, siteRootSlot = rootSlot, siteInsertCount = insertCount, siteType = bindingType, siteFact = fact) :: sites)(rest)
+                | None -> patternOwnerSitesOf(frame)(insertCount)(sites)(rest)
+        | _ :: rest -> patternOwnerSitesOf(frame)(insertCount)(sites)(rest)
+
+// Stage 0's `TrackPerceusPatternBindingOwners`: once an arm's pattern is lowered, every pattern
+// owner it bound is joined to its slot and to the loop parameter slot it was extracted from, at
+// the instruction count its protective duplicate is later spliced in at; the sites stay most
+// recent first.
+let registerPatternOwnerSites (outerBindings: List(CoreBinding)) (patternResult: LoweredCorePattern) =
+    match patternResult with
+        | LoweredCorePattern { state = state, error = None } ->
+            match state.tcoLoopFrame with
+                | Some(frame) ->
+                    state.bindings
+                    |> armBindings(length(state.bindings) - length(outerBindings))
+                    |> reverse
+                    |> patternOwnerSitesOf(frame)(length(state.reversedInstructions))(state.patternOwnerSites)
+                    |> (given (sites: List(PatternOwnerSite)) -> LoweredCorePattern(state = (state with patternOwnerSites = sites), error = None))
+                | None -> patternResult
+        | _ -> patternResult
+
 let finishPatternArm (reuseScrutineeName: Maybe(Str)) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
-    match reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp)(patternResult) with
+    match patternResult
+    |> registerPatternOwnerSites(outerBindings)
+    |> reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp) with
         | (reusedPatternResult, tokensBefore) ->
             match reusedPatternResult
             |> lowerMatchGuard(guard)(failLabel)(guardLower)
@@ -7548,7 +7859,8 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
             name = parameter,
             scheme = emptyScheme(parameterType),
             location = CoreLocal(1),
-            ownedRead = false
+            ownedRead = false,
+            patternOwner = None
         ) :: append(selfBindings)(capturedScope(captures)(0))
     in
         state
@@ -7559,7 +7871,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [])
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [])
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
@@ -7616,7 +7928,8 @@ let preparedSelfBinding environmentSize prepared =
                 name = name,
                 scheme = emptyScheme(semanticType),
                 location = CoreSelf(label)(environmentSize),
-                ownedRead = false
+                ownedRead = false,
+                patternOwner = None
             )
 
 let recursive preparedSelfBindings environmentSize members =
@@ -8001,16 +8314,30 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
             else tail
         | _ -> tail
 
+// Stage 0's `LowerCons` order once both parts are lowered: the head's pattern-owner duplicate,
+// then the tail's, before the tail's own transfer retain.
+let duplicatePatternOwnerConsParts (headExpression: Expr) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
+    match (head, tail) with
+        | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
+            match duplicatePatternOwnerTemp(headExpression)(headTemp)(tailState) with
+                | (headDuplicated, headDuplicate) ->
+                    match duplicatePatternOwnerTemp(tailExpression)(tailTemp)(headDuplicated) with
+                        | (tailDuplicated, tailDuplicate) -> (LoweredCoreValue(state = tailDuplicated, temp = headDuplicate, semanticType = headType, error = None), LoweredCoreValue(state = tailDuplicated, temp = tailDuplicate, semanticType = tailType, error = None))
+        | _ -> (head, tail)
+
 // The tail is asked only for the list type: stage 0 forwards the head's transfer to no tail.
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = headState, semanticType = headType } ->
-            headState
+            match headState
             |> withOnlyExpectedType(Some(SemList(headType)))
             |> lower(tailExpression)
-            |> retainConsTail(request)(transfers)(headExpression)(tailExpression)(head)
-            |> finishCons(request)(headExpression)(head)
+            |> duplicatePatternOwnerConsParts(headExpression)(tailExpression)(head) with
+                | (duplicatedHead, duplicatedTail) ->
+                    duplicatedTail
+                    |> retainConsTail(request)(transfers)(headExpression)(tailExpression)(duplicatedHead)
+                    |> finishCons(request)(headExpression)(duplicatedHead)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.
 let expectedListElementType state =
@@ -8050,7 +8377,8 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
             match state
             |> withConsumerRequest(listElementRequest(request)(Some(elementType))(transfers)(expression)(state))
             |> lower(expression)
-            |> retainListElement(request)(transfers)(expression) with
+            |> retainListElement(request)(transfers)(expression)
+            |> duplicatePatternOwnerChild(expression) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
                     match bindType(elementType)(headType)(valueState) with
@@ -8312,9 +8640,23 @@ let normalizeConstructorListArgument (runtimeManaged: Bool) (fieldType: Semantic
 // Stage 0's `RetainEscapingConstructorArgument`: an arena cell built under the transfer retains
 // each argument read of a live owner as it is lowered; a runtime cell retains its owned children
 // after all of its arguments (`RetainRuntimeManagedOwnedChildArguments`).
+let transferSlotRequested (transferSlot: Maybe(Int)) =
+    match transferSlot with
+        | Some(_slot) -> true
+        | None -> false
+
+// Stage 0's `RetainEscapingConstructorArgument`: a constructor whose consumer owns the value (a
+// runtime-managed candidate, a transfer slot, or the loop body's tail position) takes a
+// pattern-owner duplicate of an argument that reads one, before the transfer retain.
 let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
     match request with
-        | ConsumerRequest { transfersRuntimeManagedChildren = transfers } -> retainTransferredChild(argument)(runtimeManaged == false && transfers)(lowered)
+        | ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition } ->
+            lowered
+            |> (given (value: LoweredCoreValue) ->
+                if runtimeManaged || tailPosition || transferSlotRequested(transferSlot)
+                then duplicatePatternOwnerChild(argument)(value)
+                else value)
+            |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
 
 let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
     match (arguments, fieldTypes) with
@@ -10495,6 +10837,7 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (shapes: List(T
                     match functionState
                     |> tailSelfCallArgumentRequest(parameterType)(headArgumentShape(shapes))
                     |> lower(argument)
+                    |> duplicatePatternOwnerChild(argument)
                     |> retainTransferredChild(argument)(true) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
                         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->

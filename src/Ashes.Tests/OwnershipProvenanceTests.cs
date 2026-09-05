@@ -47,6 +47,48 @@ public sealed class OwnershipProvenanceTests
     }
 
     [Test]
+    public void Record_update_result_reaches_the_updated_value_whole_and_the_target_by_component()
+    {
+        const string source =
+            """
+            type Bag =
+                | items: List(Str)
+                | label: Str
+            let keep (bag: Bag) (item: Str) = bag with items = item :: bag.items
+            in keep(Bag(items = [], label = "x"))("y")
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("keep");
+
+        summary.ShouldNotBeNull();
+        summary.ResultPoisoned.ShouldBeFalse();
+        summary.ResultReaches("item").ShouldBeTrue();
+        summary.ResultReachesWhole("item").ShouldBeTrue();
+        summary.ResultReaches("bag").ShouldBeTrue();
+        summary.ResultReachesWhole("bag").ShouldBeFalse();
+    }
+
+    [Test]
+    public void Field_read_of_a_local_reaches_the_binding_by_component()
+    {
+        const string source =
+            """
+            type Bag =
+                | items: List(Str)
+                | label: Str
+            let contents (bag: Bag) = bag.items
+            in contents(Bag(items = [], label = "x"))
+            """;
+
+        var summary = LowerProgram(source).GetOwnershipSummary("contents");
+
+        summary.ShouldNotBeNull();
+        summary.ResultPoisoned.ShouldBeFalse();
+        summary.ResultReaches("bag").ShouldBeTrue();
+        summary.ResultReachesWhole("bag").ShouldBeFalse();
+    }
+
+    [Test]
     public void Direct_constructor_result_is_rc_eligible_with_no_forward_target()
     {
         const string source =

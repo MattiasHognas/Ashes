@@ -1143,7 +1143,14 @@ same public behavior.
   predecessor was (`ConsumedDeepCopiedListStaysWithCallee`). Regression:
   `ConsumedArgumentsReleasedAfterResultNormalizationTests.cs`,
   `tests/generic_append_of_generic_map_results_releases_after_copy.ash`,
-  `tests/generic_result_consumed_by_opaque_callee_keeps_parts.ash`.
+  `tests/generic_result_consumed_by_opaque_callee_keeps_parts.ash`. The same release rule also
+  trusted a result-reach summary that `Lowering.MoveAnalysis.cs` had left empty: a record update
+  and a dotted field read of a local (`x with f = v`, `x.f`, the latter parsed as a qualified
+  name) were unmodeled and poisoned with no parameter in the reach set, so a fresh
+  reference-counted argument a callee embedded through `with` was released by the caller right
+  after the call and its block reused by the next allocation of the same size. Both are modeled
+  now: the update's target and a field read reach the result through a component, the updated
+  values whole (`OwnershipProvenanceTests.cs`).
 - [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
   specialization (a helper's own body must resolve in the isolated scope too; an already-visited
   helper counts as resolved). Regression: `ReuseInlineResolutionTests`. Not yet applicable to
@@ -1192,22 +1199,32 @@ same public behavior.
   loop's own runtime-managed accumulators — the shell is recognized as runtime-manageable when its
   field is the enclosing loop's own parameter slot (narrowly — not any outer variable).
   Regression: `LinuxBackendCoverageTests.cs` (mechanism + RSS-plateau behavior tests).
-- [ ] **OPT-38** Release a plain runtime-RC value extracted by a match pattern and passed by name as a TCO
+- [x] **OPT-38** Release a plain runtime-RC value extracted by a match pattern and passed by name as a TCO
   back-edge argument: argument evaluation retains it for the successor, so the back edge must also
   release the pattern-bound owner's reference — it is not a moved value and must not follow the
   moved-argument rule written for resources. Only a plateau-over-iterations test catches this
   class (confirmed 2.4 GB → 8.2 MB on fannkuch-redux).
-  Selfhost port: reproduced (not yet fixed) — `let recursive f n xs last = match xs with | [] ->
-  last | head :: rest -> f(n - 1)(rest)(head)` never retains the new `last` (the raw pattern-
-  extracted `head` temp is stored with no `RcDup`) and never releases the predecessor `last`
-  (its own `LoadLocal` is read for `loadOldParameters` and then simply discarded), leaking one
-  reference's worth of the abandoned value every iteration with no corresponding over-release —
-  a pure leak, not a crash, so no simple correctness assertion catches it, matching the
-  checklist's own "only a plateau-over-iterations test" note. `head`/`rest`'s own tail-forward
-  (`f(n-1)(rest)(...)`, the same shape `tco_list_walk` exercises) is unaffected — only a pattern
-  binding forwarded BY NAME to a *different* parameter than its own root leaks. This is the
-  pattern-match/cons-path lowering another concurrent selfhost work item owns, not the TCO loop
-  path this port stayed inside of; left open here rather than touched.
+  Selfhost port: `let recursive f n xs last = match xs with | [] -> last | head :: rest ->
+  f(n - 1)(rest)(head)` used to store the raw pattern-extracted `head` into the runtime-managed
+  `last` slot with no retain while the back edge released the predecessor `last` — an
+  over-release rather than the leak first suspected: with `xs: List(Str)`, the list's strings
+  were freed while the list still held them (a use-after-free the selfhost-compiled
+  `tests/tco_pattern_head_forwarded_to_other_parameter.ash` crashed on). Closed by porting stage
+  0's pattern-binding ownership: `PatternBindingOwnership.ash` classifies every binder a `match`
+  extracts from a loop parameter by its uses (borrowed by a plain call, transferred to its own
+  parameter, embedded in an aggregate, forwarded to another parameter or captured, or
+  unclassified), keyed by the binder's span; `CoreLowering.ash` binds a protected binder as a
+  pattern owner (`CoreBinding.patternOwner`) whose reads always borrow, records a placement site
+  after the arm's pattern, takes an identity `RcDup` where the binding is read into a tail
+  self-call argument, a cons, a list literal, or an owning constructor, releases it at the arm exit
+  under its resolved type name (`PatternBinding` while unresolved), and at the loop's finalize
+  promotes the markers of a binder whose root parameter is runtime-managed or whose own type is
+  `Str`/`Bytes`/`BigInt` to real retains and releases and splices stage 0's protective duplicate
+  right after the pattern (`PatternBindingOwnershipTests.ash`, `TcoOwnershipRulesTests.ash`).
+  Open: a runtime-managed root with an aggregate-typed escaping binder would need the structural
+  dropper label on the promoted release, and the consumed-tail guard still keeps a list whose
+  heads escape in the arena where stage 0 admits it to the reference-counted heap (the OPT-25
+  tail).
 - [ ] **OPT-39** Release the RC-managed result of a call consumed only by a read-only builtin once nothing
   else owns it. Three facts must stay consistent: the release fires only for freshly-produced
   arguments; an if/match join keeps "newly produced" only when every arm was fresh; a let-scope's

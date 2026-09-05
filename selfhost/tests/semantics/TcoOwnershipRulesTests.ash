@@ -60,6 +60,14 @@ let recursive countContaining (fragment: Str) (lines: List(Str)) =
             then 1 + countContaining(fragment)(rest)
             else countContaining(fragment)(rest)
 
+let recursive countContainingBoth (first: Str) (second: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> 0
+        | line :: rest ->
+            if Ashes.Text.contains(line)(first) && Ashes.Text.contains(line)(second)
+            then 1 + countContainingBoth(first)(second)(rest)
+            else countContainingBoth(first)(second)(rest)
+
 // The lines after the last `else_N:` label: the else branch of the innermost `if`.
 let recursive afterLastElseLabel (lines: List(Str)) (tail: List(Str)) =
     match lines with
@@ -242,6 +250,49 @@ let expectConsumedTailListIsRuntimeManaged unit =
         |> (given (_) -> check("the exit release under the active flag")(countContaining("rc_tco_exit_drop_inactive")(lines) == 2))
         |> (given (_) -> check("one list walk at the back edge and one at the exit")(countContaining("rcdrop_list_shared")(lines) == 4)))
 
+let forwardedStrHeadSource = "let recursive last (n: Int) (xs: List(Str)) (keep: Str) =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
+
+// A string head forwarded by name to a different parameter of the tail self-call is a pattern
+// owner whose type is reference-counted whatever holds it: the arm retains it right after the
+// pattern binds it (stage 0's protective duplicate), the self-call argument retains it again for
+// the successor, and the owner's own reference is released at the back edge under the resolved
+// type name. The head's list stays in the arena, so its cell walk never runs.
+let expectForwardedStrHeadIsProtected unit =
+    forwardedStrHeadSource
+    |> loopFunctionLines("[ClosureHelper from last]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            "RcDup"
+            |> countContaining
+            |> (given (count) -> check("the protective duplicate and the argument retain")(count(lines) == 2)))
+        |> (given (_) -> check("both retains are real reference-count operations")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 2))
+        |> (given (_) ->
+            "RuntimeManaged=true"
+            |> Ashes.Text.contains(lineContaining("TypeName=String OwnerSlot=")(lines))
+            |> check("the owner's release under the resolved type name"))
+        |> (given (_) ->
+            "LoadLocal"
+            |> Ashes.Text.contains(lineBefore("RcDup")("")(lines))
+            |> check("the pattern binds the head before it is retained"))
+        |> (given (_) -> check("the head's list stays in the arena")(countContaining("rcdrop_list")(lines) == 0)))
+
+let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
+
+// The same shape over an unresolved element type keeps its markers as identities: the argument
+// duplicate and the owner's release name the binding, not a runtime-managed type.
+let expectForwardedGenericHeadKeepsIdentityMarkers unit =
+    forwardedGenericHeadSource
+    |> loopFunctionLines("[ClosureHelper from last]")
+    |> (given (lines) ->
+        Unit
+        |> (given (_) -> check("one identity duplicate at the self-call argument")(countContaining("RcDup")(lines) == 1))
+        |> (given (_) -> check("no runtime-managed retain")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 0))
+        |> (given (_) ->
+            "RuntimeManaged=true"
+            |> Ashes.Text.contains(lineContaining("TypeName=PatternBinding OwnerSlot=")(lines))
+            |> (given (runtime) -> check("the owner's release stays an identity marker")(runtime == false))))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -249,4 +300,6 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectLetAliasOfParameterIsNotAnOwner(Unit))
     |> (given (_) -> expectGrownConsAccumulatorIsRuntimeManaged(Unit))
     |> (given (_) -> expectConsumedTailListIsRuntimeManaged(Unit))
+    |> (given (_) -> expectForwardedStrHeadIsProtected(Unit))
+    |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))
