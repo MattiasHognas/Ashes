@@ -638,8 +638,22 @@ let expectDisabledReuseWithholdsTokens unit =
                 |> Ashes.Text.contains(disabled)
                 |> test.assertEqual(true)))
 
+// A returned local lambda that captures the enclosing parameter and ignores its own: the
+// captured parameter's type variable was unified with the constructor's field variable, and
+// generalizing `go` against the unsubstituted environment quantified that field variable away,
+// so the value later read out of the cell had no type for `print` to place.
+let expectCapturedParameterTypeSurvivesLocalLambdaGeneralization unit =
+    "type MapTree(K, V) =\n    | Empty\n    | Node(Int, MapTree, K, V, MapTree)\n\nlet setWith newValue =\n    (let go map = Node(1)(Empty)(\"a\")(newValue)(Empty)\n    in go)\n\nlet m = setWith(\"x\")(Empty)\n\nmatch m with\n    | Empty -> Ashes.IO.print(\"none\")\n    | Node(_height, _left, _key, value, _right) -> Ashes.IO.print(value)\n"
+    |> dumpSource
+    |> Ashes.Text.join("\n")
+    |> (given (text) ->
+        "PrintStr"
+        |> Ashes.Text.contains(text)
+        |> test.assertEqual(true))
+
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectCapturedParameterTypeSurvivesLocalLambdaGeneralization
     |> expectDisabledReuseWithholdsTokens
     |> expectFieldAccessOnUnresolvedReceiverResolvesByUniqueField
     |> expectAmbiguousFieldAccessStaysUnresolved

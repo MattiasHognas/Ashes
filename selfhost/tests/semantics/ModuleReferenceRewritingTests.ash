@@ -60,7 +60,7 @@ let mainProgram =
     |> binding("shadow"))(false), TopLevelLet("value"
     |> ExprQualifiedVar("Util")
     |> binding("qualified"))(false), TopLevelLet(None
-    |> ExprMatch(ExprVar("Node"))([(PatternConstructor("Node")([]), ExprVar("value"), None)])
+    |> ExprMatch(ExprVar("Node"))([(PatternConstructor("Node")([]), ExprVar("value"), None), (PatternVar("Node"), ExprVar("value"), None), (PatternVar("value"), ExprVar("value"), None)])
     |> binding("matched"))(false), TopLevelLet("render"
     |> ExprQualifiedVar("Util.Render")
     |> binding("method"))(false), TopLevelLet([(Some(
@@ -131,9 +131,11 @@ let expectUtilRewriting units =
             |> (given (_) -> units)
         | _ -> test.fail("module declarations and self references should use stitched compiler names")
 
+// A bare constructor name in pattern position is rewritten like the constructor pattern; a bare
+// name that is a stitched VALUE stays the arm's own local, in the pattern and in the body.
 let expectMatchedBinding item =
     match item with
-        | TopLevelLet(LetBindingSyntax { name = "matched", value = ExprMatch(ExprVar("Foo_Util_Node"), (PatternConstructor("Foo_Util_Node", []), ExprVar("Foo_Util_value"), None) :: [], None) }, false) -> Unit
+        | TopLevelLet(LetBindingSyntax { name = "matched", value = ExprMatch(ExprVar("Foo_Util_Node"), (PatternConstructor("Foo_Util_Node", []), ExprVar("Foo_Util_value"), None) :: (PatternVar("Foo_Util_Node"), ExprVar("Foo_Util_value"), None) :: (PatternVar("value"), ExprVar("value"), None) :: [], None) }, false) -> Unit
         | _ -> test.fail("constructor expressions and patterns should use stitched names")
 
 let expectHandlerBinding item =
