@@ -1808,12 +1808,26 @@ same public behavior.
   callers, stage 0 counts a call whose result reaches no parameter as a moved argument, so the
   self-hosted ownership inference now applies the same result-alias rule (`resultAliasMove` over
   the program's reach summaries) and the parity reports agree on which parameters are unique.
-- [ ] **OPT-47** Retain a whole ADT loop parameter consed into a sibling list accumulator
+- [x] **OPT-47** Retain a whole ADT loop parameter consed into a sibling list accumulator
   (`collect(n - 1)(State(...))(s :: acc)`) in the self-hosted lowering, stage 0's rule since the
   sibling-accumulator UAF fix. The shape is reachable only once a list over records is admitted
   as a runtime-managed list parameter alongside the record parameter it stores; confirm the
   admission after the record-list accumulator work, add the retain at the cons, and pin the
   shape with a fixture whose output would print the released record otherwise.
+  Done: confirmed rather than added. The record-list accumulator work admits both parameters
+  (the record slot is copied out of the arena at entry and at every back edge, the list slot is
+  normalized at entry), and its `retainListElement` marker already puts the `RcDup` of the
+  record parameter on the cons cell before the back edge releases the old record; the
+  self-hosted loop body matches stage 0's instruction for instruction at the cons and the back
+  edge, differing only in temp numbering, the always-emitted list exit-transfer check, and
+  stage 0's dead constant-guarded retain of the successor's scalar field.
+  `tests/tco_runtime_managed_record_param_consed_into_sibling_accumulator.ash` pins the shape
+  through both compilers: 20000 records consed behind their successor, then read in both
+  orders, so a released record would print reused memory. The self-hosted binary's higher peak
+  for a retained list of records (about 290 bytes per record against stage 0's 200) is the
+  libc `malloc` allocator recorded under CG-4, not a lowering difference: the same probe
+  without the string field shows a gap of the same kind while the instruction streams agree,
+  and both binaries scale linearly in the record count.
 - [ ] **OPT-48** Port stage 0's entry-helper inlining: a call to a stdlib or user function whose
   body is a `let recursive go ... in go(seed)(argument)` entry (`List.length`, `List.reverse`, the
   fold family) is lowered as the loop closure built in the caller and applied directly, so the
