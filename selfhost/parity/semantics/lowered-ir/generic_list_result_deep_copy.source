@@ -1,0 +1,17 @@
+type Item =
+    | name: Str
+    | flag: Bool
+
+let recursive mapAll f xs =
+    match xs with
+        | [] -> []
+        | x :: rest -> f(x) :: mapAll(f)(rest)
+
+let toItem (n: Int) = Item(name = Ashes.Text.fromInt(n), flag = true)
+
+let firstName (items: List(Item)) =
+    match items with
+        | [] -> "none"
+        | Item { name = n } :: _ -> n
+
+Ashes.IO.print(firstName(mapAll(toItem)([1, 2, 3])))

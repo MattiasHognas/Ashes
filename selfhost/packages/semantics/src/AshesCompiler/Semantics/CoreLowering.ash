@@ -38,6 +38,7 @@ import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
 import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
+import AshesCompiler.Semantics.ResultReachSummaries.ResultReachState
 import AshesCompiler.Semantics.ResultReachSummaries.ReachSummary
 import AshesCompiler.Semantics.ResultReachSummaries.ReachFunction
 import AshesCompiler.Semantics.ResultReachSummaries.programReachSummaries
@@ -399,6 +400,11 @@ type CoreLoweringState =
     // Stage 0's `_runtimeManagedClosureDropperLabels`: the `__rc_cdrop_N` function synthesized
     // for each owned-capture layout (`offset:type;...`), shared by every closure with that layout.
     | closureDropperLabels: List((Str, Str))
+    // Stage 0's `_genericDeepCopiedListTemps`: the result temps of this function's calls whose
+    // generic list result was deep-copied out of the call window. Consumed by a later call whose
+    // result reach is unknown, such a list is left to that callee's arena result rather than
+    // released after the call.
+    | genericDeepCopiedListTemps: List(Int)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -671,7 +677,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         unresolvedCallResults = [],
         runtimeOwnerAliases = [],
         pendingRuntimeArgumentFlags = [],
-        closureDropperLabels = []
+        closureDropperLabels = [],
+        genericDeepCopiedListTemps = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -3544,7 +3551,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
-        |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [])
+        |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
 let bigIntCopySizeBytes = -2
@@ -7048,12 +7055,42 @@ let isSelfCallee (spine: CoreCallSpine) (state: CoreLoweringState) =
                 | _ -> false
         | _ -> false
 
+// Stage 0's `IsCalleeResultListElementQuantifiedInScheme`: after `argumentCount` applications,
+// the callee's declared scheme yields a list whose element is one of the scheme's own quantified
+// variables, so the callee builds its result list for every instantiation alike and cannot
+// place the elements this call's instantiation needs on the reference-counted heap.
+let recursive resultListElementQuantified (quantified: List((Int, Str))) (argumentCount: Int) (body: SemanticType) =
+    if argumentCount == 0
+    then
+        match body with
+            | SemList(SemVariable(id)) -> quantifiedContains(id)(quantified)
+            | _ -> false
+    else
+        match body with
+            | SemFunction(_parameter, result, _row) -> resultListElementQuantified(quantified)(argumentCount - 1)(result)
+            | _ -> false
+and quantifiedContains (id: Int) (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == id || quantifiedContains(id)(rest)
+
+let calleeResultListElementQuantified (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprVar(callee) ->
+            match lookupBinding(callee)(state.bindings) with
+                | Some(CoreBinding { scheme = TypeScheme { quantified = quantified, body = body } }) ->
+                    resultListElementQuantified(quantified)(coreListLength(spine.arguments))(body)
+                | None -> false
+        | _ -> false
+
 // What a spine's stages know about the callee: its facts, whether it is the enclosing recursive
-// binding, and whether the call to it sits in tail position (the fused self call).
+// binding, whether the call to it sits in tail position (the fused self call), and whether its
+// declared result is a list over one of its own quantified type variables.
 type CoreCallContext =
     | facts: Maybe(CoreCalleeFacts)
     | selfCallee: Bool
     | tailCall: Bool
+    | resultElementQuantified: Bool
 
 // A fresh reference-counted argument the callee did not take, released after the call; the
 // release preserves the argument's escaped children when the callee's result may keep them.
@@ -7064,14 +7101,22 @@ type CoreConsumedArgument =
 
 // One spine stage's result with the fresh arguments applied so far and the returns-bit flag
 // temp the last application read (`-1` for none).
+// `resultNormalized` says the closed window copied the result out (a copy-out or deep copy,
+// unconditionally or on the arena branch of the returns flag), so nothing reachable from it
+// still borrows the call's consumed arguments; `resultDeepCopied` narrows that to the generic
+// list deep copy, which copies every element and its owned parts.
 type CoreCallStage =
     | lowered: LoweredCoreValue
     | consumedArguments: List(CoreConsumedArgument)
     | resultFlagTemp: Int
+    | resultNormalized: Bool
+    | resultDeepCopied: Bool
 
 let callStageOf (lowered: LoweredCoreValue) =
     CoreCallStage(
         lowered = lowered,
+        resultNormalized = false,
+        resultDeepCopied = false,
         consumedArguments = [],
         resultFlagTemp = -1
     )
@@ -7466,7 +7511,9 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                         |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
                                         |> success(target)(resolveType(unifiedState)(resultType)),
                                         consumedArguments = consumedArgumentsWith(handOff)(argumentTemp)(argumentType)(consumed),
-                                        resultFlagTemp = resultFlagTemp
+                                        resultFlagTemp = resultFlagTemp,
+                                        resultNormalized = false,
+                                        resultDeepCopied = false
                                     )
 
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
@@ -7778,13 +7825,31 @@ let emitConsumedArgumentDropByResultBranch (temp: Int) (valueType: SemanticType)
                     |> emitRuntimeChildDrop(temp)(valueType)
                     |> emit(Label(doneLabel))
 
+// What the release of a call's consumed arguments knows of the call: whether the callee's
+// lowered body produced a reference-counted result, the flag of the result's conditional list
+// copy-out when that copy-out copies the heads on its arena branch (-1 otherwise), whether the
+// closed window copied the result out at all and whether it deep-copied it, and whether the
+// callee's result reach is unknown.
+type CoreConsumedReleasePolicy =
+    | verifiedRuntimeResult: Bool
+    | elementCopyingFlagTemp: Int
+    | resultNormalized: Bool
+    | resultDeepCopied: Bool
+    | calleeResultPoisoned: Bool
+
+// Stage 0's `ConsumedDeepCopiedListStaysWithCallee`: a consumed list that an earlier call's
+// generic deep copy produced is left with a callee whose result was neither copied out here
+// nor produced reference-counted and whose result reach is unknown, since that result may keep
+// the list whole or any of its parts.
+let consumedDeepCopiedListStaysWithCallee (temp: Int) (policy: CoreConsumedReleasePolicy) (state: CoreLoweringState) = policy.calleeResultPoisoned && policy.resultNormalized == false && policy.verifiedRuntimeResult == false && containsInt(temp)(state.genericDeepCopiedListTemps)
+
 // Stage 0's `LowerCallDropConsumedRuntimeArguments` for one argument: a scalar needs nothing, a
 // closure is closed and released, an argument whose parts the callee's arena-placed result may
 // still reference gives up only the references the caller owns (or, when the result's
 // conditional list copy-out copies the heads on its arena branch, `elementCopyingFlagTemp` is
 // that branch's flag and the release follows it), and any other is released with its owned
-// children.
-let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (elementCopyingFlagTemp: Int) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
+// children; a deep-copied result shares nothing with the arguments, so their parts go with them.
+let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
@@ -7793,34 +7858,47 @@ let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (elementCopyingFlagTe
                     |> emit(CleanupResource(temp)("Function")(None))
                     |> emit(RcDrop(temp)("Function")(-1)(true)(false)(None))
                 | valueType ->
-                    if resultSurvivesReset(valueType)(state)
+                    if resultSurvivesReset(valueType)(state) || consumedDeepCopiedListStaysWithCallee(temp)(policy)(state)
                     then state
                     else
-                        if preserve && verifiedRuntimeResult == false
+                        if preserve && policy.verifiedRuntimeResult == false && policy.resultDeepCopied == false
                         then
-                            if elementCopyingFlagTemp >= 0
-                            then emitConsumedArgumentDropByResultBranch(temp)(valueType)(elementCopyingFlagTemp)(state)
+                            if policy.elementCopyingFlagTemp >= 0
+                            then emitConsumedArgumentDropByResultBranch(temp)(valueType)(policy.elementCopyingFlagTemp)(state)
                             else emitChildPreservingDrop(temp)(valueType)(state)
                         else emitRuntimeChildDrop(temp)(valueType)(state)
 
 // Each consumed temp is released once.
-let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (elementCopyingFlagTemp: Int) (dropped: List(Int)) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+let recursive emitConsumedArgumentDrops (policy: CoreConsumedReleasePolicy) (dropped: List(Int)) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
     match consumed with
         | [] -> state
         | (CoreConsumedArgument { temp = temp } as argument) :: rest ->
             if containsInt(temp)(dropped)
-            then emitConsumedArgumentDrops(verifiedRuntimeResult)(elementCopyingFlagTemp)(dropped)(rest)(state)
+            then emitConsumedArgumentDrops(policy)(dropped)(rest)(state)
             else
                 state
-                |> emitConsumedArgumentDrop(verifiedRuntimeResult)(elementCopyingFlagTemp)(argument)
-                |> emitConsumedArgumentDrops(verifiedRuntimeResult)(elementCopyingFlagTemp)(temp :: dropped)(rest)
+                |> emitConsumedArgumentDrop(policy)(argument)
+                |> emitConsumedArgumentDrops(policy)(temp :: dropped)(rest)
+
+// Stage 0's `GetOwnershipSummaryForCallRoot(...) is not { ResultPoisoned: false }`: a callee
+// without facts has an unknown result reach.
+let calleeResultPoisoned (context: CoreCallContext) =
+    match context.facts with
+        | Some(CoreCalleeFacts { reach = ResultReachState { isPoisoned = isPoisoned } }) -> isPoisoned
+        | None -> true
 
 // A partial application keeps its fresh arguments alive in the returned closure.
-let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (elementCopyingFlagTemp: Int) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (elementCopyingFlagTemp: Int) (stage: CoreCallStage) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            emitConsumedArgumentDrops(calleeCompiledResultRuntimeManaged(context.facts)(state))(elementCopyingFlagTemp)([])(consumed)(state)
+            emitConsumedArgumentDrops(CoreConsumedReleasePolicy(
+                verifiedRuntimeResult = calleeCompiledResultRuntimeManaged(context.facts)(state),
+                elementCopyingFlagTemp = elementCopyingFlagTemp,
+                resultNormalized = stage.resultNormalized,
+                resultDeepCopied = stage.resultDeepCopied,
+                calleeResultPoisoned = calleeResultPoisoned(context)
+            ))([])(stage.consumedArguments)(state)
 
 let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if callResultRuntimeManaged(context.facts)(resultType)(state)
@@ -7837,10 +7915,10 @@ let markCallSpineResult (context: CoreCallContext) (stage: CoreCallStage) =
 // Stage 0's `LowerCallFinish` tail: the fresh arguments the callee did not take are released
 // only once the call's window is closed and its result copied out of it, since an arena-placed
 // result can still reference the arguments' parts until the copy-out has copied them.
-let releaseCallSpineArguments (context: CoreCallContext) (consumed: List(CoreConsumedArgument)) (elementCopyingFlagTemp: Int) (closed: LoweredCoreValue) =
-    match closed with
-        | LoweredCoreValue { error = Some(_error) } -> closed
-        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } -> closed with state = releaseConsumedArguments(context)(semanticType)(elementCopyingFlagTemp)(consumed)(state)
+let releaseCallSpineArguments (context: CoreCallContext) (elementCopyingFlagTemp: Int) (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } as closed } -> closed
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, semanticType = semanticType, error = None } as closed } -> closed with state = releaseConsumedArguments(context)(semanticType)(elementCopyingFlagTemp)(stage)(state)
 
 // Stage 0's `arenaBranchCopiesElements`: the call's result-ownership flag when its result takes
 // the conditional list copy-out and that copy-out copies the heads on its arena branch, so the
@@ -7884,14 +7962,81 @@ let emitConditionalCallCopyOut copyOut resultTemp flagTemp cursorSlot endSlot pr
                                     |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
                                     |> reloadRuntimeSlot(resultSlot)
 
+// Stage 0's `LowerCallDeepCopyOutListResult`: the generic list result is walked out of the call
+// window by the per-element deep copy the loop entry normalization uses, unconditionally when
+// the call read no returns flag (the result may be arena-built), else only on the flag's arena
+// branch, the slot's value reloaded as the result either way.
+let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagTemp: Int) cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
+    if flagTemp < 0
+    then
+        match state
+        |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+        |> emitListDeepCopy(resultTemp)(elementPlan) with
+            | (copied, copiedTemp) ->
+                (emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))(copied), copiedTemp)
+    else
+        match freshLocal(state) with
+            | FreshLocal { state = allocated, local = resultSlot } ->
+                match allocated
+                |> emit(StoreLocal(resultSlot)(resultTemp))
+                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                |> freshLabel("call_deep_copy_arena_result") with
+                    | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                        match freshLabel("call_reclaim_owned_result")(copyLabelled) with
+                            | FreshLabel { state = labelled, label = reclaimLabel } ->
+                                match labelled
+                                |> emit(JumpIfFalse(flagTemp)(copyLabel))
+                                |> emit(Jump(reclaimLabel))
+                                |> emit(Label(copyLabel))
+                                |> emitListDeepCopy(resultTemp)(elementPlan) with
+                                    | (copied, copiedTemp) ->
+                                        match copied
+                                        |> emit(StoreLocal(resultSlot)(copiedTemp))
+                                        |> emit(Label(reclaimLabel))
+                                        |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                        |> freshTemp with
+                                            | FreshTemp { state = reloadState, temp = reloadTemp } ->
+                                                (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
+
+// Stage 0's `LowerUncoveredCallResultCopyOut` deep-copy case: a list result with no call
+// copy-out, from a callee whose declared result element is one of its own quantified variables,
+// whose element does not survive the arena reset but has a deep-copy plan.
+let genericListDeepCopyPlanOf (context: CoreCallContext) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if context.resultElementQuantified
+    then
+        match resolveType(state)(semanticType) with
+            | SemList(element) ->
+                if resultSurvivesReset(element)(state)
+                then None
+                else argumentCopyPlanOf(element)(state)
+            | _ -> None
+    else None
+
+let closedCallStage (stage: CoreCallStage) (normalized: Bool) (deepCopied: Bool) (lowered: LoweredCoreValue) = stage with lowered = lowered, resultNormalized = normalized, resultDeepCopied = deepCopied
+
+// Stage 0's `DeferCallResultCopyOut` takes a slot and a reload temp for the copy-out block it
+// emits once the result's type is known, and a block that resolves to nothing removes the slot
+// round trip but keeps the numbering. The self-hosted lowering lowers the body again once such
+// a type resolves, so a result whose type still holds an unresolved layout only takes the same
+// slot and temp here.
+let reserveDeferredCopyOut (semanticType: SemanticType) (state: CoreLoweringState) =
+    if containsUnresolvedLayout(semanticType)(state)
+    then
+        match freshLocal(state) with
+            | FreshLocal { state = allocated } ->
+                match freshTemp(allocated) with
+                    | FreshTemp { state = reserved } -> reserved
+    else state
+
 // Closes a call's arena window after its last application, stage 0's `LowerCallRestoreArena`:
 // the pre-restore end slot is allocated first either way; a result that survives the reset or
 // is reference-counted resets the window; a heap result with a call copy-out and a returns-bit
-// flag crosses the reset through the conditional copy-out; any other heap result leaves the
-// window open.
-let closeCallWindow cursorSlot endSlot (stage: CoreCallStage) =
+// flag crosses the reset through the conditional copy-out; a generic callee's list result with
+// no copy-out crosses it through the deep copy and is recorded as deep-copied; any other heap
+// result leaves the window open.
+let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
-        | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } as lowered } -> lowered
+        | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
         | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp } ->
             match freshLocal(state) with
                 | FreshLocal { state = allocated, local = preRestoreSlot } ->
@@ -7900,12 +8045,32 @@ let closeCallWindow cursorSlot endSlot (stage: CoreCallStage) =
                         allocated
                         |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
                         |> success(temp)(semanticType)
+                        |> closedCallStage(stage)(false)(false)
                     else
                         match (callCopyOutOf(semanticType)(allocated), flagTemp >= 0) with
                             | (Some(copyOut), true) ->
                                 match emitConditionalCallCopyOut(copyOut)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
-                                    | (closed, resultTemp) -> success(resultTemp)(semanticType)(closed)
-                            | _ -> success(temp)(semanticType)(allocated)
+                                    | (closed, resultTemp) ->
+                                        closed
+                                        |> success(resultTemp)(semanticType)
+                                        |> closedCallStage(stage)(true)(false)
+                            | (None, _) ->
+                                match genericListDeepCopyPlanOf(context)(semanticType)(allocated) with
+                                    | Some(elementPlan) ->
+                                        match emitCallDeepCopyOut(elementPlan)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
+                                            | (closed, resultTemp) ->
+                                                (closed with genericDeepCopiedListTemps = resultTemp :: closed.genericDeepCopiedListTemps)
+                                                |> success(resultTemp)(semanticType)
+                                                |> closedCallStage(stage)(true)(true)
+                                    | None ->
+                                        allocated
+                                        |> reserveDeferredCopyOut(semanticType)
+                                        |> success(temp)(semanticType)
+                                        |> closedCallStage(stage)(false)(false)
+                            | _ ->
+                                allocated
+                                |> success(temp)(semanticType)
+                                |> closedCallStage(stage)(false)(false)
 
 // Unifies the result a spine of `arity` applications of the callee produces with the type the
 // context expects of the call, before any argument is lowered: a callee type that is still a
@@ -7971,7 +8136,8 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (state: CoreLoweringSt
         CoreCallContext(
             facts = calleeFactsOf(spine)(state),
             selfCallee = selfCallee,
-            tailCall = selfCallee && tailCall
+            tailCall = selfCallee && tailCall,
+            resultElementQuantified = calleeResultListElementQuantified(spine)(state)
         ))
 
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
@@ -7987,10 +8153,10 @@ let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool
                 match opened
                 |> lowerCallSpineStage(function)(argument)(context)(expected)(1)(transfers)(lower)
                 |> markCallSpineResult(context) with
-                    | CoreCallStage { consumedArguments = consumed } as stage ->
+                    | stage ->
                         stage
-                        |> closeCallWindow(cursorSlot)(endSlot)
-                        |> releaseCallSpineArguments(context)(consumed)(elementCopyingFlagOf(stage)))
+                        |> closeCallWindow(context)(cursorSlot)(endSlot)
+                        |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage)))
 
 let failedIfPlan state error =
     CoreIfPlan(
@@ -10302,7 +10468,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
-        |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [])
+        |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
 // A recursive member's result meets the callers the same way a plain lambda's does: a
