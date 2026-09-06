@@ -68,6 +68,24 @@ let recursive countContainingBoth (first: Str) (second: Str) (lines: List(Str)) 
             then 1 + countContainingBoth(first)(second)(rest)
             else countContainingBoth(first)(second)(rest)
 
+// The lines outside the pending argument-retain skeletons (stage 0's
+// `EmitConditionallyRetainedRuntimeArgument` under a flag finalize zeroes for a parameter the
+// frame keeps in the arena): from the `JumpIfFalse` into `rc_call_argument_not_retained_N` up to
+// that label, whose `RcDup` is dead in an arena frame.
+let recursive withoutPendingRetainSkeletons (lines: List(Str)) (skipping: Bool) =
+    match lines with
+        | [] -> []
+        | line :: rest ->
+            if skipping
+            then
+                if Ashes.Text.startsWith(line)("  rc_call_argument_not_retained_")
+                then withoutPendingRetainSkeletons(rest)(false)
+                else withoutPendingRetainSkeletons(rest)(true)
+            else
+                if Ashes.Text.contains(line)("Target=rc_call_argument_not_retained_")
+                then withoutPendingRetainSkeletons(rest)(true)
+                else line :: withoutPendingRetainSkeletons(rest)(false)
+
 // The lines after the last `else_N:` label: the else branch of the innermost `if`.
 let recursive afterLastElseLabel (lines: List(Str)) (tail: List(Str)) =
     match lines with
@@ -122,10 +140,12 @@ let ownedLetInTailArgumentRecordSource = "type Inst =\n    | Jump(Str)\n    | Ot
 
 // OPT-26: `label` owns the fresh reference-counted call result; the tail self-call's argument
 // stores it in a constructor field, so the read is retained (`Borrow`, then `RcDup`) and the
-// duplicate is what the field stores, while the owner's own release still fires.
+// duplicate is what the field stores, while the owner's own release still fires. The loop
+// parameter `n` passed to `mk` takes the pending retain skeleton, dead in this arena frame.
 let expectTailSelfCallArgumentRetainsOwnedBinding unit =
     ownedLetInTailArgumentRecordSource
     |> loopFunctionLines("[ClosureHelper from loop]")
+    |> (given (allLines) -> withoutPendingRetainSkeletons(allLines)(false))
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("one RcDup in the loop body")(countContaining("RcDup")(lines) == 1))
@@ -155,6 +175,7 @@ let ownedLetInOperandSelfCallSource = "let mk n = Ashes.Text.fromInt(n)\n\nlet r
 let expectOperandSelfCallIsNotATailCall unit =
     ownedLetInOperandSelfCallSource
     |> loopFunctionLines("[ClosureHelper from count]")
+    |> (given (allLines) -> withoutPendingRetainSkeletons(allLines)(false))
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("one RcDup in the loop body")(countContaining("RcDup")(lines) == 1))

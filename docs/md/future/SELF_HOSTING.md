@@ -1571,11 +1571,20 @@ same public behavior.
   lowering now records the same aliases (`runtimeOwnerAliases`, `aliasArmBindingsToOwner`) and
   resolves them wherever a live owner is looked up (`liveRuntimeOwnerSlot`,
   `namesRuntimeOwner`), so the transfer retain, the aggregate child retain, and the call
-  argument hand-off treat the binding as the owner's value. Still open: a self call
-  passing a pattern binding of a loop parameter whose placement is not settled yet (a list
-  walk's `1 + count(tail)`) takes stage 0's pending argument-retain skeleton
-  (`_pendingRuntimeArgumentFlags`, zeroed at finalize for an arena-placed root), which the
-  self-hosted lowering has no counterpart for; and a curried stage capturing a runtime-managed
+  argument hand-off treat the binding as the owner's value. Done (2026-09-06): a self call
+  passing a loop parameter, or a pattern binding extracted from one, whose placement the
+  finalize pass still decides (a list walk's `1 + count(tail)`) now takes stage 0's pending
+  argument-retain skeleton: the callee's accepts bit is read and the argument retained under it
+  (or under a forced flag when the callee's result may keep the binding), the flag is registered
+  under the parameter's slot (`pendingRuntimeArgumentFlags`), and finalize rewrites the flag's
+  definition to zero for a parameter the frame keeps in the arena
+  (`resolvePendingArgumentFlags`, stage 0's `ResolvePendingRuntimeArgumentFlags`). Every such
+  argument stays pending until finalize: the per-slot admission the body can read
+  (`tcoAdtSlotAdmitted`) is still demoted with the frame, and handing an arena value over under
+  the accepts bit let the callee reuse it in place (`tco_deep_adt_accumulator` rebuilt its count
+  list on top of the loop's own). Parity fixture
+  `tco_non_tail_self_call_in_operator_operand` is registered in the runner and its six loops
+  compared in `TcoLoopLoweringTests`. Still open: a curried stage capturing a runtime-managed
   list gets no environment normalizer or closure dropper (`lambda_N$env_normalize`,
   `__rc_cdrop_N`) yet. Still open (cosmetic): the selfhost attaches no source
   location to instructions synthesized outside any located expression (a curried stage's

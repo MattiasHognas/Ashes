@@ -139,13 +139,12 @@ let expectListWalkLoopFunctionMatchesStageZero unit =
     |> stageZeroFixtureLines
     |> functionLines("[ClosureHelper from walk]"))
 
-// The operator-operand program's scalar loops (`countLeft`, `countRight`) match stage 0 line for
-// line: the non-tail self call under the operator sees its resolved result type (the body is
-// lowered again once the operator resolves it), so the call closes its arena window and owns its
-// result as in stage 0. The list-walking loops of the same program still differ by the pending
-// argument-retain skeleton of their pattern-bound tail argument and stay out of the comparison,
-// and so does `sumTo`, whose labels are numbered after the missing skeleton's.
-let expectScalarOperatorOperandLoopMatchesStageZero (originText: Str) (lines: List(Str)) (expected: List(Str)) =
+// The operator-operand program's loops match stage 0 line for line: the non-tail self call under
+// the operator sees its resolved result type (the body is lowered again once the operator
+// resolves it), so the call closes its arena window and owns its result as in stage 0, and the
+// list-walking loops pass their pattern-bound tail through the pending argument-retain skeleton,
+// its flag zeroed at finalize since the frame keeps the parameter in the arena.
+let expectOperatorOperandLoopMatchesStageZero (originText: Str) (lines: List(Str)) (expected: List(Str)) =
     lines
     |> functionLines(originText)
     |> expectSameLines(originText + " loop function")(functionLines(originText)(expected))
@@ -156,8 +155,12 @@ let expectOperatorOperandLoopsMatchStageZero unit =
         let expected = stageZeroFixtureLines("tco_non_tail_self_call_in_operator_operand")
         in
             Unit
-            |> (given (_) -> expectScalarOperatorOperandLoopMatchesStageZero("[SourceFunction from countLeft]")(lines)(expected))
-            |> (given (_) -> expectScalarOperatorOperandLoopMatchesStageZero("[SourceFunction from countRight]")(lines)(expected)))
+            |> (given (_) -> expectOperatorOperandLoopMatchesStageZero("[SourceFunction from countLeft]")(lines)(expected))
+            |> (given (_) -> expectOperatorOperandLoopMatchesStageZero("[SourceFunction from countRight]")(lines)(expected))
+            |> (given (_) -> expectOperatorOperandLoopMatchesStageZero("[SourceFunction from countEvens]")(lines)(expected))
+            |> (given (_) -> expectOperatorOperandLoopMatchesStageZero("[SourceFunction from sumTo]")(lines)(expected))
+            |> (given (_) -> expectOperatorOperandLoopMatchesStageZero("[SourceFunction from countFields]")(lines)(expected))
+            |> (given (_) -> expectOperatorOperandLoopMatchesStageZero("[SourceFunction from countNegated]")(lines)(expected)))
 
 let runTcoLoopLoweringTests unit =
     unit

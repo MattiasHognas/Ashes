@@ -391,6 +391,11 @@ type CoreLoweringState =
     // whose release covers it. A read of the binding counts as a read of the owner: an aggregate
     // or call that carries it past the owner's release retains it.
     | runtimeOwnerAliases: List((Int, Int))
+    // Stage 0's `_pendingRuntimeArgumentFlags`: the ownership flag temp of each call argument
+    // that reads a loop parameter (or a pattern binding extracted from one) whose placement the
+    // finalize pass still decides, with that parameter's slot; the flag is zeroed at finalize
+    // when the frame does not admit the parameter to the reference-counted heap.
+    | pendingRuntimeArgumentFlags: List((Int, Int))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -661,7 +666,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         reuseTokens = [],
         valuePlacements = [],
         unresolvedCallResults = [],
-        runtimeOwnerAliases = []
+        runtimeOwnerAliases = [],
+        pendingRuntimeArgumentFlags = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -3531,7 +3537,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
@@ -6106,6 +6112,36 @@ let promoteTcoParameterRetains (managedLists: List((Int, Int, SemanticType))) (m
         | [] -> state with tcoParameterRetainSites = []
         | promoted -> state with reversedInstructions = promoteRetainInstructions(state.reversedInstructions)(promoted), tcoParameterRetainSites = []
 
+let recursive unadmittedPendingFlags (flags: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) =
+    match flags with
+        | [] -> []
+        | (flagTemp, rootSlot) :: rest ->
+            if tcoParameterPlaced(rootSlot)(managedLists)(managedAdts)(candidates)
+            then unadmittedPendingFlags(rest)(managedLists)(managedAdts)(candidates)
+            else flagTemp :: unadmittedPendingFlags(rest)(managedLists)(managedAdts)(candidates)
+
+let recursive zeroPendingFlagInstructions (instructions: List(IrInstruction)) (flags: List(Int)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = AndInt(target, _left, _right) } as instruction) :: rest ->
+            (if containsInt(target)(flags)
+            then instruction with instruction = LoadConstInt(target)(0)
+            else instruction) :: zeroPendingFlagInstructions(rest)(flags)
+        | (IrInstruction { instruction = LoadConstInt(target, _value) } as instruction) :: rest ->
+            (if containsInt(target)(flags)
+            then instruction with instruction = LoadConstInt(target)(0)
+            else instruction) :: zeroPendingFlagInstructions(rest)(flags)
+        | instruction :: rest -> instruction :: zeroPendingFlagInstructions(rest)(flags)
+
+// Stage 0's `ResolvePendingRuntimeArgumentFlags`: the ownership flag of a call argument that
+// reads a loop parameter the frame did not admit to the reference-counted heap (or a pattern
+// binding extracted from one) is rewritten to zero where it is defined, so the call neither
+// retains the argument nor hands over a reference; the flag of an admitted parameter stays.
+let resolvePendingArgumentFlags (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match unadmittedPendingFlags(state.pendingRuntimeArgumentFlags)(managedLists)(managedAdts)(candidates) with
+        | [] -> state with pendingRuntimeArgumentFlags = []
+        | flags -> state with reversedInstructions = zeroPendingFlagInstructions(state.reversedInstructions)(flags), pendingRuntimeArgumentFlags = []
+
 // The runtime-managed `Str` slots as exit entries under the type name `String`: the exit
 // transfer check and the guarded release are the copy-ADT slots' own.
 let recursive strExitEntriesOf (managedStrs: List((Int, Int))) =
@@ -6157,6 +6193,7 @@ let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Co
                     |> retireUnusedListActiveSlots(frame.listActiveSlots)(managedLists)(managedAdts)(managedStrs)
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
+                    |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
                     |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(if anyBlockingSibling(candidates)(state)
         then []
         else tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots))(if anyBlockingSibling(candidates)(state)
@@ -6870,6 +6907,95 @@ let argumentReachesResultWhole (facts: Maybe(CoreCalleeFacts)) (index: Int) (arg
 // releases it; a callee keeping only destructured parts leaves the caller's spine release.
 let transfersFreshArgument facts index argument argumentTemp state = calleeParameterBorrows(facts)(index) == false && isFreshRuntimeArgument(argument)(argumentTemp)(state) && (calleeNormalizesArgument(facts)(index)(state) || argumentReachesResultWhole(facts)(index)(argumentTemp)(state))
 
+let parameterSlotOfName (name: Str) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot) }) ->
+            if containsInt(slot)(frame.parameterSlots)
+            then Some(slot)
+            else None
+        | _ -> None
+
+let recursive ordinalOfSlot (slot: Int) (slots: List(Int)) (ordinal: Int) =
+    match slots with
+        | [] -> None
+        | candidate :: rest ->
+            if candidate == slot
+            then Some(ordinal)
+            else ordinalOfSlot(slot)(rest)(ordinal + 1)
+
+let recursive shapeAtOrdinal (ordinal: Int) (shapes: List(TcoArgumentShape)) =
+    match shapes with
+        | [] -> TcoOtherShape
+        | shape :: rest ->
+            if ordinal == 0
+            then shape
+            else shapeAtOrdinal(ordinal - 1)(rest)
+
+let recursive parameterSlotAtOrdinal (ordinal: Int) (slots: List(Int)) =
+    match slots with
+        | [] -> None
+        | slot :: rest ->
+            if ordinal == 0
+            then Some(slot)
+            else parameterSlotAtOrdinal(ordinal - 1)(rest)
+
+// A loop parameter slot is a runtime-managed value when its resolved type and self-call shape
+// admit it to reference-counted placement (an ADT cell, or a `Str` the affine analysis
+// manages): a cell built around it may then live on the reference-counted heap. The finalize
+// pass places the parameter or demotes the whole frame; a demoted frame never reclaims the arena
+// at its back edge, so a cell placed early holds no dangling reference.
+let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
+        | Some(ordinal) ->
+            tcoAdtSlotAdmitted(slot)(shapeAtOrdinal(ordinal)(loop.argumentShapes))(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+        | None -> false
+
+let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop) with
+        | (Some(frame), Some(loop)) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+                | None -> false
+        | _ -> false
+
+// The loop parameter an aggregate child reads: the parameter itself, or a record field read out
+// of it (`s.label`, a qualified name whose module part is the parameter's binding).
+let loopParameterReadSlot (argument: Expr) (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | None -> None
+        | Some(frame) ->
+            match unspanArgument(argument) with
+                | ExprVar(name) -> parameterSlotOfName(name)(frame)(state)
+                | ExprQualifiedVar(owner, _field) -> parameterSlotOfName(owner)(frame)(state)
+                | _ -> None
+
+// The loop parameter slot a pattern binding was extracted from, by its recorded fact.
+let patternBindingRootSlot (name: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match patternOwnerBinding(name)(state) with
+        | Some(PatternBindingFact { rootParameterOrdinal = ordinal }) -> parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
+        | None ->
+            match patternFactsNamed(name)(loop.patternFacts) with
+                | PatternBindingFact { rootParameterOrdinal = ordinal } :: _rest ->
+                    if ordinal >= 0
+                    then parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
+                    else None
+                | [] -> None
+
+// Stage 0's `TryGetRuntimeManagedCallArgument` inside a TCO frame: an argument that reads a loop
+// parameter, or a pattern binding extracted from one, holds a reference-counted value once the
+// parameter is placed on the reference-counted heap. The placement is the finalize pass's to
+// decide (the per-slot admission read during the body can still be demoted with the frame), so
+// every such argument is pending under the parameter's slot: the ownership flag emitted for it
+// is zeroed at finalize when the frame does not place the parameter, and stays the callee's
+// accepts bit when it does.
+let argumentRootSlotOf (argument: Expr) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop, unspanArgument(argument)) with
+        | (Some(frame), Some(loop), ExprVar(name)) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) -> Some(slot)
+                | None -> patternBindingRootSlot(name)(frame)(loop)(state)
+        | _ -> None
+
 // One application's hand-off decisions, stage 0's `LowerAppliedClosureCall` facts.
 type CoreArgumentHandOff =
     | borrowsOnly: Bool
@@ -6877,15 +7003,23 @@ type CoreArgumentHandOff =
     | runtimeArgument: Bool
     | mayReach: Bool
     | transfers: Bool
+    | pendingRootSlot: Maybe(Int)
 
+// Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
+// the callee's result may keep is retained outright, its flag registered as pending.
 let argumentHandOffOf facts index argument argumentTemp state =
-    CoreArgumentHandOff(
-        borrowsOnly = calleeParameterBorrows(facts)(index),
-        fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
-        runtimeArgument = isRuntimeManagedCallArgument(argument)(argumentTemp)(state),
-        mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state),
-        transfers = transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state)
-    )
+    match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state), argumentRootSlotOf(argument)(state)) with
+        | (runtimeArgument, rootSlot) ->
+            CoreArgumentHandOff(
+                borrowsOnly = calleeParameterBorrows(facts)(index),
+                fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
+                runtimeArgument = runtimeArgument || rootSlot != None,
+                mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || rootSlot != None && calleeResultReachesArgument(facts)(index),
+                transfers = transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
+                pendingRootSlot = if runtimeArgument
+                then None
+                else rootSlot
+            )
 
 // The callee's `AcceptsRuntimeManagedArgument` bit, bit 62 of the closure's packed environment
 // size word, in a fresh flag temp.
@@ -6958,8 +7092,23 @@ let emitConditionalArgumentRetain (argumentTemp: Int) (argumentType: SemanticTyp
 
 let retainCallArgument (handOff: CoreArgumentHandOff) argumentType argumentTemp flagTemp state =
     match handOff with
-        | CoreArgumentHandOff { mayReach = true, fresh = false } -> emitArgumentRetain(argumentTemp)(argumentType)(state)
+        | CoreArgumentHandOff { mayReach = true, fresh = false, pendingRootSlot = None } -> emitArgumentRetain(argumentTemp)(argumentType)(state)
         | _ -> emitConditionalArgumentRetain(argumentTemp)(argumentType)(flagTemp)(state)
+
+// Stage 0's `EmitForcedRetainFlag`: the retain guard of a pending argument the callee's result
+// may keep defaults to one; finalize zeroes it only for an unadmitted root.
+let emitForcedRetainFlag (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = flagTemp } ->
+            (emit(LoadConstInt(flagTemp)(1))(allocated), flagTemp)
+
+// The flag of a pending argument, registered under the loop parameter slot whose placement the
+// finalize pass decides (stage 0's `_pendingRuntimeArgumentFlags`).
+let pendingArgumentFlag (handOff: CoreArgumentHandOff) (rootSlot: Int) (acceptsFlagTemp: Int) (state: CoreLoweringState) =
+    match if handOff.mayReach
+    then emitForcedRetainFlag(state)
+    else (state, acceptsFlagTemp) with
+        | (flagged, flagTemp) -> ((flagged with pendingRuntimeArgumentFlags = (flagTemp, rootSlot) :: flagged.pendingRuntimeArgumentFlags), flagTemp)
 
 // Stage 0's `PrepareRuntimeManagedCallArgument`: a borrowed parameter or an argument without a
 // reference-counted value passes as is without a flag. Otherwise the callee's accepts bit is
@@ -6970,6 +7119,13 @@ let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp
     match handOff with
         | CoreArgumentHandOff { borrowsOnly = true } -> (state, argumentTemp, -1)
         | CoreArgumentHandOff { runtimeArgument = false } -> (state, argumentTemp, -1)
+        | CoreArgumentHandOff { pendingRootSlot = Some(rootSlot) } ->
+            match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
+                | (flagged, acceptsFlagTemp) ->
+                    match pendingArgumentFlag(handOff)(rootSlot)(acceptsFlagTemp)(flagged) with
+                        | (registered, flagTemp) ->
+                            match emitConditionalArgumentRetain(argumentTemp)(argumentType)(flagTemp)(registered) with
+                                | (retained, passedTemp) -> (retained, passedTemp, flagTemp)
         | CoreArgumentHandOff { transfers = true } ->
             match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
                 | (flagged, flagTemp) -> (flagged, argumentTemp, flagTemp)
@@ -9943,7 +10099,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
@@ -10204,58 +10360,6 @@ let recursive emitTupleFields baseTemp index temps state =
             state
             |> emit(StoreMemOffset(baseTemp)(index * 8)(temp))
             |> emitTupleFields(baseTemp)(index + 1)(rest)
-
-let parameterSlotOfName (name: Str) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
-    match lookupBinding(name)(state.bindings) with
-        | Some(CoreBinding { location = CoreLocal(slot) }) ->
-            if containsInt(slot)(frame.parameterSlots)
-            then Some(slot)
-            else None
-        | _ -> None
-
-let recursive ordinalOfSlot (slot: Int) (slots: List(Int)) (ordinal: Int) =
-    match slots with
-        | [] -> None
-        | candidate :: rest ->
-            if candidate == slot
-            then Some(ordinal)
-            else ordinalOfSlot(slot)(rest)(ordinal + 1)
-
-let recursive shapeAtOrdinal (ordinal: Int) (shapes: List(TcoArgumentShape)) =
-    match shapes with
-        | [] -> TcoOtherShape
-        | shape :: rest ->
-            if ordinal == 0
-            then shape
-            else shapeAtOrdinal(ordinal - 1)(rest)
-
-// A loop parameter read is a runtime-managed value when its slot's resolved type and self-call
-// shape admit it to reference-counted placement (an ADT cell, or a `Str` the affine analysis
-// manages): a cell built around it may then live on the reference-counted heap. The finalize
-// pass places the parameter or demotes the whole frame; a demoted frame never reclaims the arena
-// at its back edge, so a cell placed early holds no dangling reference.
-let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
-    match (state.tcoLoopFrame, state.tcoLoop) with
-        | (Some(frame), Some(loop)) ->
-            match parameterSlotOfName(name)(frame)(state) with
-                | Some(slot) ->
-                    match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
-                        | Some(ordinal) ->
-                            tcoAdtSlotAdmitted(slot)(shapeAtOrdinal(ordinal)(loop.argumentShapes))(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
-                        | None -> false
-                | None -> false
-        | _ -> false
-
-// The loop parameter an aggregate child reads: the parameter itself, or a record field read out
-// of it (`s.label`, a qualified name whose module part is the parameter's binding).
-let loopParameterReadSlot (argument: Expr) (state: CoreLoweringState) =
-    match state.tcoLoopFrame with
-        | None -> None
-        | Some(frame) ->
-            match unspanArgument(argument) with
-                | ExprVar(name) -> parameterSlotOfName(name)(frame)(state)
-                | ExprQualifiedVar(owner, _field) -> parameterSlotOfName(owner)(frame)(state)
-                | _ -> None
 
 // A parameter's own read inside the tail self-call argument that rebuilds it: the reference the
 // back edge moves into the successor (stage 0's `_loweringTcoBackEdgeArgumentSlot` exclusion). A
