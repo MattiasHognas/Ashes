@@ -1502,10 +1502,22 @@ same public behavior.
   the normalization before the body is lowered for the same reason (`withNormalizedAlwaysReturnedParameter`)
   and computes the function-body request against the prepared body state, not the outer one.
   The churn fixture is flat at 8.2 MB (stage 0) and 5.6 MB (selfhost) at both 20000 and 200000
-  iterations. Still open: the same loop over a string-returning function grows slowly in stage 0
-  (8.2 MB to 12.3 MB), because the conditional list copy-out with string heads copies the heads
-  on its arena branch but the consumed first argument is still released spine-only there (the
-  sibling of the deep-copy release above, on `LowerCallConditionalCopyOutResult`'s branch); an
+  iterations. Done (2026-09-06): the same loop over a string-returning function
+  (`tests/generic_map_string_churn_plateau.ash`) grew from 8.2 MB to 12.3 MB, because the
+  conditional list copy-out with string heads copies the heads on its arena branch while the
+  consumed first argument was released spine-only on both branches; the release now follows the
+  result's branch (`EmitConsumedArgumentDropByResultBranch` / `emitConsumedArgumentDropByResultBranch`:
+  spine-only on the owned branch, with the elements on the copied one), and stage 0 also
+  releases the elements outright after an unconditional head-copying list copy-out (the selfhost
+  has no unconditional call copy-out yet, so only its conditional case applies). The parity fixture
+  `consumed_string_list_copied_release` covers the branch in both compilers. The string fixture
+  still grows in the selfhost (9.4 MB to 43 MB) for an older reason: its result-reach analysis
+  sums a plain-name call's callee and argument reach instead of substituting the callee's own
+  summary, binds a `let recursive` name to its analyzed body instead of registering the nested
+  function, and treats an unbound name as bottom instead of poison, so `append`'s summary says
+  its result keeps both parameters whole (stage 0: `left` by component, poisoned) and both fresh
+  `map` results hand over without a retain or release. Porting stage 0's function registry,
+  call-site substitution, and nested-recursive shape is the next item. Still open: an
   un-annotated parameter misses the pre-body decision (its type resolves only inside the body),
   so its record stays arena-placed as before; and the selfhost still lacks the generic list
   deep-copy call path (`LowerCallDeepCopyOutListResult`). Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into

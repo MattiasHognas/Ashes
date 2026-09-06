@@ -1,0 +1,332 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9024)
+
+function lambda_0  [SourceFunction from bang]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=1   (consumed_string_list_copied_release.ash:1:21)
+    LoadConstStr          Target=1 StrLabel=str_0   (consumed_string_list_copied_release.ash:1:25)
+    ConcatStr             Target=2 Left=0 Right=1 RuntimeManaged=true   (consumed_string_list_copied_release.ash:1:21)
+    LoadArgumentOwnership Target=3
+    LoadConstInt          Target=4 Value=1
+    ShrInt                Target=5 Left=3 Right=4
+    JumpIfFalse           CondTemp=5 Target=rc_result_owned_0
+    CopyOutArena          DestTemp=6 SrcTemp=2 Purpose=ArenaResultBoundary
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=2 Source=6
+    Jump                  Target=rc_result_done_1
+  rc_result_owned_0:
+    StoreLocal            Slot=2 Source=2
+  rc_result_done_1:
+    LoadLocal             Target=7 Slot=2
+    Return                Source=7
+
+function lambda_1  [SourceFunction from pair]
+  locals=10 temps=22
+    LoadConstInt          Target=0 Value=0   (consumed_string_list_copied_release.ash:3:21)
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=1 Index=0   (consumed_string_list_copied_release.ash:3:31)
+    Borrow                Target=2 SourceTemp=1
+    LoadLocal             Target=3 Slot=1   (consumed_string_list_copied_release.ash:3:36)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (consumed_string_list_copied_release.ash:3:31)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    Alloc                 Target=5 SizeBytes=16 RuntimeManaged=true   (consumed_string_list_copied_release.ash:3:21)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=4   (consumed_string_list_copied_release.ash:3:21)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=0   (consumed_string_list_copied_release.ash:3:21)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadEnv               Target=6 Index=0   (consumed_string_list_copied_release.ash:3:22)
+    Borrow                Target=7 SourceTemp=6
+    LoadLocal             Target=8 Slot=1   (consumed_string_list_copied_release.ash:3:27)
+    CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (consumed_string_list_copied_release.ash:3:22)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=7
+    Alloc                 Target=10 SizeBytes=16 RuntimeManaged=true   (consumed_string_list_copied_release.ash:3:21)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=9   (consumed_string_list_copied_release.ash:3:21)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=5   (consumed_string_list_copied_release.ash:3:21)
+    LoadArgumentOwnership Target=11
+    LoadConstInt          Target=12 Value=1
+    ShrInt                Target=13 Left=11 Right=12
+    JumpIfFalse           CondTemp=13 Target=rc_result_owned_2
+    CopyOutList           DestTemp=14 SrcTemp=10 HeadCopy=String Purpose=ArenaResultBoundary
+    StoreLocal            Slot=9 Source=10
+  rcdrop_list_4:
+    LoadLocal             Target=15 Slot=9
+    LoadConstInt          Target=16 Value=0
+    CmpIntNe              Target=17 Left=15 Right=16
+    JumpIfFalse           CondTemp=17 Target=rcdrop_list_end_6
+    RcIsUnique            Target=18 SourceTemp=15
+    JumpIfFalse           CondTemp=18 Target=rcdrop_list_shared_5
+    LoadMemOffset         Target=19 BasePtr=15 OffsetBytes=0
+    RcDrop                SourceTemp=19 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=20 BasePtr=15 OffsetBytes=8
+    RcDrop                SourceTemp=15 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=9 Source=20
+    Jump                  Target=rcdrop_list_4
+  rcdrop_list_shared_5:
+    RcDrop                SourceTemp=15 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_6
+  rcdrop_list_end_6:
+    StoreLocal            Slot=8 Source=14
+    Jump                  Target=rc_result_done_3
+  rc_result_owned_2:
+    StoreLocal            Slot=8 Source=10
+  rc_result_done_3:
+    LoadLocal             Target=21 Slot=8
+    Return                Source=21
+
+function lambda_2  [SourceFunction from rebuilt]
+  locals=13 temps=17
+    LoadLocal             Target=0 Slot=1   (consumed_string_list_copied_release.ash:6:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (consumed_string_list_copied_release.ash:6:5)
+    CmpIntEq              Target=2 Left=0 Right=1   (consumed_string_list_copied_release.ash:6:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_10   (consumed_string_list_copied_release.ash:6:5)
+    LoadConstInt          Target=3 Value=0   (consumed_string_list_copied_release.ash:7:17)
+    StoreLocal            Slot=2 Source=3   (consumed_string_list_copied_release.ash:6:5)
+    Jump                  Target=match_end_7   (consumed_string_list_copied_release.ash:6:5)
+  match_arm_cleanup_10:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_next_9   (consumed_string_list_copied_release.ash:6:5)
+  match_next_9:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=4 Value=0   (consumed_string_list_copied_release.ash:6:5)
+    CmpIntNe              Target=5 Left=0 Right=4   (consumed_string_list_copied_release.ash:6:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_11   (consumed_string_list_copied_release.ash:6:5)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (consumed_string_list_copied_release.ash:6:5)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (consumed_string_list_copied_release.ash:6:5)
+    StoreLocal            Slot=9 Source=6   (consumed_string_list_copied_release.ash:6:5)
+    StoreLocal            Slot=10 Source=7   (consumed_string_list_copied_release.ash:6:5)
+    LoadLocal             Target=8 Slot=9   (consumed_string_list_copied_release.ash:8:27)
+    Borrow                Target=9 SourceTemp=8
+    LoadLocal             Target=10 Slot=10   (consumed_string_list_copied_release.ash:8:35)
+    Borrow                Target=11 SourceTemp=10
+    Alloc                 Target=12 SizeBytes=16   (consumed_string_list_copied_release.ash:8:27)
+    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=9   (consumed_string_list_copied_release.ash:8:27)
+    StoreMemOffset        BasePtr=12 OffsetBytes=8 Source=11   (consumed_string_list_copied_release.ash:8:27)
+    StoreLocal            Slot=2 Source=12   (consumed_string_list_copied_release.ash:6:5)
+    RcDrop                SourceTemp=7 TypeName=List OwnerSlot=10
+    RcDrop                SourceTemp=6 TypeName=String OwnerSlot=9
+    Jump                  Target=match_end_7   (consumed_string_list_copied_release.ash:6:5)
+  match_arm_cleanup_11:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=12
+    Jump                  Target=match_none_8   (consumed_string_list_copied_release.ash:6:5)
+  match_none_8:
+    LoadConstInt          Target=15 Value=0   (consumed_string_list_copied_release.ash:6:5)
+    StoreLocal            Slot=2 Source=15   (consumed_string_list_copied_release.ash:6:5)
+  match_end_7:
+    LoadLocal             Target=16 Slot=2   (consumed_string_list_copied_release.ash:6:5)
+    Return                Source=16
+
+function lambda_3  [SourceFunction from count]
+  locals=11 temps=11
+    LoadLocal             Target=0 Slot=1   (consumed_string_list_copied_release.ash:11:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (consumed_string_list_copied_release.ash:11:5)
+    CmpIntEq              Target=2 Left=0 Right=1   (consumed_string_list_copied_release.ash:11:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_15   (consumed_string_list_copied_release.ash:11:5)
+    LoadConstInt          Target=3 Value=0   (consumed_string_list_copied_release.ash:12:17)
+    StoreLocal            Slot=2 Source=3   (consumed_string_list_copied_release.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Jump                  Target=match_end_12   (consumed_string_list_copied_release.ash:11:5)
+  match_arm_cleanup_15:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_next_14   (consumed_string_list_copied_release.ash:11:5)
+  match_next_14:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=4 Value=0   (consumed_string_list_copied_release.ash:11:5)
+    CmpIntNe              Target=5 Left=0 Right=4   (consumed_string_list_copied_release.ash:11:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_16   (consumed_string_list_copied_release.ash:11:5)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (consumed_string_list_copied_release.ash:11:5)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (consumed_string_list_copied_release.ash:11:5)
+    LoadConstInt          Target=8 Value=1   (consumed_string_list_copied_release.ash:13:21)
+    StoreLocal            Slot=2 Source=8   (consumed_string_list_copied_release.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
+    Jump                  Target=match_end_12   (consumed_string_list_copied_release.ash:11:5)
+  match_arm_cleanup_16:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
+    Jump                  Target=match_none_13   (consumed_string_list_copied_release.ash:11:5)
+  match_none_13:
+    LoadConstInt          Target=9 Value=0   (consumed_string_list_copied_release.ash:11:5)
+    StoreLocal            Slot=2 Source=9   (consumed_string_list_copied_release.ash:11:5)
+  match_end_12:
+    LoadLocal             Target=10 Slot=2   (consumed_string_list_copied_release.ash:11:5)
+    Return                Source=10
+
+function _start_main  [ProgramEntry]
+  locals=36 temps=71
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    AllocStack            Target=2 SizeBytes=8
+    LoadLocal             Target=3 Slot=2
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4
+    MakeClosureStack      Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true
+    StoreLocal            Slot=5 Source=5
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=6 Value=0
+    MakeClosureStack      Target=7 FuncLabel=lambda_2 EnvPtrTemp=6 EnvSizeBytes=0
+    StoreLocal            Slot=8 Source=7
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadConstInt          Target=8 Value=0
+    MakeClosureStack      Target=9 FuncLabel=lambda_3 EnvPtrTemp=8 EnvSizeBytes=0
+    StoreLocal            Slot=11 Source=9
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=10 Slot=11   (consumed_string_list_copied_release.ash:15:35)
+    Borrow                Target=11 SourceTemp=10
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadLocal             Target=12 Slot=8   (consumed_string_list_copied_release.ash:15:41)
+    Borrow                Target=13 SourceTemp=12
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadLocal             Target=14 Slot=5   (consumed_string_list_copied_release.ash:15:49)
+    Borrow                Target=15 SourceTemp=14
+    LoadConstStr          Target=16 StrLabel=str_1   (consumed_string_list_copied_release.ash:15:54)
+    LoadMemOffset         Target=17 BasePtr=15 OffsetBytes=16   (consumed_string_list_copied_release.ash:15:49)
+    LoadConstInt          Target=18 Value=63   (consumed_string_list_copied_release.ash:15:49)
+    ShrInt                Target=19 Left=17 Right=18   (consumed_string_list_copied_release.ash:15:49)
+    CallClosure           Target=20 ClosureTemp=15 ArgTemp=16   (consumed_string_list_copied_release.ash:15:49)
+    StoreLocal            Slot=19 Source=20   (consumed_string_list_copied_release.ash:15:49)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=18
+    JumpIfFalse           CondTemp=19 Target=call_copy_arena_result_17   (consumed_string_list_copied_release.ash:15:49)
+    Jump                  Target=call_reclaim_owned_result_18   (consumed_string_list_copied_release.ash:15:49)
+  call_copy_arena_result_17:
+    CopyOutList           DestTemp=21 SrcTemp=20 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (consumed_string_list_copied_release.ash:15:49)
+    StoreLocal            Slot=19 Source=21   (consumed_string_list_copied_release.ash:15:49)
+  call_reclaim_owned_result_18:
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=18
+    LoadLocal             Target=22 Slot=19   (consumed_string_list_copied_release.ash:15:49)
+    LoadMemOffset         Target=23 BasePtr=13 OffsetBytes=16   (consumed_string_list_copied_release.ash:15:41)
+    LoadConstInt          Target=24 Value=62   (consumed_string_list_copied_release.ash:15:41)
+    ShrInt                Target=25 Left=23 Right=24   (consumed_string_list_copied_release.ash:15:41)
+    LoadConstInt          Target=26 Value=1   (consumed_string_list_copied_release.ash:15:41)
+    AndInt                Target=27 Left=25 Right=26   (consumed_string_list_copied_release.ash:15:41)
+    StoreLocal            Slot=20 Source=22   (consumed_string_list_copied_release.ash:15:41)
+    JumpIfFalse           CondTemp=27 Target=rc_call_argument_not_retained_19   (consumed_string_list_copied_release.ash:15:41)
+    RcDup                 Target=28 SourceTemp=22 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=20 Source=28   (consumed_string_list_copied_release.ash:15:41)
+  rc_call_argument_not_retained_19:
+    LoadLocal             Target=29 Slot=20   (consumed_string_list_copied_release.ash:15:41)
+    LoadMemOffset         Target=30 BasePtr=13 OffsetBytes=16   (consumed_string_list_copied_release.ash:15:41)
+    LoadConstInt          Target=31 Value=63   (consumed_string_list_copied_release.ash:15:41)
+    ShrInt                Target=32 Left=30 Right=31   (consumed_string_list_copied_release.ash:15:41)
+    CallClosure           Target=33 ClosureTemp=13 ArgTemp=29 RuntimeManagedArgumentFlagTemp=27   (consumed_string_list_copied_release.ash:15:41)
+    StoreLocal            Slot=22 Source=33   (consumed_string_list_copied_release.ash:15:41)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=21
+    JumpIfFalse           CondTemp=32 Target=call_copy_arena_result_20   (consumed_string_list_copied_release.ash:15:41)
+    Jump                  Target=call_reclaim_owned_result_21   (consumed_string_list_copied_release.ash:15:41)
+  call_copy_arena_result_20:
+    CopyOutList           DestTemp=34 SrcTemp=33 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (consumed_string_list_copied_release.ash:15:41)
+    StoreLocal            Slot=22 Source=34   (consumed_string_list_copied_release.ash:15:41)
+  call_reclaim_owned_result_21:
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=21
+    LoadLocal             Target=35 Slot=22   (consumed_string_list_copied_release.ash:15:41)
+    JumpIfFalse           CondTemp=32 Target=rc_consumed_copied_22   (consumed_string_list_copied_release.ash:15:41)
+    StoreLocal            Slot=23 Source=22   (consumed_string_list_copied_release.ash:15:41)
+  rcdrop_list_spine_24:
+    LoadLocal             Target=36 Slot=23   (consumed_string_list_copied_release.ash:15:41)
+    LoadConstInt          Target=37 Value=0   (consumed_string_list_copied_release.ash:15:41)
+    CmpIntNe              Target=38 Left=36 Right=37   (consumed_string_list_copied_release.ash:15:41)
+    JumpIfFalse           CondTemp=38 Target=rcdrop_list_spine_end_26   (consumed_string_list_copied_release.ash:15:41)
+    RcIsUnique            Target=39 SourceTemp=36
+    JumpIfFalse           CondTemp=39 Target=rcdrop_list_spine_shared_25   (consumed_string_list_copied_release.ash:15:41)
+    LoadMemOffset         Target=40 BasePtr=36 OffsetBytes=8   (consumed_string_list_copied_release.ash:15:41)
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=23 Source=40   (consumed_string_list_copied_release.ash:15:41)
+    Jump                  Target=rcdrop_list_spine_24   (consumed_string_list_copied_release.ash:15:41)
+  rcdrop_list_spine_shared_25:
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_spine_end_26   (consumed_string_list_copied_release.ash:15:41)
+  rcdrop_list_spine_end_26:
+    Jump                  Target=rc_consumed_done_23   (consumed_string_list_copied_release.ash:15:41)
+  rc_consumed_copied_22:
+    StoreLocal            Slot=24 Source=22   (consumed_string_list_copied_release.ash:15:41)
+  rcdrop_list_27:
+    LoadLocal             Target=41 Slot=24   (consumed_string_list_copied_release.ash:15:41)
+    LoadConstInt          Target=42 Value=0   (consumed_string_list_copied_release.ash:15:41)
+    CmpIntNe              Target=43 Left=41 Right=42   (consumed_string_list_copied_release.ash:15:41)
+    JumpIfFalse           CondTemp=43 Target=rcdrop_list_end_29   (consumed_string_list_copied_release.ash:15:41)
+    RcIsUnique            Target=44 SourceTemp=41
+    JumpIfFalse           CondTemp=44 Target=rcdrop_list_shared_28   (consumed_string_list_copied_release.ash:15:41)
+    LoadMemOffset         Target=45 BasePtr=41 OffsetBytes=0   (consumed_string_list_copied_release.ash:15:41)
+    RcDrop                SourceTemp=45 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=46 BasePtr=41 OffsetBytes=8   (consumed_string_list_copied_release.ash:15:41)
+    RcDrop                SourceTemp=41 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=24 Source=46   (consumed_string_list_copied_release.ash:15:41)
+    Jump                  Target=rcdrop_list_27   (consumed_string_list_copied_release.ash:15:41)
+  rcdrop_list_shared_28:
+    RcDrop                SourceTemp=41 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_29   (consumed_string_list_copied_release.ash:15:41)
+  rcdrop_list_end_29:
+  rc_consumed_done_23:
+    LoadMemOffset         Target=47 BasePtr=11 OffsetBytes=16   (consumed_string_list_copied_release.ash:15:35)
+    LoadConstInt          Target=48 Value=62   (consumed_string_list_copied_release.ash:15:35)
+    ShrInt                Target=49 Left=47 Right=48   (consumed_string_list_copied_release.ash:15:35)
+    LoadConstInt          Target=50 Value=1   (consumed_string_list_copied_release.ash:15:35)
+    AndInt                Target=51 Left=49 Right=50   (consumed_string_list_copied_release.ash:15:35)
+    StoreLocal            Slot=25 Source=35   (consumed_string_list_copied_release.ash:15:35)
+    JumpIfFalse           CondTemp=51 Target=rc_call_argument_not_retained_30   (consumed_string_list_copied_release.ash:15:35)
+    RcDup                 Target=52 SourceTemp=35 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=25 Source=52   (consumed_string_list_copied_release.ash:15:35)
+  rc_call_argument_not_retained_30:
+    LoadLocal             Target=53 Slot=25   (consumed_string_list_copied_release.ash:15:35)
+    CallClosure           Target=54 ClosureTemp=11 ArgTemp=53 RuntimeManagedArgumentFlagTemp=51   (consumed_string_list_copied_release.ash:15:35)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=26
+    StoreLocal            Slot=27 Source=35   (consumed_string_list_copied_release.ash:15:35)
+  rcdrop_list_31:
+    LoadLocal             Target=55 Slot=27   (consumed_string_list_copied_release.ash:15:35)
+    LoadConstInt          Target=56 Value=0   (consumed_string_list_copied_release.ash:15:35)
+    CmpIntNe              Target=57 Left=55 Right=56   (consumed_string_list_copied_release.ash:15:35)
+    JumpIfFalse           CondTemp=57 Target=rcdrop_list_end_33   (consumed_string_list_copied_release.ash:15:35)
+    RcIsUnique            Target=58 SourceTemp=55
+    JumpIfFalse           CondTemp=58 Target=rcdrop_list_shared_32   (consumed_string_list_copied_release.ash:15:35)
+    LoadMemOffset         Target=59 BasePtr=55 OffsetBytes=0   (consumed_string_list_copied_release.ash:15:35)
+    RcDrop                SourceTemp=59 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=60 BasePtr=55 OffsetBytes=8   (consumed_string_list_copied_release.ash:15:35)
+    RcDrop                SourceTemp=55 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=60   (consumed_string_list_copied_release.ash:15:35)
+    Jump                  Target=rcdrop_list_31   (consumed_string_list_copied_release.ash:15:35)
+  rcdrop_list_shared_32:
+    RcDrop                SourceTemp=55 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_33   (consumed_string_list_copied_release.ash:15:35)
+  rcdrop_list_end_33:
+    TextFromInt           Target=61 ValueTemp=54   (consumed_string_list_copied_release.ash:15:16)
+    PrintStr              Source=61   (consumed_string_list_copied_release.ash:15:1)
+    AllocAdt              Target=62 Tag=0 FieldCount=0   (consumed_string_list_copied_release.ash:15:1)
+    StoreLocal            Slot=28 Source=62
+    LoadLocal             Target=63 Slot=11
+    CleanupResource       SourceTemp=63 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=29
+    CopyOutArena          DestTemp=64 SrcTemp=62 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=29
+    StoreLocal            Slot=30 Source=64
+    LoadLocal             Target=65 Slot=8
+    CleanupResource       SourceTemp=65 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=31
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=31
+    LoadLocal             Target=66 Slot=30
+    StoreLocal            Slot=32 Source=66
+    LoadLocal             Target=67 Slot=5
+    CleanupResource       SourceTemp=67 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=33
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=33
+    LoadLocal             Target=68 Slot=32
+    StoreLocal            Slot=34 Source=68
+    LoadLocal             Target=69 Slot=2
+    CleanupResource       SourceTemp=69 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=35
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=35
+    LoadLocal             Target=70 Slot=34
+    Return                Source=70
+

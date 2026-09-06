@@ -10883,11 +10883,19 @@ public sealed partial class Lowering
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
         TrackStableReuseCallResult(currentTemp, stableReuseResult);
-        CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out _);
+        CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out IrInst.ListHeadCopyKind callResultHeadCopy);
         runtimeManagedResult = ResolveUncopyableResultRuntimeManaged(rootExpr, collectedArgs.Count, callResultType, callResultCopyKind, runtimeManagedResult);
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
             && runtimeManagedResultFlagTemp >= 0
             && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List;
+        // A list copy-out with string or inner-list heads copies the heads too, so the copied
+        // result shares nothing with the consumed arguments' parts either: unconditionally when the
+        // call always copies out, or on the arena branch of a conditional copy-out.
+        bool resultCopyCopiesElements = !runtimeManagedResult
+            && !stableReuseResult
+            && !CanArenaReset(callResultType)
+            && callResultCopyKind == CopyOutKind.List
+            && callResultHeadCopy != IrInst.ListHeadCopyKind.Inline;
         currentTemp = LowerCallRestoreArena(
             callWmCursorSlot,
             callWmEndSlot,
@@ -10908,7 +10916,9 @@ public sealed partial class Lowering
             CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count),
             resultNormalized,
             resultDeepCopied,
-            GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false });
+            GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false },
+            resultCopyCopiesElements ? runtimeManagedResultFlagTemp : -1,
+            resultCopyCopiesElements && runtimeManagedResultFlagTemp < 0);
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -11987,13 +11997,21 @@ public sealed partial class Lowering
             && !calleeCompiledResultVerifiedRuntimeManaged
             && _genericDeepCopiedListTemps.Contains(temp);
 
+    // `elementCopyingFlagTemp` is the call's result-ownership flag when the result's conditional
+    // list copy-out copies the heads on its arena branch (-1 otherwise): on that branch the
+    // consumed argument's parts are released with it, since the copied result shares nothing;
+    // only the owned branch, whose reference-counted result may still hold those parts, keeps
+    // the child-preserving release. `resultCopiedWithElements` says the same of an unconditional
+    // list copy-out, after which the parts are released outright.
     private void LowerCallDropConsumedRuntimeArguments(
         TypeRef resultType,
         IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         bool calleeCompiledResultVerifiedRuntimeManaged,
         bool resultNormalized,
         bool resultDeepCopied,
-        bool calleeResultPoisoned)
+        bool calleeResultPoisoned,
+        int elementCopyingFlagTemp = -1,
+        bool resultCopiedWithElements = false)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -12020,7 +12038,7 @@ public sealed partial class Lowering
                 Emit(new IrInst.CleanupResource(temp, "Function"));
                 Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
             }
-            else if (preserveEscapedChildren && !calleeCompiledResultVerifiedRuntimeManaged && !resultDeepCopied)
+            else if (preserveEscapedChildren && !calleeCompiledResultVerifiedRuntimeManaged && !resultDeepCopied && !resultCopiedWithElements)
             {
                 // The callee's result is arena-placed (or unresolved): it may carry raw,
                 // unretained references to this argument's parts, so give up only the references
@@ -12029,13 +12047,36 @@ public sealed partial class Lowering
                 // out of the window, so the plain deep release below is both safe and required —
                 // skipping head drops there leaks one reference per kept part (caught by the
                 // consumed-tuple-head RSS plateau test and the generic append churn fixture).
-                EmitRuntimeManagedChildPreservingDrop(temp, valueType);
+                if (elementCopyingFlagTemp >= 0)
+                {
+                    EmitConsumedArgumentDropByResultBranch(temp, valueType, elementCopyingFlagTemp);
+                }
+                else
+                {
+                    EmitRuntimeManagedChildPreservingDrop(temp, valueType);
+                }
             }
             else
             {
                 EmitRuntimeManagedChildDrop(temp, valueType);
             }
         }
+    }
+
+    // The consumed argument's release chosen by the call's result branch: the owned branch (the
+    // callee returned a reference-counted result that may hold the argument's parts) keeps the
+    // child-preserving release, the copied branch (the arena result was copied out with its
+    // heads) releases the argument with its parts.
+    private void EmitConsumedArgumentDropByResultBranch(int temp, TypeRef valueType, int resultFlagTemp)
+    {
+        string copiedLabel = NewLabel("rc_consumed_copied");
+        string doneLabel = NewLabel("rc_consumed_done");
+        Emit(new IrInst.JumpIfFalse(resultFlagTemp, copiedLabel));
+        EmitRuntimeManagedChildPreservingDrop(temp, valueType);
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copiedLabel));
+        EmitRuntimeManagedChildDrop(temp, valueType);
+        Emit(new IrInst.Label(doneLabel));
     }
 
     private bool IsKnownRuntimeNormalizedFunctionArgument(Expr rootExpr, int argumentIndex)
