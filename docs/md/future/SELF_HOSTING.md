@@ -157,8 +157,8 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    `malloc` stand-ins, reuse, `--debug-disable-reuse` parity, and the four explain snapshots.
    Gate hard on the challenge benchmarks: this is where compile-time and RSS regressions would
    first appear.
-   Gates: OPT-22..OPT-27, OPT-29, OPT-30, OPT-32..OPT-36, OPT-38..OPT-42, OPT-44, OPT-45,
-   CG-6, CG-10, and CG-4's arena/drop tail.
+   Gates: OPT-22..OPT-27, OPT-29, OPT-30, OPT-32..OPT-36, OPT-38..OPT-42, OPT-44..OPT-49,
+   CG-6, CG-10, CG-16, SEM-18, SEM-19, PKG-8, and CG-4's arena/drop tail.
 3. **Trait and capability physical lowering.** The one keystone decision — call-site dictionary
    forwarding via constraint-aware local type reconstruction, or a merged type-variable space —
    then dictionary construction/dispatch lowering, the standard trait ABI, `deriving`'s physical
@@ -262,6 +262,12 @@ same public behavior.
   parity formats remain.
 - [x] **PKG-7** Make every self-hosted package buildable from a restored source-only dependency graph without
   undeclared checkout-relative inputs.
+- [ ] **PKG-8** Run the three script-style project test files (`ProjectDiscoveryTests.ash`,
+  `ProjectSourceEnumerationTests.ash`, `ProjectCompilationPlanningTests.ash` under
+  `selfhost/tests/semantics/`) from a suite: they are trailing-expression scripts that no runner
+  invokes today, so their assertions have not been executed since they were written. Wire them
+  into the projects suite (or a runner of their own if they need the repository layout), fix
+  whatever has rotted, and keep them in the standing gate.
 
 #### Frontend and source model
 
@@ -382,6 +388,19 @@ same public behavior.
   genuinely-unknown names). `ASH016` was never missing — import-resolution collision checking
   already covers it. `ASH015` has no stage-0 reference implementation at all — nothing to port
   until stage 0 implements it.
+- [ ] **SEM-18** Resolve a polymorphic `==` the way stage 0 does when the operands' type is still a
+  variable at the comparison. `tests/runtime_rc_tco_nested_tuple_pattern_alias.ash` is rejected by
+  the self-hosted lowering with a `String`/`Int` mismatch (`CoreCallTypeMismatch`) where stage 0
+  accepts the program: the comparison's operand type is defaulted before the pattern alias that
+  pins it is seen. Establish which side stage 0 takes (the deferred operator default sealed at
+  finalization against the finished substitution), mirror it, and register the fixture in the
+  loop sweep. The trait-evidence lowering of `==` on a derived type stays under TRT-15.
+- [ ] **SEM-19** Report an argument type mismatch once per call. Stage 0 reports the same mismatch
+  three times at the call span on an ordinary call (the expected-type unification in `LowerExpr`
+  plus the contextual unification) and twice on a tail self-call; the self-hosted lowering rejects
+  the same programs through `ensureFunctionType` binding the open return to a fresh arrow and
+  reports a location-less `CoreCallTypeMismatch`. Dedupe stage 0's diagnostics at the call span,
+  give the self-hosted mismatch the call's span, and pin both in the diagnostic parity fixtures.
 
 #### Capabilities and handlers
 
@@ -1718,6 +1737,32 @@ same public behavior.
   call site looks under-applied; it is also pinned as a known difference. Result-reach through a
   destructured pattern component is tracked since the component-reach port, so `record_pattern`
   and `tag_group_arm_brackets` match stage 0 in every report.
+- [ ] **OPT-46** Admit every `Str` loop parameter to the reference-counted heap as stage 0's
+  `IsRcEligibleScalarTupleOrAdtType` does. The self-hosted admission (`runtimeManagedStrOrdinals`
+  and the affine-append walk) declines a string parameter the successor reads more than once
+  (`widen(n - 1)(text + text)`), so such a loop keeps its strings in the arena and grows per
+  iteration where stage 0 plateaus. Widen the admission, keep the affine in-place append for the
+  single-read shape, and pin the two-read shape with a plateau fixture through both compilers.
+- [ ] **OPT-47** Retain a whole ADT loop parameter consed into a sibling list accumulator
+  (`collect(n - 1)(State(...))(s :: acc)`) in the self-hosted lowering, stage 0's rule since the
+  sibling-accumulator UAF fix. The shape is reachable only once a list over records is admitted
+  as a runtime-managed list parameter alongside the record parameter it stores; confirm the
+  admission after the record-list accumulator work, add the retain at the cons, and pin the
+  shape with a fixture whose output would print the released record otherwise.
+- [ ] **OPT-48** Port stage 0's entry-helper inlining: a call to a stdlib or user function whose
+  body is a `let recursive go ... in go(seed)(argument)` entry (`List.length`, `List.reverse`, the
+  fold family) is lowered as the loop closure built in the caller and applied directly, so the
+  argument passes without the accepts-bit retain of a general call. The churn fixture's loop
+  (`tests/generic_append_map_churn_plateau.ash`) differs from stage 0 only at its
+  `list.length(entries)` call for this reason; the parity fixtures and the churn loop diff are
+  the oracle.
+- [ ] **OPT-49** Both compilers: honor a poisoned result reach when releasing a consumed fresh
+  reference-counted argument. Only the deep-copied list case consults the callee's poison
+  (`ConsumedDeepCopiedListStaysWithCallee` / `consumedDeepCopiedListStaysWithCallee`); the
+  remaining poison sources (a lambda, `await`, a handler, a result pipe, an unresolved callee)
+  can still release an argument the callee's arena-placed result embeds. Model each shape
+  precisely rather than forcing retains (which would leak), mirror the rule in
+  `CoreLowering.ash`, and pin each source with a parity fixture and an execution test.
 
 #### LLVM code generation and runtime integration
 
@@ -1907,6 +1952,17 @@ same public behavior.
 - [ ] **CG-15** Generate verified object files for `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` from the
   corresponding native host compiler bundle (`LlvmTargetSetup.EnsureInitialized` per target,
   `VerifyModule` before emission; `ASH_DBG_DUMP_IR` dumps the module text on a verifier failure).
+- [ ] **CG-16** Lower the builtins the self-hosted compiler still rejects with
+  `UnknownLoweringBinding`: `Ashes.Text.fromBigInt`, `Ashes.Text.formatFloat`,
+  `Ashes.Rune.isAsciiLetter`, and `Ashes.Internal.deepCopy`, each through the semantic builtin
+  table and the backend emitter, placed by the runtime-managed flag like the other fresh-value
+  builtins. They are what keeps `tco_fixed_watermark_whole_value_accumulators`,
+  `tco_list_of_adt_accumulator`, `runtime_rc_branch_late_tco_promotion`,
+  `runtime_rc_multi_bigint_tco`, and `runtime_rc_whole_string_pattern_recursion` out of the loop
+  sweep and `stdlib_string` out of the compile-time timing set. `Ashes.Trait.Show.show` and
+  `Ashes.Trait.Hash.hash` (the remaining sweep and timing failures) are trait dictionary lowering
+  and stay under TRT-13..TRT-15.
+
 #### Object parsing and executable linking
 
 - [ ] **LNK-1** Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
