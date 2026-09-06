@@ -3110,6 +3110,17 @@ let buildTextFromIntModule name context = codegenOptimizedRealSource("Ashes.IO.p
 
 let buildTextByteLengthModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.byteLength(\"hello, world\" + \"!\"))")(name)(context)
 
+// `formatFloat` keeps its trailing zeros and rounds half up (a carry into the integer part
+// included), `fromFloat` trims down to one fraction digit, and a magnitude past the signed
+// 64-bit range takes the `e+N` form.
+let buildTextFloatModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.formatFloat(3.14159)(2) + \"|\" + Ashes.Text.formatFloat(0.0 - 2.5)(0) + \"|\" + Ashes.Text.formatFloat(99.999)(2) + \"|\" + Ashes.Text.formatFloat(5.0)(0 - 3) + \"|\" + Ashes.Text.fromFloat(1.5) + \"|\" + Ashes.Text.fromFloat(2.0) + \"|\" + Ashes.Text.fromFloat(0.0 - 0.25) + \"|\" + Ashes.Text.fromFloat(10000000000000000000.0))")(name)(context)
+
+let buildTextAsciiCaseModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.asciiUpper(\"hi, World 9\") + \"|\" + Ashes.Text.asciiLower(\"Hi, WORLD 9\") + \"|\" + (if Ashes.Rune.isAsciiLetter('q') then \"letter\" else \"other\") + (if Ashes.Rune.isAsciiLetter('9') then \"letter\" else \"other\"))")(name)(context)
+
+// `Ashes.Internal.deepCopy` clones a record with a string and a list field, a bare string,
+// and passes a scalar through.
+let buildInternalDeepCopyModule name context = codegenOptimizedRealSource("type Item =\n    | name: Str\n    | tags: List(Str)\nlet original = Item(name = Ashes.Text.fromInt(42) + \"-name\", tags = [\"a\", \"b\"])\nlet copied = Ashes.Internal.deepCopy(original)\nAshes.IO.print(copied.name + \"|\" + Ashes.Internal.deepCopy(\"plain\") + \"|\" + Ashes.Text.fromInt(Ashes.Internal.deepCopy(7)))")(name)(context)
+
 let buildBytesSliceModule name context = codegenOptimizedRealSource("let bytes = Ashes.Byte.fromText(\"hello world\")\nAshes.IO.print(Ashes.Byte.subText(bytes)(6)(5) + \"/\" + Ashes.Byte.subView(bytes)(0)(5))")(name)(context)
 
 let buildBytesScalarOpsModule name context = codegenOptimizedRealSource("let bytes = Ashes.Byte.fromText(\"hello\")\nAshes.IO.print(Ashes.Text.fromInt(Ashes.Byte.indexOf(bytes)(108)(0)) + Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(1))) + Ashes.Text.fromInt(Ashes.Byte.compare(bytes)(Ashes.Byte.fromText(\"hellp\"))))")(name)(context)
@@ -3146,6 +3157,12 @@ let testRunStaticExecutableForShippedTextJoinModule shipped unit =
 let testRunStaticExecutableForTextFromIntModule unit = assertProgramPrints(buildTextFromIntModule)("selfhostBackendRunTextFromInt")("selfhost_backend_text_from_int_e2e")("-42|0|9007")
 
 let testRunStaticExecutableForTextByteLengthModule unit = assertProgramPrints(buildTextByteLengthModule)("selfhostBackendRunTextByteLength")("selfhost_backend_text_byte_length_e2e")("13")
+
+let testRunStaticExecutableForTextFloatModule unit = assertProgramPrints(buildTextFloatModule)("selfhostBackendRunTextFloat")("selfhost_backend_text_float_e2e")("3.14|-3|100.00|5|1.5|2.0|-0.25|1.0e+19")
+
+let testRunStaticExecutableForTextAsciiCaseModule unit = assertProgramPrints(buildTextAsciiCaseModule)("selfhostBackendRunTextAsciiCase")("selfhost_backend_text_ascii_case_e2e")("HI, WORLD 9|hi, world 9|letterother")
+
+let testRunStaticExecutableForInternalDeepCopyModule unit = assertProgramPrints(buildInternalDeepCopyModule)("selfhostBackendRunInternalDeepCopy")("selfhost_backend_internal_deep_copy_e2e")("42-name|plain|7")
 
 let testRunStaticExecutableForBytesSliceModule unit = assertProgramPrints(buildBytesSliceModule)("selfhostBackendRunBytesSlice")("selfhost_backend_bytes_slice_e2e")("world/hello")
 
@@ -5044,6 +5061,9 @@ let run shipped =
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)
     |> testRunStaticExecutableForTextFromIntModule
+    |> testRunStaticExecutableForTextFloatModule
+    |> testRunStaticExecutableForTextAsciiCaseModule
+    |> testRunStaticExecutableForInternalDeepCopyModule
     |> testRunStaticExecutableForTextByteLengthModule
     |> testRunStaticExecutableForBytesSliceModule
     |> testRunStaticExecutableForBytesScalarOpsModule

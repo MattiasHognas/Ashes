@@ -116,6 +116,8 @@ import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
 import AshesCompiler.Backend.IrCodegen.Console
 import AshesCompiler.Backend.IrCodegen.TextBytes
+import AshesCompiler.Backend.IrCodegen.FloatText
+import AshesCompiler.Backend.IrCodegen.AsciiCase
 import Ashes.Number.UInt
 export (
     value codegenEntryFunction,
@@ -507,6 +509,21 @@ let codegenInstructionKind cx builder kind state =
                                             |> lookupIndexed(value)
                                             |> emitTextFromInt(context)(function_)(i64)(builder)(given (srcBytesAddr) ->
                                                 given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("from_int"))) :: tempEnv, terminated)
+                                        | TextFromFloat(target, value, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(value)
+                                            |> emitTextFromFloat(context)(function_)(builder)(i64)(i8)(given (srcBytesAddr) ->
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("from_float"))) :: tempEnv, terminated)
+                                        | TextFormatFloat(target, value, decimals, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(decimals)
+                                            |> emitTextFormatFloat(context)(function_)(builder)(i64)(i8)(given (srcBytesAddr) ->
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("format_float"))(lookupIndexed(value)(tempEnv))) :: tempEnv, terminated)
+                                        | TextAsciiCase(target, source, upper, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(source)
+                                            |> emitTextAsciiCase(context)(function_)(builder)(i64)(i8)(ptrType)(given (srcBytesAddr) ->
+                                                given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("ascii_case"))(upper)) :: tempEnv, terminated)
                                         | TextByteLength(target, text) ->
                                             ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupIndexed(text)(tempEnv))("text_byte_length")) :: tempEnv, terminated)
                                         | BytesLength(target, bytes) ->
