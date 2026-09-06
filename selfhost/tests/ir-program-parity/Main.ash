@@ -82,7 +82,10 @@ let checkFixture root name =
 // did not take, element heads included; consumed_string_list_copied_release the release of a
 // fresh string-list argument the callee's result keeps parts of, branching on the result's
 // returns bit: spine-only where the result stayed reference-counted, strings included where the
-// conditional copy-out copied its heads.
+// conditional copy-out copied its heads. non_tail_self_call_list_result adds a self call outside
+// tail position (`bang(head) :: stamp(tail)`): it reads the returns bit and copies its string-list
+// result out like any other call, so placement keeps the pattern-owned tail alive across it, and
+// the closure the self reference rebuilds carries its environment size in bytes.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 // match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
@@ -132,6 +135,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("call_argument_retain"))
         |> (given (_) -> checkFixture(root)("consumed_list_argument"))
         |> (given (_) -> checkFixture(root)("consumed_string_list_copied_release"))
+        |> (given (_) -> checkFixture(root)("non_tail_self_call_list_result"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))

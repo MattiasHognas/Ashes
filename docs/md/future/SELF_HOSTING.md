@@ -1531,7 +1531,19 @@ same public behavior.
   decision snapshot lists nested functions with their qualified names. The string fixture is flat
   at 5.6 MB and the ownership report of the append probe matches stage 0 line for line;
   `aggregate_children_retain`'s ownership explain fixture matches and its known difference is
-  retired. Still open: an
+  retired. Done (2026-09-06): the selfhost suppressed the returns-bit read for every call to the
+  enclosing recursive binding (the backend fuses a self call and its return into a loop, which a
+  copy-out block between them would break), so a self call outside tail position
+  (`bang(head) :: stamp(tail)`) kept its string-list result in an open window and placement
+  never protected the pattern-owned tail across it. The consumer request now carries the tail
+  position of every function body (`tailCall`, stage 0's `InTailPosition` without the loop
+  condition), the suppression applies to tail self calls only, and the closure a self reference
+  rebuilds carries its environment size in bytes rather than its capture count; parity fixture
+  `non_tail_self_call_list_result`. Still open (cosmetic): the selfhost attaches no source
+  location to instructions synthesized outside any located expression (a curried stage's
+  closure construction, epilogue blocks), where stage 0 attaches the declaration span; a
+  trailing-expression `match` on a fresh reference-counted call result never releases the
+  scrutinee in its arm. Still open: an
   un-annotated parameter misses the pre-body decision (its type resolves only inside the body),
   so its record stays arena-placed as before; and the selfhost still lacks the generic list
   deep-copy call path (`LowerCallDeepCopyOutListResult`). Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into

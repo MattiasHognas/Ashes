@@ -165,6 +165,29 @@ let expectCurriedSelfCallKeepsWindowOpen unit =
     |> expectNoInstructionText("call_copy_arena_result")
     |> (given (_) -> Unit)
 
+// A self call outside tail position is an ordinary call: its string-list result crosses the
+// window through the returns-bit copy-out, and placement keeps the pattern-owned tail alive
+// across it with a protective duplicate.
+let expectNonTailSelfCallReadsReturnsBit unit =
+    "let bang (n: Str) = n + \"!\"\n\nlet recursive stamp xs =\n    match xs with\n        | [] -> []\n        | head :: tail -> bang(head) :: stamp(tail)\n\nmatch stamp([\"a\"]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
+    |> dumpSource
+    |> liftedFunctionLines
+    |> expectInstruction("LoadConstInt          Target=17 Value=63")
+    |> expectInstruction("RcDup                 Target=26 SourceTemp=15")
+    |> expectInstruction("JumpIfFalse           CondTemp=18 Target=call_copy_arena_result_7")
+    |> expectInstruction("CopyOutList           DestTemp=20 SrcTemp=19 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization")
+    |> (given (_) -> Unit)
+
+// A recursive group member's tail call to its sibling is the fused self call: no returns bit,
+// no copy-out block between the call and the return.
+let expectGroupSiblingTailCallKeepsWindowOpen unit =
+    "let recursive ping (n: Int) = if n == 0 then \"\" else pong(n - 1)\nand pong (n: Int) = if n == 0 then \"!\" else ping(n - 1)\n\nAshes.IO.print(ping(3))"
+    |> dumpSource
+    |> liftedFunctionLines
+    |> expectNoInstructionText("Value=63")
+    |> expectNoInstructionText("call_copy_arena_result")
+    |> (given (_) -> Unit)
+
 // A saturated application of a curried let-bound function whose innermost stage produced a
 // reference-counted result: the returned-closure chain is followed to that stage, so the window
 // resets without reading the returns bit and the result is released after its use.
@@ -214,6 +237,8 @@ let runCallWindowLoweringTests unit =
     |> expectKnownRuntimeManagedResultResetsWithoutFlag
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
+    |> expectNonTailSelfCallReadsReturnsBit
+    |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag
     |> expectBodyRuntimeManagedNonEligibleCalleeReadsReturnsBit
     |> expectConcatCarriesRuntimeFlag
