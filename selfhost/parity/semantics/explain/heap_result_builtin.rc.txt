@@ -1,6 +1,16 @@
 RC report
 =========
 
+Function: shout
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
 Function: _start_main
   Operations
     dup:                  0

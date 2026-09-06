@@ -1120,7 +1120,9 @@ public sealed class IrOptimizerTests
 
         CountErasedRcOperations(lowered).ShouldBeGreaterThan(0);
         CountErasedRcOperations(optimized).ShouldBe(0);
-        CountRuntimeRcOperations(optimized).ShouldBe(3,
+        // The entry's release of the mapped list, and mapGo's release of its own result on the
+        // arena-result boundary a generic caller can request.
+        CountRuntimeRcOperations(optimized).ShouldBe(6,
             "The optimizer must retain the runtime-managed result list's lifetime operations.");
     }
 

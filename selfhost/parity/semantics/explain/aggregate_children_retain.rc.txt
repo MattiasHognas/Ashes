@@ -1,25 +1,35 @@
 RC report
 =========
 
+Function: label
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
 Function: pair
   Operations
     dup:                  2
-    drop:                 2
-    uniqueness checks:    0
-    allocations:          1
+    drop:                 5
+    uniqueness checks:    1
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               2
 
 Function: listed
   Operations
     dup:                  2
-    drop:                 2
-    uniqueness checks:    0
+    drop:                 5
+    uniqueness checks:    1
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               1
 
 Function: prefixed
   Operations
@@ -34,12 +44,12 @@ Function: prefixed
 Function: pair
   Operations
     dup:                  2
-    drop:                 2
-    uniqueness checks:    0
-    allocations:          1
+    drop:                 5
+    uniqueness checks:    1
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               2
 
 Function: _start_main
   Operations

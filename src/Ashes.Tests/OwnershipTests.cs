@@ -682,10 +682,11 @@ public sealed class OwnershipTests
         // The successor's `previous` field is a fresh record literal: an arena cell with no
         // reference count, so the back edge releases only the string it holds, never the cell.
         // The `State` releases left are the retained `current` child of the dying successor,
-        // the two children of the old parameter's structural walk, and the same two at the exit.
+        // the two children of the old parameter's structural walk, the same two at the exit, and
+        // the two of the returned pair's release on its arena-result boundary.
         instructions.Count(inst =>
             inst is IrInst.RcDrop { TypeName: "State", RuntimeManaged: true }).ShouldBe(
-            5,
+            7,
             "a fresh literal child of the successor is never released as a reference-counted cell");
     }
 
@@ -797,7 +798,11 @@ public sealed class OwnershipTests
         ir.Functions.Any(function =>
             function.Instructions.Any(inst => inst is IrInst.CallClosure)
             && function.Instructions.Any(inst => inst is IrInst.CopyOutArena { RuntimeManaged: true })
-            && function.Instructions.All(inst => inst is not IrInst.CopyOutArena { RuntimeManaged: false })).ShouldBeTrue();
+            && function.Instructions.All(inst => inst is not IrInst.CopyOutArena
+            {
+                RuntimeManaged: false,
+                Purpose: not IrInst.CopyOutPurpose.ArenaResultBoundary,
+            })).ShouldBeTrue();
         ir.EntryFunction.Instructions.Count(inst =>
             inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBe(2);
     }

@@ -5,7 +5,12 @@ Function: makeText
   ownership
     n: consumed, move-safe yes
     result fresh: no
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
   representation [lambda_0]
+    region:               1
     runtime rc:           2
     copy value:           1
 

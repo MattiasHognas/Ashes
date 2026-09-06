@@ -2470,8 +2470,9 @@ public sealed partial class Lowering
         TypeRef childType = Prune(type);
         return CanArenaReset(childType) || childType switch
         {
-            TypeRef.TStr => IsRuntimeRcStringProducer(expression)
-                && IsRuntimeRcClosureCaptureSafeStringProducer(expression),
+            TypeRef.TStr => (IsRuntimeRcStringProducer(expression)
+                    && IsRuntimeRcClosureCaptureSafeStringProducer(expression))
+                || IsNormalizedAlwaysReturnedStringParameterRead(expression),
             TypeRef.TBytes => CanMaterializeOwnedBytes(expression),
             TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),
@@ -2873,7 +2874,10 @@ public sealed partial class Lowering
     /// equal value for the (immutable) result and only matters once this is wired into an arena
     /// reset. Shared foundation for in-place reuse (#2 fallback) and parallel result copy-out (#5).
     /// </summary>
-    private int EmitDeepCopy(int temp, TypeRef type)
+    private int EmitDeepCopy(
+        int temp,
+        TypeRef type,
+        IrInst.CopyOutPurpose purpose = IrInst.CopyOutPurpose.IndependentClone)
     {
         var pruned = Prune(type);
         switch (pruned)
@@ -2887,7 +2891,7 @@ public sealed partial class Lowering
                         temp,
                         -1,
                         RuntimeManaged: false,
-                        IrInst.CopyOutPurpose.IndependentClone));
+                        purpose));
                     return dest;
                 }
 
@@ -2899,7 +2903,7 @@ public sealed partial class Lowering
                     {
                         int field = NewTemp();
                         Emit(new IrInst.LoadMemOffset(field, temp, i * 8));
-                        int copied = EmitDeepCopy(field, tup.Elements[i]);
+                        int copied = EmitDeepCopy(field, tup.Elements[i], purpose);
                         Emit(new IrInst.StoreMemOffset(dest, i * 8, copied));
                     }
 
@@ -2907,7 +2911,7 @@ public sealed partial class Lowering
                 }
 
             case TypeRef.TList list:
-                return EmitListDeepCopy(temp, list);
+                return EmitListDeepCopy(temp, list, purpose);
 
             case TypeRef.TFun:
                 {
@@ -2916,7 +2920,7 @@ public sealed partial class Lowering
                         dest,
                         temp,
                         RuntimeManaged: false,
-                        IrInst.CopyOutPurpose.IndependentClone));
+                        purpose));
                     return dest;
                 }
 
@@ -2934,7 +2938,10 @@ public sealed partial class Lowering
     /// CopyOutList primitive; other deep-copyable elements go through the synthesized
     /// recursive list copier; unsupported element types stay shallow.
     /// </summary>
-    private int EmitListDeepCopy(int temp, TypeRef.TList list)
+    private int EmitListDeepCopy(
+        int temp,
+        TypeRef.TList list,
+        IrInst.CopyOutPurpose purpose = IrInst.CopyOutPurpose.IndependentClone)
     {
         var elemPruned = Prune(list.Element);
         if (CanArenaReset(elemPruned))
@@ -2945,7 +2952,7 @@ public sealed partial class Lowering
                 temp,
                 IrInst.ListHeadCopyKind.Inline,
                 RuntimeManaged: false,
-                IrInst.CopyOutPurpose.IndependentClone));
+                purpose));
             return dest;
         }
 
@@ -2957,7 +2964,7 @@ public sealed partial class Lowering
                 temp,
                 IrInst.ListHeadCopyKind.String,
                 RuntimeManaged: false,
-                IrInst.CopyOutPurpose.IndependentClone));
+                purpose));
             return dest;
         }
 
@@ -2969,7 +2976,7 @@ public sealed partial class Lowering
                 temp,
                 IrInst.ListHeadCopyKind.InnerList,
                 RuntimeManaged: false,
-                IrInst.CopyOutPurpose.IndependentClone));
+                purpose));
             return dest;
         }
 

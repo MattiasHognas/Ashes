@@ -974,6 +974,7 @@ The IR makes every remaining copy operation declare its purpose:
 | `ArenaCallBoundary` | Preserve a value across a scheduler/capability call watermark. |
 | `ArenaTcoCompaction` | Keep live loop state while resetting such a region. |
 | `IndependentClone` | Explicit `deepCopy`, reuse defense, or worker publication. |
+| `ArenaResultBoundary` | A reference-counted result handed to a caller that cannot own one (a generic body applying a closure parameter): the callee clones it into the arena and releases the original. |
 
 `AllocAdtToSpace` and `CopyOutArenaToSpace` are not general escape mechanisms;
 they belong only to the persistent `Map`/`HashMap` region described below.

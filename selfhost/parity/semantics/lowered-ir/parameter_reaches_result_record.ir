@@ -2,21 +2,23 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from wrap]
-  locals=3 temps=11
+  locals=3 temps=13
     LoadLocal             Target=3 Slot=1
     LoadArgumentOwnership Target=4
-    JumpIfFalse           CondTemp=4 Target=rc_arg_normalize_copy_0
+    LoadConstInt          Target=5 Value=1
+    AndInt                Target=6 Left=4 Right=5
+    JumpIfFalse           CondTemp=6 Target=rc_arg_normalize_copy_0
     StoreLocal            Slot=2 Source=3
     Jump                  Target=rc_arg_normalize_done_1
   rc_arg_normalize_copy_0:
-    CopyOutArena          DestTemp=7 SrcTemp=3 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=8 Ptr=3 FieldIndex=0 Tagless=true
-    CopyOutArena          DestTemp=9 SrcTemp=8 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=7 FieldIndex=0 Source=9 Tagless=true
-    StoreLocal            Slot=2 Source=7
+    CopyOutArena          DestTemp=9 SrcTemp=3 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=10 Ptr=3 FieldIndex=0 Tagless=true
+    CopyOutArena          DestTemp=11 SrcTemp=10 RuntimeManaged=true Purpose=RcNormalization
+    SetAdtField           Ptr=9 FieldIndex=0 Source=11 Tagless=true
+    StoreLocal            Slot=2 Source=9
   rc_arg_normalize_done_1:
-    LoadLocal             Target=10 Slot=2
-    StoreLocal            Slot=1 Source=10
+    LoadLocal             Target=12 Slot=2
+    StoreLocal            Slot=1 Source=12
     LoadConstInt          Target=0 Value=0   (parameter_reaches_result_record.ash:5:25)
     LoadLocal             Target=1 Slot=1   (parameter_reaches_result_record.ash:5:26)
     Alloc                 Target=2 SizeBytes=16   (parameter_reaches_result_record.ash:5:25)

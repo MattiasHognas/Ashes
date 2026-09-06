@@ -40,6 +40,7 @@ type CopyOutPurpose =
     | ArenaCallBoundary
     | ArenaTcoCompaction
     | IndependentClone
+    | ArenaResultBoundary
     deriving {Eq, Show}
 
 type ListHeadCopyKind =

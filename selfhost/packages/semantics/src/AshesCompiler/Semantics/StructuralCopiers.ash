@@ -82,29 +82,31 @@ let recursive copierSwitchCases (labels: List(Str)) (tag: Int) =
         | label :: rest -> IrSwitchCase(tag = tag, label = label) :: copierSwitchCases(rest)(tag + 1)
 
 // The clone of one value by its type (stage 0's `EmitDeepCopy`), answering the temp holding it.
-let recursive emitDeepCopyInto (valueTemp: Int) (semanticType: SemanticType) (body: DropperBody) =
+// `purpose` names the copy-out purpose of the leaf clones the walk emits directly; a copier it
+// calls clones its fields as independent clones.
+let recursive emitDeepCopyInto (valueTemp: Int) (semanticType: SemanticType) purpose (body: DropperBody) =
     match semanticType with
-        | SemString -> emitLeafClone(valueTemp)(body)
-        | SemBytes -> emitLeafClone(valueTemp)(body)
-        | SemTuple(elements) -> emitTupleClone(valueTemp)(elements)(body)
-        | SemList(element) -> emitListClone(valueTemp)(element)(body)
+        | SemString -> emitLeafClone(valueTemp)(purpose)(body)
+        | SemBytes -> emitLeafClone(valueTemp)(purpose)(body)
+        | SemTuple(elements) -> emitTupleClone(valueTemp)(elements)(purpose)(body)
+        | SemList(element) -> emitListClone(valueTemp)(element)(purpose)(body)
         | SemNamed(_symbolId, _name, _arguments) ->
             if namedTypeHoldsResource(semanticType)(body)
             then (valueTemp, body)
             else emitAdtClone(valueTemp)(semanticType)(body)
         | _ -> (valueTemp, body)
-and emitLeafClone (valueTemp: Int) (body: DropperBody) =
+and emitLeafClone (valueTemp: Int) purpose (body: DropperBody) =
     match freshDropperTemp(body) with
         | (destTemp, destBody) ->
-            (destTemp, emitDropper(CopyOutArena(destTemp)(valueTemp)(-1)(false)(IndependentClone)(None))(destBody))
-and emitTupleClone (valueTemp: Int) (elements: List(SemanticType)) (body: DropperBody) =
+            (destTemp, emitDropper(CopyOutArena(destTemp)(valueTemp)(-1)(false)(purpose)(None))(destBody))
+and emitTupleClone (valueTemp: Int) (elements: List(SemanticType)) purpose (body: DropperBody) =
     match freshDropperTemp(body) with
         | (destTemp, destBody) ->
             destBody
             |> emitDropper(Alloc(destTemp)(8 * length(elements))(false))
-            |> emitTupleElementClones(valueTemp)(destTemp)(0)(elements)
+            |> emitTupleElementClones(valueTemp)(destTemp)(0)(elements)(purpose)
             |> (given (cloned: DropperBody) -> (destTemp, cloned))
-and emitTupleElementClones (valueTemp: Int) (destTemp: Int) (index: Int) (elements: List(SemanticType)) (body: DropperBody) =
+and emitTupleElementClones (valueTemp: Int) (destTemp: Int) (index: Int) (elements: List(SemanticType)) purpose (body: DropperBody) =
     match elements with
         | [] -> body
         | element :: rest ->
@@ -112,17 +114,17 @@ and emitTupleElementClones (valueTemp: Int) (destTemp: Int) (index: Int) (elemen
                 | (fieldTemp, fieldBody) ->
                     match fieldBody
                     |> emitDropper(LoadMemOffset(fieldTemp)(valueTemp)(index * 8))
-                    |> emitDeepCopyInto(fieldTemp)(element) with
+                    |> emitDeepCopyInto(fieldTemp)(element)(purpose) with
                         | (copiedTemp, copiedBody) ->
                             copiedBody
                             |> emitDropper(StoreMemOffset(destTemp)(index * 8)(copiedTemp))
-                            |> emitTupleElementClones(valueTemp)(destTemp)(index + 1)(rest)
-and emitListClone (valueTemp: Int) (element: SemanticType) (body: DropperBody) =
+                            |> emitTupleElementClones(valueTemp)(destTemp)(index + 1)(rest)(purpose)
+and emitListClone (valueTemp: Int) (element: SemanticType) purpose (body: DropperBody) =
     match listCloneHeadKind(element) with
         | Some(headKind) ->
             match freshDropperTemp(body) with
                 | (destTemp, destBody) ->
-                    (destTemp, emitDropper(CopyOutList(destTemp)(valueTemp)(headKind)(false)(IndependentClone))(destBody))
+                    (destTemp, emitDropper(CopyOutList(destTemp)(valueTemp)(headKind)(false)(purpose))(destBody))
         | None ->
             if elementDeepCopySupported(element)(body)
             then
@@ -167,7 +169,7 @@ and emitListCopierBody (element: SemanticType) (label: Str) (body: DropperBody) 
                                                             |> emitDropper(Label(label + "_copy"))
                                                             |> emitDropper(LoadMemOffset(headTemp)(valueTemp)(0))
                                                             |> emitDropper(LoadMemOffset(tailTemp)(valueTemp)(8))
-                                                            |> emitDeepCopyInto(headTemp)(element) with
+                                                            |> emitDeepCopyInto(headTemp)(element)(IndependentClone) with
                                                                 | (copiedHeadTemp, copiedBody) ->
                                                                     match freshDropperTemp(copiedBody) with
                                                                         | (copiedTailTemp, copiedTailBody) ->
@@ -261,14 +263,15 @@ and emitCopierField (fieldTemp: Int) (fieldType: SemanticType) (named: SemanticT
         match freshDropperTemp(body) with
             | (copiedTemp, copiedBody) ->
                 (copiedTemp, emitDropper(CallClosure(copiedTemp)(selfTemp)(fieldTemp)(-1))(copiedBody))
-    else emitDeepCopyInto(fieldTemp)(fieldType)(body)
+    else emitDeepCopyInto(fieldTemp)(fieldType)(IndependentClone)(body)
 
 // The inline clone of `valueTemp`, a value of the caller's resolved `semanticType`, in emission
 // order, with the copier functions it synthesized and the counters, cache, and functions it
 // advanced; the temp holding the clone comes back beside it. `definitions` are the constructors
-// in scope in declaration order (a constructor's tag is its index among its type's constructors).
-let synthesizeDeepCopy (valueTemp: Int) (semanticType: SemanticType) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
+// in scope in declaration order (a constructor's tag is its index among its type's constructors),
+// and `purpose` the copy-out purpose of the clone's own leaf copies.
+let synthesizeDeepCopy (valueTemp: Int) (semanticType: SemanticType) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) purpose =
     match openDropperBody(definitions)(cache)(nextLambdaId)(nextLabelId) with
         | (ids, opened) ->
-            match emitDeepCopyInto(valueTemp)(renumberType(ids)(semanticType))((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
+            match emitDeepCopyInto(valueTemp)(renumberType(ids)(semanticType))(purpose)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
                 | (resultTemp, cloned) -> (inlineReleaseResult(cloned), resultTemp)

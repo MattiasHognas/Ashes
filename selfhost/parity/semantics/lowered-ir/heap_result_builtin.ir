@@ -2,10 +2,22 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from shout]
-  locals=2 temps=2
+  locals=3 temps=7
     LoadLocal             Target=0 Slot=1   (heap_result_builtin.ash:1:34)
     TextFromInt           Target=1 ValueTemp=0 RuntimeManaged=true   (heap_result_builtin.ash:1:15)
-    Return                Source=1
+    LoadArgumentOwnership Target=2
+    LoadConstInt          Target=3 Value=1
+    ShrInt                Target=4 Left=2 Right=3
+    JumpIfFalse           CondTemp=4 Target=rc_result_owned_0
+    CopyOutArena          DestTemp=5 SrcTemp=1 Purpose=ArenaResultBoundary
+    RcDrop                SourceTemp=1 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=2 Source=5
+    Jump                  Target=rc_result_done_1
+  rc_result_owned_0:
+    StoreLocal            Slot=2 Source=1
+  rc_result_done_1:
+    LoadLocal             Target=6 Slot=2
+    Return                Source=6
 
 function _start_main  [ProgramEntry]
   locals=8 temps=9

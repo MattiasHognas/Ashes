@@ -622,6 +622,12 @@ public sealed partial class Lowering
     // Curried application labels whose argument is normalized into an independent RC graph at the
     // admitted TCO loop entry. A consumed runtime argument may be released after the saturated chain.
     private readonly HashSet<string> _runtimeNormalizedFunctionArgumentLabels = new(StringComparer.Ordinal);
+
+    // The parameter of the function being lowered that its entry copies into an owned
+    // runtime-managed value because the result always reaches it
+    // (LowerLambdaCoreNormalizeAlwaysReturnedParameter), so a read of it counts as a fresh owned
+    // child of the aggregate storing it. Null while lowering a function without one.
+    private (string Name, int Slot, TypeRef Type)? _normalizedAlwaysReturnedParameter;
     private readonly Dictionary<int, int> _pendingRuntimeArgumentFlags = [];
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
@@ -6442,7 +6448,7 @@ public sealed partial class Lowering
 
         var outerTcoCtx = LowerLambdaCoreSuspendOuterTco(isChainLambda, lam);
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
-        var (bodyTemp, bodyType) = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
+        var (bodyTemp, bodyType) = LowerLambdaCoreLowerBodyWithNormalizedParameter(lam, label, paramTy, argSlot, rowTy, selfName);
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
         LowerLambdaCoreFinalizeTcoOwnership(
@@ -6463,7 +6469,7 @@ public sealed partial class Lowering
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
         RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
-        Emit(new IrInst.Return(bodyTemp));
+        Emit(new IrInst.Return(LowerLambdaCoreNormalizeRequestedArenaResult(bodyTemp, bodyType, bodyRuntimeManaged)));
 
         IrFunction loweredFunction = LowerLambdaCoreFinishFunction(label, placementFrame.Origin);
         LowerLambdaCoreRestoreFrame(savedFrame);
@@ -6684,14 +6690,12 @@ public sealed partial class Lowering
         int argumentSlot,
         TypeRef argumentType)
     {
-        TypeRef parameterType = Prune(argumentType);
-        if (_runtimeNormalizedFunctionArgumentLabels.Contains(label)
-            || !IsRuntimeNormalizableParameterType(parameterType)
-            || !ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName))
+        if (!NormalizesAlwaysReturnedParameter(lambda, label, argumentType))
         {
             return;
         }
 
+        TypeRef parameterType = Prune(argumentType);
         int generatedStart = _inst.Count;
         int sourceTemp = NewTemp();
         Emit(new IrInst.LoadLocal(sourceTemp, argumentSlot));
@@ -6701,6 +6705,128 @@ public sealed partial class Lowering
         _inst.RemoveRange(generatedStart, generated.Count);
         _inst.InsertRange(0, generated);
         _runtimeNormalizedFunctionArgumentLabels.Add(label);
+    }
+
+    // Lowers the body with the entry-normalized parameter (if any) visible to the body's
+    // aggregate placement decisions, restoring the enclosing function's own afterwards.
+    private (int, TypeRef) LowerLambdaCoreLowerBodyWithNormalizedParameter(
+        Expr.Lambda lam,
+        string label,
+        TypeRef paramTy,
+        int argSlot,
+        TypeRef rowTy,
+        string? selfName)
+    {
+        (string, int, TypeRef)? outerNormalizedParameter = _normalizedAlwaysReturnedParameter;
+        _normalizedAlwaysReturnedParameter = NormalizesAlwaysReturnedParameter(lam, label, paramTy)
+            ? (lam.ParamName, argSlot, paramTy)
+            : null;
+        (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
+        _normalizedAlwaysReturnedParameter = outerNormalizedParameter;
+        return body;
+    }
+
+    // Whether the function's entry normalizes its parameter into an owned runtime-managed value.
+    // Decided before the body is lowered (so the body's aggregates can count a read of the
+    // parameter as a fresh owned child) and again after it, when the parameter's type may have
+    // resolved further; the later decision can only add the normalization, never withdraw it.
+    private bool NormalizesAlwaysReturnedParameter(Expr.Lambda lambda, string label, TypeRef argumentType)
+        => !_runtimeNormalizedFunctionArgumentLabels.Contains(label)
+            && IsRuntimeNormalizableParameterType(Prune(argumentType))
+            && ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName);
+
+    // A read of the string parameter the entry normalization owns: the read moves the owned copy
+    // (or the adopted argument) into the aggregate storing it, so that aggregate can live on the
+    // RC heap and release the string with itself. The parameter's own slot holds nothing else to
+    // release, since its result always reaches the value.
+    private bool IsNormalizedAlwaysReturnedStringParameterRead(Expr expression)
+        => _normalizedAlwaysReturnedParameter is (string name, int slot, TypeRef type)
+            && expression is Expr.Var variable
+            && string.Equals(variable.Name, name, StringComparison.Ordinal)
+            && Prune(type) is TypeRef.TStr
+            && Lookup(variable.Name) is Binding.Local { Slot: int readSlot }
+            && readSlot == slot;
+
+    // A callee whose result is reference-counted can be invoked from a body that cannot own such
+    // a result: a generic function applying a closure parameter has no static layout for the
+    // result, stores it wherever an arena value goes, and its own caller later deep-copies the
+    // whole result out, so the reference-counted original would never be released. Such a call
+    // site requests an arena result (bit 1 of the hidden ownership word), and the callee honors
+    // it here by deep-copying its result into the arena and releasing the original. Only result
+    // types the arena deep copy reproduces completely qualify; a closure or resource result keeps
+    // its reference-counted form.
+    private int LowerLambdaCoreNormalizeRequestedArenaResult(int bodyTemp, TypeRef bodyType, bool bodyRuntimeManaged)
+    {
+        TypeRef resultType = Prune(bodyType);
+        if (!bodyRuntimeManaged
+            || _inCoroutineBody
+            || !CanNormalizeRuntimeManagedResultIntoArena(resultType))
+        {
+            return bodyTemp;
+        }
+
+        int ownershipWordTemp = NewTemp();
+        Emit(new IrInst.LoadArgumentOwnership(ownershipWordTemp));
+        int requestShiftTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(requestShiftTemp, 1));
+        int requestedTemp = NewTemp();
+        Emit(new IrInst.ShrInt(requestedTemp, ownershipWordTemp, requestShiftTemp));
+        int resultSlot = NewLocal();
+        string ownedLabel = NewLabel("rc_result_owned");
+        string doneLabel = NewLabel("rc_result_done");
+        Emit(new IrInst.JumpIfFalse(requestedTemp, ownedLabel));
+        int arenaCopyTemp = EmitDeepCopy(bodyTemp, resultType, IrInst.CopyOutPurpose.ArenaResultBoundary);
+        EmitRuntimeManagedResultDrop(bodyTemp, resultType);
+        Emit(new IrInst.StoreLocal(resultSlot, arenaCopyTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(ownedLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    // The result types EmitDeepCopy clones completely into the arena: strings and bytes, tuples
+    // and lists over such values or copy types, and the ADTs with an arena deep copy.
+    private bool CanNormalizeRuntimeManagedResultIntoArena(TypeRef resultType)
+        => Prune(resultType) switch
+        {
+            TypeRef.TStr or TypeRef.TBytes => true,
+            TypeRef.TTuple tuple => tuple.Elements.All(element =>
+                CanArenaReset(Prune(element)) || CanNormalizeRuntimeManagedResultIntoArena(element)),
+            TypeRef.TList list => Prune(list.Element) switch
+            {
+                TypeRef.TStr => true,
+                TypeRef.TList inner => CanArenaReset(Prune(inner.Element)),
+                TypeRef element => CanArenaReset(element) || IsDeepCopyOutSafeType(element),
+            },
+            TypeRef.TNamedType named => !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+                && CanDeepCopyOutAdt(named),
+            _ => false,
+        };
+
+    private void EmitRuntimeManagedResultDrop(int resultTemp, TypeRef resultType)
+    {
+        switch (Prune(resultType))
+        {
+            case TypeRef.TNamedType named:
+                EmitRuntimeManagedAdtDrop(resultTemp, named);
+                break;
+            case TypeRef.TTuple tuple:
+                EmitRuntimeManagedTupleDrop(resultTemp, tuple);
+                break;
+            case TypeRef.TList list:
+                EmitRuntimeManagedListDrop(resultTemp, list.Element);
+                break;
+            default:
+                Emit(new IrInst.RcDrop(
+                    resultTemp,
+                    TcoRuntimeManagedTypeName(resultType),
+                    OwnerSlot: -1,
+                    RuntimeManaged: true));
+                break;
+        }
     }
 
     // The parameter types the entry normalization can turn into an owned runtime-managed value:
@@ -8535,8 +8661,12 @@ public sealed partial class Lowering
     private int EmitRuntimeManagedTcoArgumentNormalization(int sourceTemp, TypeRef type)
     {
         int resultSlot = NewLocal();
+        int ownershipWordTemp = NewTemp();
+        Emit(new IrInst.LoadArgumentOwnership(ownershipWordTemp));
+        int ownershipMaskTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipMaskTemp, 1));
         int ownershipTemp = NewTemp();
-        Emit(new IrInst.LoadArgumentOwnership(ownershipTemp));
+        Emit(new IrInst.AndInt(ownershipTemp, ownershipWordTemp, ownershipMaskTemp));
         string copyLabel = NewLabel("rc_arg_normalize_copy");
         string doneLabel = NewLabel("rc_arg_normalize_done");
         Emit(new IrInst.JumpIfFalse(ownershipTemp, copyLabel));
@@ -11279,7 +11409,33 @@ public sealed partial class Lowering
                 && i == collectedArgs.Count - 1
                 && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
                 && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
+            RequestsArenaResult(funType.Ret),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
+    }
+
+    // A call whose result has no static layout here (a generic body applying a closure parameter,
+    // or a result type inference has not resolved yet) cannot own a reference-counted result: it
+    // stores the value wherever an arena value goes and leaves the copy-out to whoever resolves
+    // the type. The callee is asked for an arena result instead; see
+    // LowerLambdaCoreNormalizeRequestedArenaResult for the callee side.
+    private bool RequestsArenaResult(TypeRef resultType)
+        => Prune(resultType) is not TypeRef.TFun
+            && ContainsUnresolvedLayoutType(resultType, []);
+
+    // The hidden ownership word carrying the arena-result request (bit 1) beside the argument
+    // ownership flag (bit 0), when the call passes one.
+    private int EmitArenaResultRequestWord(int runtimeManagedArgumentFlagTemp)
+    {
+        int requestTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(requestTemp, 2));
+        if (runtimeManagedArgumentFlagTemp < 0)
+        {
+            return requestTemp;
+        }
+
+        int wordTemp = NewTemp();
+        Emit(new IrInst.OrInt(wordTemp, runtimeManagedArgumentFlagTemp, requestTemp));
+        return wordTemp;
     }
 
     private bool IsCalleeParameterQuantifiedInScheme(Expr rootExpr, int argumentIndex)
@@ -11432,6 +11588,7 @@ public sealed partial class Lowering
         Expr argument,
         int argumentIndex,
         bool needsResultOwnership,
+        bool requestsArenaResult,
         int closureTemp,
         int argumentTemp,
         TypeRef argumentType,
@@ -11487,13 +11644,7 @@ public sealed partial class Lowering
         }
 
         int target = NewTemp();
-        EmitClosureCall(
-            target,
-            closureTemp,
-            argumentTemp,
-            borrowsOnly,
-            runtimeManagedArgumentFlagTemp);
-
+        EmitClosureCall(target, closureTemp, argumentTemp, borrowsOnly, runtimeManagedArgumentFlagTemp, requestsArenaResult);
         return rcStatus == AccessorArgumentRcStatus.NotRc
             ? target
             : RetainAccessorCallResult(target, rcStatus, pendingSlot);
@@ -11912,8 +12063,14 @@ public sealed partial class Lowering
         int closureTemp,
         int argumentTemp,
         bool borrowsArgument,
-        int runtimeManagedArgumentFlagTemp = -1)
+        int runtimeManagedArgumentFlagTemp = -1,
+        bool requestsArenaResult = false)
     {
+        if (requestsArenaResult)
+        {
+            runtimeManagedArgumentFlagTemp = EmitArenaResultRequestWord(runtimeManagedArgumentFlagTemp);
+        }
+
         var callInstruction = new IrInst.CallClosure(
             target,
             closureTemp,

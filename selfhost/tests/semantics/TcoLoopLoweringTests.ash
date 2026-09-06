@@ -147,18 +147,71 @@ let expectListWalkLoopFunctionMatchesStageZero unit =
     |> stageZeroFixtureLines
     |> functionLines("[ClosureHelper from walk]"))
 
+let recursive isNumber (text: Str) =
+    if text == ""
+    then false
+    else
+        if 1
+        |> Ashes.Text.take(text)
+        |> Ashes.Text.isDigitText
+        then
+            Ashes.Text.drop(text)(1) == "" || isNumber(Ashes.Text.drop(text)(1))
+        else false
+
+// A piece of an instruction line that follows an `=`: its leading number (a temp, a slot, a
+// value) is dropped so lines renumbered by an extra instruction still compare by shape.
+let withoutLeadingNumber (piece: Str) =
+    match Ashes.Text.split(piece)(" ") with
+        | first :: rest ->
+            if isNumber(first)
+            then Ashes.Text.join(" ")("" :: rest)
+            else piece
+        | [] -> piece
+
+let recursive withoutOperandNumbers (pieces: List(Str)) =
+    match pieces with
+        | [] -> []
+        | piece :: rest -> withoutLeadingNumber(piece) :: withoutOperandNumbers(rest)
+
+let normalizeOperandNumbers (line: Str) =
+    match Ashes.Text.split(line)("=") with
+        | first :: rest -> Ashes.Text.join("=")(first :: withoutOperandNumbers(rest))
+        | [] -> line
+
+let withoutRequestWord (line: Str) =
+    " RuntimeManagedArgumentFlagTemp="
+    |> Ashes.Text.split(line)
+    |> Ashes.Text.join("")
+
+// The `LoadConstInt 2` that loads the arena-result request right before the call passing it.
+let recursive withoutRequestWordLoads (lines: List(Str)) =
+    match lines with
+        | [] -> []
+        | line :: next :: rest ->
+            if Ashes.Text.contains(line)("LoadConstInt") && Ashes.Text.contains(line)("Value=2") && Ashes.Text.contains(next)("RuntimeManagedArgumentFlagTemp=")
+            then withoutRequestWordLoads(next :: rest)
+            else line :: withoutRequestWordLoads(next :: rest)
+        | line :: rest -> line :: withoutRequestWordLoads(rest)
+
 // The operator-operand program's scalar loops (`countLeft`, `countRight`) match stage 0 except
-// for the arena reset closing the window of the non-tail self-call under the operator: stage 0
-// infers the binding's result type before lowering, the selfhost's single-file lowering still
-// sees a type variable there. The list-walking loops of the same program differ by their
-// runtime-managed parameters and stay out of the comparison.
+// around the non-tail self-call under the operator: stage 0 infers the binding's result type
+// before lowering, the selfhost's single-file lowering still sees a type variable there, so the
+// selfhost neither closes the call's arena window nor knows it can own the result and asks the
+// callee for an arena one (the `LoadConstInt 2` request word beside the call), which renumbers
+// every later temp. The comparison drops the window close, the request word, and the operand
+// numbers. The list-walking loops of the same program differ by their runtime-managed
+// parameters and stay out of the comparison.
 let expectScalarOperatorOperandLoopMatchesStageZero (originText: Str) (windowClose: Str) (windowReclaim: Str) (lines: List(Str)) (expected: List(Str)) =
     lines
     |> functionLines(originText)
+    |> withoutRequestWordLoads
+    |> Ashes.Collection.List.map(withoutRequestWord)
+    |> Ashes.Collection.List.map(normalizeOperandNumbers)
     |> expectSameLines(originText + " loop function")(expected
     |> functionLines(originText)
     |> withoutLinesContaining(windowClose)
-    |> withoutLinesContaining(windowReclaim))
+    |> withoutLinesContaining(windowReclaim)
+    |> Ashes.Collection.List.map(normalizeOperandNumbers))
 
 let expectOperatorOperandLoopsMatchStageZero unit =
     (let lines = loweredFixtureLines("tco_non_tail_self_call_in_operator_operand")

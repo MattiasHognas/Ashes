@@ -106,7 +106,7 @@ let expectFreshArgumentRetainedUnderAcceptsBit unit =
     |> expectInstruction("LoadConstInt          Target=13 Value=1")
     |> expectInstruction("AndInt                Target=14 Left=12 Right=13")
     |> expectInstruction("StoreLocal            Slot=11 Source=9")
-    |> expectInstruction("JumpIfFalse           CondTemp=14 Target=rc_call_argument_not_retained_0")
+    |> expectInstruction("JumpIfFalse           CondTemp=14 Target=rc_call_argument_not_retained_2")
     |> expectInstruction("RcDup                 Target=15 SourceTemp=9 RuntimeManaged=true")
     |> expectInstruction("StoreLocal            Slot=11 Source=15")
     |> expectInstruction("LoadLocal             Target=16 Slot=11")

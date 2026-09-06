@@ -2,18 +2,20 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from wrap]
-  locals=3 temps=7
+  locals=3 temps=9
     LoadLocal             Target=3 Slot=1
     LoadArgumentOwnership Target=4
-    JumpIfFalse           CondTemp=4 Target=rc_arg_normalize_copy_0
+    LoadConstInt          Target=5 Value=1
+    AndInt                Target=6 Left=4 Right=5
+    JumpIfFalse           CondTemp=6 Target=rc_arg_normalize_copy_0
     StoreLocal            Slot=2 Source=3
     Jump                  Target=rc_arg_normalize_done_1
   rc_arg_normalize_copy_0:
-    CopyOutArena          DestTemp=5 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=2 Source=5
+    CopyOutArena          DestTemp=7 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=7
   rc_arg_normalize_done_1:
-    LoadLocal             Target=6 Slot=2
-    StoreLocal            Slot=1 Source=6
+    LoadLocal             Target=8 Slot=2
+    StoreLocal            Slot=1 Source=8
     LoadConstInt          Target=0 Value=0   (parameter_reaches_result_string.ash:1:21)
     LoadLocal             Target=1 Slot=1   (parameter_reaches_result_string.ash:1:22)
     Alloc                 Target=2 SizeBytes=16   (parameter_reaches_result_string.ash:1:21)

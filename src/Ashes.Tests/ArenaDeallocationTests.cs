@@ -479,8 +479,8 @@ public sealed class ArenaDeallocationTests
             RuntimeManaged: true,
         }).ShouldBeTrue();
         instructions.Any(instruction => instruction is
-            IrInst.CopyOutArena { RuntimeManaged: false }
-            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+            IrInst.CopyOutArena { RuntimeManaged: false, Purpose: not IrInst.CopyOutPurpose.ArenaResultBoundary }
+            or IrInst.CopyOutList { RuntimeManaged: false, Purpose: not IrInst.CopyOutPurpose.ArenaResultBoundary }).ShouldBeFalse();
         instructions.Any(instruction => instruction is IrInst.ReclaimArenaChunks).ShouldBeTrue();
     }
 
@@ -1026,7 +1026,7 @@ public sealed class ArenaDeallocationTests
             && label.Name.Contains("rc_tco_alias_duplicated", StringComparison.Ordinal)).ShouldBeFalse(
                 "The source-name TCO alias path must remain deleted.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
-            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+            or IrInst.CopyOutList { RuntimeManaged: false, Purpose: not IrInst.CopyOutPurpose.ArenaResultBoundary }).ShouldBeFalse();
     }
 
     [Test]
@@ -1396,7 +1396,7 @@ public sealed class ArenaDeallocationTests
             && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBe(2,
                 "Exactly one matching active list transfers; the other list follows its exit-drop path.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
-            or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+            or IrInst.CopyOutList { RuntimeManaged: false, Purpose: not IrInst.CopyOutPurpose.ArenaResultBoundary }).ShouldBeFalse();
     }
 
     [Test]
@@ -2007,6 +2007,8 @@ public sealed class ArenaDeallocationTests
         CopyOutInstructions(ordinary).All(instruction =>
             instruction switch
             {
+                IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.ArenaResultBoundary } => true,
+                IrInst.CopyOutList { Purpose: IrInst.CopyOutPurpose.ArenaResultBoundary } => true,
                 IrInst.CopyOutArena copy => copy.RuntimeManaged
                     && copy.Purpose == IrInst.CopyOutPurpose.RcNormalization,
                 IrInst.CopyOutList copy => copy.RuntimeManaged
@@ -2333,7 +2335,7 @@ public sealed class ArenaDeallocationTests
             instruction is IrInst.CopyOutList { RuntimeManaged: true })).ShouldBeTrue(
                 "A borrowed list crossing a reclaimed lexical scope should become an RC-owned spine.");
         ir.Functions.SelectMany(function => function.Instructions).Any(instruction =>
-            instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
+            instruction is IrInst.CopyOutList { RuntimeManaged: false, Purpose: not IrInst.CopyOutPurpose.ArenaResultBoundary }).ShouldBeFalse();
         ir.EntryFunction.Instructions.Any(instruction =>
             instruction is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
     }

@@ -84,6 +84,7 @@ let copyOutPurposeText purpose =
         | ArenaCallBoundary -> "ArenaCallBoundary"
         | ArenaTcoCompaction -> "ArenaTcoCompaction"
         | IndependentClone -> "IndependentClone"
+        | ArenaResultBoundary -> "ArenaResultBoundary"
 
 let listHeadCopyText kind =
     match kind with
