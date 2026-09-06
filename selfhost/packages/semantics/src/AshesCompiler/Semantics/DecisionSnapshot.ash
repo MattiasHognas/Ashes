@@ -21,6 +21,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipInference
 import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.ResultReachSummaries
 import AshesCompiler.Semantics.ReuseDecision
 export (
     type ValuePlacementCategory(..),
@@ -236,19 +237,41 @@ let sourceOriginFor qualifiedNameOf (lowered: IrProgram) (name: Str) =
         | None ->
             createSourceFunctionOrigin(name)(qualifiedNameOf(name))(None)(0)
 
-let hasParameters (entry: (Str, List(Str), Expr)) =
-    match entry with
-        | (_name, [], _body) -> false
-        | _ -> true
+// A nested function's qualified name extends its parent's (`Main.append.go`), stage 0's
+// `CreateSourceFunctionOrigin`; a parent without one leaves it unqualified.
+let recursive qualifiedNameOfFunction qualifiedNameOf (summaries: List(ReachSummary)) (function: ReachFunction) =
+    match function with
+        | ReachFunction { name = name, enclosing = None } -> qualifiedNameOf(name)
+        | ReachFunction { name = name, enclosing = Some(parentKey) } ->
+            match lookupReachSummary(parentKey)(summaries) with
+                | Some(ReachSummary { function = parent }) ->
+                    match qualifiedNameOfFunction(qualifiedNameOf)(summaries)(parent) with
+                        | Some(parentQualified) -> Some(parentQualified + "." + name)
+                        | None -> None
+                | None -> None
 
-let functionSignature qualifiedNameOf (lowered: IrProgram) (entry: (Str, List(Str), Expr)) =
-    match entry with
-        | (name, parameters, body) ->
+let nestedSourceOriginFor (qualified: Maybe(Str)) (lowered: IrProgram) (name: Str) =
+    match loweredSourceOrigin(name)(lowered.functions) with
+        | Some(origin) -> origin with functionQualifiedName = qualified
+        | None -> createSourceFunctionOrigin(name)(qualified)(None)(0)
+
+// Every registered function of the program, nested ones included, with its whole-program result
+// reach; a top-level function's origin is the one lowering assigned to its lifted lambda.
+let signatureOriginFor qualifiedNameOf (lowered: IrProgram) (summaries: List(ReachSummary)) (function: ReachFunction) =
+    match function with
+        | ReachFunction { name = name, enclosing = None } -> sourceOriginFor(qualifiedNameOf)(lowered)(name)
+        | ReachFunction { name = name, enclosing = Some(_parent) } ->
+            nestedSourceOriginFor(qualifiedNameOfFunction(qualifiedNameOf)(summaries)(function))(lowered)(name)
+
+let reachFunctionSignature qualifiedNameOf (lowered: IrProgram) (summaries: List(ReachSummary)) (summary: ReachSummary) =
+    match summary with
+        | ReachSummary { function = ReachFunction { name = name, parameters = parameters, body = body } as function, reach = reach } ->
             FunctionSignature(
                 name = name,
-                origin = sourceOriginFor(qualifiedNameOf)(lowered)(name),
+                origin = signatureOriginFor(qualifiedNameOf)(lowered)(summaries)(function),
                 parameters = parameters,
-                body = body
+                body = body,
+                resultReach = reach
             )
 
 let textBefore (left: Str) (right: Str) = Ashes.Text.compare(left)(right) <= 0
@@ -580,9 +603,9 @@ let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: I
                     |> placementRecordsFrom(0)(functionReprs)
                 in
                     program
-                    |> topLevelFunctions
-                    |> filter(hasParameters)
-                    |> map(functionSignature(qualifiedNameOf)(lowered))
+                    |> programReachSummaries
+                    |> (given (summaries) ->
+                        map(reachFunctionSignature(qualifiedNameOf)(lowered)(summaries))(summaries))
                     |> (given (signatures) ->
                         program
                         |> topLevelFunctions

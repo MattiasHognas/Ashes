@@ -57,6 +57,7 @@ import ExplainReportTests
 import TaglessAdtLayoutTests
 import StructuralDroppersTests
 import ResultReachTests
+import ResultReachSummariesTests
 import TcoOwnershipRulesTests
 import PatternBindingOwnershipTests
 import TcoLoopLoweringTests
@@ -118,6 +119,7 @@ let run unit =
     |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
     |> (given (_) -> MatchArmScopeTests.runMatchArmScopeTests(Unit))
     |> (given (_) -> ResultReachTests.runResultReachTests(Unit))
+    |> (given (_) -> ResultReachSummariesTests.runResultReachSummariesTests(Unit))
     |> (given (_) -> PatternBindingOwnershipTests.runPatternBindingOwnershipTests(Unit))
     |> (given (_) -> TcoOwnershipRulesTests.runTcoOwnershipRulesTests(Unit))
     |> (given (_) -> TcoLoopLoweringTests.runTcoLoopLoweringTests(Unit))

@@ -13,17 +13,14 @@ import Ashes.Collection.List.length
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
 import AshesCompiler.Semantics.IrInstructions
-import AshesCompiler.Semantics.OwnershipInference.ResultReachState
-import AshesCompiler.Semantics.OwnershipInference.analyzeExprReach
-import AshesCompiler.Semantics.OwnershipInference.reachParam
 import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.ResultReachSummaries.ResultReachState
 import AshesCompiler.Semantics.Types
 export (
     type CallCopyOut(..),
     type CoreCalleeFacts(..),
     value callCopyOutInstruction,
     value listHeadCopyOf,
-    value calleeReach,
     value parameterAtIndex,
     value calleeParameterBorrows,
     value calleeResultReachesArgument,
@@ -115,14 +112,6 @@ let calleeSaturatedAndEligible (facts: Maybe(CoreCalleeFacts)) =
     match facts with
         | Some(CoreCalleeFacts { parameters = parameters, rcEligible = eligible, argumentCount = count }) -> eligible && length(parameters) == count
         | None -> false
-
-let recursive reachEnvironment (parameters: List(Str)) (environment: List((Str, ResultReachState))) =
-    match parameters with
-        | [] -> environment
-        | parameter :: rest -> reachEnvironment(rest)((parameter, reachParam(parameter)) :: environment)
-
-// The parameter reach of a callee's result over its own body.
-let calleeReach (parameters: List(Str)) (body: Expr) = analyzeExprReach(body)(reachEnvironment(parameters)([]))
 
 // The ownership of the parameter at `index`, consumed past the classified chain.
 let recursive parameterAtIndex (index: Int) (ownership: List((Str, ParameterOwnership))) =

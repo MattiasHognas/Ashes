@@ -7,6 +7,7 @@ import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.OwnershipProvenance
 import AshesCompiler.Semantics.OwnershipInference
+import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import Ashes.Collection.List.length
 export (
     value runOwnershipInferenceTests,
@@ -19,6 +20,9 @@ let dummyOrigin name =
         declarationLocation = None,
         declarationOffset = 0
     )
+
+// A signature on its own: its result reach computed over the body alone.
+let signatureOf (name: Str) (parameters: List(Str)) (body: Expr) = FunctionSignature(name = name, origin = dummyOrigin(name), parameters = parameters, body = body, resultReach = singleFunctionReach(parameters)(body))
 
 // 1. Borrow vs Consumed classification tests
 let testBorrowReadResourceParameter unit =
@@ -112,7 +116,7 @@ let testMixedParameters unit =
 
 // 2. Result reachability and freshness tests
 let testFreshConstantResult unit =
-    (let sig = FunctionSignature(name = "f", origin = dummyOrigin("f"), parameters = ["x"], body = ExprInt(42))
+    (let sig = signatureOf("f")(["x"])(ExprInt(42))
     in
         let summary = inferFunctionOwnership(sig)([])
         in
@@ -132,7 +136,7 @@ let testFreshConstantResult unit =
 let testScalarOperatorResultIsFresh unit =
     (let body = ExprAdd(ExprVar("x"))(ExprVar("y"))
     in
-        let sig = FunctionSignature(name = "add", origin = dummyOrigin("add"), parameters = ["x", "y"], body = body)
+        let sig = signatureOf("add")(["x", "y"])(body)
         in
             match inferFunctionOwnership(sig)([]) with
                 | FunctionOwnershipSummary { resultReachFacts = facts } ->
@@ -149,7 +153,7 @@ let testScalarOperatorResultIsFresh unit =
                         |> test.assertEqual(false)))
 
 let testParameterReachingResult unit =
-    (let sig = FunctionSignature(name = "id", origin = dummyOrigin("id"), parameters = ["x"], body = ExprVar("x"))
+    (let sig = signatureOf("id")(["x"])(ExprVar("x"))
     in
         let summary = inferFunctionOwnership(sig)([])
         in
@@ -185,7 +189,7 @@ let testDestructuredParameterIsNotReachedWhole unit =
         in
             let body = ExprMatch(ExprVar("values"))([consArm, emptyArm])(None)
             in
-                let sig = FunctionSignature(name = "reverse", origin = dummyOrigin("reverse"), parameters = ["values", "reversed"], body = body)
+                let sig = signatureOf("reverse")(["values", "reversed"])(body)
                 in
                     let summary = inferFunctionOwnership(sig)([])
                     in
@@ -213,7 +217,7 @@ let testDestructuredParameterIsNotReachedWhole unit =
 let testConditionalBranchReachingResult unit =
     (let body = ExprIf(ExprVar("cond"))(ExprVar("a"))(ExprVar("b"))
     in
-        let sig = FunctionSignature(name = "pick", origin = dummyOrigin("pick"), parameters = ["cond", "a", "b"], body = body)
+        let sig = signatureOf("pick")(["cond", "a", "b"])(body)
         in
             let summary = inferFunctionOwnership(sig)([])
             in
@@ -233,7 +237,7 @@ let testConditionalBranchReachingResult unit =
 let testInternalSharingPoisoning unit =
     (let body = ExprTuple([ExprVar("x"), ExprVar("x")])
     in
-        let sig = FunctionSignature(name = "pair", origin = dummyOrigin("pair"), parameters = ["x"], body = body)
+        let sig = signatureOf("pair")(["x"])(body)
         in
             let summary = inferFunctionOwnership(sig)([])
             in
@@ -399,9 +403,9 @@ let testProgramOwnershipInference unit =
                 ExprString("")
             )
         in
-            let sig1 = FunctionSignature(name = "readIfPos", origin = dummyOrigin("readIfPos"), parameters = ["h", "x"], body = body1)
+            let sig1 = signatureOf("readIfPos")(["h", "x"])(body1)
             in
-                let sig2 = FunctionSignature(name = "id", origin = dummyOrigin("id"), parameters = ["x"], body = ExprVar("x"))
+                let sig2 = signatureOf("id")(["x"])(ExprVar("x"))
                 in
                     let prov1 = buildProvenanceNode("readIfPos")(false)(false)(1)([])(None)([])(false)
                     in
@@ -454,9 +458,9 @@ let testProgramLevelCaptureExcludesOtherFunctions unit =
     in
         let body = ExprAdd(callOther)(ExprVar("y"))
         in
-            let sigHelper = FunctionSignature(name = "helper", origin = dummyOrigin("helper"), parameters = ["x"], body = body)
+            let sigHelper = signatureOf("helper")(["x"])(body)
             in
-                let sigOther = FunctionSignature(name = "other", origin = dummyOrigin("other"), parameters = ["z"], body = ExprVar("z"))
+                let sigOther = signatureOf("other")(["z"])(ExprVar("z"))
                 in
                     let provHelper = buildProvenanceNode("helper")(false)(false)(1)([])(None)([])(false)
                     in
@@ -588,7 +592,7 @@ let testPartialHandOffIsConsumed unit =
 let recursive signaturesOf (funcs: List((Str, List(Str), Expr))) =
     match funcs with
         | [] -> []
-        | (name, parameters, body) :: rest -> FunctionSignature(name = name, origin = dummyOrigin(name), parameters = parameters, body = body) :: signaturesOf(rest)
+        | (name, parameters, body) :: rest -> signatureOf(name)(parameters)(body) :: signaturesOf(rest)
 
 let recursive provenanceNodesOf (funcs: List((Str, List(Str), Expr))) =
     match funcs with
