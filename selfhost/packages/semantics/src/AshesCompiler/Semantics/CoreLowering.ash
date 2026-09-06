@@ -380,6 +380,17 @@ type CoreLoweringState =
     // for a same-name rebuild in its own arm, most recently produced first.
     | reuseTokens: List(CoreReuseToken)
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
+    // The result types of the calls lowered so far in the current function body whose layout was
+    // still unresolved at the call (an arena result was requested in place of a placement
+    // decision), in the current function body and the closures lowered inside it. Stage 0 infers
+    // the whole program before lowering, so such a call never sees a variable a later expression
+    // of the same body resolves; the body is lowered again once those types are known.
+    | unresolvedCallResults: List(SemanticType)
+    // Stage 0's `_ownershipAliases` for a match arm: each heap-typed binding an arm's pattern
+    // bound out of a fresh reference-counted scrutinee, by its slot, and the slot of the owner
+    // whose release covers it. A read of the binding counts as a read of the owner: an aggregate
+    // or call that carries it past the owner's release retains it.
+    | runtimeOwnerAliases: List((Int, Int))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -648,7 +659,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         ownerReleasePlans = [],
         pendingOwnerPlan = None,
         reuseTokens = [],
-        valuePlacements = []
+        valuePlacements = [],
+        unresolvedCallResults = [],
+        runtimeOwnerAliases = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -1887,13 +1900,29 @@ let recursive lookupRuntimeOwner (slot: Int) (owners: List((Int, Bool))) =
 
 let runtimeOwnerStateOf (slot: Int) (state: CoreLoweringState) = lookupRuntimeOwner(slot)(state.runtimeOwners)
 
-// The slot of a local `let` binding that still owns a reference-counted value.
+let recursive lookupOwnerAlias (slot: Int) (aliases: List((Int, Int))) =
+    match aliases with
+        | [] -> None
+        | (candidate, ownerSlot) :: rest ->
+            if candidate == slot
+            then Some(ownerSlot)
+            else lookupOwnerAlias(slot)(rest)
+
+// The slot of the owner whose reference-counted value a local binding reads: the binding's own
+// slot when it still owns one, or the still-live owner a pattern binding aliases.
 let liveRuntimeOwnerSlot (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
         | Some(CoreBinding { location = CoreLocal(slot) }) ->
             match runtimeOwnerStateOf(slot)(state) with
                 | Some(true) -> Some(slot)
-                | _ -> None
+                | Some(false) -> None
+                | None ->
+                    match lookupOwnerAlias(slot)(state.runtimeOwnerAliases) with
+                        | Some(ownerSlot) ->
+                            match runtimeOwnerStateOf(ownerSlot)(state) with
+                                | Some(true) -> Some(ownerSlot)
+                                | _ -> None
+                        | None -> None
         | _ -> None
 
 // Stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer`: the read of a live owner that an
@@ -3463,6 +3492,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with bodyRuntimeManagedByLabel = bodyState.bodyRuntimeManagedByLabel)
             |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
             |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements)
+            |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = append(bodyState.unresolvedCallResults)(outer.unresolvedCallResults))
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -3501,8 +3531,9 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
+        |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
 // A capture that a runtime-managed copy of the closure environment re-establishes by copying its
@@ -6353,18 +6384,72 @@ let loopBodyTailPosition (state: CoreLoweringState) =
 
 let withLoopBodyRequest (request: ConsumerRequest) (state: CoreLoweringState) = withConsumerRequest((request with tailPosition = loopBodyTailPosition(state)))(state)
 
+// Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
+// value's layout.
+let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemList(element) -> containsUnresolvedLayout(element)(state)
+        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
+        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
+        | _ -> false
+and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
+
+// Stage 0's `RequestsArenaResult`: a call whose result has no static layout here (a generic body
+// applying a closure parameter, or a result type inference has not resolved yet) cannot own a
+// reference-counted result, so it asks the callee for an arena result.
+let requestsArenaResult (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemFunction(_argument, _result, _row) -> false
+        | _ -> containsUnresolvedLayout(resultType)(state)
+
+// A function body starts in tail position under the request its shape asks for.
+let withFunctionBodyRequest (body: Expr) (prepared: CoreLoweringState) =
+    (let request = functionBodyRequest(body)(prepared)
+    in withLoopBodyRequest((request with tailCall = true))(prepared))
+
+let recursive anyCallResultResolved (resultTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match resultTypes with
+        | [] -> false
+        | resultType :: rest -> requestsArenaResult(resultType)(state) == false || anyCallResultResolved(rest)(state)
+
+// Lowers a function body from its prepared entry state. Stage 0 lowers against the whole
+// program's finished inference, so a call whose result type a later expression of the same body
+// resolves (a self call under an operator, a generic callee whose result the body's own use
+// pins) already sees the resolved type. This lowering resolves as it goes: when a body's call
+// asked for an arena result because its result type was still a variable, and the finished body
+// resolved it, the body is lowered a second time from the same entry state carrying only the
+// finished substitution and variable supply, so every counter, label, and lifted function is
+// numbered as in a single pass over resolved types. A type the body never resolves (a generic
+// function's own parameter) keeps the single pass.
+let lowerFunctionBodyResolvingCalls (body: Expr) prepare lower (entered: CoreLoweringState) =
+    match entered
+    |> prepare
+    |> lower(body) with
+        | LoweredCoreValue { error = Some(_error) } as failed -> failed
+        | LoweredCoreValue { state = firstState } as first ->
+            if anyCallResultResolved(firstState.unresolvedCallResults)(firstState)
+            then
+                (entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply)
+                |> prepare
+                |> lower(body)
+            else first
+
 let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
-            |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
-            |> enterLambdaTcoLoop
-            |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
-            |> (given (prepared: CoreLoweringState) ->
-                let request = functionBodyRequest(body)(prepared)
-                in withLoopBodyRequest((request with tailCall = true))(prepared))
-            |> lower(body)
+            |> lowerFunctionBodyResolvingCalls(body)(given (entered: CoreLoweringState) ->
+                entered
+                |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
+                |> enterLambdaTcoLoop
+                |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
+                |> withFunctionBodyRequest(body))(lower)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
             |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
@@ -6606,16 +6691,14 @@ let isVariableArgument (argument: Expr) =
         | ExprVar(_name) -> true
         | _ -> false
 
-// Whether the argument names a `let` binding that still owns a reference-counted value.
+// Whether the argument names a binding that still owns a reference-counted value, or aliases a
+// live owner of one.
 let namesRuntimeOwner (argument: Expr) (state: CoreLoweringState) =
     match unspanArgument(argument) with
         | ExprVar(name) ->
-            match lookupBinding(name)(state.bindings) with
-                | Some(CoreBinding { location = CoreLocal(slot) }) ->
-                    match runtimeOwnerStateOf(slot)(state) with
-                        | Some(owned) -> owned
-                        | None -> false
-                | _ -> false
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) -> true
+                | None -> false
         | _ -> false
 
 // Stage 0's `TryGetRuntimeManagedCallArgument` outside a TCO frame: the argument temp holds a
@@ -6836,35 +6919,12 @@ let emitResultOwnershipFlag (context: CoreCallContext) (arity: Int) (resultType:
             then emitReturnsRuntimeManagedFlag(functionTemp)(state)
             else (state, -1)
 
-// Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
-// value's layout.
-let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemList(element) -> containsUnresolvedLayout(element)(state)
-        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
-        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
-        | _ -> false
-and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
-    match types with
-        | [] -> false
-        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
-
-// Stage 0's `RequestsArenaResult`: a call whose result has no static layout here (a generic body
-// applying a closure parameter, or a result type inference has not resolved yet) cannot own a
-// reference-counted result, so it asks the callee for an arena result.
-let requestsArenaResult (resultType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemFunction(_argument, _result, _row) -> false
-        | _ -> containsUnresolvedLayout(resultType)(state)
-
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one.
 let emitArenaResultRequestWord (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if requestsArenaResult(resultType)(state)
     then
-        match freshTemp(state) with
+        match freshTemp((state with unresolvedCallResults = resultType :: state.unresolvedCallResults)) with
             | FreshTemp { state = requestState, temp = requestTemp } ->
                 let loaded =
                     emit(LoadConstInt(requestTemp)(2))(requestState)
@@ -8628,10 +8688,21 @@ let adoptScrutineeIntoSlot (ownerSlot: Int) (valueTemp: Int) (scrutineeType: Sem
     |> markRuntimeTemp(valueTemp)(RuntimeTransferred)
     |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (ownerSlot, true) :: adopted.runtimeOwners, ownerReleasePlans = (ownerSlot, scrutineeType, OwnedReleasePlan(deepUnique = false, constructorName = None)) :: adopted.ownerReleasePlans)
 
+// Stage 0's `_ownershipAliases` for the arm: every heap-typed binding the pattern bound out of
+// the adopted scrutinee reads a value the owner's release covers.
+let recursive aliasArmBindingsToOwner (ownerSlot: Int) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> state
+        | CoreBinding { location = CoreLocal(slot), scheme = TypeScheme { body = bindingType } } :: rest ->
+            if resultSurvivesReset(resolveType(state)(bindingType))(state)
+            then aliasArmBindingsToOwner(ownerSlot)(rest)(state)
+            else aliasArmBindingsToOwner(ownerSlot)(rest)((state with runtimeOwnerAliases = (slot, ownerSlot) :: state.runtimeOwnerAliases))
+        | _ :: rest -> aliasArmBindingsToOwner(ownerSlot)(rest)(state)
+
 // Stage 0's `TrackRuntimeManagedMatchScrutineeOwner` after the guard: a plain variable pattern
 // owns the fresh scrutinee through its own slot, released at the arm exit like any owned
 // binding; any other arm that adopts the scrutinee stores it into an owner slot of its own
-// (`$match_rc_N`), released the same way.
+// (`$match_rc_N`), released the same way, and its heap-typed bindings alias that owner.
 let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pattern: Pattern) (outerBindings: List(CoreBinding)) (guarded: LoweredCoreValue) =
     match (owner, guarded) with
         | (Some(MatchScrutineeOwner { scrutineeTypeName = typeName, scrutineeIsList = isList, scrutineeType = scrutineeType }), LoweredCoreValue { state = state, error = None }) ->
@@ -8645,6 +8716,8 @@ let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pa
                                 allocated
                                 |> emit(StoreLocal(ownerSlot)(valueTemp))
                                 |> adoptScrutineeIntoSlot(ownerSlot)(valueTemp)(scrutineeType)
+                                |> (given (adopted: CoreLoweringState) ->
+                                    aliasArmBindingsToOwner(ownerSlot)(armBindings(length(adopted.bindings) - length(outerBindings))(adopted.bindings))(adopted))
                                 |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)(valueTemp)(scrutineeType)]))
                     else (guarded, [])
         | _ -> (guarded, [])
@@ -9730,10 +9803,13 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
+        |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
+// A recursive member's result meets the callers the same way a plain lambda's does: a
+// reference-counted result is copied into the arena when the caller asked for one.
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
     match (prepared, lowered) with
         | (_prepared, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
@@ -9742,10 +9818,12 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (typedBody, None) ->
                     let finishedBody =
-                        typedBody
-                        |> emit(Return(bodyTemp))
-                        |> resolvePendingTcoResets
-                        |> finishLiftedFunction(label)(origin)
+                        match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
+                            | (normalized, returnedTemp) ->
+                                normalized
+                                |> emit(Return(returnedTemp))
+                                |> resolvePendingTcoResets
+                                |> finishLiftedFunction(label)(origin)
                     in
                         let restored =
                             finishedBody
@@ -9782,12 +9860,11 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                     |> (given (origin) ->
                         labeled
                         |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
-                        |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
-                        |> enterTcoLoopBody(label)(parameter)
-                        |> (given (entered: CoreLoweringState) ->
-                            let request = functionBodyRequest(body)(entered)
-                            in withLoopBodyRequest((request with tailCall = true))(entered))
-                        |> lower(sugarChainBody(body)(labeled.recursiveDeclarationSpan))
+                        |> lowerFunctionBodyResolvingCalls(sugarChainBody(body)(labeled.recursiveDeclarationSpan))(given (entered: CoreLoweringState) ->
+                            entered
+                            |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
+                            |> enterTcoLoopBody(label)(parameter)
+                            |> withFunctionBodyRequest(body))(lower)
                         |> finalizeTcoRuntimeManagedParams(label)
                         |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(labeled))
 

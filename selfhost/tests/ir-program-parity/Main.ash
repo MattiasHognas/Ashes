@@ -91,6 +91,10 @@ let checkFixture root name =
 // walk; match_fresh_scrutinee_head_returned the arm that returns the bound head: the head keeps
 // a reference of its own and the owner is released before the result through its structural
 // dropper, synthesized under the match's location.
+// self_call_operand_string_result adds a self call under a string concatenation (`"a" + go(n - 1)`)
+// whose result type only the concatenation resolves: the call reads the callee's returns bit and
+// copies its result out like a call to any other function, instead of asking for an arena result
+// because its type was still a variable when the call was lowered.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 // match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
@@ -143,6 +147,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("non_tail_self_call_list_result"))
         |> (given (_) -> checkFixture(root)("match_fresh_scrutinee_owner_release"))
         |> (given (_) -> checkFixture(root)("match_fresh_scrutinee_head_returned"))
+        |> (given (_) -> checkFixture(root)("self_call_operand_string_result"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))
