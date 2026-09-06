@@ -388,13 +388,25 @@ same public behavior.
   genuinely-unknown names). `ASH016` was never missing — import-resolution collision checking
   already covers it. `ASH015` has no stage-0 reference implementation at all — nothing to port
   until stage 0 implements it.
-- [ ] **SEM-18** Resolve a polymorphic `==` the way stage 0 does when the operands' type is still a
+- [x] **SEM-18** Resolve a polymorphic `==` the way stage 0 does when the operands' type is still a
   variable at the comparison. `tests/runtime_rc_tco_nested_tuple_pattern_alias.ash` is rejected by
   the self-hosted lowering with a `String`/`Int` mismatch (`CoreCallTypeMismatch`) where stage 0
   accepts the program: the comparison's operand type is defaulted before the pattern alias that
   pins it is seen. Establish which side stage 0 takes (the deferred operator default sealed at
   finalization against the finished substitution), mirror it, and register the fixture in the
   loop sweep. The trait-evidence lowering of `==` on a derived type stays under TRT-15.
+  Done: stage 0 maps such a comparison to the `Eq` trait, emits a placeholder when the operand
+  is still a variable, and lowers the binding again with a late type hint once the body has pinned
+  it, so the fixture's `lit == ch` becomes a `CmpStrEq`. The self-hosted lowering now takes the
+  path its deferred `+` already took: two unresolved operands are unified with each other, an
+  integer comparison is emitted speculatively and recorded under its target temp, and the shared
+  variable joins the body's unresolved call results, so a body that pins it later is lowered a
+  second time against the resolved type. The finalization rewrite covers the still-speculative
+  survivors (a lambda pinned by the enclosing program): `CmpStrEq`/`CmpStrNe`, the float forms,
+  and the BigInt compare expansion, which takes two fresh temps past the function's count. A
+  variable no body pins seals to the integer comparison, as `+` seals to `AddInt`, until TRT-15's
+  dictionaries. Both fixtures (`runtime_rc_tco_nested_tuple_pattern_alias`,
+  `runtime_rc_whole_string_pattern_recursion`) compile and match stage 0 in the loop sweep.
 - [ ] **SEM-19** Report an argument type mismatch once per call. Stage 0 reports the same mismatch
   three times at the call span on an ordinary call (the expected-type unification in `LowerExpr`
   plus the contextual unification) and twice on a tail self-call; the self-hosted lowering rejects
