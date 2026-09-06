@@ -69,17 +69,22 @@ let recursive sortedSetInsert (item: Int) (set: List(Int)) =
                 then item :: set
                 else head :: sortedSetInsert(item)(rest)
 
-let recursive sortedSetIntersect (left: List(Int)) (right: List(Int)) =
+// The common elements of two sorted sets, gathered in reverse through a tail call per element
+// so the walk's depth does not grow with the sets (a dominator set of a deep block holds every
+// block above it).
+let recursive sortedSetIntersectInto (left: List(Int)) (right: List(Int)) (reversed: List(Int)) =
     match (left, right) with
-        | ([], _) -> []
-        | (_, []) -> []
+        | ([], _) -> reverse(reversed)
+        | (_, []) -> reverse(reversed)
         | (l :: leftRest, r :: rightRest) ->
             if l == r
-            then l :: sortedSetIntersect(leftRest)(rightRest)
+            then sortedSetIntersectInto(leftRest)(rightRest)(l :: reversed)
             else
                 if l < r
-                then sortedSetIntersect(leftRest)(right)
-                else sortedSetIntersect(left)(rightRest)
+                then sortedSetIntersectInto(leftRest)(right)(reversed)
+                else sortedSetIntersectInto(left)(rightRest)(reversed)
+
+let sortedSetIntersect (left: List(Int)) (right: List(Int)) = sortedSetIntersectInto(left)(right)([])
 
 let appendUnique (item: Int) (items: List(Int)) =
     if containsInt(item)(items)
@@ -243,22 +248,24 @@ let recursive intersectDominators (dominators: List(List(Int))) (predecessors: L
                         | None -> intersectDominators(dominators)(rest)(Some(set))
                 | None -> intersectDominators(dominators)(rest)(acc)
 
-let recursive initialDominators (blocks: List(IrCfgBlock)) (reachable: List(Int)) (index: Int) =
+// The per-block sets are gathered in reverse through a tail call per block, so neither walk's
+// depth grows with the function's block count.
+let recursive initialDominators (blocks: List(IrCfgBlock)) (reachable: List(Int)) (index: Int) (reversed: List(List(Int))) =
     match blocks with
-        | [] -> []
+        | [] -> reverse(reversed)
         | _block :: rest ->
-            (if index == 0
+            ((given (set) -> initialDominators(rest)(reachable)(index + 1)(set :: reversed)))(if index == 0
             then [0]
             else
                 if sortedSetContains(index)(reachable)
                 then reachable
-                else [index]) :: initialDominators(rest)(reachable)(index + 1)
+                else [index])
 
-let recursive dominatorStep (blocks: List(IrCfgBlock)) (reachable: List(Int)) (dominators: List(List(Int))) (index: Int) =
+let recursive dominatorStep (blocks: List(IrCfgBlock)) (reachable: List(Int)) (dominators: List(List(Int))) (index: Int) (reversed: List(List(Int))) =
     match blocks with
-        | [] -> []
+        | [] -> reverse(reversed)
         | IrCfgBlock { blockPredecessors = predecessors } :: rest ->
-            (if index == 0
+            ((given (set) -> dominatorStep(rest)(reachable)(dominators)(index + 1)(set :: reversed)))(if index == 0
             then [0]
             else
                 if sortedSetContains(index)(reachable)
@@ -266,11 +273,11 @@ let recursive dominatorStep (blocks: List(IrCfgBlock)) (reachable: List(Int)) (d
                     None
                     |> intersectDominators(dominators)(filter(given (predecessor) -> sortedSetContains(predecessor)(reachable))(predecessors))
                     |> sortedSetInsert(index)
-                else [index]) :: dominatorStep(rest)(reachable)(dominators)(index + 1)
+                else [index])
 
 let recursive dominatorFixpoint (blocks: List(IrCfgBlock)) (reachable: List(Int)) (dominators: List(List(Int))) =
-    0
-    |> dominatorStep(blocks)(reachable)(dominators)
+    []
+    |> dominatorStep(blocks)(reachable)(dominators)(0)
     |> (given (next) ->
         if next == dominators
         then next
@@ -280,6 +287,6 @@ let computeDominators (blocks: List(IrCfgBlock)) =
     []
     |> reachableBlocks(blocks)([0])
     |> (given (reachable) ->
-        0
-        |> initialDominators(blocks)(reachable)
+        []
+        |> initialDominators(blocks)(reachable)(0)
         |> dominatorFixpoint(blocks)(reachable))

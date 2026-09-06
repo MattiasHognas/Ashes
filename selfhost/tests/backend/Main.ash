@@ -3117,6 +3117,11 @@ let buildTextFloatModule name context = codegenOptimizedRealSource("Ashes.IO.pri
 
 let buildTextAsciiCaseModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.asciiUpper(\"hi, World 9\") + \"|\" + Ashes.Text.asciiLower(\"Hi, WORLD 9\") + \"|\" + (if Ashes.Rune.isAsciiLetter('q') then \"letter\" else \"other\") + (if Ashes.Rune.isAsciiLetter('9') then \"letter\" else \"other\"))")(name)(context)
 
+// The BigInt runtime: a multi-limb sum, a negative difference, a product past two limbs, the
+// long division and remainder of a forty-digit value by seven, a comparison, the machine
+// conversion that does not fit, and the decimal parse of a negative value.
+let buildBigIntModule name context = codegenOptimizedRealSource("let recursive power (base: BigInt) (exponent: Int) (acc: BigInt) =\n    if exponent == 0\n    then acc\n    else power(base)(exponent - 1)(acc * base)\nlet huge = power(10N)(40)(1N)\nlet parsed = match Ashes.Text.parseBigInt(\"-42\") with | Ok(v) -> Ashes.Text.fromBigInt(v) | Error(m) -> m\nlet narrowed = match Ashes.Number.BigInt.toInt(huge) with | Ok(v) -> Ashes.Text.fromInt(v) | Error(m) -> m\nAshes.IO.print(Ashes.Text.fromBigInt(18446744073709551615N + 1N) + \"|\" + Ashes.Text.fromBigInt(3N - 8N) + \"|\" + Ashes.Text.fromBigInt(123456789012345678901234567890N * 987654321098765432109876543210N) + \"|\" + Ashes.Text.fromBigInt(huge / 7N) + \"|\" + Ashes.Text.fromBigInt(huge % 7N) + \"|\" + Ashes.Text.fromInt(Ashes.Number.BigInt.compare(0N - huge)(huge)) + \"|\" + narrowed + \"|\" + parsed)")(name)(context)
+
 // `Ashes.Internal.deepCopy` clones a record with a string and a list field, a bare string,
 // and passes a scalar through.
 let buildInternalDeepCopyModule name context = codegenOptimizedRealSource("type Item =\n    | name: Str\n    | tags: List(Str)\nlet original = Item(name = Ashes.Text.fromInt(42) + \"-name\", tags = [\"a\", \"b\"])\nlet copied = Ashes.Internal.deepCopy(original)\nAshes.IO.print(copied.name + \"|\" + Ashes.Internal.deepCopy(\"plain\") + \"|\" + Ashes.Text.fromInt(Ashes.Internal.deepCopy(7)))")(name)(context)
@@ -3163,6 +3168,8 @@ let testRunStaticExecutableForTextFloatModule unit = assertProgramPrints(buildTe
 let testRunStaticExecutableForTextAsciiCaseModule unit = assertProgramPrints(buildTextAsciiCaseModule)("selfhostBackendRunTextAsciiCase")("selfhost_backend_text_ascii_case_e2e")("HI, WORLD 9|hi, world 9|letterother")
 
 let testRunStaticExecutableForInternalDeepCopyModule unit = assertProgramPrints(buildInternalDeepCopyModule)("selfhostBackendRunInternalDeepCopy")("selfhost_backend_internal_deep_copy_e2e")("42-name|plain|7")
+
+let testRunStaticExecutableForBigIntModule unit = assertProgramPrints(buildBigIntModule)("selfhostBackendRunBigInt")("selfhost_backend_bigint_e2e")("18446744073709551616|-5|121932631137021795226185032733622923332237463801111263526900|1428571428571428571428571428571428571428|4|-1|BigInt does not fit in Int|-42")
 
 let testRunStaticExecutableForBytesSliceModule unit = assertProgramPrints(buildBytesSliceModule)("selfhostBackendRunBytesSlice")("selfhost_backend_bytes_slice_e2e")("world/hello")
 
@@ -5064,6 +5071,7 @@ let run shipped =
     |> testRunStaticExecutableForTextFloatModule
     |> testRunStaticExecutableForTextAsciiCaseModule
     |> testRunStaticExecutableForInternalDeepCopyModule
+    |> testRunStaticExecutableForBigIntModule
     |> testRunStaticExecutableForTextByteLengthModule
     |> testRunStaticExecutableForBytesSliceModule
     |> testRunStaticExecutableForBytesScalarOpsModule
