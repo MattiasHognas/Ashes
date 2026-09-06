@@ -4,7 +4,7 @@ Memory report
 Function: label
   ownership
     n: consumed, move-safe yes
-    result fresh: no
+    result fresh: yes
   perceus [lambda_0]
     dup:                  0
     drop:                 1
@@ -17,7 +17,7 @@ Function: label
 Function: listed
   ownership
     n: consumed, move-safe yes
-    result fresh: no
+    result fresh: yes
   perceus [lambda_2]
     dup:                  2
     drop:                 5
@@ -31,7 +31,7 @@ Function: listed
 Function: pair
   ownership
     n: consumed, move-safe yes
-    result fresh: no
+    result fresh: yes
   perceus [lambda_1]
     dup:                  2
     drop:                 5
@@ -49,7 +49,7 @@ Function: pair
 Function: prefixed
   ownership
     n: consumed, move-safe yes
-    result fresh: no
+    result fresh: yes
   perceus [lambda_3]
     dup:                  2
     drop:                 4

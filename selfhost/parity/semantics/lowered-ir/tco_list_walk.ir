@@ -1,6 +1,10 @@
 IR (lowered)
 ============
 
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+  resolved requirement=Ashes.Trait.Multiply(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9890)
+
 function lambda_2  [ClosureHelper from walk]
   locals=26 temps=30
     LoadEnv               Target=0 Index=0   (tco_list_walk.ash:1:1)

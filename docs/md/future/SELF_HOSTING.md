@@ -1775,12 +1775,39 @@ same public behavior.
   call site looks under-applied; it is also pinned as a known difference. Result-reach through a
   destructured pattern component is tracked since the component-reach port, so `record_pattern`
   and `tag_group_arm_brackets` match stage 0 in every report.
-- [ ] **OPT-46** Admit every `Str` loop parameter to the reference-counted heap as stage 0's
+- [x] **OPT-46** Admit every `Str` loop parameter to the reference-counted heap as stage 0's
   `IsRcEligibleScalarTupleOrAdtType` does. The self-hosted admission (`runtimeManagedStrOrdinals`
   and the affine-append walk) declines a string parameter the successor reads more than once
   (`widen(n - 1)(text + text)`), so such a loop keeps its strings in the arena and grows per
   iteration where stage 0 plateaus. Widen the admission, keep the affine in-place append for the
   single-read shape, and pin the two-read shape with a plateau fixture through both compilers.
+  Done: measured, the premise did not hold. The self-hosted walk already admits a parameter its
+  successor reads twice (`text + text` is the parameter's own append; only the in-place tip
+  reservation stays single-read), its loop plateaus at 5.6 MB, and the growth was stage 0's: a
+  guard-plus-double successor (`if byteLength(text) >= 4096 then "ab" else text + text`) grew to
+  211 MB, and a successor cut out of the parameter by the standard library's `substring` to 408 MB.
+  Three stage-0 defects, each fixed in both compilers where the rule exists: a control-flow join of
+  a literal and a fresh string was an arena join whose later copy-out orphaned the fresh branch's
+  reference-counted value, so a reconcilable join (`IsReconcilableFreshStringJoin`, the match
+  arms' rule extended to `if`) now asks its branches for a runtime-managed string and copies the
+  literal branches inside their branch (`WithReconcilableFreshStringJoinRequest`,
+  `TryLowerStaticStringNormalizedBranch`; self-hosted `withReconcilableFreshStringJoinRequest`,
+  `lowerStaticStringNormalizedBody`); the post-hoc promotion of a concatenation reached from a
+  runtime-managed parameter is limited to values that flow to a parameter store or the result and
+  outside a mixed join (`TempsFlowingToLoopParameters`, `MixedJoinSources`), and the concat fold
+  accepts arena inner links under a reference-counted root; and a fresh reference-counted builtin
+  result reaches none of its arguments in the ownership summaries (both reach walks), which made
+  `substring`'s result fresh, so the entry-helper inliner took it and now releases a fresh
+  reference-counted argument the inlined result cannot keep (`ReleaseInlinedFreshArguments`). The
+  self-hosted backend's `BytesSubText` also allocated a reference-counted cell for an arena request
+  (a 4 KB leak per slice); it now places the string where the instruction asked. Pinned by
+  `tests/tco_runtime_managed_str_parameter_read_twice_plateau.ash` (both compilers, 200000
+  iterations, 8.2 and 5.9 MB) and
+  `Linux_backend_llvm_runtime_rc_string_parameter_read_twice_memory_should_plateau`; the explain
+  parity fixtures record the now-fresh results. With those results no longer poisoning their
+  callers, stage 0 counts a call whose result reaches no parameter as a moved argument, so the
+  self-hosted ownership inference now applies the same result-alias rule (`resultAliasMove` over
+  the program's reach summaries) and the parity reports agree on which parameters are unique.
 - [ ] **OPT-47** Retain a whole ADT loop parameter consed into a sibling list accumulator
   (`collect(n - 1)(State(...))(s :: acc)`) in the self-hosted lowering, stage 0's rule since the
   sibling-accumulator UAF fix. The shape is reachable only once a list over records is admitted

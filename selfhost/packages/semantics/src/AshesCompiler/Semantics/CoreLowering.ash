@@ -2691,18 +2691,6 @@ let finishLetValueInSlot name body requestBody bodyRequest lower outerBindings l
 // Stage 0's `IsRuntimeRcStringProducer`: `+` or a fully applied call to a builtin declared to
 // produce a fresh string — the expressions a runtime-string request can place on the
 // reference-counted heap.
-let isFreshStringBuiltinKind (kind: CoreBuiltinKind) =
-    match kind with
-        | CoreTextFromInt -> true
-        | CoreTextFromFloat -> true
-        | CoreTextFormatFloat -> true
-        | CoreBigIntToString -> true
-        | CoreTextToHex -> true
-        | CoreTextAsciiCase(_upper) -> true
-        | CoreRuneToText -> true
-        | CoreBytesSubText -> true
-        | _ -> false
-
 // The root and argument count of a call spine, spans looked through.
 let recursive qualifiedCallRoot (expression: Expr) (argumentCount: Int) =
     match expression with
@@ -3219,10 +3207,24 @@ let withEscapingTransfer (request: ConsumerRequest) =
     then request
     else request with transfersRuntimeManagedChildren = true
 
+// Stage 0's `IsReconcilableFreshStringJoin`: a control-flow join an escaping runtime-managed
+// string request reconciles, every branch a literal (copied to the reference-counted heap
+// inside its branch), a fresh producer, or a value that never reaches the join, and at least one
+// branch fresh. Deciding the request on the whole join keeps a nested fresh branch from taking
+// the representation alone and leaving the literal beside it as an arena value in a mixed join.
+let reconcilableStringArms (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (_body: Expr) -> false)(cases)
+
+let isReconcilableFreshStringJoin (body: Expr) (state: CoreLoweringState) =
+    match unspanArgument(body) with
+        | ExprIf(_condition, thenBranch, elseBranch) -> reconcilableStringArms([(PatternWildcard, thenBranch, None), (PatternWildcard, elseBranch, None)])(state)
+        | ExprMatch(_scrutinee, cases, _position) -> reconcilableStringArms(cases)(state)
+        | _ -> false
+
 let escapingResultRequest (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
     (let produced =
         emptyConsumerRequest
-        |> (given (fresh: ConsumerRequest) -> fresh with runtimeString = isRuntimeRcStringProducer(body)(state))
+        |> (given (fresh: ConsumerRequest) -> fresh with runtimeString = isRuntimeRcStringProducer(body)(state) || isReconcilableFreshStringJoin(body)(state))
         |> (given (fresh: ConsumerRequest) -> fresh with runtimeAdt = producesFreshRuntimeManageableAdt(body)(state))
         |> (given (fresh: ConsumerRequest) -> fresh with runtimeList = producesFreshRuntimeManageableList(body))
         |> (given (fresh: ConsumerRequest) -> fresh with runtimeRecord = isFreshRuntimeManageableRecordTree(body)(state))
@@ -8365,7 +8367,30 @@ let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: C
         | (true, false) -> markRuntimeTemp(resultTemp)(RuntimeTransferred)(state)
         | (false, _) -> state)
 
-let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
+// Stage 0's `TryLowerStaticStringNormalizedBranch` for a literal string: the constant loaded and
+// copied to the reference-counted heap as an RC-normalized `CopyOutArena`, so it joins a fresh
+// runtime-managed sibling uniformly; any other body lowers as usual.
+let lowerStaticStringNormalizedBody body (normalizeStaticStrings: Bool) lower (state: CoreLoweringState) =
+    match (normalizeStaticStrings, staticStringArmBody(body)) with
+        | (true, Some(value)) ->
+            match lowerString(value)(state) with
+                | LoweredCoreValue { state = literalState, temp = literalTemp, semanticType = literalType, error = None } ->
+                    match freshTemp(literalState) with
+                        | FreshTemp { state = copyState, temp = copyTemp } ->
+                            copyState
+                            |> emit(CopyOutArena(copyTemp)(literalTemp)(-1)(true)(RcNormalization)(None))
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> success(copyTemp)(literalType)
+                | failed -> failed
+        | _ -> lower(body)(state)
+
+// Stage 0's `ShouldNormalizeStaticStringIfBranches`: an `if` lowered under a request for a
+// runtime-managed string normalizes a literal branch beside a fresh branch exactly as a match
+// normalizes its arms, since a join of a static literal and a reference-counted value is an
+// arena join whose later copy-out orphans the fresh branch's reference-counted value.
+let ifBranchesNormalizeStaticStrings thenBranch elseBranch (request: ConsumerRequest) (state: CoreLoweringState) = request.runtimeString && reconcilableStringArms([(PatternWildcard, thenBranch, None), (PatternWildcard, elseBranch, None)])(state)
+
+let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStrings: Bool) lower plan =
     match plan with
         | CoreIfPlan { state = failedState, error = Some(error) } ->
             CoreIfThen(
@@ -8379,7 +8404,7 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
         | CoreIfPlan { state = thenState, resultSlot = resultSlot, elseLabel = elseLabel, endLabel = endLabel, error = None } ->
             match thenState
             |> withConsumerRequest(request)
-            |> lower(thenBranch) with
+            |> lowerStaticStringNormalizedBody(thenBranch)(normalizeStaticStrings)(lower) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } ->
                     CoreIfThen(
                         state = failedState,
@@ -8404,11 +8429,11 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) lower plan =
                                 error = None
                             )
 
-let finishIfElseBranch elseBranch (request: ConsumerRequest) lower loweredThen =
+let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStrings: Bool) lower loweredThen =
     match loweredThen with
         | CoreIfThen { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | CoreIfThen { state = elseState, resultSlot = resultSlot, endLabel = endLabel, thenType = thenType, thenArm = thenArm, error = None } ->
-            match lower(elseBranch)(withConsumerRequest((request with expectedType = Some(thenType)))(elseState)) with
+            match lowerStaticStringNormalizedBody(elseBranch)(normalizeStaticStrings)(lower)(withConsumerRequest((request with expectedType = Some(thenType)))(elseState)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = elseType, error = None } ->
                     match bindType(thenType)(elseType)(resultState) with
@@ -8427,17 +8452,31 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) lower loweredThen =
 
 // The then branch inherits the context's expected type; the else branch is expected to have the
 // then branch's type.
+// Stage 0's `WithReconcilableFreshStringJoinRequest`: a reconcilable join asks its branches for
+// a runtime-managed string whatever its consumer asked for, so the fresh branch produces its
+// value on the reference-counted heap and the literal branches copy theirs, and the join is
+// uniformly runtime-managed wherever it flows.
+let withReconcilableFreshStringJoinRequest (join: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
+    if request.runtimeString == false && isReconcilableFreshStringJoin(join)(state)
+    then request with runtimeString = true
+    else request
+
 let lowerIf condition thenBranch elseBranch lower state =
-    state
-    |> clearConsumerRequest
-    |> lower(condition)
-    |> prepareIfPlan
-    |> lowerIfThenBranch(thenBranch)(state
-    |> consumerRequestOf
-    |> branchRequest)(lower)
-    |> finishIfElseBranch(elseBranch)(state
-    |> consumerRequestOf
-    |> branchRequest)(lower)
+    (let request =
+        state
+        |> consumerRequestOf
+        |> branchRequest
+        |> (given (branch: ConsumerRequest) ->
+            withReconcilableFreshStringJoinRequest(ExprIf(condition)(thenBranch)(elseBranch))(branch)(state))
+    in
+        let normalizeStaticStrings = ifBranchesNormalizeStaticStrings(thenBranch)(elseBranch)(request)(state)
+        in
+            state
+            |> clearConsumerRequest
+            |> lower(condition)
+            |> prepareIfPlan
+            |> lowerIfThenBranch(thenBranch)(request)(normalizeStaticStrings)(lower)
+            |> finishIfElseBranch(elseBranch)(request)(normalizeStaticStrings)(lower))
 
 let patternName pattern =
     match pattern with
@@ -9300,16 +9339,7 @@ let isStaticConstructorArm (expression: Expr) (state: CoreLoweringState) =
 // included; any other arm body lowers as usual.
 let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLoweringState) =
     match (normalizeStaticStrings, staticStringArmBody(body)) with
-        | (true, Some(value)) ->
-            match lowerString(value)(state) with
-                | LoweredCoreValue { state = literalState, temp = literalTemp, semanticType = literalType, error = None } ->
-                    match freshTemp(literalState) with
-                        | FreshTemp { state = copyState, temp = copyTemp } ->
-                            copyState
-                            |> emit(CopyOutArena(copyTemp)(literalTemp)(-1)(true)(RcNormalization)(None))
-                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
-                            |> success(copyTemp)(literalType)
-                | failed -> failed
+        | (true, Some(_value)) -> lowerStaticStringNormalizedBody(body)(true)(lower)(state)
         | _ ->
             match (normalizeStaticStrings, staticConstructorArm(body)(state)) with
                 | (true, Some(plan)) ->
@@ -10528,9 +10558,9 @@ let lowerMatch value cases lower state =
     |> clearConsumerRequest
     |> lower(value)
     |> prepareMatchPlan
-    |> withPlanArmRequest(state
+    |> withPlanArmRequest(withReconcilableFreshStringJoinRequest(ExprMatch(value)(cases)(None))(state
     |> consumerRequestOf
-    |> branchRequest)
+    |> branchRequest)(state))
     |> withScrutineeOwner(value)
     |> withReuseScrutinee(value)(cases)
     |> withStaticStringNormalization(cases)
@@ -13330,8 +13360,8 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                     state
                     |> lower(condition)
                     |> prepareIfPlan
-                    |> lowerIfThenBranch(thenBranch)(emptyConsumerRequest)(branchLower)
-                    |> finishIfElseBranch(elseBranch)(emptyConsumerRequest)(branchLower)
+                    |> lowerIfThenBranch(thenBranch)(emptyConsumerRequest)(false)(branchLower)
+                    |> finishIfElseBranch(elseBranch)(emptyConsumerRequest)(false)(branchLower)
         // A scrutinee that IS itself a resume call (`match resume(v) with | ...`) is the one-shot
         // scrutinee shape (stage-0's TryRewriteResumeOneShotMatch): `v` returns to the perform
         // site immediately, and the WHOLE match — re-run against the resumed value, via a fresh

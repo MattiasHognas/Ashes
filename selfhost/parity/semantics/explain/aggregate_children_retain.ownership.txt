@@ -8,8 +8,8 @@ Function: label
       move-safe: yes
       unique:    yes
   Result
-    fresh:    no
-    poisoned: yes
+    fresh:    yes
+    poisoned: no
     aliases:  (none)
 
 Function: listed
@@ -19,8 +19,8 @@ Function: listed
       move-safe: yes
       unique:    yes
   Result
-    fresh:    no
-    poisoned: yes
+    fresh:    yes
+    poisoned: no
     aliases:  (none)
 
 Function: pair
@@ -30,8 +30,8 @@ Function: pair
       move-safe: yes
       unique:    yes
   Result
-    fresh:    no
-    poisoned: yes
+    fresh:    yes
+    poisoned: no
     aliases:  (none)
 
 Function: prefixed
@@ -41,7 +41,7 @@ Function: prefixed
       move-safe: yes
       unique:    yes
   Result
-    fresh:    no
-    poisoned: yes
+    fresh:    yes
+    poisoned: no
     aliases:  (none)
 

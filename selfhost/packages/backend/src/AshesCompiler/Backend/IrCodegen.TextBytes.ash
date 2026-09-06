@@ -6,6 +6,7 @@
 // `IrCodegen.Support`.
 
 import AshesCompiler.Backend.Llvm
+import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import Ashes.Number.UInt
@@ -276,36 +277,15 @@ let emitBytesSubClamp builder i64 srcLen startVal lenVal name =
 
 // `Bytes.subText(bytes)(start)(len)`: copies the clamped range into a fresh RC heap string —
 // `emitStringConcatN`'s exact `{count, size, len, bytes}` allocation with a single `memcpy`.
-let emitBytesSubText builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bytesRef startVal lenVal =
+// `Bytes.subText(bytes)(start)(len)`: a fresh string of the clamped range's bytes, placed where
+// the instruction asked (stage 0's `EmitBytesSubText`): a reference-counted cell when
+// runtime-managed, otherwise an arena block reclaimed with the bracket that allocated it.
+let emitBytesSubText context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType memcpyFn memcpyType (managed: Bool) bytesRef startVal lenVal =
     match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_sub") with
         | (srcLen, srcAddr) ->
             match emitBytesSubClamp(builder)(i64)(srcLen)(startVal)(lenVal)("bytes_sub") with
                 | (start, copyLen) ->
-                    let totalSize =
-                        buildAdd(builder)(copyLen)(constInt(i64)(24u64)(false))("bytes_sub_total_size")
-                    in
-                        let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("bytes_sub_header")
-                        in
-                            let _ =
-                                buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
-                            in
-                                let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bytes_sub_size_ptr")
-                                in
-                                    let _ =
-                                        buildStore(builder)(buildAdd(builder)(copyLen)(constInt(i64)(8u64)(false))("bytes_sub_size_value"))(sizePtr)
-                                    in
-                                        let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bytes_sub_payload_ptr")
-                                        in
-                                            let _ = buildStore(builder)(copyLen)(payloadPtr)
-                                            in
-                                                let destBytesPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_sub_dest_bytes_ptr")
-                                                in
-                                                    let srcStartAddr = buildAdd(builder)(srcAddr)(start)("bytes_sub_src_start_addr")
-                                                    in
-                                                        let srcStartPtr = buildIntToPtr(builder)(srcStartAddr)(ptrType)("bytes_sub_src_start_ptr")
-                                                        in
-                                                            let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, srcStartPtr, copyLen])(3u32)("bytes_sub_memcpy")
-                                                            in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_sub_result")
+                    emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(buildAdd(builder)(srcAddr)(start)("bytes_sub_src_start_addr"))(copyLen)("bytes_sub")
 
 // `Bytes.subView(bytes)(start)(len)`: a zero-copy view `{len|VIEW, backingBytesAddr}` over the
 // clamped range in a fresh 16-byte RC payload — O(1), the backing must outlive the view exactly as

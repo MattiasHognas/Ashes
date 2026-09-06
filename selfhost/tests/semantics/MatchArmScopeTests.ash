@@ -213,8 +213,9 @@ let expectMatchJoinOfFreshArmsIsRuntimeManaged unit =
 
 // Beside a fresh-string arm, a literal string arm is normalized to the reference-counted heap:
 // the constant is loaded at the match's location and copied as an RC-normalized value, so the
-// arm resets its window; the fresh-string arm itself keeps its arena placement, so the join is
-// not uniformly runtime-managed and the closure carries no returns bit.
+// arm resets its window; the fresh-string arm produces its string runtime-managed under the
+// same request, so the join is uniformly runtime-managed and the closure carries the returns
+// bit.
 let expectLiteralStringArmIsNormalizedBesideAFreshStringArm unit =
     "let label n =\n    match Ashes.Text.fromInt(n) with\n        | \"7\" -> \"seven\"\n        | _ -> Ashes.Text.fromInt(8)\n\n0"
     |> dumpSource
@@ -222,8 +223,8 @@ let expectLiteralStringArmIsNormalizedBesideAFreshStringArm unit =
     |> expectLine("    CopyOutArena          DestTemp=5 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization")
     |> expectLine("    StoreLocal            Slot=2 Source=5")
     |> expectLine("    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5")
-    |> expectLine("    TextFromInt           Target=7 ValueTemp=6")
-    |> expectLine("    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0")
+    |> expectLine("    TextFromInt           Target=7 ValueTemp=6 RuntimeManaged=true")
+    |> expectLine("    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true")
     |> (given (_) -> Unit)
 
 // A nested match whose arms are a copied-out list and the empty list joins as a runtime-managed

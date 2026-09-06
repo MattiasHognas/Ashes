@@ -213,10 +213,14 @@ let checkConsumedListArgument unit =
 // reached the shared result slot, classified by the same last-write-wins walk: since every arm,
 // including the unreachable match_none fallback, writes to that slot in program order, the join
 // read picks up the last write in program order rather than the reachable arm that actually
-// produced the value, misclassifying the join read as conservative-unknown.
+// produced the value, misclassifying the join read as conservative-unknown. Stage 0 classifies
+// that read and the function's result reload of it as runtime rc, since the fallback arm's
+// `fromInt` result is fresh; this walk reports the join read and the reload as unknown instead,
+// so the block carries two unknowns and one fewer runtime-rc value.
 let matchResultSlotJoinLine (line: Str) =
     match line with
-        | "    conservative unknown: 1" -> ["    conservative unknown: 2"]
+        | "    region:               2" -> ["    conservative unknown: 2", "    region:               2"]
+        | "    runtime rc:           3" -> ["    runtime rc:           2"]
         | _ -> [line]
 
 let matchResultSlotJoinReason = "representation is classified by a post-hoc walk that is last-write-wins in program order rather than per-branch, so a total match's result-slot join read takes whichever arm wrote the slot last in program order (here the unreachable match_none fallback) instead of the reachable arm that actually produced the value"

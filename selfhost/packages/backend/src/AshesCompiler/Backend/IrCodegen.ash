@@ -465,10 +465,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(right)
                                             |> emitBytesCompare(context)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(lookupIndexed(left)(tempEnv))) :: tempEnv, terminated)
-                                        | BytesSubText(target, bytes, start, count, _managed) ->
+                                        | BytesSubText(target, bytes, start, count, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(count)
-                                            |> emitBytesSubText(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(start)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesSubText(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(start)(tempEnv))) :: tempEnv, terminated)
                                         | BytesSubView(target, bytes, start, count) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(count)

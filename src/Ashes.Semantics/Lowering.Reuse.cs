@@ -600,6 +600,7 @@ public sealed partial class Lowering
         LoweredValueRequest request = default)
     {
         var argSlots = new int[paramNames.Count];
+        var argTemps = new int[paramNames.Count];
         var argTypes = new TypeRef[paramNames.Count];
         // Params whose argument was built by in-place reuse are themselves linear: a match-then-rebuild
         // on them in the helper body reuses the same cell (intermediate-value linearity).
@@ -624,6 +625,7 @@ public sealed partial class Lowering
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, argTemp));
             argSlots[i] = slot;
+            argTemps[i] = argTemp;
             argTypes[i] = argType;
             if (_reuseResultTemps.Contains(argTemp) && !_linearReuseNames.Contains(paramNames[i]))
             {
@@ -648,7 +650,38 @@ public sealed partial class Lowering
         foreach (var p in linearParams) _linearReuseNames.Remove(p);
         _inliningInProgress.Remove(fnName);
         _scopes.Pop();
+        ReleaseInlinedFreshArguments(fnName, args, argTemps, argTypes, result.Temp);
         return result.AsPair();
+    }
+
+    // A fresh reference-counted argument the inlined body read through its parameter slot is
+    // released after the body, as a call releases the fresh argument it consumed, unless the
+    // callee's result may keep the parameter (an ordinary call transfers such an argument to the
+    // callee, and the inlined body's result carries the reference on).
+    private void ReleaseInlinedFreshArguments(
+        string fnName,
+        IReadOnlyList<Expr> args,
+        int[] argTemps,
+        TypeRef[] argTypes,
+        int resultTemp)
+    {
+        FunctionOwnershipSummary? summary = GetOwnershipSummaryForCallRoot(new Expr.Var(fnName));
+        for (int i = 0; i < args.Count; i++)
+        {
+            if (args[i] is Expr.Var
+                || argTemps[i] == resultTemp
+                || !IsRuntimeManagedResultTemp(argTemps[i])
+                || IsBorrowedOwnershipTemp(argTemps[i])
+                || summary is null
+                || summary.ResultPoisoned
+                || i >= summary.Parameters.Count
+                || summary.ResultReaches(summary.Parameters[i]))
+            {
+                continue;
+            }
+
+            EmitRuntimeManagedChildDrop(argTemps[i], Prune(argTypes[i]));
+        }
     }
 
     /// <summary>
