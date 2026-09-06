@@ -99,6 +99,11 @@ let checkFixture root name =
 // (`let toEntry n = Item(name = n, flag = true)`): the parameter's type is seeded from the field
 // it is stored into before the body is lowered, so the entry normalization decided ahead of the
 // body places the record on the reference-counted heap as it does for an annotated parameter.
+// tco_non_tail_self_call_in_operator_operand adds the loop functions whose self call sits under
+// an operator (`1 + countEvens(tail)`): the scalar loops read the callee's returns bit like any
+// call, and the list loops pass a pattern binding of a loop parameter whose placement finalize
+// still decides through the pending argument-retain skeleton, its ownership flag zeroed at
+// finalize when the frame keeps the parameter in the arena.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 // match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
@@ -114,8 +119,8 @@ let checkFixture root name =
 // label, the affine accumulator's reservation slots, and the back edge's argument temps, old
 // parameter loads, parameter stores, deferred owner releases and arena reset, stack restore,
 // and jump, with the unread chain parameter's synthetic slot. tco_list_walk (a runtime-managed
-// list parameter) and tco_non_tail_self_call_in_operator_operand keep their loop-function
-// comparisons in `selfhost/tests/semantics/TcoLoopLoweringTests.ash`.
+// list parameter) keeps its loop-function comparison in
+// `selfhost/tests/semantics/TcoLoopLoweringTests.ash`.
 // owned_let_list_drop adds a `let`-owned runtime list of fresh strings (the list request, the
 // runtime-managed cells and heads, and the inline unique-spine walk at the scope exit) and
 // aggregate_children_retain the escaping tuple, list literal, and cons cell that retain the owned
@@ -153,6 +158,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("match_fresh_scrutinee_head_returned"))
         |> (given (_) -> checkFixture(root)("self_call_operand_string_result"))
         |> (given (_) -> checkFixture(root)("unannotated_parameter_record"))
+        |> (given (_) -> checkFixture(root)("tco_non_tail_self_call_in_operator_operand"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))
