@@ -129,8 +129,8 @@ let expectNoSelfCallMeansNoAffinity unit =
 
 // The list walk's loop function matches stage 0 line for line: the runtime-managed list
 // parameter's back edge stores the borrowed tail, releases the pattern owner, and skips the arena
-// reset. The program as a whole still lacks the closure environment normalizer and dropper for
-// the list-typed capture, which keeps the fixture out of the parity runner.
+// reset. The whole program, with the closure environment normalizers and dropper of the
+// list-typed capture, is pinned by the parity runner.
 let expectListWalkLoopFunctionMatchesStageZero unit =
     "tco_list_walk"
     |> loweredFixtureLines

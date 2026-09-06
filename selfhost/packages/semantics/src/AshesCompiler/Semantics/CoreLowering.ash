@@ -396,6 +396,9 @@ type CoreLoweringState =
     // finalize pass still decides, with that parameter's slot; the flag is zeroed at finalize
     // when the frame does not admit the parameter to the reference-counted heap.
     | pendingRuntimeArgumentFlags: List((Int, Int))
+    // Stage 0's `_runtimeManagedClosureDropperLabels`: the `__rc_cdrop_N` function synthesized
+    // for each owned-capture layout (`offset:type;...`), shared by every closure with that layout.
+    | closureDropperLabels: List((Str, Str))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -667,7 +670,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         valuePlacements = [],
         unresolvedCallResults = [],
         runtimeOwnerAliases = [],
-        pendingRuntimeArgumentFlags = []
+        pendingRuntimeArgumentFlags = [],
+        closureDropperLabels = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -3499,6 +3503,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
             |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements)
             |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = append(bodyState.unresolvedCallResults)(outer.unresolvedCallResults))
+            |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -3542,10 +3547,55 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
+let bigIntCopySizeBytes = -2
+
+// Reserves `count` consecutive temps and returns the first; the run is `temp .. temp + count - 1`.
+let freshTempRun (count: Int) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { nextTemp = base } ->
+            FreshTemp(
+                state = withNextTemp(base + count)(state),
+                temp = base
+            )
+
+let listHeadCopyKindOf (element: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(element) with
+        | SemString -> Some(StringListHead)
+        | SemList(inner) ->
+            if inner
+            |> resolveType(state)
+            |> canArenaResetLayout
+            then Some(InnerListHead)
+            else None
+        | resolved ->
+            if canArenaResetLayout(resolved)
+            then Some(InlineListHead)
+            else None
+
+// The iterative `rcdrop_list_N` walk of a runtime-managed list over scalars held in a cursor
+// slot: a unique cell releases its tail and frees itself, a shared cell is decremented once and
+// keeps the rest of the spine.
+let emitListSpineWalkBody (cursorSlot: Int) (loopLabel: Str) (sharedLabel: Str) (endLabel: Str) (firstTemp: Int) (state: CoreLoweringState) =
+    state
+    |> emit(Label(loopLabel))
+    |> emit(LoadLocal(firstTemp)(cursorSlot))
+    |> emit(LoadConstInt(firstTemp + 1)(0))
+    |> emit(CmpIntNe(firstTemp + 2)(firstTemp)(firstTemp + 1))
+    |> emit(JumpIfFalse(firstTemp + 2)(endLabel))
+    |> emit(RcIsUnique(firstTemp + 3)(firstTemp))
+    |> emit(JumpIfFalse(firstTemp + 3)(sharedLabel))
+    |> emit(LoadMemOffset(firstTemp + 4)(firstTemp)(8))
+    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
+    |> emit(StoreLocal(cursorSlot)(firstTemp + 4))
+    |> emit(Jump(loopLabel))
+    |> emit(Label(sharedLabel))
+    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
+    |> emit(Jump(endLabel))
+    |> emit(Label(endLabel))
+
 // A capture that a runtime-managed copy of the closure environment re-establishes by copying its
-// word: the scalars. Strings, bytes, big integers, lists, tuples, and named types need the copy-out
-// and closure-dropper helpers that are not ported yet, so a closure capturing one gets no
-// normalizer here.
+// word: the scalars, the only captures a closure recorded for the deferred decision can still
+// qualify with.
 let scalarCaptureText (semanticType: SemanticType) =
     match semanticType with
         | SemInt -> Some("Int")
@@ -3594,14 +3644,94 @@ let recursive captureLayoutText (layout: List((Int, Str))) =
 // span stage 0 synthesizes them under.
 let locatedInstruction (location: Maybe(IrSourceLocation)) kind = IrInstruction(instruction = kind, location = location)
 
-// The word copies of the normalizer body: capture `i` is read from the source environment (temp
-// 0) at its offset and stored into the target environment (temp 1) at the same offset, on temps
-// from 2 upward.
-let recursive normalizerCopies (layout: List((Int, Str))) (temp: Int) (location: Maybe(IrSourceLocation)) =
+// How the runtime-managed copy of a closure environment re-establishes one capture (stage 0's
+// `EmitRuntimeManagedTcoDeepCopy` inside `SynthesizeRuntimeManagedClosureNormalizer`): a scalar
+// by its word, a string, bytes, or big integer by an owned copy-out, a list over scalars by its
+// spine copy. Tuples, named types, and lists over heap elements are not normalized here yet, so
+// a closure capturing one gets no normalizer, as a closure capturing a function never does.
+type CaptureCopy =
+    | WordCaptureCopy
+    | LeafCaptureCopy(Int)
+    | ListCaptureCopy(ListHeadCopyKind)
+
+let recursive captureTypeText (semanticType: SemanticType) =
+    match semanticType with
+        | SemString -> Some("Str")
+        | SemBytes -> Some("Bytes")
+        | SemBigInt -> Some("BigInt")
+        | SemList(element) ->
+            match captureTypeText(element) with
+                | Some(text) -> Some("List(" + text + ")")
+                | None -> None
+        | scalar -> scalarCaptureText(scalar)
+
+let captureCopyOf (resolved: SemanticType) (state: CoreLoweringState) =
+    match resolved with
+        | SemString -> Some(LeafCaptureCopy(-1))
+        | SemBytes -> Some(LeafCaptureCopy(-1))
+        | SemBigInt -> Some(LeafCaptureCopy(bigIntCopySizeBytes))
+        | SemList(element) ->
+            if resultSurvivesReset(resolveType(state)(element))(state)
+            then
+                match listHeadCopyKindOf(element)(state) with
+                    | Some(headCopy) -> Some(ListCaptureCopy(headCopy))
+                    | None -> None
+            else None
+        | scalar ->
+            match scalarCaptureText(scalar) with
+                | Some(_text) -> Some(WordCaptureCopy)
+                | None -> None
+
+// `(environment offset, type text, copy)` per capture, in environment order, when every capture
+// resolves to a type the normalizer re-establishes; `None` leaves the closure to the deferred
+// scalar-only decision.
+let recursive resolvedCaptureLayout (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
+    match types with
+        | [] -> Some([])
+        | captureType :: rest ->
+            let resolved = resolveType(state)(captureType)
+            in
+                match (captureTypeText(resolved), captureCopyOf(resolved)(state), resolvedCaptureLayout(rest)(index + 1)(state)) with
+                    | (Some(text), Some(copy), Some(layout)) -> Some((index * 8, text, copy, resolved) :: layout)
+                    | _ -> None
+
+let recursive wordCaptureLayout (layout: List((Int, Str))) =
     match layout with
         | [] -> []
-        | (offset, _text) :: rest ->
-            locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: normalizerCopies(rest)(temp + 1)(location)
+        | (offset, text) :: rest -> (offset, text, WordCaptureCopy, SemInt) :: wordCaptureLayout(rest)
+
+let recursive ownedCaptures (layout: List((Int, Str, CaptureCopy, SemanticType))) =
+    match layout with
+        | [] -> []
+        | (_offset, _text, WordCaptureCopy, _resolved) :: rest -> ownedCaptures(rest)
+        | (offset, text, _copy, resolved) :: rest -> (offset, text, resolved) :: ownedCaptures(rest)
+
+let recursive captureOffsetsAndTexts (layout: List((Int, Str, CaptureCopy, SemanticType))) =
+    match layout with
+        | [] -> []
+        | (offset, text, _copy, _resolved) :: rest -> (offset, text) :: captureOffsetsAndTexts(rest)
+
+// The copies of the normalizer body: capture `i` is read from the source environment (temp 0)
+// at its offset, copied out when it owns a heap value, and stored into the target environment
+// (temp 1) at the same offset, on temps from 2 upward; answers the instructions and the next
+// free temp.
+let recursive normalizerCopies (layout: List((Int, Str, CaptureCopy, SemanticType))) (temp: Int) (location: Maybe(IrSourceLocation)) =
+    match layout with
+        | [] -> ([], temp)
+        | (offset, _text, copy, _resolved) :: rest ->
+            match copy with
+                | WordCaptureCopy ->
+                    match normalizerCopies(rest)(temp + 1)(location) with
+                        | (instructions, nextTemp) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: instructions, nextTemp)
+                | LeafCaptureCopy(sizeBytes) ->
+                    match normalizerCopies(rest)(temp + 2)(location) with
+                        | (instructions, nextTemp) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(CopyOutArena(temp + 1)(temp)(sizeBytes)(true)(RcNormalization)(None)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
+                | ListCaptureCopy(headCopy) ->
+                    match normalizerCopies(rest)(temp + 2)(location) with
+                        | (instructions, nextTemp) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(CopyOutList(temp + 1)(temp)(headCopy)(true)(RcNormalization)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
 
 let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layoutText: Str) =
     IrFunctionOrigin(
@@ -3614,37 +3744,151 @@ let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrF
         generationLocation = None
     )
 
-// Stage 0's `lambda$env_normalize` helper for a closure whose captures are all scalars: called
-// with the source environment in slot 0 and the target environment in slot 1, it copies every
-// capture across and returns 0, the "no dropper" address, since scalar captures own nothing.
-let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str))) (location: Maybe(IrSourceLocation)) =
-    ((given (labelled) ->
-        match labelled with
-            | (label, resultTemp) ->
-                IrFunction(
-                    label = label,
-                    instructions = append(locatedInstruction(location)(LoadLocal(0)(0)) :: locatedInstruction(location)(LoadLocal(1)(1)) :: normalizerCopies(layout)(2)(location))([0
-                    |> LoadConstInt(resultTemp)
-                    |> locatedInstruction(location), locatedInstruction(location)(Return(resultTemp))]),
-                    localCount = 2,
-                    tempCount = resultTemp + 1,
-                    hasEnvAndArgParams = true,
-                    coroutine = None,
-                    localNames = [],
-                    localTypes = [],
-                    origin = layout
-                    |> captureLayoutText
-                    |> closureNormalizerOrigin(label)(closureLabel)(closureOrigin)
-                    |> Some,
-                    lifetimesPlaced = false
-                )))((closureLabel + "$env_normalize", 2 + length(layout)))
+// Stage 0's `lambda$env_normalize` helper: called with the source environment in slot 0 and the
+// target environment in slot 1, it copies every capture across and returns the address of the
+// closure dropper that releases the owned copies, or 0 when the captures own nothing.
+let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str, CaptureCopy, SemanticType))) (location: Maybe(IrSourceLocation)) (dropperLabel: Maybe(Str)) =
+    match normalizerCopies(layout)(2)(location) with
+        | (copies, resultTemp) ->
+            IrFunction(
+                label = closureLabel + "$env_normalize",
+                instructions = append(locatedInstruction(location)(LoadLocal(0)(0)) :: locatedInstruction(location)(LoadLocal(1)(1)) :: copies)([locatedInstruction(location)(match dropperLabel with
+                    | Some(label) -> LoadFuncAddr(resultTemp)(label)
+                    | None -> LoadConstInt(resultTemp)(0)), locatedInstruction(location)(Return(resultTemp))]),
+                localCount = 2,
+                tempCount = resultTemp + 1,
+                hasEnvAndArgParams = true,
+                coroutine = None,
+                localNames = [],
+                localTypes = [],
+                origin = layout
+                |> captureOffsetsAndTexts
+                |> captureLayoutText
+                |> closureNormalizerOrigin(closureLabel + "$env_normalize")(closureLabel)(closureOrigin)
+                |> Some,
+                lifetimesPlaced = false
+            )
 
-// Records a capturing closure for a normalizer decided at program finalization, when the
-// substitution and the deferred operator defaults are final; a capture-free closure needs none.
+// The release of one owned capture inside the closure dropper, stage 0's
+// `EmitRuntimeManagedClosureCaptureDrop`: a list over scalars walks its spine through a cursor
+// slot, a string, bytes, or big integer drops as one allocation.
+let emitClosureCaptureDrop (capturedTemp: Int) (resolved: SemanticType) (state: CoreLoweringState) =
+    match resolved with
+        | SemList(_element) ->
+            match freshLocal(state) with
+                | FreshLocal { state = cursorState, local = cursorSlot } ->
+                    match freshLabel("rcdrop_list")(cursorState) with
+                        | FreshLabel { state = loopState, label = loopLabel } ->
+                            match freshLabel("rcdrop_list_shared")(loopState) with
+                                | FreshLabel { state = sharedState, label = sharedLabel } ->
+                                    match freshLabel("rcdrop_list_end")(sharedState) with
+                                        | FreshLabel { state = endState, label = endLabel } ->
+                                            match freshTempRun(5)(endState) with
+                                                | FreshTemp { state = walkState, temp = firstTemp } ->
+                                                    walkState
+                                                    |> emit(StoreLocal(cursorSlot)(capturedTemp))
+                                                    |> emitListSpineWalkBody(cursorSlot)(loopLabel)(sharedLabel)(endLabel)(firstTemp)
+        | SemString ->
+            emit(RcDrop(capturedTemp)("String")(-1)(true)(false)(None))(state)
+        | SemBytes ->
+            emit(RcDrop(capturedTemp)("Bytes")(-1)(true)(false)(None))(state)
+        | SemBigInt ->
+            emit(RcDrop(capturedTemp)("BigInt")(-1)(true)(false)(None))(state)
+        | _ -> state
+
+let recursive emitClosureCaptureDrops (owned: List((Int, Str, SemanticType))) (environmentTemp: Int) (state: CoreLoweringState) =
+    match owned with
+        | [] -> state
+        | (offset, _text, resolved) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = capturedTemp } ->
+                    allocated
+                    |> emit(LoadMemOffset(capturedTemp)(environmentTemp)(offset))
+                    |> emitClosureCaptureDrop(capturedTemp)(resolved)
+                    |> emitClosureCaptureDrops(rest)(environmentTemp)
+
+let recursive ownedCaptureKey (owned: List((Int, Str, SemanticType))) =
+    match owned with
+        | [] -> []
+        | (offset, text, _resolved) :: rest -> (offset, text) :: ownedCaptureKey(rest)
+
+let closureDropperOrigin (label: Str) (key: Str) =
+    IrFunctionOrigin(
+        generatedLabel = label,
+        originKind = RuntimeManagedClosureDropperOrigin,
+        sourceOrigin = None,
+        parentGeneratedLabel = None,
+        compilerOwner = Some(CompilerFunctionOwner(ownerKind = RuntimeLayoutFunctionOwner, ownerName = key)),
+        stableDiscriminator = Some(key),
+        generationLocation = None
+    )
+
+// Stage 0's `SynthesizeRuntimeManagedClosureDropper`: the `__rc_cdrop_N` function (called with
+// the closure's own environment in slot 0 and the environment to release in slot 1) that
+// releases every owned capture, synthesized once per capture layout and taking a lambda id like
+// any lifted function; its body is built on a scratch frame that borrows the state's label
+// counter and the closure's location.
+let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: CoreLoweringState) =
+    (let key =
+        owned
+        |> ownedCaptureKey
+        |> captureLayoutText
+    in
+        match lookupLetLambdaLabel(key)(state.closureDropperLabels) with
+            | Some(label) -> (state, label)
+            | None ->
+                let label = "__rc_cdrop_" + Ashes.Text.fromInt(state.nextLambdaId)
+                in
+                    match freshLocal((state with reversedInstructions = [], nextTemp = 0, nextLocal = 0, retiredLocals = [], nextLambdaId = state.nextLambdaId + 1, closureDropperLabels = (key, label) :: state.closureDropperLabels)) with
+                        | FreshLocal { state = ownSlotState } ->
+                            match freshLocal(ownSlotState) with
+                                | FreshLocal { state = targetSlotState, local = targetSlot } ->
+                                    match freshTemp(targetSlotState) with
+                                        | FreshTemp { state = environmentState, temp = environmentTemp } ->
+                                            match environmentState
+                                            |> emit(LoadLocal(environmentTemp)(targetSlot))
+                                            |> emitClosureCaptureDrops(owned)(environmentTemp)
+                                            |> freshTemp with
+                                                | FreshTemp { state = resultState, temp = resultTemp } ->
+                                                    match resultState
+                                                    |> emit(LoadConstInt(resultTemp)(0))
+                                                    |> emit(Return(resultTemp)) with
+                                                        | CoreLoweringState { reversedInstructions = instructions, nextTemp = tempCount, nextLocal = localCount, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, closureDropperLabels = labels } ->
+                                                            ((state with functions = append(state.functions)([IrFunction(
+                                                                label = label,
+                                                                instructions = reverse(instructions),
+                                                                localCount = localCount,
+                                                                tempCount = tempCount,
+                                                                hasEnvAndArgParams = true,
+                                                                coroutine = None,
+                                                                localNames = [],
+                                                                localTypes = [],
+                                                                origin = key
+                                                                |> closureDropperOrigin(label)
+                                                                |> Some,
+                                                                lifetimesPlaced = false
+                                                            )]), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, closureDropperLabels = labels), label))
+
+// Stage 0's `AttachRuntimeManagedClosureNormalizer`: a capturing closure whose captures all
+// resolve to types the normalizer re-establishes gets its normalizer (and the dropper of its
+// owned captures) right after its own function, as stage 0 synthesizes them when the closure
+// is emitted. A closure with a capture still unresolved is recorded for the decision at program
+// finalization, when the substitution and the deferred operator defaults are final and only
+// scalar captures can still qualify; a capture-free closure needs none.
 let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (closureOrigin: IrFunctionOrigin) (state: CoreLoweringState) =
     match captures with
         | [] -> state
-        | _ -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: state.pendingClosureNormalizers
+        | _ ->
+            match resolvedCaptureLayout(captureTypes(captures))(0)(state) with
+                | Some(layout) ->
+                    match match ownedCaptures(layout) with
+                        | [] -> (state, None)
+                        | owned ->
+                            match synthesizeClosureDropper(owned)(state) with
+                                | (synthesized, label) -> (synthesized, Some(label)) with
+                        | (dropped, dropperLabel) ->
+                            dropped with functions = append(dropped.functions)([closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(currentLocation(state))(dropperLabel)])
+                | None -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: state.pendingClosureNormalizers
 
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
     match functions with
@@ -3664,7 +3908,7 @@ let recursive insertClosureNormalizers (pending: List((Str, IrFunctionOrigin, Li
             match scalarCaptureLayout(types)(0)(defaulted)(state) with
                 | Some(layout) ->
                     functions
-                    |> insertAfterLabel(closureLabel)(closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(location))
+                    |> insertAfterLabel(closureLabel)(closureNormalizerFunction(closureLabel)(closureOrigin)(wordCaptureLayout(layout))(location)(None))
                     |> insertClosureNormalizers(rest)(defaulted)(state)
                 | None -> insertClosureNormalizers(rest)(defaulted)(state)(functions)
 
@@ -3768,8 +4012,6 @@ type ArgumentCopyPlan =
     | ConstructorArgumentCopy((Int, Int, Bool, List((Int, ArgumentCopyPlan))))
     | SwitchArgumentCopy(List((Int, Int, Bool, List((Int, ArgumentCopyPlan)))))
 
-let bigIntCopySizeBytes = -2
-
 // The cell size of one constructor: one word per field, plus the tag word unless tagless.
 let layoutAllocationSizeBytes (layout: CoreConstructorLayout) =
     match layout with
@@ -3791,20 +4033,6 @@ let recursive ownedConstructorChildren (constructorName: Str) (children: List(He
 
 // The list-head copy kind of a list argument: scalar heads copy inline, string heads and heads
 // that are lists of scalars copy with the spine; any other element type has no spine copy.
-let listHeadCopyKindOf (element: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(element) with
-        | SemString -> Some(StringListHead)
-        | SemList(inner) ->
-            if inner
-            |> resolveType(state)
-            |> canArenaResetLayout
-            then Some(InnerListHead)
-            else None
-        | resolved ->
-            if canArenaResetLayout(resolved)
-            then Some(InlineListHead)
-            else None
-
 let runtimeManagedAdtLayout (facts: HeapLayoutFacts) =
     match facts with
         | HeapLayoutFacts { runtimeRecordAdtSupported = record, runtimeOwnedChildAdtSupported = ownedChild, runtimeTcoOwnedChildAdtSupported = tcoOwnedChild } -> record || ownedChild || tcoOwnedChild
@@ -6691,15 +6919,6 @@ let lowerLambda parameter body annotation stackAllocate lower state =
                                         | (checkedState, Some(error)) -> failure(checkedState)(error)
                                         | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = seedParameterFromConstructorFields(parameter)(parameterType)(body)(checkedState), semanticType = parameterType))
 
-// Reserves `count` consecutive temps and returns the first; the run is `temp .. temp + count - 1`.
-let freshTempRun (count: Int) (state: CoreLoweringState) =
-    match state with
-        | CoreLoweringState { nextTemp = base } ->
-            FreshTemp(
-                state = withNextTemp(base + count)(state),
-                temp = base
-            )
-
 let recursive constructorAritiesOf (layouts: List(CoreConstructorLayout)) =
     match layouts with
         | [] -> []
@@ -8568,24 +8787,6 @@ let closeGuardedArmBracket cursorSlot endSlot (state: CoreLoweringState) =
 // Whether an arm's closing bracket resets the arena, stage 0's `PopOwnershipScope` test: the
 // result survives the reset, or already lives on the reference-counted heap.
 let armResultSurvivesReset (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(resultType)(state) || isRuntimeTemp(resultTemp)(state)
-
-let emitListSpineWalkBody (cursorSlot: Int) (loopLabel: Str) (sharedLabel: Str) (endLabel: Str) (firstTemp: Int) (state: CoreLoweringState) =
-    state
-    |> emit(Label(loopLabel))
-    |> emit(LoadLocal(firstTemp)(cursorSlot))
-    |> emit(LoadConstInt(firstTemp + 1)(0))
-    |> emit(CmpIntNe(firstTemp + 2)(firstTemp)(firstTemp + 1))
-    |> emit(JumpIfFalse(firstTemp + 2)(endLabel))
-    |> emit(RcIsUnique(firstTemp + 3)(firstTemp))
-    |> emit(JumpIfFalse(firstTemp + 3)(sharedLabel))
-    |> emit(LoadMemOffset(firstTemp + 4)(firstTemp)(8))
-    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
-    |> emit(StoreLocal(cursorSlot)(firstTemp + 4))
-    |> emit(Jump(loopLabel))
-    |> emit(Label(sharedLabel))
-    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
-    |> emit(Jump(endLabel))
-    |> emit(Label(endLabel))
 
 // Stage 0's `EmitOwnedValueDrop` of a runtime-managed list owner whose heads are scalars: the
 // owner is loaded into a cursor slot and its spine walked iteratively (`rcdrop_list_N`), a

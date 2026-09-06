@@ -1584,9 +1584,17 @@ same public behavior.
   the accepts bit let the callee reuse it in place (`tco_deep_adt_accumulator` rebuilt its count
   list on top of the loop's own). Parity fixture
   `tco_non_tail_self_call_in_operator_operand` is registered in the runner and its six loops
-  compared in `TcoLoopLoweringTests`. Still open: a curried stage capturing a runtime-managed
-  list gets no environment normalizer or closure dropper (`lambda_N$env_normalize`,
-  `__rc_cdrop_N`) yet. Still open (cosmetic): the selfhost attaches no source
+  compared in `TcoLoopLoweringTests`. Done (2026-09-06): a closure capturing a string, bytes, a
+  big integer, or a list over scalars now gets its environment normalizer and closure dropper
+  when its closure is emitted, as stage 0 synthesizes them (`recordClosureNormalizer`,
+  `synthesizeClosureDropper`): `lambda_N$env_normalize` copies each such capture out into the
+  escaping environment (`CopyOutArena`, `CopyOutList`) beside the word copies of the scalars and
+  returns the address of the `__rc_cdrop_N` dropper, synthesized once per owned-capture layout
+  and taking a lambda id like any lifted function, which walks each owned capture. A closure
+  whose captures include a still-unresolved type keeps the deferred scalar-only decision; one
+  capturing a tuple, a named type, a list over heap elements, or a function gets none, as in
+  stage 0 for the latter. Parity fixture `tco_list_walk` joins the runner. Still open
+  (cosmetic): the selfhost attaches no source
   location to instructions synthesized outside any located expression (a curried stage's
   closure construction, epilogue blocks), where stage 0 attaches the declaration span. Done
   (2026-09-06, both compilers): an un-annotated parameter missed the pre-body decision in both
