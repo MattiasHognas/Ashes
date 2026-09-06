@@ -1,0 +1,13 @@
+let bang (n: Str) = n + "!"
+
+let recursive stamp xs =
+    match xs with
+        | [] -> []
+        | head :: tail -> bang(head) :: stamp(tail)
+
+let count (items: List(Str)) =
+    match items with
+        | [] -> 0
+        | _ :: _ -> 1
+
+Ashes.IO.print(Ashes.Text.fromInt(count(stamp(["a", "b"]))))

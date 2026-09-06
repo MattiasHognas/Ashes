@@ -188,6 +188,10 @@ type ConsumerRequest =
     | transferSlot: Maybe(Int)
     | tailPosition: Bool
     | transfersRuntimeManagedChildren: Bool
+    // Whether the expression sits in tail position of any function body, loop or not, the
+    // position where the backend fuses a self call into a jump and no copy-out block may follow
+    // it; `tailPosition` above is the loop body's own flag.
+    | tailCall: Bool
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -205,7 +209,8 @@ let emptyConsumerRequest =
         runtimeTuple = false,
         transferSlot = None,
         tailPosition = false,
-        transfersRuntimeManagedChildren = false
+        transfersRuntimeManagedChildren = false,
+        tailCall = false
     )
 
 // The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop
@@ -1290,7 +1295,8 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         then request.transferSlot
         else None,
         tailPosition = tailPositionForwards(expression) && request.tailPosition,
-        transfersRuntimeManagedChildren = transferRequestForwards(expression) && request.transfersRuntimeManagedChildren
+        transfersRuntimeManagedChildren = transferRequestForwards(expression) && request.transfersRuntimeManagedChildren,
+        tailCall = tailPositionForwards(expression) && request.tailCall
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (expected: Maybe(SemanticType)) (lowered: LoweredCoreValue) =
@@ -6346,7 +6352,8 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
             |> enterLambdaTcoLoop
             |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
             |> (given (prepared: CoreLoweringState) ->
-                withLoopBodyRequest(functionBodyRequest(body)(prepared))(prepared))
+                let request = functionBodyRequest(body)(prepared)
+                in withLoopBodyRequest((request with tailCall = true))(prepared))
             |> lower(body)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
@@ -6539,7 +6546,8 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
 // A callee that is the enclosing recursive binding itself or a group sibling, bound directly in
 // the member's outermost stage or captured into an inner curried stage or a nested closure: the
 // backend fuses its tail calls into native loops on the adjacency of the call and its return, so
-// its window keeps the plain scope rule and no copy-out block is placed after the call.
+// a call to it in tail position keeps the plain scope rule with no copy-out block after it; a
+// self call elsewhere (`bang(head) :: stamp(tail)`) closes its window like any other call.
 let isSelfCallee (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
@@ -6549,11 +6557,12 @@ let isSelfCallee (spine: CoreCallSpine) (state: CoreLoweringState) =
                 | _ -> false
         | _ -> false
 
-// What a spine's stages know about the callee: its facts and whether it is the enclosing
-// recursive binding.
+// What a spine's stages know about the callee: its facts, whether it is the enclosing recursive
+// binding, and whether the call to it sits in tail position (the fused self call).
 type CoreCallContext =
     | facts: Maybe(CoreCalleeFacts)
     | selfCallee: Bool
+    | tailCall: Bool
 
 // A fresh reference-counted argument the callee did not take, released after the call; the
 // release preserves the argument's escaped children when the callee's result may keep them.
@@ -6811,7 +6820,7 @@ let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: Semant
 // is not statically known and its type has a call copy-out, stage 0's `needsResultOwnership`.
 let emitResultOwnershipFlag (context: CoreCallContext) (arity: Int) (resultType: SemanticType) (functionTemp: Int) (state: CoreLoweringState) =
     match context with
-        | CoreCallContext { selfCallee = true } -> (state, -1)
+        | CoreCallContext { tailCall = true } -> (state, -1)
         | CoreCallContext { facts = facts } ->
             if arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false && hasCallCopyOut(resultType)(state)
             then emitReturnsRuntimeManagedFlag(functionTemp)(state)
@@ -7365,21 +7374,30 @@ let isTailSelfCall (spine: CoreCallSpine) (state: CoreLoweringState) =
         | (Some(CoreTcoLoop { selfName = selfName, arity = arity, pendingCurried = pending }), ConsumerRequest { tailPosition = true }, ExprVar(name)) -> pending == 0 && name == selfName && coreListLength(spine.arguments) == arity
         | _ -> false
 
-let callContextOf (spine: CoreCallSpine) (state: CoreLoweringState) =
-    CoreCallContext(
-        facts = calleeFactsOf(spine)(state),
-        selfCallee = isSelfCallee(spine)(state)
-    )
+let tailCallPosition (state: CoreLoweringState) =
+    match consumerRequestOf(state) with
+        | ConsumerRequest { tailCall = tailCall } -> tailCall
+
+// `tailCall` is the call expression's own tail position, read before the general call clears
+// the consumer request.
+let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (state: CoreLoweringState) =
+    (let selfCallee = isSelfCallee(spine)(state)
+    in
+        CoreCallContext(
+            facts = calleeFactsOf(spine)(state),
+            selfCallee = selfCallee,
+            tailCall = selfCallee && tailCall
+        ))
 
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
-let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool) lower state =
+let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool) (tailCall: Bool) lower state =
     match state
     |> ensureResultRcEligibility
     |> openArenaBracket with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
-            |> callContextOf(spine)
+            |> callContextOf(spine)(tailCall)
             |> (given (context: CoreCallContext) ->
                 match opened
                 |> lowerCallSpineStage(function)(argument)(context)(expected)(1)(transfers)(lower)
@@ -9708,7 +9726,8 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
                         |> enterTcoLoopBody(label)(parameter)
                         |> (given (entered: CoreLoweringState) ->
-                            withLoopBodyRequest(functionBodyRequest(body)(entered))(entered))
+                            let request = functionBodyRequest(body)(entered)
+                            in withLoopBodyRequest((request with tailCall = true))(entered))
                         |> lower(sugarChainBody(body)(labeled.recursiveDeclarationSpan))
                         |> finalizeTcoRuntimeManagedParams(label)
                         |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(labeled))
@@ -9862,8 +9881,7 @@ let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower 
                     |> allocateEnvironment(captures)(captures)(false) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
-                            let selfBindings =
-                                preparedSelfBindings(captureCount(captures))(members)
+                            let selfBindings = preparedSelfBindings(captureCount(captures) * 8)(members)
                             in
                                 environmentState
                                 |> lowerPreparedRecursiveMembers(
@@ -12922,7 +12940,7 @@ let lowerGeneralCall expression function argument lower state =
         | _ ->
             state
             |> clearConsumerRequest
-            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(lower)
+            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
             |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
 
 let lowerCallExpression expression function argument lower state =
