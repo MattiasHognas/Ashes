@@ -32,6 +32,7 @@ import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.HeapLayoutClassification
+import AshesCompiler.Semantics.HelperInlining.isInlinableHelperValue
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
@@ -403,6 +404,12 @@ type CoreLoweringState =
     // OPT-42: the live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
     // for a same-name rebuild in its own arm, most recently produced first.
     | reuseTokens: List(CoreReuseToken)
+    // Stage 0's `_inlinableFunctions`: the let-bound non-recursive functions whose body allocates
+    // or calls, spliced into a call site while a reuse token is live or under a loop's back edge
+    // when their result is fresh; and stage 0's `_inliningInProgress`, the helpers whose bodies
+    // are being spliced, so a helper is never spliced into itself.
+    | inlinableHelpers: List(Str)
+    | inliningInProgress: List(Str)
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
     // The result types of the calls lowered so far in the current function body whose layout was
     // still unresolved at the call (an arena result was requested in place of a placement
@@ -696,6 +703,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         ownerReleasePlans = [],
         pendingOwnerPlan = None,
         reuseTokens = [],
+        inlinableHelpers = [],
+        inliningInProgress = [],
         valuePlacements = [],
         unresolvedCallResults = [],
         runtimeOwnerAliases = [],
@@ -906,10 +915,19 @@ let recordLetLambda (name: Str) (value: Expr) (state: CoreLoweringState) =
     match lambdaParameterChain(value)([]) with
         | (parameters, body) -> state with letLambdas = (name, parameters, body) :: state.letLambdas, letLambdaIdentities = (name, lambdaIdentityOf(value)) :: state.letLambdaIdentities
 
+// A non-recursive let-bound lambda whose body allocates or calls is registered as an inlinable
+// helper, stage 0's `RegisterInlinableNonRecursiveLet`.
+let registerInlinableHelper (name: Str) (value: Expr) (state: CoreLoweringState) =
+    if isInlinableHelperValue(value)
+    then state with inlinableHelpers = name :: state.inlinableHelpers
+    else state
+
 let armSourceFunction (name: Str) (value: Expr) (stackClosure: Bool) (state: CoreLoweringState) =
     if letValueIsLambda(value)
     then
-        recordLetLambda(name)(value)((state with pendingSourceFunction = Some(sourceFunctionOriginFor(name)(state)), pendingStackClosure = stackClosure))
+        (state with pendingSourceFunction = Some(sourceFunctionOriginFor(name)(state)), pendingStackClosure = stackClosure)
+        |> recordLetLambda(name)(value)
+        |> registerInlinableHelper(name)(value)
     else state
 
 let sourceFunctionOrigin (label: Str) (source: SourceFunctionOrigin) (state: CoreLoweringState) =
@@ -13902,6 +13920,167 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
                             |> markCallArgumentsMoved(spine)
                             |> emitTailSelfCallBackEdge(frame)(spine.arguments)(temps)(argumentTypes)
 
+// Stage 0's `LowerCallTryReuseInlineForm` trigger: a saturated helper call is spliced into its
+// site while a reuse token is live (so the helper's constructor can consume it), or under a
+// loop's back edge when the helper's result is fresh (so the argument passes without the
+// accepts-bit retain of a general call).
+let inlineHelperTriggered (state: CoreLoweringState) =
+    match (state.reuseTokens, state.backEdgeArgumentSlot) with
+        | (_token :: _rest, _slot) -> true
+        | ([], Some(_slot)) -> true
+        | ([], None) -> false
+
+let inlineHelperNeedsFreshResult (state: CoreLoweringState) =
+    match state.reuseTokens with
+        | [] -> true
+        | _token :: _rest -> false
+
+// The callee name resolves to a function binding at this site: a local shadowing the helper's
+// name with a non-function value keeps the call out of the inline path.
+let calleeBindsFunction (callee: Str) (state: CoreLoweringState) =
+    match lookupBinding(callee)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+            match resolveType(state)(body) with
+                | SemFunction(_parameter, _result, _row) -> true
+                | _ -> false
+        | None -> false
+
+let recursive parameterReachedBy (parameter: Str) (counts: List(ParameterReachEntry)) =
+    match counts with
+        | [] -> false
+        | ParameterReachEntry { parameterName = name } :: rest -> name == parameter || Ashes.Text.startsWith(name)(parameter + "/") || parameterReachedBy(parameter)(rest)
+
+let helperResultFresh (reach: ResultReachState) =
+    match reach with
+        | ResultReachState { counts = [], isPoisoned = false } -> true
+        | _ -> false
+
+// Stage 0's `InlinedBodyReferencesResolveHere`: an inlined body lowers in the caller's scope, so
+// every name it reads past its parameters must resolve there, lexically, as a constructor, or
+// by being an inlinable helper whose own references resolve in turn. A helper already accepted
+// on this walk is a shared sibling, not a cycle.
+let recursive inlinedReferencesResolveHere (names: List(Str)) (visited: List(Str)) (state: CoreLoweringState) =
+    match names with
+        | [] -> true
+        | name :: rest ->
+            if inlinedReferenceResolvesHere(name)(visited)(state)
+            then inlinedReferencesResolveHere(rest)(visited)(state)
+            else false
+and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(_binding) -> true
+        | None ->
+            if containsName(name)(constructorLayoutNames(state.constructorLayouts)) || containsName(name)(visited)
+            then true
+            else
+                if containsName(name)(state.inlinableHelpers)
+                then
+                    match lookupLetLambda(name)(state.letLambdas) with
+                        | Some((parameters, body)) ->
+                            inlinedReferencesResolveHere(collectFree(body)(parameters)([]))(name :: visited)(state)
+                        | None -> false
+                else false
+
+// The helper a saturated call names, when the call is to be spliced: registered, not being
+// spliced already, bound as a function here, its arity matched, its references resolving here,
+// and its result fresh when the trigger is the back edge rather than a live token.
+let inlinableHelperOf (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprVar(callee) ->
+            if inlineHelperTriggered(state) && containsName(callee)(state.inlinableHelpers) && containsName(callee)(state.inliningInProgress) == false && calleeBindsFunction(callee)(state)
+            then
+                match lookupLetLambda(callee)(state.letLambdas) with
+                    | Some((parameters, body)) ->
+                        match calleeReachSummary(callee)(parameters)(body)(state) with
+                            | (_summaryParameters, _summaryBody, reach) ->
+                                if length(parameters) == coreListLength(spine.arguments) && (inlineHelperNeedsFreshResult(state) == false || helperResultFresh(reach)) && inlinedReferencesResolveHere(collectFree(body)(parameters)([]))([callee])(state)
+                                then Some((callee, parameters, body, reach))
+                                else None
+                    | None -> None
+            else None
+        | _ -> None
+
+// Each argument lowered in the caller's scope under a plain request and stored into a fresh
+// local of its own, so the helper's parameter names cannot capture it: the argument, its temp,
+// its type, and its slot.
+let recursive lowerInlinedHelperArguments (arguments: List(Expr)) lower (state: CoreLoweringState) (reversed: List((Expr, Int, SemanticType, Int))) =
+    match arguments with
+        | [] -> (state, reverse(reversed), None)
+        | argument :: rest ->
+            match state
+            |> withConsumerRequest(emptyConsumerRequest)
+            |> lower(argument) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> (failedState, [], Some(error))
+                | LoweredCoreValue { state = argumentState, temp = temp, semanticType = argumentType, error = None } ->
+                    match freshLocal(argumentState) with
+                        | FreshLocal { state = allocated, local = slot } ->
+                            lowerInlinedHelperArguments(rest)(lower)(emit(StoreLocal(slot)(temp))(allocated))((argument, temp, argumentType, slot) :: reversed)
+
+let recursive bindInlinedParameters (parameters: List(Str)) (arguments: List((Expr, Int, SemanticType, Int))) (state: CoreLoweringState) =
+    match (parameters, arguments) with
+        | (parameter :: restParameters, (_argument, _temp, argumentType, slot) :: restArguments) ->
+            state
+            |> addBinding(parameter)(TypeScheme(quantified = [], body = argumentType, constraints = []))(CoreLocal(slot))
+            |> bindInlinedParameters(restParameters)(restArguments)
+        | _ -> state
+
+let isNewlyProducedTemp (temp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false
+
+// Stage 0's `ReleaseInlinedFreshArguments`: a fresh reference-counted argument the spliced body
+// read through its parameter slot is released after the body, as a call releases the fresh
+// argument it consumed, unless the helper's result may keep the parameter (the body's result
+// then carries the reference on).
+let recursive releaseInlinedFreshArguments (parameters: List(Str)) (arguments: List((Expr, Int, SemanticType, Int))) (reach: ResultReachState) (resultTemp: Int) (state: CoreLoweringState) =
+    match (parameters, arguments) with
+        | (parameter :: restParameters, (argument, temp, argumentType, _slot) :: restArguments) ->
+            if isVariableArgument(argument) || temp == resultTemp || isNewlyProducedTemp(temp)(state) == false || reach.isPoisoned || parameterReachedBy(parameter)(reach.counts)
+            then releaseInlinedFreshArguments(restParameters)(restArguments)(reach)(resultTemp)(state)
+            else
+                state
+                |> emitOwnedValueRelease(emit)(temp)(argumentType)
+                |> releaseInlinedFreshArguments(restParameters)(restArguments)(reach)(resultTemp)
+        | _ -> state
+
+let recursive withoutName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | candidate :: rest ->
+            if candidate == name
+            then rest
+            else candidate :: withoutName(name)(rest)
+
+let withoutInliningInProgress (callee: Str) (state: CoreLoweringState) = state with inliningInProgress = withoutName(callee)(state.inliningInProgress)
+
+// Stage 0's `InlineCall`: the arguments are evaluated in the caller's scope, the parameters bound
+// to their slots, and the helper's body lowered in place under the call's own request; the
+// caller's bindings are restored afterwards.
+let lowerInlinedHelperCall (callee: Str) (parameters: List(Str)) (body: Expr) (reach: ResultReachState) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+    match lowerInlinedHelperArguments(arguments)(lower)(state)([]) with
+        | (failedState, _lowered, Some(error)) -> failure(failedState)(error)
+        | (argumentState, lowered, None) ->
+            match lower(body)(withConsumerRequest(consumerRequestOf(state))(bindInlinedParameters(parameters)(lowered)((argumentState with inliningInProgress = callee :: argumentState.inliningInProgress)))) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } ->
+                    failure(failedState
+                    |> restoreBindings(state.bindings)
+                    |> withoutInliningInProgress(callee))(error)
+                | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
+                    bodyState
+                    |> restoreBindings(state.bindings)
+                    |> withoutInliningInProgress(callee)
+                    |> releaseInlinedFreshArguments(parameters)(lowered)(reach)(resultTemp)
+                    |> success(resultTemp)(resultType)
+
+let tryInlineHelperCall (spine: CoreCallSpine) lower (state: CoreLoweringState) =
+    match inlinableHelperOf(spine)(state) with
+        | Some((callee, parameters, body, reach)) ->
+            state
+            |> lowerInlinedHelperCall(callee)(parameters)(body)(reach)(spine.arguments)(lower)
+            |> Some
+        | None -> None
+
 let lowerGeneralCall expression function argument lower state =
     match (isTailSelfCall(collectCallSpine(expression))(state), state.tcoLoopFrame, state.tcoLoop) with
         | (true, Some(frame), Some(loop)) ->
@@ -13911,10 +14090,13 @@ let lowerGeneralCall expression function argument lower state =
             |> unifyOptionalExpectedResult(expectedTypeOf(state))
             |> locateLoweredMismatch(argumentSiteOf(state))
         | _ ->
-            state
-            |> clearConsumerRequest
-            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
-            |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
+            match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
+                | Some(inlined) -> inlined
+                | None ->
+                    state
+                    |> clearConsumerRequest
+                    |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
+                    |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
 
 let lowerCallExpression expression function argument lower state =
     match state

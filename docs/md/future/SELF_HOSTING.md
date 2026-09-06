@@ -1828,13 +1828,30 @@ same public behavior.
   libc `malloc` allocator recorded under CG-4, not a lowering difference: the same probe
   without the string field shows a gap of the same kind while the instruction streams agree,
   and both binaries scale linearly in the record count.
-- [ ] **OPT-48** Port stage 0's entry-helper inlining: a call to a stdlib or user function whose
+- [x] **OPT-48** Port stage 0's entry-helper inlining: a call to a stdlib or user function whose
   body is a `let recursive go ... in go(seed)(argument)` entry (`List.length`, `List.reverse`, the
   fold family) is lowered as the loop closure built in the caller and applied directly, so the
   argument passes without the accepts-bit retain of a general call. The churn fixture's loop
   (`tests/generic_append_map_churn_plateau.ash`) differs from stage 0 only at its
   `list.length(entries)` call for this reason; the parity fixtures and the churn loop diff are
   the oracle.
+  Done: `HelperInlining.ash` carries the structural shapes (`exprHasCallOrAggregate`, the
+  nested-recursive-return shape stage 0 specializes instead of inlining), and every
+  non-recursive let-bound lambda whose innermost body allocates or calls is registered as an
+  inlinable helper when its `let` is lowered, stitched stdlib functions included. A saturated
+  call to such a helper is spliced into its site (`tryInlineHelperCall`, before the general
+  call's arena window opens) while a reuse token is live, or under a loop's back edge when the
+  helper's result reach is fresh; the helper must not be inlining already, its name must still
+  bind a function at the site, and every name its body reads past its parameters must resolve
+  there lexically, as a constructor, or as an inlinable helper in turn (a top-level function the
+  caller did not capture keeps the call on the general path, since this lowering resolves such a
+  reference through a closure capture rather than stage 0's by-label reference). The arguments
+  are lowered under a plain request into fresh locals, the parameters bound to those locals, the
+  body lowered under the call's own request, and a fresh reference-counted argument the result
+  cannot keep is released after the body (`releaseInlinedFreshArguments`). The churn loop now
+  lowers instruction for instruction as stage 0 does, and
+  `inlined_entry_helper_under_back_edge` pins a user helper spliced under a back edge as a
+  whole-program parity fixture.
 - [ ] **OPT-49** Both compilers: honor a poisoned result reach when releasing a consumed fresh
   reference-counted argument. Only the deep-copied list case consults the callee's poison
   (`ConsumedDeepCopiedListStaysWithCallee` / `consumedDeepCopiedListStaysWithCallee`); the
