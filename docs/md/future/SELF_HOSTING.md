@@ -1539,11 +1539,19 @@ same public behavior.
   position of every function body (`tailCall`, stage 0's `InTailPosition` without the loop
   condition), the suppression applies to tail self calls only, and the closure a self reference
   rebuilds carries its environment size in bytes rather than its capture count; parity fixture
-  `non_tail_self_call_list_result`. Still open (cosmetic): the selfhost attaches no source
+  `non_tail_self_call_list_result`. Done (2026-09-06): a `match` on a fresh reference-counted
+  call result made its scrutinee owner only in arms binding nothing heap-typed (the selfhost
+  assumed stage 0 aliases a bound field to the owner and hands the owner over), so an arm binding
+  a string head (`head :: _ -> print(head)`) never released the list, and one returning the head
+  would have released it under the result once the owner existed. Every arm now adopts the owner
+  (stage 0's `TrackRuntimeManagedMatchScrutineeOwner`), and an arm whose result is a heap value
+  its pattern bound out of the scrutinee retains it and releases the owner right there through
+  its structural dropper (`transferScrutineeChildResult`, stage 0's
+  `EmitRuntimeManagedParentFieldTransfer`), the dropper's instructions carrying the match's
+  location as stage 0's do; parity fixtures `match_fresh_scrutinee_owner_release` and
+  `match_fresh_scrutinee_head_returned`. Still open (cosmetic): the selfhost attaches no source
   location to instructions synthesized outside any located expression (a curried stage's
-  closure construction, epilogue blocks), where stage 0 attaches the declaration span; a
-  trailing-expression `match` on a fresh reference-counted call result never releases the
-  scrutinee in its arm. Still open: an
+  closure construction, epilogue blocks), where stage 0 attaches the declaration span. Still open: an
   un-annotated parameter misses the pre-body decision (its type resolves only inside the body),
   so its record stays arena-placed as before; and the selfhost still lacks the generic list
   deep-copy call path (`LowerCallDeepCopyOutListResult`). Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
