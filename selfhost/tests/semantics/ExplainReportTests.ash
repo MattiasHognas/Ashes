@@ -161,21 +161,6 @@ let recursive scopedRewrite (targetNames: List(Str)) transform (inBlock: Bool) (
                     |> append(transform(line))
                 else line :: scopedRewrite(targetNames)(transform)(inBlock)(rest)
 
-// Result reach is computed one function at a time, with no whole-program fixpoint: a callee's own
-// poisoned (unmodelled) result reach does not propagate into a caller that returns a value built
-// from calling it, so the caller reads as an ordinary (non-whole) reach of its own parameter
-// instead of poisoned.
-let poisonNotPropagatedLine (paramName: Str) (line: Str) =
-    match line with
-        | "    poisoned: yes" -> ["    poisoned: no"]
-        | "    aliases:  (none)" -> ["    aliases:", "      - " + paramName]
-        | _ -> [line]
-
-let poisonNotPropagated (targetNames: List(Str)) (paramName: Str) (text: Str) =
-    rewriteLines(scopedRewrite(targetNames)(poisonNotPropagatedLine(paramName))(false))(text)
-
-let poisonNotPropagatedReason = "result reach has no whole-program fixpoint yet, so a poisoned callee's poison does not propagate into a caller that returns its result"
-
 // Flips the second `Function: pair` heading (the optimizer's scalar-environment specialization of
 // `pair`, correlated to the same source origin) to carry this port's own generated label.
 let recursive rewriteSecondFunctionHeading (name: Str) (label: Str) (seen: Int) (lines: List(Str)) =
@@ -467,10 +452,7 @@ let aggregateChildrenRetainRepresentation (text: Str) =
 
 let checkAggregateChildrenRetain unit =
     unit
-    |> (given (_) ->
-        "n"
-        |> poisonNotPropagated(["pair", "listed", "prefixed"])
-        |> checkKnownDifference("aggregate_children_retain")(ExplainOwnership)("ownership")(poisonNotPropagatedReason))
+    |> (given (_) -> checkFixture("aggregate_children_retain")(ExplainOwnership)("ownership"))
     |> (given (_) -> checkKnownDifference("aggregate_children_retain")(ExplainRc)("rc")(scalarEnvSpecializationNotCorrelated)(pairScalarEnvSpecializationLabeled))
     |> (given (_) -> checkFixture("aggregate_children_retain")(ExplainReuse)("reuse"))
     |> (given (_) -> checkKnownDifference("aggregate_children_retain")(ExplainMemory)("memory")(aggregateChildrenRetainReprReason)(aggregateChildrenRetainRepresentation))

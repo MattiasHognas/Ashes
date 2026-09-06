@@ -10,20 +10,14 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.OwnershipProvenance
+import AshesCompiler.Semantics.ResultReachSummaries
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
 export (
-    type ResultReachState(..),
     type FunctionSignature(..),
-    value reachBottom,
-    value reachParam,
-    value reachPoisoned,
-    value reachJoin,
-    value reachSum,
     value isParamUsedOnlyAsBorrowRead,
     value classifyParameterOwnership,
-    value analyzeExprReach,
     value computeCaptures,
     value inferFunctionOwnership,
     value inferProgramOwnership,
@@ -33,17 +27,14 @@ export (
     value topLevelFunctions,
 )
 
-type ResultReachState =
-    | counts: List(ParameterReachEntry)
-    | causes: List(ResultReachCause)
-    | isPoisoned: Bool
-    deriving {Eq, Show}
-
+// A function's stored result reach comes from the whole-program fixpoint (`programReachSummaries`);
+// a signature built on its own carries `singleFunctionReach`.
 type FunctionSignature =
     | name: Str
     | origin: SourceFunctionOrigin
     | parameters: List(Str)
     | body: Expr
+    | resultReach: ResultReachState
 
 // Each registered function name with the ownership of each of its parameters, in parameter order.
 type alias ProgramParameterOwnership = List((Str, List((Str, ParameterOwnership))))
@@ -52,121 +43,6 @@ let notBool (b: Bool) =
     if b
     then false
     else true
-
-let recursive listContainsCause (list: List(ResultReachCause)) (target: ResultReachCause) =
-    match list with
-        | [] -> false
-        | head :: tail ->
-            if head == target
-            then true
-            else listContainsCause(tail)(target)
-
-let reachBottom unit = ResultReachState(counts = [], causes = [], isPoisoned = false)
-
-let reachParam (param: Str) = ResultReachState(counts = [ParameterReachEntry(parameterName = param, reachCount = 1)], causes = [], isPoisoned = false)
-
-let reachPoisoned (cause: ResultReachCause) = ResultReachState(counts = [], causes = [cause], isPoisoned = true)
-
-// --- ResultReachState operations ---
-let recursive lookupCount pairs key =
-    match pairs with
-        | [] -> 0
-        | entry :: rest ->
-            match entry with
-                | ParameterReachEntry { parameterName = k, reachCount = v } ->
-                    if k == key
-                    then v
-                    else lookupCount(rest)(key)
-
-let recursive updateOrInsertCount key val pairs =
-    match pairs with
-        | [] -> [ParameterReachEntry(parameterName = key, reachCount = val)]
-        | entry :: rest ->
-            match entry with
-                | ParameterReachEntry { parameterName = k, reachCount = v } ->
-                    if k == key
-                    then ParameterReachEntry(parameterName = key, reachCount = val) :: rest
-                    else ParameterReachEntry(parameterName = k, reachCount = v) :: updateOrInsertCount(key)(val)(rest)
-
-let recursive mergeCountsJoin a b =
-    match b with
-        | [] -> a
-        | entry :: rest ->
-            match entry with
-                | ParameterReachEntry { parameterName = k, reachCount = v } ->
-                    let cur = lookupCount(a)(k)
-                    in
-                        let maxVal =
-                            if v > cur
-                            then v
-                            else cur
-                        in
-                            let nextA = updateOrInsertCount(k)(maxVal)(a)
-                            in mergeCountsJoin(nextA)(rest)
-
-let recursive mergeCauses (a: List(ResultReachCause)) (b: List(ResultReachCause)) =
-    match b with
-        | [] -> a
-        | c :: rest ->
-            if listContainsCause(a)(c)
-            then mergeCauses(a)(rest)
-            else mergeCauses(c :: a)(rest)
-
-let reachJoin (a: ResultReachState) (b: ResultReachState) =
-    match a with
-        | ResultReachState { counts = cA, causes = causesA, isPoisoned = pA } ->
-            match b with
-                | ResultReachState { counts = cB, causes = causesB, isPoisoned = pB } ->
-                    let newCounts = mergeCountsJoin(cA)(cB)
-                    in
-                        let newCauses = mergeCauses(causesA)(causesB)
-                        in
-                            let poisoned =
-                                if pA
-                                then true
-                                else pB
-                            in ResultReachState(counts = newCounts, causes = newCauses, isPoisoned = poisoned)
-
-let recursive mergeCountsSum a b hasInternalSharing =
-    match b with
-        | [] -> (a, hasInternalSharing)
-        | entry :: rest ->
-            match entry with
-                | ParameterReachEntry { parameterName = k, reachCount = v } ->
-                    let cur = lookupCount(a)(k)
-                    in
-                        let sumVal = cur + v
-                        in
-                            let sharing =
-                                if hasInternalSharing
-                                then true
-                                else sumVal >= 2
-                            in
-                                let nextA = updateOrInsertCount(k)(sumVal)(a)
-                                in mergeCountsSum(nextA)(rest)(sharing)
-
-let reachSum (a: ResultReachState) (b: ResultReachState) =
-    match a with
-        | ResultReachState { counts = cA, causes = causesA, isPoisoned = pA } ->
-            match b with
-                | ResultReachState { counts = cB, causes = causesB, isPoisoned = pB } ->
-                    match mergeCountsSum(cA)(cB)(false) with
-                        | (newCounts, sharing) ->
-                            let baseCauses = mergeCauses(causesA)(causesB)
-                            in
-                                let newCauses =
-                                    if sharing
-                                    then mergeCauses(baseCauses)([InternalSharing])
-                                    else baseCauses
-                                in
-                                    let poisoned =
-                                        if pA
-                                        then true
-                                        else
-                                            if pB
-                                            then true
-                                            else sharing
-                                    in ResultReachState(counts = newCounts, causes = newCauses, isPoisoned = poisoned)
 
 // --- Borrow-read analysis ---
 let isBorrowReadResourceOp (moduleName: Str) (name: Str) =
@@ -830,208 +706,6 @@ let recursive registerTopLevelItems (items: List(TopLevelItem)) (acc: List((Str,
 // binding contributing an empty parameter list.
 let topLevelFunctions (program: ProgramSyntax) = registerTopLevelItems(program.items)([])
 
-// --- Result Reachability Analysis for an Expression ---
-// A component of a bound value's reach (stage 0's `ExtendPaths`): the parent's entries under the
-// component's own path (`items/0`), so two distinct components of one parameter stay disjoint
-// siblings (rebuilding a value from its own parts is no sharing) while the same component used
-// twice still sums to a shared reach.
-let recursive componentEntries (index: Int) (entries: List(ParameterReachEntry)) =
-    match entries with
-        | [] -> []
-        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest -> ParameterReachEntry(parameterName = name + "/" + Ashes.Text.fromInt(index), reachCount = count) :: componentEntries(index)(rest)
-
-let componentReach (index: Int) (parent: ResultReachState) =
-    match parent with
-        | ResultReachState { counts = counts } -> parent with counts = componentEntries(index)(counts)
-
-// Whether a bare pattern name is a data constructor rather than a binder: constructors are
-// capitalized, binders never are.
-let patternNameIsConstructor (name: Str) =
-    Ashes.Text.length(name) > 0 && Ashes.Text.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ")(Ashes.Text.substring(name)(0)(1))
-
-// Stage 0's `BindPatternPaths`: every binder of the pattern bound to its component of the
-// scrutinee's reach, a whole-value binder to the scrutinee's reach itself.
-let recursive bindPatternReach (pattern: Pattern) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
-    match pattern with
-        | PatternAt(_span, inner) -> bindPatternReach(inner)(parent)(env)
-        | PatternVar(name) ->
-            if patternNameIsConstructor(name)
-            then env
-            else (name, parent) :: env
-        | PatternAs(inner, name) -> (name, parent) :: bindPatternReach(inner)(parent)(env)
-        | PatternCons(head, tail) ->
-            env
-            |> bindPatternReach(head)(componentReach(0)(parent))
-            |> bindPatternReach(tail)(componentReach(1)(parent))
-        | PatternTuple(elements) -> bindPatternComponents(elements)(0)(parent)(env)
-        | PatternConstructor(_constructor, fields) -> bindPatternComponents(fields)(0)(parent)(env)
-        | PatternRecord(_record, fields) -> bindRecordPatternComponents(fields)(0)(parent)(env)
-        | PatternOr(alternatives) -> bindPatternAlternatives(alternatives)(parent)(env)
-        | _ -> env
-and bindPatternComponents (patterns: List(Pattern)) (index: Int) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
-    match patterns with
-        | [] -> env
-        | pattern :: rest ->
-            env
-            |> bindPatternReach(pattern)(componentReach(index)(parent))
-            |> bindPatternComponents(rest)(index + 1)(parent)
-and bindRecordPatternComponents (fields: List((Str, Pattern))) (index: Int) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
-    match fields with
-        | [] -> env
-        | (_field, pattern) :: rest ->
-            env
-            |> bindPatternReach(pattern)(componentReach(index)(parent))
-            |> bindRecordPatternComponents(rest)(index + 1)(parent)
-and bindPatternAlternatives (alternatives: List(Pattern)) (parent: ResultReachState) (env: List((Str, ResultReachState))) =
-    match alternatives with
-        | [] -> env
-        | alternative :: rest ->
-            env
-            |> bindPatternReach(alternative)(parent)
-            |> bindPatternAlternatives(rest)(parent)
-
-let recursive lookupEnv (name: Str) (env: List((Str, ResultReachState))) =
-    match env with
-        | [] -> None
-        | entry :: rest ->
-            match entry with
-                | (k, state) ->
-                    if k == name
-                    then Some(state)
-                    else lookupEnv(name)(rest)
-
-let recursive analyzeExprReach (expr: Expr) (env: List((Str, ResultReachState))) =
-    match expr with
-        | ExprAt(_span, inner) -> analyzeExprReach(inner)(env)
-        | ExprInt(_) -> reachBottom(Unit)
-        | ExprBigInt(_) -> reachBottom(Unit)
-        | ExprUInt(_, _, _) -> reachBottom(Unit)
-        | ExprFloat(_, _) -> reachBottom(Unit)
-        | ExprBool(_) -> reachBottom(Unit)
-        | ExprString(_) -> reachBottom(Unit)
-        | ExprRune(_) -> reachBottom(Unit)
-        | ExprVar(name) ->
-            // Bare variable return/use is consuming, not borrow
-            match lookupEnv(name)(env) with
-                | Some(state) -> state
-                | None -> reachBottom(Unit)
-        | ExprQualifiedVar(_, _) -> reachBottom(Unit)
-        | ExprIf(_cond, thenE, elseE) ->
-            let reachThen = analyzeExprReach(thenE)(env)
-            in
-                let reachElse = analyzeExprReach(elseE)(env)
-                in reachJoin(reachThen)(reachElse)
-        | ExprLet(name, val, body, _params, _ann, _traits) ->
-            let valReach = analyzeExprReach(val)(env)
-            in
-                let nextEnv = (name, valReach) :: env
-                in analyzeExprReach(body)(nextEnv)
-        | ExprLetResult(name, val, body) ->
-            let valReach = analyzeExprReach(val)(env)
-            in
-                let nextEnv = (name, valReach) :: env
-                in analyzeExprReach(body)(nextEnv)
-        | ExprLetRecursive(recName, val, body, _params, _ann, _traits) ->
-            let valReach = analyzeExprReach(val)(env)
-            in
-                let nextEnv = (recName, valReach) :: env
-                in analyzeExprReach(body)(nextEnv)
-        | ExprLambda(_p, body, _ann) -> analyzeExprReach(body)(env)
-        // A call through a module-qualified name (a builtin, a module function) or through a
-        // computed callee is not modelled and poisons; a call through a plain name sums the callee's
-        // and the argument's reach, the result standing in for the callee's own summary.
-        | ExprCall(func, arg, _isSugar, _layout) ->
-            match collectCallArgsAndRoot(func)([]) with
-                | (ExprVar(_name), _arguments) ->
-                    env
-                    |> analyzeExprReach(arg)
-                    |> reachSum(analyzeExprReach(func)(env))
-                | _ -> reachPoisoned(UnmodelledReach)
-        | ExprMatch(scrutinee, arms, _defaultArm) ->
-            analyzeMatchArmsReach(arms)(analyzeExprReach(scrutinee)(env))(env)
-        | ExprTuple(elements) -> analyzeExprListSumReach(elements)(env)
-        | ExprList(elements, _isMultiline) -> analyzeExprListSumReach(elements)(env)
-        | ExprCons(head, tail) ->
-            let hReach = analyzeExprReach(head)(env)
-            in
-                let tReach = analyzeExprReach(tail)(env)
-                in reachSum(hReach)(tReach)
-        | ExprRecord(_, fields, _isMultiline) -> analyzeRecordFieldsSumReach(fields)(env)
-        | ExprRecordUpdate(record, fields) ->
-            let rReach = analyzeExprReach(record)(env)
-            in
-                let fReach = analyzeRecordFieldsSumReach(fields)(env)
-                in reachSum(rReach)(fReach)
-        // Arithmetic, bitwise, shift, logical, and comparison results are copy-typed scalars: they
-        // reach no heap cell, so they are confined and reach no parameter.
-        | ExprAdd(_left, _right) -> reachBottom(Unit)
-        | ExprSubtract(_left, _right) -> reachBottom(Unit)
-        | ExprMultiply(_left, _right) -> reachBottom(Unit)
-        | ExprDivide(_left, _right) -> reachBottom(Unit)
-        | ExprModulo(_left, _right) -> reachBottom(Unit)
-        | ExprBitwiseAnd(_left, _right) -> reachBottom(Unit)
-        | ExprBitwiseOr(_left, _right) -> reachBottom(Unit)
-        | ExprBitwiseXor(_left, _right) -> reachBottom(Unit)
-        | ExprShiftLeft(_left, _right) -> reachBottom(Unit)
-        | ExprShiftRight(_left, _right) -> reachBottom(Unit)
-        | ExprBitwiseNot(_operand) -> reachBottom(Unit)
-        | ExprLogicalNot(_operand) -> reachBottom(Unit)
-        | ExprLogicalAnd(_left, _right) -> reachBottom(Unit)
-        | ExprLogicalOr(_left, _right) -> reachBottom(Unit)
-        | ExprEqual(_left, _right) -> reachBottom(Unit)
-        | ExprNotEqual(_left, _right) -> reachBottom(Unit)
-        | ExprLessThan(_left, _right) -> reachBottom(Unit)
-        | ExprLessOrEqual(_left, _right) -> reachBottom(Unit)
-        | ExprGreaterThan(_left, _right) -> reachBottom(Unit)
-        | ExprGreaterOrEqual(_left, _right) -> reachBottom(Unit)
-        | ExprResultPipe(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprResultMapErrorPipe(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprAwait(e) -> analyzeExprReach(e)(env)
-        | ExprPerform(e) -> analyzeExprReach(e)(env)
-        | _ -> reachPoisoned(UnmodelledReach)
-and analyzeExprListSumReach (elements: List(Expr)) (env: List((Str, ResultReachState))) =
-    match elements with
-        | [] -> reachBottom(Unit)
-        | head :: tail ->
-            let h = analyzeExprReach(head)(env)
-            in
-                let t = analyzeExprListSumReach(tail)(env)
-                in reachSum(h)(t)
-and analyzeRecordFieldsSumReach (fields: List((Str, Expr))) (env: List((Str, ResultReachState))) =
-    match fields with
-        | [] -> reachBottom(Unit)
-        | field :: tail ->
-            match field with
-                | (_, expr) ->
-                    let e = analyzeExprReach(expr)(env)
-                    in
-                        let rest = analyzeRecordFieldsSumReach(tail)(env)
-                        in reachSum(e)(rest)
-// Each arm is analyzed with its pattern's binders bound to the scrutinee's reach (stage 0's
-// `MatchReach`): a matched head or field is the only way a parameter's component reaches the
-// result, so an arm that keeps one in its result reaches the parameter through it.
-and analyzeMatchArmsReach (arms: List((Pattern, Expr, Maybe(Expr)))) (scrutineeReach: ResultReachState) (env: List((Str, ResultReachState))) =
-    match arms with
-        | [] -> reachBottom(Unit)
-        | arm :: tail ->
-            match arm with
-                | (pattern, body, _guard) ->
-                    let armReach =
-                        env
-                        |> bindPatternReach(pattern)(scrutineeReach)
-                        |> analyzeExprReach(body)
-                    in
-                        let restReach = analyzeMatchArmsReach(tail)(scrutineeReach)(env)
-                        in reachJoin(armReach)(restReach)
-
 // --- Parameter Ownership Classification & Summary Construction ---
 let recursive classifyParameterOwnership (params: List(Str)) (body: Expr) (acc: List((Str, ParameterOwnership))) =
     match params with
@@ -1044,11 +718,6 @@ let recursive classifyParameterOwnership (params: List(Str)) (body: Expr) (acc: 
                     then Borrowed
                     else Consumed
                 in classifyParameterOwnership(rest)(body)((param, own) :: acc)
-
-let recursive buildInitialEnv (params: List(Str)) (acc: List((Str, ResultReachState))) =
-    match params with
-        | [] -> acc
-        | param :: rest -> buildInitialEnv(rest)((param, reachParam(param)) :: acc)
 
 let recursive makeMoveSafetyProofs (params: List(Str)) (acc: List((Str, ParameterMoveSafetyProof))) =
     match params with
@@ -1067,63 +736,40 @@ let recursive lookupProvenance (name: Str) (provMap: List((Str, FunctionResultPr
                     then Some(v)
                     else lookupProvenance(name)(rest)
 
-// The parameters this walk reaches whole: an entry under a parameter's own name. A pattern-bound
-// head or field reaches its parameter's component under a path entry (`items/0`, stage 0's
-// "values/0"), which counts as a reach but not as a whole reach.
-let recursive reachedParameterNames (entries: List(ParameterReachEntry)) =
-    match entries with
-        | [] -> []
-        | ParameterReachEntry { parameterName = name } :: rest ->
-            if Ashes.Text.contains(name)("/")
-            then reachedParameterNames(rest)
-            else name :: reachedParameterNames(rest)
-
 let inferFunctionOwnershipWith (sig: FunctionSignature) (provMap: List((Str, FunctionResultProvenance))) (paramOwnership: List((Str, ParameterOwnership))) =
     match sig with
-        | FunctionSignature { name = fName, origin = origin, parameters = params, body = body } ->
-            let initialEnv = buildInitialEnv(params)([])
+        | FunctionSignature { name = fName, origin = origin, parameters = params, body = body, resultReach = resultReach } ->
+            let reachFacts = reachFactsOf(resultReach)
             in
-                let reachState = analyzeExprReach(body)(initialEnv)
+                let borrowed = getBorrowedParameters(paramOwnership)
                 in
-                    let reachFacts =
-                        match reachState with
-                            | ResultReachState { counts = counts, causes = causes, isPoisoned = poisoned } ->
-                                FunctionResultReachFacts(
-                                    parameterReach = counts,
-                                    causes = causes,
-                                    isPoisoned = poisoned,
-                                    wholeParameterReach = reachedParameterNames(counts)
-                                )
+                    let consumed = getConsumedParameters(paramOwnership)
                     in
-                        let borrowed = getBorrowedParameters(paramOwnership)
+                        let census = FunctionCallCensus(directCallCount = 1, causes = [CensusCauseNone])
                         in
-                            let consumed = getConsumedParameters(paramOwnership)
+                            let moveProofs = makeMoveSafetyProofs(params)([])
                             in
-                                let census = FunctionCallCensus(directCallCount = 1, causes = [CensusCauseNone])
+                                let prov =
+                                    match lookupProvenance(fName)(provMap) with
+                                        | Some(p) -> p
+                                        | None -> FunctionResultProvenance(rcEligible = true, forwardsTo = None, bytesProvenance = BytesProvenanceUnknown)
                                 in
-                                    let moveProofs = makeMoveSafetyProofs(params)([])
-                                    in
-                                        let prov =
-                                            match lookupProvenance(fName)(provMap) with
-                                                | Some(p) -> p
-                                                | None -> FunctionResultProvenance(rcEligible = true, forwardsTo = None, bytesProvenance = BytesProvenanceUnknown)
-                                        in
-                                            FunctionOwnershipSummary(
-                                                functionName = fName,
-                                                origin = origin,
-                                                parameters = params,
-                                                parameterOwnership = paramOwnership,
-                                                borrowedParameters = borrowed,
-                                                consumedParameters = consumed,
-                                                uniqueParameters = params,
-                                                callCensus = census,
-                                                parameterMoveSafety = moveProofs,
-                                                capturedValues = computeCaptures(body)(params),
-                                                resultReachFacts = reachFacts,
-                                                resultProvenance = prov,
-                                                tcoParamFacts = [],
-                                                mayExecuteUnderLiveHandlerPost = false
-                                            )
+                                    FunctionOwnershipSummary(
+                                        functionName = fName,
+                                        origin = origin,
+                                        parameters = params,
+                                        parameterOwnership = paramOwnership,
+                                        borrowedParameters = borrowed,
+                                        consumedParameters = consumed,
+                                        uniqueParameters = params,
+                                        callCensus = census,
+                                        parameterMoveSafety = moveProofs,
+                                        capturedValues = computeCaptures(body)(params),
+                                        resultReachFacts = reachFacts,
+                                        resultProvenance = prov,
+                                        tcoParamFacts = [],
+                                        mayExecuteUnderLiveHandlerPost = false
+                                    )
 
 // The single-function summary: parameter ownership from the body alone.
 let inferFunctionOwnership (sig: FunctionSignature) (provMap: List((Str, FunctionResultProvenance))) =

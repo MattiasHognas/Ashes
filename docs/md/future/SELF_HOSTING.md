@@ -1510,14 +1510,28 @@ same public behavior.
   spine-only on the owned branch, with the elements on the copied one), and stage 0 also
   releases the elements outright after an unconditional head-copying list copy-out (the selfhost
   has no unconditional call copy-out yet, so only its conditional case applies). The parity fixture
-  `consumed_string_list_copied_release` covers the branch in both compilers. The string fixture
-  still grows in the selfhost (9.4 MB to 43 MB) for an older reason: its result-reach analysis
-  sums a plain-name call's callee and argument reach instead of substituting the callee's own
-  summary, binds a `let recursive` name to its analyzed body instead of registering the nested
-  function, and treats an unbound name as bottom instead of poison, so `append`'s summary says
-  its result keeps both parameters whole (stage 0: `left` by component, poisoned) and both fresh
-  `map` results hand over without a retain or release. Porting stage 0's function registry,
-  call-site substitution, and nested-recursive shape is the next item. Still open: an
+  `consumed_string_list_copied_release` covers the branch in both compilers. Done (2026-09-06):
+  the string fixture still grew in the selfhost (9.4 MB to 43 MB) because its result-reach
+  analysis was a per-function approximation: a plain-name call summed the callee's and the
+  argument's reach (so the argument read as reached whole), a `let recursive` name was bound to
+  its analyzed body instead of the nested function being registered, and an unbound name was
+  bottom instead of poison, so `append`'s summary said its result keeps both parameters whole
+  (stage 0: `left` by component, poisoned) and both fresh `map` results handed over without a
+  retain or release. `ResultReachSummaries.ash` now ports stage 0's `MoveAnalysis` result reach:
+  a registry of every let-bound function, nested ones included, with the functions in scope of
+  its body (sequential top-level scoping, recursive groups, parameter and pattern shadowing), the
+  Map.set shape registered over its outer parameters plus accumulator with the inner self-call
+  resolved against the enclosing summary, a least fixpoint from bottom, call-site substitution
+  of the callee's stored summary (whole roots versus `name/*` components, multiplicity capped at
+  two with internal-sharing and path-ancestor poison, over-application inlined one level over
+  argument markers), constructor and record fields skipping copy-typed scalars, sole nullary
+  constructors, dotted field reads through named sub-cells, and poison for free names, lambdas,
+  pipes, handlers, and unmodelled calls. The lowering resolves a callee's summary by name and
+  lambda identity (`letLambdaIdentities`), taking the registered parameters and body, and the
+  decision snapshot lists nested functions with their qualified names. The string fixture is flat
+  at 5.6 MB and the ownership report of the append probe matches stage 0 line for line;
+  `aggregate_children_retain`'s ownership explain fixture matches and its known difference is
+  retired. Still open: an
   un-annotated parameter misses the pre-body decision (its type resolves only inside the body),
   so its record stays arena-placed as before; and the selfhost still lacks the generic list
   deep-copy call path (`LowerCallDeepCopyOutListResult`). Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into

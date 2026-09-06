@@ -38,6 +38,14 @@ import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
 import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
+import AshesCompiler.Semantics.ResultReachSummaries.ReachSummary
+import AshesCompiler.Semantics.ResultReachSummaries.ReachFunction
+import AshesCompiler.Semantics.ResultReachSummaries.programReachSummaries
+import AshesCompiler.Semantics.ResultReachSummaries.expressionReachSummaries
+import AshesCompiler.Semantics.ResultReachSummaries.reachSummaryFor
+import AshesCompiler.Semantics.ResultReachSummaries.reachSummaryNamed
+import AshesCompiler.Semantics.ResultReachSummaries.lambdaIdentityOf
+import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
@@ -347,6 +355,11 @@ type CoreLoweringState =
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | letLambdaLabels: List((Str, Str))
+    // The lambda identity (`lambdaIdentityOf`) recorded under each let-bound function's name,
+    // resolving its whole-program result-reach summary among same-named functions.
+    | letLambdaIdentities: List((Str, Int))
+    // The whole-program result-reach summaries of the program being lowered.
+    | reachSummaries: List(ReachSummary)
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
@@ -617,6 +630,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeNormalizedArgumentLabels = [],
         recursiveGroupNames = [],
         letLambdaLabels = [],
+        letLambdaIdentities = [],
+        reachSummaries = [],
         programParameterOwnership = [],
         dropperLabels = emptyDropperLabelCache,
         tcoLoop = None,
@@ -831,7 +846,7 @@ let recursive lambdaParameterChain (value: Expr) (parameters: List(Str)) =
 // parameters it only borrows (stage 0's per-function ownership summary).
 let recordLetLambda (name: Str) (value: Expr) (state: CoreLoweringState) =
     match lambdaParameterChain(value)([]) with
-        | (parameters, body) -> state with letLambdas = (name, parameters, body) :: state.letLambdas
+        | (parameters, body) -> state with letLambdas = (name, parameters, body) :: state.letLambdas, letLambdaIdentities = (name, lambdaIdentityOf(value)) :: state.letLambdaIdentities
 
 let armSourceFunction (name: Str) (value: Expr) (stackClosure: Bool) (state: CoreLoweringState) =
     if letValueIsLambda(value)
@@ -6467,6 +6482,36 @@ let ensureResultRcEligibility (state: CoreLoweringState) =
                 |> resultProvenanceNodes(provenanceFunctionsOf(state.letLambdas))(provenanceConstructorsOf(state))
                 |> resolvedRcEligibility)
 
+let recursive lookupLetLambdaIdentity (name: Str) (identities: List((Str, Int))) =
+    match identities with
+        | [] -> None
+        | (candidate, identity) :: rest ->
+            if candidate == name
+            then Some(identity)
+            else lookupLetLambdaIdentity(name)(rest)
+
+// Stage 0's ownership summary of a let-bound callee: the whole-program result-reach summary of
+// the function recorded under the name (by its lambda identity, else by name), whose parameters
+// and body are the registered ones (a Map.set-shaped function's outer parameters plus its
+// accumulator over the inner body); a callee outside the program's registry keeps its recorded
+// chain with its reach computed on its own.
+let calleeReachSummary (callee: Str) (recordedParameters: List(Str)) (recordedBody: Expr) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { letLambdaIdentities = identities, reachSummaries = summaries } ->
+            let byIdentity =
+                match lookupLetLambdaIdentity(callee)(identities) with
+                    | Some(identity) -> reachSummaryFor(callee)(identity)(summaries)
+                    | None -> None
+            in
+                let summary =
+                    match byIdentity with
+                        | Some(found) -> Some(found)
+                        | None -> reachSummaryNamed(callee)(summaries)
+                in
+                    match summary with
+                        | Some(ReachSummary { function = ReachFunction { parameters = parameters, body = body }, reach = reach }) -> (parameters, body, reach)
+                        | None -> (recordedParameters, recordedBody, singleFunctionReach(recordedParameters)(recordedBody))
+
 // Stage 0's known-callee resolution for a call spine: a let-bound function called by name
 // carries its label, the ownership of its parameters (the single-function verdict overlaid with
 // the whole-program fixpoint, as `markCallArgumentsMoved` consults it), and the parameter reach
@@ -6475,17 +6520,19 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
             match lookupLetLambda(callee)(state.letLambdas) with
-                | Some((parameters, body)) ->
-                    Some(CoreCalleeFacts(
-                        label = lookupLetLambdaLabel(callee)(state.letLambdaLabels),
-                        parameters = parameters,
-                        ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
-                        reach = calleeReach(parameters)(body),
-                        rcEligible = state
-                        |> resultRcEligibilityOf
-                        |> lookupRcEligible(callee),
-                        argumentCount = length(spine.arguments)
-                    ))
+                | Some((recordedParameters, recordedBody)) ->
+                    match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
+                        | (parameters, body, reach) ->
+                            Some(CoreCalleeFacts(
+                                label = lookupLetLambdaLabel(callee)(state.letLambdaLabels),
+                                parameters = parameters,
+                                ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
+                                reach = reach,
+                                rcEligible = state
+                                |> resultRcEligibilityOf
+                                |> lookupRcEligible(callee),
+                                argumentCount = length(spine.arguments)
+                            ))
                 | None -> None
         | _ -> None
 
@@ -13836,7 +13883,10 @@ let buildProgram lowered =
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered
 // top-level functions, the verdict `markCallArgumentsMoved` consults for hand-offs.
 let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
-    state with programParameterOwnership = inferProgramParameterOwnership(topLevelFunctions(program))
+    state with programParameterOwnership = inferProgramParameterOwnership(topLevelFunctions(program)), reachSummaries = programReachSummaries(program)
+
+// Seeds the state with the result-reach summaries of the functions a bare expression binds.
+let withExpressionReachSummaries (expression: Expr) (state: CoreLoweringState) = state with reachSummaries = expressionReachSummaries(expression)
 
 let lowerCoreProgram (program: ProgramSyntax) =
     match program with
@@ -13929,30 +13979,35 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
 let lowerCoreExpression expression =
     Unit
     |> initialState
+    |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
 
 let lowerCoreExpressionWithLayouts layouts expression =
     Unit
     |> initialStateWithLayouts(layouts)
+    |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
 
 let lowerCoreExpressionWithContext constructorLayouts builtinLayouts expression =
     Unit
     |> initialStateWithContext(constructorLayouts)(builtinLayouts)
+    |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
 
 let lowerCoreExpressionWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes expression =
     Unit
     |> initialStateWithFullContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)
+    |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
 
 let lowerCoreExpressionWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount expression =
     Unit
     |> initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)(capabilityLayouts)(staticProviders)(capabilityGlobalCount)
+    |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
 
@@ -13962,6 +14017,7 @@ let lowerCoreExpressionLocated (context: SourceContext) (itemIndex: Int) express
     Unit
     |> initialState
     |> (given (state: CoreLoweringState) -> state with sourceContext = Some(context), currentItem = itemIndex)
+    |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
 
