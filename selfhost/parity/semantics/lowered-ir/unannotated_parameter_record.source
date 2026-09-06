@@ -1,0 +1,11 @@
+type Item =
+    | name: Str
+    | flag: Bool
+
+let toEntry n = Item(name = n, flag = true)
+
+let describe (item: Item) =
+    match item with
+        | Item { name = name } -> name
+
+Ashes.IO.print(describe(toEntry("Found")))
