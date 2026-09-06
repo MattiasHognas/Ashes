@@ -1,81 +1,17 @@
 // The TCO loop lowering of a self-recursive function, checked against stage 0: the affine
 // self-append analysis that reserves a slot pair per accumulator at the loop entry, and the loop
 // function's lowered IR text for the fixtures whose whole program does not yet match stage 0
-// byte for byte (`selfhost/parity/semantics/lowered-ir`, read relative to the repository root
-// like the backend suite's shared programs).
+// byte for byte.
 import Ashes.Test as test
-import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
-import AshesCompiler.Semantics.CoreLowering
-import AshesCompiler.Semantics.Ir
-import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.TcoAffineAppend
+import LoweredIrFixtures.loweredFixtureLines
+import LoweredIrFixtures.stageZeroFixtureLines
+import LoweredIrFixtures.functionLines
+import LoweredIrFixtures.expectSameLines
 export (
     value runTcoLoopLoweringTests,
 )
-
-let fixtureRoot = "selfhost/parity/semantics/lowered-ir"
-
-let readFixture (path: Str) =
-    match Ashes.IO.File.readText(path) with
-        | Ok(value) -> value
-        | Error(message) -> test.fail("could not read " + path + ": " + message)
-
-let parsedProgram (source: Str) =
-    match parseProgram(source) with
-        | ProgramParseResult { program = program, diagnostics = [] } -> program
-        | ProgramParseResult { diagnostics = diagnostics } -> test.fail("program should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
-
-let loweredFixtureLines (name: Str) =
-    (let source = readFixture(fixtureRoot + "/" + name + ".source")
-    in
-        match source
-        |> parsedProgram
-        |> lowerCoreProgramWithSource(name + ".ash")(source) with
-            | CoreLoweringResult { program = Some(program), error = None } -> formatIr(program)(LoweredIr)(None)
-            | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed for " + name + ": " + Ashes.Trait.Show.show(error))
-            | _ -> test.fail("lowering produced no program for " + name))
-
-let stageZeroFixtureLines (name: Str) =
-    Ashes.Text.split(readFixture(fixtureRoot + "/" + name + ".ir"))("\n")
-
-let isFunctionHeader (line: Str) = Ashes.Text.startsWith(line)("function ")
-
-// The lines of the function whose header carries `originText`, up to the next header, trailing
-// blank lines dropped.
-let recursive functionBody (lines: List(Str)) (collected: List(Str)) =
-    match lines with
-        | [] -> Ashes.Collection.List.reverse(collected)
-        | line :: rest ->
-            if isFunctionHeader(line)
-            then Ashes.Collection.List.reverse(collected)
-            else functionBody(rest)(line :: collected)
-
-let recursive dropTrailingBlank (reversed: List(Str)) =
-    match reversed with
-        | "" :: rest -> dropTrailingBlank(rest)
-        | _ -> reversed
-
-let recursive functionLines (originText: Str) (lines: List(Str)) =
-    match lines with
-        | [] -> test.fail("no function with origin " + originText)
-        | line :: rest ->
-            if isFunctionHeader(line) && Ashes.Text.contains(line)(originText)
-            then
-                []
-                |> functionBody(rest)
-                |> Ashes.Collection.List.reverse
-                |> dropTrailingBlank
-                |> Ashes.Collection.List.reverse
-            else functionLines(originText)(rest)
-
-let expectSameLines (label: Str) (expected: List(Str)) (actual: List(Str)) =
-    if expected == actual
-    then Unit
-    else
-        test.fail(
-            label + "\nexpected:\n" + Ashes.Text.join("\n")(expected) + "\nactual:\n" + Ashes.Text.join("\n")(actual)
-        )
 
 let selfCall (arguments: List(Expr)) =
     Ashes.Collection.List.foldLeft(given (callee) ->

@@ -1610,8 +1610,24 @@ same public behavior.
   (`LowerLambdaCoreSeedParamTypeFromConstructorFields` / `seedParameterFromConstructorFields`),
   the unification the body would perform later; the fixture is flat in both compilers and the
   un-annotated builder lowers exactly as the annotated one (parity fixture
-  `unannotated_parameter_record`). Still open: the selfhost still lacks the generic list
-  deep-copy call path (`LowerCallDeepCopyOutListResult`). Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
+  `unannotated_parameter_record`). Done (2026-09-06, selfhost): the generic list deep-copy
+  call path. A known callee whose declared scheme yields a list over one of its own quantified
+  variables (`mapAll(toItem)(xs)`) builds its result for every instantiation alike, so a
+  result over records has no call copy-out and stayed in an open window in the selfhost. The
+  call now closes its window through the per-element deep copy the loop entry normalization
+  already uses (`emitCallDeepCopyOut`, stage 0's `LowerCallDeepCopyOutListResult`: the
+  `rc_normalize_list` walk, unconditionally when the call read no returns flag, else on the
+  flag's arena branch), the result is recorded as deep-copied (`genericDeepCopiedListTemps`),
+  the consumed arguments are released with their parts after it, and a consumed list an earlier
+  deep copy produced is left with a callee whose result reach is unknown when that result was
+  neither copied out nor produced reference-counted (stage 0's
+  `ConsumedDeepCopiedListStaysWithCallee`). A call result whose type still holds an unresolved
+  layout also takes the slot and temp stage 0's deferred copy-out placeholder takes, so a
+  generic body's numbering matches. The churn fixture's loop matches stage 0 apart from the
+  inlined `List.length` entry helper (not ported), and `CallWindowLoweringTests` pins the entry
+  function of parity fixture `generic_list_result_deep_copy` line for line (the whole program
+  stays out of the runner until the synthesized copier and epilogue carry stage 0's locations).
+  Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
   an aggregate is never retained at the store. For a runtime-RC aggregate that retain would be
   balanced by its dropper and is the Perceus-correct rule; for an arena aggregate (the self-hosted
   lowering's emitted instruction records, say) there is no dropper to balance it, so the arena

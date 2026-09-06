@@ -4,6 +4,11 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
+import LoweredIrFixtures.loweredFixtureLines
+import LoweredIrFixtures.stageZeroFixtureLines
+import LoweredIrFixtures.functionLines
+import LoweredIrFixtures.withoutLocations
+import LoweredIrFixtures.expectSameLines
 export (
     value runCallWindowLoweringTests,
 )
@@ -227,9 +232,28 @@ let expectConcatCarriesRuntimeFlag unit =
     |> expectInstruction("RcDrop                SourceTemp=3 TypeName=String OwnerSlot=4 RuntimeManaged=true")
     |> (given (_) -> Unit)
 
+// A generic callee's list result over records (`mapAll(toItem)([1, 2, 3])`) has no call
+// copy-out, so the program entry deep-copies it out of the call window through the
+// `rc_normalize_list` walk, unconditionally since the call read no returns flag, and the
+// consumed argument is released outright after it, matching stage 0 instruction for
+// instruction. Locations are left out: stage 0 tags the closure construction of a top-level
+// `let` with its declaration span, which the self-hosted lowering does not attach yet, and the
+// same gap keeps the whole program (the synthesized copier and epilogue of `toItem`) out of the
+// parity runner.
+let expectGenericListResultDeepCopyMatchesStageZero unit =
+    "generic_list_result_deep_copy"
+    |> loweredFixtureLines
+    |> functionLines("[ProgramEntry]")
+    |> withoutLocations
+    |> expectSameLines("generic list result deep copy program entry")("generic_list_result_deep_copy"
+    |> stageZeroFixtureLines
+    |> functionLines("[ProgramEntry]")
+    |> withoutLocations)
+
 let runCallWindowLoweringTests unit =
     Unit
     |> expectUnknownResultPlacementReadsReturnsBit
+    |> (given (_) -> expectGenericListResultDeepCopyMatchesStageZero(Unit))
     |> expectCurriedSelfCallKeepsWindowOpen
     |> expectNormalizedResultResetsEnclosingBracket
     |> expectFreshArgumentRetainedUnderAcceptsBit
