@@ -149,6 +149,73 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
             0, $"the consumed map results' records should be dropped with their spines; dump:\n{dump}");
     }
 
+    // The standard library's `append` borrows its parameters (its ownership summary says so), so
+    // the map results it is handed are consumed at the call and released by the caller, while its
+    // result's ownership is only known at run time (the callee's returns bit) and the
+    // string-element result takes the conditional list copy-out.
+    private const string GenericAppendOfGenericStringMapResultsSource = """
+        import Ashes.Collection.List as list
+
+        let bang (n: Str) = n + "!"
+
+        let recursive loop i acc =
+            if i == 0
+            then acc
+            else
+                let entries = list.append(list.map(bang)([Ashes.Text.fromInt(i)]))(list.map(bang)(["Testing"]))
+                in loop(i - 1)(acc + list.length(entries))
+
+        Ashes.IO.print(Ashes.Text.fromInt(loop(20000)(0)))
+        """;
+
+    private static IrProgram LowerProgramWithImports(string source)
+    {
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames);
+        HashSet<string> importedStandardModules = parsed.ImportNames
+            .Where(ProjectSupport.IsStdModule)
+            .ToHashSet(StringComparer.Ordinal);
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        IrProgram ir = new Lowering(
+            diagnostics,
+            importedStandardModules,
+            parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases).Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
+    // A string-element result takes the conditional list copy-out instead of the deep copy: its
+    // arena branch copies the heads too, so on that branch the consumed first argument shares
+    // nothing with the result and is released with its strings, while the owned branch keeps the
+    // spine-only release. Releasing spine-only on both leaked one string per element.
+    [Test]
+    public void Consumed_string_map_result_is_released_with_its_strings_on_the_copied_branch()
+    {
+        IrProgram ir = LowerProgramWithImports(GenericAppendOfGenericStringMapResultsSource);
+
+        IReadOnlyList<string> lines = IrTextFormatter.Format(ir, IrDumpStage.Lowered, filter: null);
+        string dump = string.Join('\n', lines);
+
+        int copied = dump.IndexOf("rc_consumed_copied_", StringComparison.Ordinal);
+        copied.ShouldBeGreaterThanOrEqualTo(
+            0, $"the consumed first argument's release should branch on the appended result's ownership; dump:\n{dump}");
+        string branches = dump[copied..];
+        branches.IndexOf("rcdrop_list_spine", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(
+            0, $"the owned branch keeps the spine-only release; dump:\n{dump}");
+        int copiedLabel = branches.IndexOf("rc_consumed_copied_", branches.IndexOf('\n', StringComparison.Ordinal), StringComparison.Ordinal);
+        copiedLabel.ShouldBeGreaterThanOrEqualTo(0, $"expected the copied branch's label; dump:\n{dump}");
+        string copiedBranch = branches[copiedLabel..];
+        int deepRelease = copiedBranch.IndexOf("rcdrop_list_", StringComparison.Ordinal);
+        deepRelease.ShouldBeGreaterThanOrEqualTo(
+            0, $"the copied branch should release the consumed list with its elements; dump:\n{dump}");
+        copiedBranch.IndexOf("TypeName=String RuntimeManaged=true", deepRelease, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(
+            0, $"the copied branch should drop the consumed list's strings; dump:\n{dump}");
+    }
+
     // The same deep-copied generic result consumed by a callee whose result stays in its own region
     // (never normalized, not produced runtime-managed) and whose ownership summary is poisoned: it
     // hands each record's string to an unknown closure that stores it into the state it returns.

@@ -2673,6 +2673,27 @@ public sealed class LinuxBackendCoverageTests
     }
 
     /// <summary>
+    /// The string sibling: the appended result takes the conditional list copy-out, whose arena
+    /// branch copies the string heads, so the consumed first argument is released with its strings
+    /// on that branch and spine-only on the owned one. Releasing spine-only on both leaked one string
+    /// per element.
+    /// </summary>
+    [Test]
+    public async Task Linux_backend_llvm_generic_map_returning_strings_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureImportedMemoryGrowthAsync(
+            BuildGenericMapStringResultMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("generic map returning strings", samples);
+    }
+
+    /// <summary>
     /// Root-cause probe for the leak above: the ADT shell built at the TCO loop's exit arm must be
     /// runtime-managed (RC) whenever it stores runtime-managed children, exactly like the equivalent
     /// tuple shape already is (see <see cref="AssertRuntimeRcTupleTcoProbe"/>'s sibling coverage).
@@ -7285,6 +7306,22 @@ public sealed class LinuxBackendCoverageTests
                 then acc
                 else
                     let entries = list.append(list.map(toEntry)([Ashes.Text.fromInt(i)]))(list.map(toEntry)(["Testing"]))
+                    in loop(i - 1)(acc + list.length(entries))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildGenericMapStringResultMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.List as list
+
+            let bang (n: Str) = n + "!"
+
+            let recursive loop i acc =
+                if i == 0
+                then acc
+                else
+                    let entries = list.append(list.map(bang)([Ashes.Text.fromInt(i)]))(list.map(bang)(["Testing"]))
                     in loop(i - 1)(acc + list.length(entries))
 
             Ashes.IO.print(loop({{iterations}})(0))

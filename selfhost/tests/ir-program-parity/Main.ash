@@ -79,7 +79,10 @@ let checkFixture root name =
 // only the callee's returns bit knows, and call_argument_retain the retain of a fresh
 // reference-counted argument under the callee's accepts bit with its release after the call.
 // consumed_list_argument adds the inline list walk releasing a fresh list argument the callee
-// did not take, element heads included.
+// did not take, element heads included; consumed_string_list_copied_release the release of a
+// fresh string-list argument the callee's result keeps parts of, branching on the result's
+// returns bit: spine-only where the result stayed reference-counted, strings included where the
+// conditional copy-out copied its heads.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 // match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
@@ -128,6 +131,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("call_result_copy_out"))
         |> (given (_) -> checkFixture(root)("call_argument_retain"))
         |> (given (_) -> checkFixture(root)("consumed_list_argument"))
+        |> (given (_) -> checkFixture(root)("consumed_string_list_copied_release"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))

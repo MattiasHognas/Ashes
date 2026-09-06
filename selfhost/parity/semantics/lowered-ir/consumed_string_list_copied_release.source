@@ -1,0 +1,15 @@
+let bang (n: Str) = n + "!"
+
+let pair (a: Str) = [bang(a), bang(a)]
+
+let rebuilt (xs: List(Str)) =
+    match xs with
+        | [] -> []
+        | head :: tail -> head :: tail
+
+let count (items: List(Str)) =
+    match items with
+        | [] -> 0
+        | _ :: _ -> 1
+
+Ashes.IO.print(Ashes.Text.fromInt(count(rebuilt(pair("a")))))

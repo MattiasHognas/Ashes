@@ -7120,7 +7120,30 @@ let emitChildPreservingDrop (valueTemp: Int) (semanticType: SemanticType) (state
 // closure is closed and released, an argument whose parts the callee's arena-placed result may
 // still reference gives up only the references the caller owns, and any other is released with
 // its owned children.
-let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
+// Stage 0's `EmitConsumedArgumentDropByResultBranch`: the consumed argument's release chosen by
+// the call's result branch. The owned branch (the callee returned a reference-counted result
+// that may hold the argument's parts) keeps the child-preserving release; the copied branch
+// (the arena result was copied out with its heads) releases the argument with its parts.
+let emitConsumedArgumentDropByResultBranch (temp: Int) (valueType: SemanticType) (resultFlagTemp: Int) (state: CoreLoweringState) =
+    match freshLabel("rc_consumed_copied")(state) with
+        | FreshLabel { state = copiedState, label = copiedLabel } ->
+            match freshLabel("rc_consumed_done")(copiedState) with
+                | FreshLabel { state = doneState, label = doneLabel } ->
+                    doneState
+                    |> emit(JumpIfFalse(resultFlagTemp)(copiedLabel))
+                    |> emitChildPreservingDrop(temp)(valueType)
+                    |> emit(Jump(doneLabel))
+                    |> emit(Label(copiedLabel))
+                    |> emitRuntimeChildDrop(temp)(valueType)
+                    |> emit(Label(doneLabel))
+
+// Stage 0's `LowerCallDropConsumedRuntimeArguments` for one argument: a scalar needs nothing, a
+// closure is closed and released, an argument whose parts the callee's arena-placed result may
+// still reference gives up only the references the caller owns (or, when the result's
+// conditional list copy-out copies the heads on its arena branch, `elementCopyingFlagTemp` is
+// that branch's flag and the release follows it), and any other is released with its owned
+// children.
+let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (elementCopyingFlagTemp: Int) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
@@ -7133,27 +7156,30 @@ let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (consumed: CoreConsum
                     then state
                     else
                         if preserve && verifiedRuntimeResult == false
-                        then emitChildPreservingDrop(temp)(valueType)(state)
+                        then
+                            if elementCopyingFlagTemp >= 0
+                            then emitConsumedArgumentDropByResultBranch(temp)(valueType)(elementCopyingFlagTemp)(state)
+                            else emitChildPreservingDrop(temp)(valueType)(state)
                         else emitRuntimeChildDrop(temp)(valueType)(state)
 
 // Each consumed temp is released once.
-let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (dropped: List(Int)) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (elementCopyingFlagTemp: Int) (dropped: List(Int)) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
     match consumed with
         | [] -> state
         | (CoreConsumedArgument { temp = temp } as argument) :: rest ->
             if containsInt(temp)(dropped)
-            then emitConsumedArgumentDrops(verifiedRuntimeResult)(dropped)(rest)(state)
+            then emitConsumedArgumentDrops(verifiedRuntimeResult)(elementCopyingFlagTemp)(dropped)(rest)(state)
             else
                 state
-                |> emitConsumedArgumentDrop(verifiedRuntimeResult)(argument)
-                |> emitConsumedArgumentDrops(verifiedRuntimeResult)(temp :: dropped)(rest)
+                |> emitConsumedArgumentDrop(verifiedRuntimeResult)(elementCopyingFlagTemp)(argument)
+                |> emitConsumedArgumentDrops(verifiedRuntimeResult)(elementCopyingFlagTemp)(temp :: dropped)(rest)
 
 // A partial application keeps its fresh arguments alive in the returned closure.
-let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (elementCopyingFlagTemp: Int) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            emitConsumedArgumentDrops(calleeCompiledResultRuntimeManaged(context.facts)(state))([])(consumed)(state)
+            emitConsumedArgumentDrops(calleeCompiledResultRuntimeManaged(context.facts)(state))(elementCopyingFlagTemp)([])(consumed)(state)
 
 let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if callResultRuntimeManaged(context.facts)(resultType)(state)
@@ -7170,10 +7196,25 @@ let markCallSpineResult (context: CoreCallContext) (stage: CoreCallStage) =
 // Stage 0's `LowerCallFinish` tail: the fresh arguments the callee did not take are released
 // only once the call's window is closed and its result copied out of it, since an arena-placed
 // result can still reference the arguments' parts until the copy-out has copied them.
-let releaseCallSpineArguments (context: CoreCallContext) (consumed: List(CoreConsumedArgument)) (closed: LoweredCoreValue) =
+let releaseCallSpineArguments (context: CoreCallContext) (consumed: List(CoreConsumedArgument)) (elementCopyingFlagTemp: Int) (closed: LoweredCoreValue) =
     match closed with
         | LoweredCoreValue { error = Some(_error) } -> closed
-        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } -> closed with state = releaseConsumedArguments(context)(semanticType)(consumed)(state)
+        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } -> closed with state = releaseConsumedArguments(context)(semanticType)(elementCopyingFlagTemp)(consumed)(state)
+
+// Stage 0's `arenaBranchCopiesElements`: the call's result-ownership flag when its result takes
+// the conditional list copy-out and that copy-out copies the heads on its arena branch, so the
+// consumed arguments' release can follow the same branch; -1 otherwise.
+let elementCopyingFlagOf (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp } ->
+            if flagTemp >= 0 && isRuntimeTemp(temp)(state) == false && resultSurvivesReset(semanticType)(state) == false
+            then
+                match callCopyOutOf(semanticType)(state) with
+                    | Some(ListCallCopyOut(InlineListHead)) -> -1
+                    | Some(ListCallCopyOut(_headCopy)) -> flagTemp
+                    | _ -> -1
+            else -1
+        | _ -> -1
 
 // Stage 0's `LowerCallConditionalCopyOutResult`: the result is spilled to a slot, the arena is
 // restored, and the callee's returns bit selects between reclaiming the window as is (the
@@ -7299,7 +7340,7 @@ let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool
                     | CoreCallStage { consumedArguments = consumed } as stage ->
                         stage
                         |> closeCallWindow(cursorSlot)(endSlot)
-                        |> releaseCallSpineArguments(context)(consumed))
+                        |> releaseCallSpineArguments(context)(consumed)(elementCopyingFlagOf(stage)))
 
 let failedIfPlan state error =
     CoreIfPlan(
