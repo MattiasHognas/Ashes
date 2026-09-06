@@ -5935,11 +5935,21 @@ let recursive patternOwnerAliases (instructions: List(IrInstruction)) (slot: Int
 // `SynthesizeStructuralOwnerDropper`), synthesizing it and any ADT dropper it calls into the
 // program once per type through the state's label cache; `None` when the value's release is a
 // single allocation.
+// A synthesized dropper's instructions carry the location of the release that synthesized it,
+// the way stage 0 emits them under the site's span; runtime machinery stays unlocated.
+let locateSynthesizedInstruction (state: CoreLoweringState) (instruction: IrInstruction) =
+    match (state, instruction) with
+        | (CoreLoweringState { sourceContext = context, currentSpan = span, currentItem = item }, IrInstruction { instruction = kind }) -> tagItemInstruction(kind)(span)(item)(context)
+
+let locateSynthesizedFunction (state: CoreLoweringState) (function: IrFunction) =
+    function with instructions = map(locateSynthesizedInstruction(state))(function.instructions)
+
 let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
             match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> (label, (state with dropperLabels = nextCache, functions = append(functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    (label, (state with dropperLabels = nextCache, functions = append(functions)(map(locateSynthesizedFunction(state))(synthesized)), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
 // Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
 // real retain, and the owner's release marker a real runtime-managed release under the resolved
@@ -8271,13 +8281,14 @@ let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType
 // resource by its name, slot, and resource type, any other heap-typed binding by its slot and
 // owned type name. A binding whose type is still unresolved once the pattern is lowered owns
 // nothing. The arm that matched a fresh runtime-managed scrutinee owns it too, by the owner slot
-// it stored it in, its type name, and whether the release walks a list spine.
+// it stored it in, its type name, whether the release walks a list spine, the temp that defined
+// it, and its type (the structural dropper of a release placed before the arm result).
 // A pattern owner (stage 0's Perceus pattern owner) is released under the owned type name its
 // binding type resolves to by the arm's exit, or `PatternBinding` while it is unresolved.
 type ArmOwner =
     | ArmResourceOwner(Str, Int, Str)
     | ArmHeapOwner(Int, Str)
-    | ArmScrutineeOwner(Int, Str, Bool)
+    | ArmScrutineeOwner(Int, Str, Bool, Int, SemanticType)
     | ArmPatternOwner(Int, SemanticType)
 
 let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
@@ -8333,7 +8344,7 @@ let armResultIsBinding (name: Str) (body: Expr) =
 let armOwnerAlive (body: Expr) (state: CoreLoweringState) owner =
     match owner with
         | ArmHeapOwner(_slot, _typeName) -> true
-        | ArmScrutineeOwner(_slot, _typeName, _isList) -> true
+        | ArmScrutineeOwner(_slot, _typeName, _isList, _valueTemp, _scrutineeType) -> true
         | ArmPatternOwner(_slot, _bindingType) -> true
         | ArmResourceOwner(name, slot, _typeName) ->
             match resourceStateOf(slot)(state) with
@@ -8363,11 +8374,14 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
             state
             |> emitOwnedLetRelease(patternOwnerTypeName(resolveType(state)(bindingType))(state))(slot)
             |> emitArmOwnerReleases(body)(rest)
-        | ArmScrutineeOwner(slot, _typeName, true) :: rest ->
-            state
-            |> emitScrutineeListRelease(slot)
-            |> emitArmOwnerReleases(body)(rest)
-        | ArmScrutineeOwner(slot, typeName, false) :: rest ->
+        | ArmScrutineeOwner(slot, _typeName, true, _valueTemp, _scrutineeType) :: rest ->
+            match runtimeOwnerStateOf(slot)(state) with
+                | Some(false) -> emitArmOwnerReleases(body)(rest)(state)
+                | _ ->
+                    state
+                    |> emitScrutineeListRelease(slot)
+                    |> emitArmOwnerReleases(body)(rest)
+        | ArmScrutineeOwner(slot, typeName, false, _valueTemp, _scrutineeType) :: rest ->
             state
             |> emitOwnedLetRelease(typeName)(slot)
             |> emitArmOwnerReleases(body)(rest)
@@ -8509,6 +8523,55 @@ let transferArmBindingResult (body: Expr) (temp: Int) (outerBindings: List(CoreB
                         | Some(true) -> transferRuntimeOwner(slot)(temp)(state)
                         | _ -> state
 
+let recursive armScrutineeOwnerOf (owners: List(ArmOwner)) =
+    match owners with
+        | [] -> None
+        | ArmScrutineeOwner(slot, typeName, isList, valueTemp, scrutineeType) :: _rest -> Some((slot, typeName, isList, valueTemp, scrutineeType))
+        | _ :: rest -> armScrutineeOwnerOf(rest)
+
+// Stage 0's `EmitRuntimeManagedParentFieldTransfer`: the child keeps a reference of its own, the
+// owner is read once more (placement releases an owner right after its last use, and a unique
+// owner's structural release would otherwise free the child before it was retained), and the
+// owner is released whole through its structural dropper, its slot named so placement moves the
+// release on every path through the match. The release names the owner's defining temp; the
+// temp stage 0 spends on the owner's own release load stays reserved and unused.
+let emitScrutineeChildTransfer (childTemp: Int) (childType: SemanticType) (ownerSlot: Int) (typeName: Str) (valueTemp: Int) (scrutineeType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = duplicateState, temp = duplicate } ->
+            match freshTempRun(2)(duplicateState) with
+                | FreshTemp { state = loadState, temp = loadTemp } ->
+                    match synthesizeStructuralDropperLabel(scrutineeType)(loadState) with
+                        | (dropperLabel, dropperState) ->
+                            dropperState
+                            |> emit(childType
+                            |> resolveType(state)
+                            |> mayBeEmptyList
+                            |> RcDup(duplicate)(childTemp)(true))
+                            |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+                            |> emit(LoadLocal(loadTemp)(ownerSlot))
+                            |> emit(RcDrop(valueTemp)(typeName)(ownerSlot)(true)(scrutineeType
+                            |> resolveType(state)
+                            |> mayBeEmptyList)(dropperLabel))
+                            |> (given (released: CoreLoweringState) -> ((released with runtimeOwners = releaseRuntimeOwner(ownerSlot)(released.runtimeOwners)), duplicate))
+
+// Stage 0's `TransferVariableRuntimeManagedMatchResult` for a child of the scrutinee owner: an
+// arm whose result is a heap value its own pattern bound out of the fresh scrutinee (the head of
+// a matched list) hands a retained reference to the match result and releases the owner right
+// there, so the arm exit releases nothing more; a scalar child owns nothing, and a binding that
+// is an owner itself takes the whole-binding transfer instead.
+let transferScrutineeChildResult (body: Expr) (temp: Int) (bodyType: SemanticType) (outerBindings: List(CoreBinding)) (owners: List(ArmOwner)) (state: CoreLoweringState) =
+    match (tailForwardedVariable(body), armScrutineeOwnerOf(owners)) with
+        | (Some(name), Some((ownerSlot, typeName, _isList, valueTemp, scrutineeType))) ->
+            match state.bindings
+            |> armBindings(length(state.bindings) - length(outerBindings))
+            |> armBindingSlotOf(name) with
+                | Some(slot) ->
+                    if runtimeOwnerStateOf(slot)(state) == Some(true) || resultSurvivesReset(resolveType(state)(bodyType))(state)
+                    then (state, temp)
+                    else emitScrutineeChildTransfer(temp)(bodyType)(ownerSlot)(typeName)(valueTemp)(scrutineeType)(state)
+                | None -> (state, temp)
+        | _ -> (state, temp)
+
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
@@ -8521,35 +8584,31 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resul
                     match bindType(resultType)(bodyType)(resultState) with
                         | (failedState, Some(error)) -> failedMatchArm(failedState)(error)
                         | (typedState, None) ->
-                            match typedState
-                            |> transferArmBindingResult(body)(temp)(outerBindings)
-                            |> emit(StoreLocal(resultSlot)(temp))
-                            |> closeArmScope(body)(owners)(bracket)(resultSlot)(temp)(bodyType) with
-                                | (closed, finalTemp) ->
-                                    LoweredMatchArm(
-                                        lowered = closed
-                                        |> emit(Jump(endLabel))
-                                        |> restoreBindings(outerBindings)
-                                        |> success(temp)(resultType),
-                                        armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
-                                    )
+                            match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(typedState) with
+                                | (transferredState, resultTemp) ->
+                                    match transferredState
+                                    |> transferArmBindingResult(body)(resultTemp)(outerBindings)
+                                    |> emit(StoreLocal(resultSlot)(resultTemp))
+                                    |> closeArmScope(body)(owners)(bracket)(resultSlot)(resultTemp)(bodyType) with
+                                        | (closed, finalTemp) ->
+                                            LoweredMatchArm(
+                                                lowered = closed
+                                                |> emit(Jump(endLabel))
+                                                |> restoreBindings(outerBindings)
+                                                |> success(resultTemp)(resultType),
+                                                armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
+                                            )
 
 let recursive allBindingsSurviveReset (state: CoreLoweringState) (bindings: List(CoreBinding)) =
     match bindings with
         | [] -> true
         | CoreBinding { scheme = TypeScheme { body = bindingType } } :: rest -> resultSurvivesReset(bindingType)(state) && allBindingsSurviveReset(state)(rest)
 
-// Whether the arm takes the scrutinee owner: not when a plain variable pattern binds the whole
-// scrutinee (stage 0 makes that binding's slot the owner, and the arm may hand it on), and not
-// when the pattern bound a heap value (stage 0 aliases such a binding to the owner and transfers
-// it out of the arm on demand); a pattern binding only scalars leaves the owner nothing to share.
-let armAdoptsScrutinee (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
-    if patternBindsWholeScrutinee(pattern)
-    then false
-    else
-        state.bindings
-        |> armBindings(length(state.bindings) - length(outerBindings))
-        |> allBindingsSurviveReset(state)
+// Whether the arm takes the scrutinee owner: every arm does, except one whose plain variable
+// pattern binds the whole scrutinee (stage 0 makes that binding's slot the owner, and the arm
+// may hand it on). A heap value the pattern bound aliases the owner: its own read keeps a
+// reference when the arm result carries it out, and the owner's release covers the rest.
+let armAdoptsScrutinee (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) = patternBindsWholeScrutinee(pattern) == false
 
 // The slot of the plain variable pattern that binds the whole scrutinee, stage 0's
 // `TryTrackWholeRuntimeManagedMatchBinding`: that binding's own slot becomes the owner instead
@@ -8586,7 +8645,7 @@ let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pa
                                 allocated
                                 |> emit(StoreLocal(ownerSlot)(valueTemp))
                                 |> adoptScrutineeIntoSlot(ownerSlot)(valueTemp)(scrutineeType)
-                                |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)]))
+                                |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)(valueTemp)(scrutineeType)]))
                     else (guarded, [])
         | _ -> (guarded, [])
 

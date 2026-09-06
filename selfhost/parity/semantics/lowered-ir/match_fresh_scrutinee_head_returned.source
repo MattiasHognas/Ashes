@@ -1,0 +1,15 @@
+let bang (n: Str) = n + "!"
+
+let pair (a: Str) = [bang(a), bang(a)]
+
+let rebuilt (xs: List(Str)) =
+    match xs with
+        | [] -> []
+        | head :: tail -> head :: tail
+
+let first (a: Str) =
+    match rebuilt(pair(a)) with
+        | [] -> "none"
+        | head :: _ -> head
+
+Ashes.IO.print(first("a"))

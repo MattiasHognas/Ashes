@@ -1,0 +1,12 @@
+let bang (n: Str) = n + "!"
+
+let pair (a: Str) = [bang(a), bang(a)]
+
+let rebuilt (xs: List(Str)) =
+    match xs with
+        | [] -> []
+        | head :: tail -> head :: tail
+
+match rebuilt(pair("a")) with
+    | [] -> Ashes.IO.print("none")
+    | head :: _ -> Ashes.IO.print(head)

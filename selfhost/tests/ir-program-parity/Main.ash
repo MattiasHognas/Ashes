@@ -86,6 +86,11 @@ let checkFixture root name =
 // tail position (`bang(head) :: stamp(tail)`): it reads the returns bit and copies its string-list
 // result out like any other call, so placement keeps the pattern-owned tail alive across it, and
 // the closure the self reference rebuilds carries its environment size in bytes.
+// match_fresh_scrutinee_owner_release adds the owner every arm makes for a fresh reference-counted
+// list scrutinee whose pattern binds a string head, released at the arm exit through the inline
+// walk; match_fresh_scrutinee_head_returned the arm that returns the bound head: the head keeps
+// a reference of its own and the owner is released before the result through its structural
+// dropper, synthesized under the match's location.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 // match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
@@ -136,6 +141,8 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("consumed_list_argument"))
         |> (given (_) -> checkFixture(root)("consumed_string_list_copied_release"))
         |> (given (_) -> checkFixture(root)("non_tail_self_call_list_result"))
+        |> (given (_) -> checkFixture(root)("match_fresh_scrutinee_owner_release"))
+        |> (given (_) -> checkFixture(root)("match_fresh_scrutinee_head_returned"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))
