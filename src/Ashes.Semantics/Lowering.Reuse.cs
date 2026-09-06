@@ -1949,10 +1949,10 @@ public sealed partial class Lowering
                 ? TryLowerTraitDictionaryFunctionValue(arguments[index], expectedTypes[index])
                     ?? LowerExpr(
                         arguments[index],
-                        default(LoweredValueRequest).WithExpectedType(expectedTypes[index])).AsPair()
+                        default(LoweredValueRequest).WithCallerReportedExpectedType(expectedTypes[index])).AsPair()
                 : LowerExpr(
                     arguments[index],
-                    default(LoweredValueRequest).WithExpectedType(expectedTypes[index])).AsPair();
+                    default(LoweredValueRequest).WithCallerReportedExpectedType(expectedTypes[index])).AsPair();
             temps[index] = temp;
             actualTypes[index] = type;
             Unify(expectedTypes[index], type);

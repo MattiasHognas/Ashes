@@ -1,0 +1,6 @@
+let recursive f (xs: List(Int)) (n: Int) =
+    match xs with
+        | [] -> n
+        | _ :: rest -> f(rest)(rest)
+
+f([1])(0)

@@ -45,6 +45,19 @@ out-of-range numeric literals, unexpected characters) and parser diagnostics (mi
 patterns, a trailing token past the end of a program, a refutable let-pattern, `and` without a
 preceding `let recursive`, and a constructor-less type declaration).
 
+## Semantic diagnostics
+
+Semantic diagnostic fixtures live in `semantics/diagnostics` as matching `<name>.source` and
+`<name>.diagnostics` files in the same `ashes-diagnostic-v1` format. Each `.source` file parses
+cleanly and is rejected by lowering; the `recovered-items` line counts the program's parsed
+top-level items, and the records are the diagnostics lowering reports for it. Stage 0 keeps
+lowering past an error while the self-hosted lowering stops at its first, so a fixture holds a
+program with exactly one diagnostic. The self-hosted side renders its lowering error through
+`loweringErrorDiagnostic`, which reproduces stage 0's code, message text, and span.
+
+The shared fixtures cover an argument that fails to meet its parameter type on an ordinary call and
+on a tail self-call, each reported once at the call's span under the argument's context.
+
 ## Lowered IR
 
 Lowered IR fixtures live in `semantics/lowered-ir` as matching `<name>.source` and `<name>.ir` files.

@@ -184,7 +184,7 @@ let expectUnguardedConcreteCallStaysUnrewrittenAndTypeMismatches unit =
     |> inferredProgramAndEnvironment with
         | (program, environment) ->
             match lowerCoreProgramWithEnvironment(environment)(program) with
-                | CoreLoweringResult { error = Some(CoreCallTypeMismatch(_unificationError)) } -> Unit
+                | CoreLoweringResult { error = Some(CoreCallTypeMismatch(_unificationError, _site)) } -> Unit
                 | CoreLoweringResult { error = Some(error) } -> test.fail("expected CoreCallTypeMismatch, got " + Ashes.Trait.Show.show(error))
                 | CoreLoweringResult { error = None } -> test.fail("expected the unguarded concrete call to fail lowering, but it produced a program")
 

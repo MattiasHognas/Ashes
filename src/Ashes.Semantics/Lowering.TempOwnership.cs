@@ -110,7 +110,8 @@ internal readonly record struct LoweredValueRequest(
     int? RuntimeTcoListTailSlot,
     TypeRef.TNamedType? RuntimeReuseAdtType,
     IReadOnlyDictionary<string, bool>? RuntimeAdtChildBindings,
-    TypeRef? ExpectedType)
+    TypeRef? ExpectedType,
+    bool ExpectedTypeMismatchReportedByCaller)
 {
     public static LoweredValueRequest None => default;
 
@@ -125,7 +126,8 @@ internal readonly record struct LoweredValueRequest(
             RuntimeTcoListTailSlot: null,
             RuntimeReuseAdtType: null,
             RuntimeAdtChildBindings: null,
-            ExpectedType: null);
+            ExpectedType: null,
+            ExpectedTypeMismatchReportedByCaller: false);
 
     public bool EmitsRuntime(LoweredValueRuntimeRepresentation representation) =>
         ConsumerCanOwn
@@ -144,10 +146,16 @@ internal readonly record struct LoweredValueRequest(
             : this;
 
     public LoweredValueRequest WithExpectedType(TypeRef expectedType) =>
-        this with { ExpectedType = expectedType };
+        this with { ExpectedType = expectedType, ExpectedTypeMismatchReportedByCaller = false };
+
+    // An expected type whose mismatch the requesting lowering reports itself, with its own span
+    // and diagnostic context (a call site's parameter type, a list literal's element type): the
+    // expected-type unifications on the way to it stay silent.
+    public LoweredValueRequest WithCallerReportedExpectedType(TypeRef expectedType) =>
+        this with { ExpectedType = expectedType, ExpectedTypeMismatchReportedByCaller = true };
 
     public LoweredValueRequest WithoutExpectedType() =>
-        this with { ExpectedType = null };
+        this with { ExpectedType = null, ExpectedTypeMismatchReportedByCaller = false };
 
     public LoweredValueRequest WithRuntimeListContext(
         string? tailBinding,

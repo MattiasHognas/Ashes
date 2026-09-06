@@ -407,12 +407,38 @@ same public behavior.
   variable no body pins seals to the integer comparison, as `+` seals to `AddInt`, until TRT-15's
   dictionaries. Both fixtures (`runtime_rc_tco_nested_tuple_pattern_alias`,
   `runtime_rc_whole_string_pattern_recursion`) compile and match stage 0 in the loop sweep.
-- [ ] **SEM-19** Report an argument type mismatch once per call. Stage 0 reports the same mismatch
+- [x] **SEM-19** Report an argument type mismatch once per call. Stage 0 reports the same mismatch
   three times at the call span on an ordinary call (the expected-type unification in `LowerExpr`
   plus the contextual unification) and twice on a tail self-call; the self-hosted lowering rejects
   the same programs through `ensureFunctionType` binding the open return to a fresh arrow and
   reports a location-less `CoreCallTypeMismatch`. Dedupe stage 0's diagnostics at the call span,
   give the self-hosted mismatch the call's span, and pin both in the diagnostic parity fixtures.
+  Done: stage 0's call site owns the report. A `LoweredValueRequest` whose expected type is
+  caller-reported (`WithCallerReportedExpectedType`: a call argument's parameter type, a list
+  literal's element type) makes the expected-type unification in `LowerExpr`, the call result
+  pre-constraint, and the result unification in `LowerCallFinish` silent
+  (`SuppressUnificationDiagnostics`), the literal pre-constraint is always silent, and the tail
+  self-call's contextual unification reports at the call span like the ordinary path, so an
+  ordinary call, a tail self-call, a call-shaped argument (one report per call), and a list-literal
+  argument (one `ASH005`) each report a mismatch exactly once. The self-hosted `CoreCallTypeMismatch`
+  carries a `CoreMismatchSite`: every unification failure takes the innermost enclosing span and
+  its resolved location (stage 0's span stack), and a call argument's failure takes the call's
+  span plus the argument's ordinal and the callee's display name, attached by the ordinary and tail
+  self-call argument bindings and by the argument request the expected type travels under
+  (`ConsumerRequest.argumentSite`, so a nested call's result pre-constraint and the unforwarded
+  expected-type unification report the outer argument, as stage 0's silenced unifications leave
+  the outer call site to). `LoweringDiagnostics.ash` renders it as stage 0's `ASH002` text with
+  stage 0's type spelling (`List<Int>`, shared `a`, `b` variable names) and the CLI prints
+  `path:line:col ASH002 message`. Porting the tail self-call fixture surfaced a typing gap fixed
+  on the way: a recursive member's first parameter annotation was dropped (`lambdaParts` kept no
+  annotation) and its body was lowered without the member's result type as the expected type, so
+  a self-call met fresh arrows instead of the annotated parameter types and the mismatch surfaced
+  at the outer call; the annotation now binds before the body and the body request carries the
+  result type (`withRecursiveBodyRequest`), as stage 0's lambda-chain lowering does. The new
+  `selfhost/parity/semantics/diagnostics` fixtures pin both calls in the `ashes-diagnostic-v1`
+  format, checked by `SelfhostSemanticDiagnosticParityTests` and the
+  `selfhost/tests/semantics-diagnostic-parity` suite. Not ported: stage 0's enclosing contexts
+  (`-> in if branches`) and the excerpt lines under a diagnostic.
 
 #### Capabilities and handlers
 

@@ -75,6 +75,8 @@ import AshesCompiler.Semantics.Unification
 // Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some
 // terminal arm, with no passthrough arm that could alias a tuple built elsewhere.
 export (
+    type CoreCallArgument(..),
+    type CoreMismatchSite(..),
     type CoreLoweringError(..),
     type CoreLoweringResult(..),
     type CoreConstructorLayout(..),
@@ -93,10 +95,27 @@ export (
     value lowerCoreProgramWithEnvironment,
 )
 
+// The call argument a mismatch was found for: the argument's 1-based ordinal in the spine and
+// the callee's display name when the callee is a variable.
+type CoreCallArgument =
+    | ordinal: Int
+    | callee: Maybe(Str)
+    deriving {Eq, Show}
+
+// Where a type mismatch was found: the innermost enclosing span and its resolved location, the
+// span stage 0 reports a unification failure at, and, for an argument that failed to meet its
+// parameter type, the argument, with the span moved to the call's (an argument's own span is
+// restored to the call's once the argument is lowered).
+type CoreMismatchSite =
+    | span: Maybe(TextSpan)
+    | location: Maybe(IrSourceLocation)
+    | argument: Maybe(CoreCallArgument)
+    deriving {Eq, Show}
+
 type CoreLoweringError =
     | UnknownLoweringBinding(Str)
     | CoreCallRequiresFunction(SemanticType)
-    | CoreCallTypeMismatch(UnificationError)
+    | CoreCallTypeMismatch(UnificationError, CoreMismatchSite)
     | CoreOperatorTypeMismatch(Str, SemanticType, SemanticType)
     | CoreConstructorArityMismatch(Str, Int, Int)
     | CoreBuiltinArityMismatch(Str, Str, Int, Int)
@@ -181,6 +200,9 @@ type CoreBinding =
 // record literal, a list literal or cons cell, and a tuple placed on the reference-counted heap.
 type ConsumerRequest =
     | expectedType: Maybe(SemanticType)
+    // The call argument the expected type is a parameter type of: a mismatch the expected type
+    // finds on the way is reported at that argument's call, as stage 0 reports it.
+    | argumentSite: Maybe(CoreMismatchSite)
     | runtimeString: Bool
     | runtimeAdt: Bool
     | runtimeRecord: Bool
@@ -203,6 +225,7 @@ type RuntimeTempState =
 let emptyConsumerRequest =
     ConsumerRequest(
         expectedType = None,
+        argumentSite = None,
         runtimeString = false,
         runtimeAdt = false,
         runtimeRecord = false,
@@ -1097,6 +1120,14 @@ let success temp semanticType state =
 // new address, not a new value).
 let finishClosedLetResult finalTemp resultType state = LoweredCoreValue(state = state, temp = finalTemp, semanticType = resultType, error = None)
 
+// A unification failure is found at the innermost enclosing span, as stage 0 reports it.
+let mismatchSiteOf (state: CoreLoweringState) =
+    CoreMismatchSite(
+        span = state.currentSpan,
+        location = currentLocation(state),
+        argument = None
+    )
+
 let bindType left right state =
     match state with
         | CoreLoweringState { substitution = existing } ->
@@ -1105,7 +1136,11 @@ let bindType left right state =
             |> unify(resolveType(state)(left)) with
                 | UnificationResult { substitution = added, error = None } ->
                     (withSubstitution(append(added)(existing))(state), None)
-                | UnificationResult { error = Some(error) } -> (state, Some(CoreCallTypeMismatch(error)))
+                | UnificationResult { error = Some(error) } ->
+                    (state, state
+                    |> mismatchSiteOf
+                    |> CoreCallTypeMismatch(error)
+                    |> Some)
 
 // The type the context expects of the next expression lowered, threaded through the state:
 // `lowerCore` consumes it. A let, recursive binding, lambda, if, match, handle, call, list
@@ -1141,7 +1176,7 @@ let transfersChildrenRequested (state: CoreLoweringState) =
 
 // A call argument's request: the callee's parameter type, and the transfer when the call is the
 // loop's tail self-call.
-let withArgumentRequest expected (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, transfersRuntimeManagedChildren = transfers))(state)
+let withArgumentRequest expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, argumentSite = site, transfersRuntimeManagedChildren = transfers))(state)
 
 // The reference-counted heap temps of the current function.
 let recursive lookupRuntimeTemp (temp: Int) (temps: List((Int, RuntimeTempState))) =
@@ -1233,6 +1268,25 @@ let unifyExpectedResult expected lowered =
                 | (typedState, None) ->
                     success(temp)(resolveType(typedState)(semanticType))(typedState)
 
+// A mismatch an expected type found while lowering a call argument is reported at the argument's
+// call; a mismatch already located, or found outside an argument, keeps its own site.
+let locateLoweredMismatch (site: Maybe(CoreMismatchSite)) (lowered: LoweredCoreValue) =
+    match (site, lowered) with
+        | (Some(argumentSite), LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = Some(CoreCallTypeMismatch(error, CoreMismatchSite { argument = None })) }) ->
+            LoweredCoreValue(
+                state = state,
+                temp = temp,
+                semanticType = semanticType,
+                error = argumentSite
+                |> CoreCallTypeMismatch(error)
+                |> Some
+            )
+        | _ -> lowered
+
+let argumentSiteOf (state: CoreLoweringState) =
+    match consumerRequestOf(state) with
+        | ConsumerRequest { argumentSite = site } -> site
+
 let recursive expectedTypeForwards expression =
     match expression with
         | ExprAt(_span, inner) -> expectedTypeForwards(inner)
@@ -1316,6 +1370,9 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         expectedType = if expectedTypeForwards(expression)
         then request.expectedType
         else None,
+        argumentSite = if expectedTypeForwards(expression)
+        then request.argumentSite
+        else None,
         runtimeString = runtimeRequestForwards(expression) && request.runtimeString,
         runtimeAdt = aggregateRequestForwards(expression) && request.runtimeAdt,
         runtimeRecord = aggregateRequestForwards(expression) && request.runtimeRecord,
@@ -1329,12 +1386,15 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         tailCall = tailPositionForwards(expression) && request.tailCall
     )
 
-let unifyUnforwardedExpectedType (expression: Expr) (expected: Maybe(SemanticType)) (lowered: LoweredCoreValue) =
-    match expected with
+let unifyUnforwardedExpectedType (expression: Expr) (request: ConsumerRequest) (lowered: LoweredCoreValue) =
+    match request.expectedType with
         | Some(expectedType) ->
             if expectedTypeForwards(expression)
             then lowered
-            else unifyExpectedResult(expectedType)(lowered)
+            else
+                lowered
+                |> unifyExpectedResult(expectedType)
+                |> locateLoweredMismatch(request.argumentSite)
         | None -> lowered
 
 let recursive findConstructorLayout (name: Str) (layouts: List(CoreConstructorLayout)) =
@@ -1482,12 +1542,12 @@ let recursive bindCoreValueTypes expected actual state =
                 | (failedState, Some(error)) -> (failedState, Some(error))
                 | (typedState, None) -> bindCoreValueTypes(expectedTail)(actualTail)(typedState)
         | _ ->
-            (state, Some(actual
+            (state, state
+            |> mismatchSiteOf
+            |> CoreCallTypeMismatch(actual
             |> coreListLength
-            |> TypeArityMismatch(
-                coreListLength(expected)
-            )
-            |> CoreCallTypeMismatch))
+            |> TypeArityMismatch(coreListLength(expected)))
+            |> Some)
 
 let lowerConstant kind semanticType state =
     match freshTemp(state) with
@@ -6824,6 +6884,13 @@ let withFunctionBodyRequest (body: Expr) (prepared: CoreLoweringState) =
     (let request = functionBodyRequest(body)(prepared)
     in withLoopBodyRequest((request with tailCall = true))(prepared))
 
+// A recursive member's body meets the member's result type while it is lowered, not only after:
+// a nested lambda then pins the self type's next arrow and its parameter annotation before a
+// self-call in its body is lowered, as stage 0's lambda-chain lowering does.
+let withRecursiveBodyRequest (body: Expr) (resultType: SemanticType) (prepared: CoreLoweringState) =
+    (let request = functionBodyRequest(body)(prepared)
+    in withLoopBodyRequest((request with tailCall = true, expectedType = Some(resultType)))(prepared))
+
 let recursive anyCallResultResolved (resultTypes: List(SemanticType)) (state: CoreLoweringState) =
     match resultTypes with
         | [] -> false
@@ -7091,6 +7158,8 @@ type CoreCallContext =
     | selfCallee: Bool
     | tailCall: Bool
     | resultElementQuantified: Bool
+    | calleeName: Maybe(Str)
+    | argumentCount: Int
 
 // A fresh reference-counted argument the callee did not take, released after the call; the
 // release preserves the argument's escaped children when the callee's result may keep them.
@@ -7530,6 +7599,25 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
             |> argumentHandOffOf(context.facts)(argumentIndexOf(context.facts)(arity))(argument)(argumentTemp)
             |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(argumentTemp)(resultType)(handOff)(unifiedState))
 
+// The site an argument's mismatch against its parameter type is reported at: the call, which the
+// state's span is back to once the argument is lowered.
+let argumentSite (callee: Maybe(Str)) (ordinal: Int) (state: CoreLoweringState) =
+    CoreMismatchSite(
+        span = state.currentSpan,
+        location = currentLocation(state),
+        argument = Some(CoreCallArgument(ordinal = ordinal, callee = callee))
+    )
+
+// Stage 0 reports an argument that fails to meet its parameter type once, at the call, under the
+// argument's context; the mismatch a parameter binding found takes the same site.
+let locateArgumentMismatch (site: CoreMismatchSite) binding =
+    match binding with
+        | (state, Some(CoreCallTypeMismatch(error, CoreMismatchSite { argument = None }))) ->
+            (state, site
+            |> CoreCallTypeMismatch(error)
+            |> Some)
+        | other -> other
+
 let lowerCoreCallArgument (context: CoreCallContext) arity argument consumed functionTemp expectedArgumentType resultType loweredArgument =
     match loweredArgument with
         | LoweredCoreValue { state = argumentState, error = Some(error) } ->
@@ -7539,6 +7627,7 @@ let lowerCoreCallArgument (context: CoreCallContext) arity argument consumed fun
         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
             argumentState
             |> bindType(expectedArgumentType)(argumentType)
+            |> locateArgumentMismatch(argumentSite(context.calleeName)(context.argumentCount - arity + 1)(argumentState))
             |> finishCoreCall(context)(arity)(argument)(argumentType)(consumed)(functionTemp)(argumentTemp)(resultType)
 
 // An argument is expected to have the callee's parameter type. A tail self-call's argument
@@ -7552,7 +7641,9 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
             |> callStageOf
         | FunctionTypeResolution { state = typedState, argumentType = expectedType, resultType = resultType, error = None } ->
             typedState
-            |> withArgumentRequest(Some(expectedType))(transfers)
+            |> withArgumentRequest(Some(expectedType))(typedState
+            |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
+            |> Some)(transfers)
             |> lower(argument)
             |> retainTransferredChild(argument)(transfers)
             |> lowerCoreCallArgument(context)(arity)(argument)(consumed)(functionTemp)(expectedType)(resultType)
@@ -8077,19 +8168,22 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
 // variable at some arrow is made a function type on the way.
 let recursive preconstrainCallResultType functionType arity expected state =
     if arity == 0
-    then bindType(functionType)(expected)(state)
+    then bindType(expected)(functionType)(state)
     else
         match ensureFunctionType(functionType)(state) with
             | FunctionTypeResolution { state = failedState, error = Some(_error) } -> (failedState, None)
             | FunctionTypeResolution { state = functionState, resultType = resultType, error = None } -> preconstrainCallResultType(resultType)(arity - 1)(expected)(functionState)
 
-let preconstrainCallResult expected arity loweredCallee =
+let preconstrainCallResult expected (site: Maybe(CoreMismatchSite)) arity loweredCallee =
     match (expected, loweredCallee) with
         | (None, _) -> loweredCallee
         | (_, LoweredCoreValue { error = Some(_error) }) -> loweredCallee
         | (Some(expectedType), LoweredCoreValue { state = state, temp = temp, semanticType = functionType, error = None }) ->
             match preconstrainCallResultType(functionType)(arity)(expectedType)(state) with
-                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (failedState, Some(error)) ->
+                    error
+                    |> failure(failedState)
+                    |> locateLoweredMismatch(site)
                 | (constrainedState, None) -> success(temp)(functionType)(constrainedState)
 
 // The callee of one application inside a call spine `f(a)(b)`: a further application is another
@@ -8097,23 +8191,23 @@ let preconstrainCallResult expected arity loweredCallee =
 // else is an ordinary expression. The stages share the window `lowerCall` opened around the
 // whole spine; a call inside an argument opens its own. The root callee's result after the
 // spine's `arity` applications is constrained to the expected type before the arguments.
-let recursive lowerCallSpineCallee expression (context: CoreCallContext) expected arity (transfers: Bool) lower state =
+let recursive lowerCallSpineCallee expression (context: CoreCallContext) expected (site: Maybe(CoreMismatchSite)) arity (transfers: Bool) lower state =
     match expression with
-        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(context)(expected)(arity)(transfers)(lower)(state)
-        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(context)(expected)(arity + 1)(transfers)(lower)(state)
+        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(context)(expected)(site)(arity + 1)(transfers)(lower)(state)
         | ExprLambda(parameter, body, annotation) ->
             state
             |> lowerLambda(parameter)(body)(annotation)(true)(lower)
-            |> preconstrainCallResult(expected)(arity)
+            |> preconstrainCallResult(expected)(site)(arity)
             |> callStageOf
         | _ ->
             state
             |> lower(expression)
-            |> preconstrainCallResult(expected)(arity)
+            |> preconstrainCallResult(expected)(site)(arity)
             |> callStageOf
-and lowerCallSpineStage function argument (context: CoreCallContext) expected arity (transfers: Bool) lower state =
+and lowerCallSpineStage function argument (context: CoreCallContext) expected (site: Maybe(CoreMismatchSite)) arity (transfers: Bool) lower state =
     state
-    |> lowerCallSpineCallee(function)(context)(expected)(arity)(transfers)(lower)
+    |> lowerCallSpineCallee(function)(context)(expected)(site)(arity)(transfers)(lower)
     |> lowerCoreCallFunction(context)(arity)(argument)(transfers)(lower)
 
 // Stage 0's TCO tail self-call (`LowerCallTcoEvalArgs`): in tail position of the loop body, the
@@ -8130,6 +8224,13 @@ let tailCallPosition (state: CoreLoweringState) =
 
 // `tailCall` is the call expression's own tail position, read before the general call clears
 // the consumer request.
+// The callee name a diagnostic shows: a plain or module-qualified variable, nothing else.
+let calleeDisplayName (root: Expr) =
+    match unspanArgument(root) with
+        | ExprVar(name) -> Some(name)
+        | ExprQualifiedVar(moduleName, name) -> Some(moduleName + "." + name)
+        | _ -> None
+
 let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (state: CoreLoweringState) =
     (let selfCallee = isSelfCallee(spine)(state)
     in
@@ -8137,12 +8238,14 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (state: CoreLoweringSt
             facts = calleeFactsOf(spine)(state),
             selfCallee = selfCallee,
             tailCall = selfCallee && tailCall,
-            resultElementQuantified = calleeResultListElementQuantified(spine)(state)
+            resultElementQuantified = calleeResultListElementQuantified(spine)(state),
+            calleeName = calleeDisplayName(spine.root),
+            argumentCount = coreListLength(spine.arguments)
         ))
 
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
-let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool) (tailCall: Bool) lower state =
+let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
     match state
     |> ensureResultRcEligibility
     |> openArenaBracket with
@@ -8151,7 +8254,7 @@ let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool
             |> callContextOf(spine)(tailCall)
             |> (given (context: CoreCallContext) ->
                 match opened
-                |> lowerCallSpineStage(function)(argument)(context)(expected)(1)(transfers)(lower)
+                |> lowerCallSpineStage(function)(argument)(context)(expected)(site)(1)(transfers)(lower)
                 |> markCallSpineResult(context) with
                     | stage ->
                         stage
@@ -10438,7 +10541,7 @@ let lowerMatch value cases lower state =
 let recursive lambdaParts expression =
     match expression with
         | ExprAt(_span, inner) -> lambdaParts(inner)
-        | ExprLambda(parameter, body, _annotation) -> Some((parameter, body))
+        | ExprLambda(parameter, body, annotation) -> Some((parameter, body, annotation))
         | _ -> None
 
 let recursive bindingNames (bindings: List(CoreBinding)) =
@@ -10515,7 +10618,7 @@ let sugarChainBody (body: Expr) (declarationSpan: Maybe(TextSpan)) =
 // its name, so a call through the name can consult the member's recorded body placement.
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
     match prepared with
-        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, parameterType = parameterType } ->
+        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, parameterType = parameterType, resultType = resultType } ->
             match (state with letLambdaLabels = (name, label) :: state.letLambdaLabels) with
                 | labeled ->
                     labeled
@@ -10528,7 +10631,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                             entered
                             |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
-                            |> withFunctionBodyRequest(body))(lower)
+                            |> withRecursiveBodyRequest(body)(resultType))(lower)
                         |> finalizeTcoRuntimeManagedParams(label)
                         |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(labeled))
 
@@ -10579,12 +10682,33 @@ let finishPreparedRecursiveMember name parameter body lambdaId slot fresh =
                 error = None
             )
 
-let allocatePreparedRecursiveMember name parameter body lambdaId fresh =
+// The member's first parameter takes its annotation before the body is lowered, as a plain
+// lambda's does, so a self-call inside the body meets the annotated parameter type.
+let annotatePreparedParameter annotation fresh =
+    match fresh with
+        | FreshFunctionType { state = state, semanticType = semanticType, parameterType = parameterType, resultType = resultType } ->
+            match lowerLambdaParameterType(annotation)(parameterType)(state) with
+                | (annotatedState, error) ->
+                    (FreshFunctionType(
+                        state = annotatedState,
+                        semanticType = semanticType,
+                        parameterType = parameterType,
+                        resultType = resultType
+                    ), error)
+
+let allocatePreparedRecursiveMember name parameter body annotation lambdaId fresh =
     match fresh with
         | FreshLocal { state = state, local = slot } ->
-            state
+            match state
             |> freshFunctionType
-            |> finishPreparedRecursiveMember(name)(parameter)(body)(lambdaId)(slot)
+            |> annotatePreparedParameter(annotation) with
+                | (FreshFunctionType { state = failedState }, Some(error)) ->
+                    PreparedCoreRecursiveMemberResult(
+                        state = failedState,
+                        member = None,
+                        error = Some(error)
+                    )
+                | (annotated, None) -> finishPreparedRecursiveMember(name)(parameter)(body)(lambdaId)(slot)(annotated)
 
 let prepareRecursiveMember name value state =
     match (lambdaParts(value), state) with
@@ -10594,11 +10718,11 @@ let prepareRecursiveMember name value state =
                 member = None,
                 error = Some(CoreRecursiveBindingRequiresFunction(name))
             )
-        | (Some((parameter, body)), CoreLoweringState { nextLambdaId = lambdaId }) ->
+        | (Some((parameter, body, annotation)), CoreLoweringState { nextLambdaId = lambdaId }) ->
             state
             |> recordLetLambda(name)(value)
             |> freshLocal
-            |> allocatePreparedRecursiveMember(name)(parameter)(body)(lambdaId)
+            |> allocatePreparedRecursiveMember(name)(parameter)(body)(annotation)(lambdaId)
 
 let recursive prepareRecursiveGroup bindings state reversed =
     match bindings with
@@ -13577,7 +13701,7 @@ let failedTailSelfCallArguments state error =
 // affine in-place append) is asked for a reference-counted string, stage 0's runtime string
 // request for a runtime-managed parameter's successor: the back edge then stores it as the
 // parameter's own value instead of copying it out of the arena.
-let tailSelfCallArgumentRequest (parameterType: SemanticType) (shape: TcoArgumentShape) (runtimeString: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString))(state)
+let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString))(state)
 
 let tailSelfCallStringSuccessor (argument: Expr) (slot: Maybe(Int)) (ordinal: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match slot with
@@ -13620,10 +13744,10 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
             match ensureFunctionType(functionType)(state) with
                 | FunctionTypeResolution { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
                 | FunctionTypeResolution { state = functionState, argumentType = parameterType, resultType = resultType, error = None } ->
-                    match retainTransferredChild(argument)(true)(duplicatePatternOwnerChild(argument)(lower(argument)(tailSelfCallArgumentRequest(parameterType)(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))((functionState with backEdgeArgumentSlot = headSlotOf(slots), affineAppendContext = affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations)))))) with
+                    match retainTransferredChild(argument)(true)(duplicatePatternOwnerChild(argument)(lower(argument)(tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))((functionState with backEdgeArgumentSlot = headSlotOf(slots), affineAppendContext = affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations)))))) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedTailSelfCallArguments((failedState with backEdgeArgumentSlot = None, affineAppendContext = None))(error)
                         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
-                            match bindType(parameterType)(argumentType)((argumentState with backEdgeArgumentSlot = None, affineAppendContext = None)) with
+                            match locateArgumentMismatch(argumentSite(Some(loop.selfName))(ordinal + 1)(argumentState))(bindType(parameterType)(argumentType)((argumentState with backEdgeArgumentSlot = None, affineAppendContext = None))) with
                                 | (failedState, Some(error)) -> failedTailSelfCallArguments(failedState)(error)
                                 | (typedState, None) ->
                                     lowerTailSelfCallArguments(rest)(restSlotsOf(slots))(restArgumentShapes(shapes))(ordinal + 1)(loop)(reservations)(resultType)(lower)(typedState)(argumentTemp :: reversedTemps)(argumentType :: reversedTypes)
@@ -13755,10 +13879,11 @@ let lowerGeneralCall expression function argument lower state =
             |> clearConsumerRequest
             |> lowerTailSelfCall(collectCallSpine(expression))(frame)(loop)(lower)
             |> unifyOptionalExpectedResult(expectedTypeOf(state))
+            |> locateLoweredMismatch(argumentSiteOf(state))
         | _ ->
             state
             |> clearConsumerRequest
-            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
+            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
             |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
 
 let lowerCallExpression expression function argument lower state =
@@ -13766,7 +13891,9 @@ let lowerCallExpression expression function argument lower state =
     |> clearConsumerRequest
     |> tryLowerConstructorCall(expression)(consumerRequestOf(state))(lower) with
         | Some(lowered) ->
-            unifyOptionalExpectedResult(expectedTypeOf(state))(lowered)
+            lowered
+            |> unifyOptionalExpectedResult(expectedTypeOf(state))
+            |> locateLoweredMismatch(argumentSiteOf(state))
         | None ->
             match tryLowerBuiltinCall(expression)(lower)(withConsumerRequest((emptyConsumerRequest with runtimeString = runtimeStringRequested(state)))(state)) with
                 | Some(lowered) -> lowered
@@ -13870,7 +13997,7 @@ let recursive lowerCore expression state =
                     |> withConsumerRequest(dispatched)
                     |> lowerCoreDispatch(expression)(lowerCore)
                     |> withLoweredConsumerRequest(emptyConsumerRequest)
-                    |> unifyUnforwardedExpectedType(expression)(request.expectedType)
+                    |> unifyUnforwardedExpectedType(expression)(request)
 
 let entryOrigin =
     IrFunctionOrigin(

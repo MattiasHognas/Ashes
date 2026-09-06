@@ -243,7 +243,7 @@ public sealed partial class Lowering
         {
             if (Occurs(va.Id, b))
             {
-                ReportDiagnostic(0, "Occurs check failed (recursive type).");
+                ReportUnificationDiagnostic("Occurs check failed (recursive type).", null);
                 return;
             }
             _subst[va.Id] = b;
@@ -306,7 +306,7 @@ public sealed partial class Lowering
             if (ta.Elements.Count != tb.Elements.Count)
             {
                 var tupleArityMismatch = PrettyPair(a, b);
-                ReportDiagnostic(0, $"Type mismatch: {tupleArityMismatch.Left} vs {tupleArityMismatch.Right}.", DiagnosticCodes.TypeMismatch);
+                ReportUnificationDiagnostic($"Type mismatch: {tupleArityMismatch.Left} vs {tupleArityMismatch.Right}.", DiagnosticCodes.TypeMismatch);
                 return;
             }
 
@@ -325,7 +325,7 @@ public sealed partial class Lowering
 
         // base mismatch
         var typeMismatch = PrettyPair(a, b);
-        ReportDiagnostic(0, $"Type mismatch: {typeMismatch.Left} vs {typeMismatch.Right}.", DiagnosticCodes.TypeMismatch);
+        ReportUnificationDiagnostic($"Type mismatch: {typeMismatch.Left} vs {typeMismatch.Right}.", DiagnosticCodes.TypeMismatch);
     }
 
     /// <summary>
@@ -337,14 +337,14 @@ public sealed partial class Lowering
         if (!string.Equals(na.Symbol.Name, nb.Symbol.Name, StringComparison.Ordinal))
         {
             var namedTypeMismatch = PrettyPair(a, b);
-            ReportDiagnostic(0, $"Type mismatch: {namedTypeMismatch.Left} vs {namedTypeMismatch.Right}.", DiagnosticCodes.TypeMismatch);
+            ReportUnificationDiagnostic($"Type mismatch: {namedTypeMismatch.Left} vs {namedTypeMismatch.Right}.", DiagnosticCodes.TypeMismatch);
             return;
         }
 
         if (na.TypeArgs.Count != nb.TypeArgs.Count)
         {
             var namedTypeArityMismatch = PrettyPair(a, b);
-            ReportDiagnostic(0, $"Type mismatch: {namedTypeArityMismatch.Left} vs {namedTypeArityMismatch.Right}.", DiagnosticCodes.TypeMismatch);
+            ReportUnificationDiagnostic($"Type mismatch: {namedTypeArityMismatch.Left} vs {namedTypeArityMismatch.Right}.", DiagnosticCodes.TypeMismatch);
             return;
         }
 
