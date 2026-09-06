@@ -1,0 +1,15 @@
+let count (xs: List(Int)) =
+    (let recursive go (acc: Int) (rest: List(Int)) =
+        match rest with
+            | [] -> acc
+            | _ :: tail -> go(acc + 1)(tail)
+    in go(0)(xs))
+
+let recursive loop (i: Int) (acc: Int) =
+    if i == 0
+    then acc
+    else
+        let entries = [i, i + 1, i + 2]
+        in loop(i - 1)(acc + count(entries))
+
+Ashes.IO.print(Ashes.Text.fromInt(loop(3)(0)))
