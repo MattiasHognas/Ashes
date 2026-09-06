@@ -8,8 +8,8 @@ Function: makeText
       move-safe: yes
       unique:    yes
   Result
-    fresh:    no
-    poisoned: yes
+    fresh:    yes
+    poisoned: no
     aliases:  (none)
 
 Function: shout
@@ -17,7 +17,7 @@ Function: shout
     text
       ownership: consumed
       move-safe: yes
-      unique:    no
+      unique:    yes
   Result
     fresh:    no
     poisoned: yes

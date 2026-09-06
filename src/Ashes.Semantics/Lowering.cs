@@ -3583,7 +3583,8 @@ public sealed partial class Lowering
         // region-backed, so the enclosing region reset could not reclaim it and no owner released it.
         bool placementAllowsRuntimeRc = AllowsAsyncIndependentRcPlacement
             && AllowsOrdinaryRcPlacement;
-        bool runtimeManagedString = placementAllowsRuntimeRc && IsRuntimeRcStringProducer(body);
+        bool runtimeManagedString = placementAllowsRuntimeRc
+            && (IsRuntimeRcStringProducer(body) || IsReconcilableFreshStringJoin(body));
         bool runtimeManagedAdt = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableAdt(body);
         bool runtimeManagedList = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableList(body);
         bool runtimeManagedBytes = placementAllowsRuntimeRc
@@ -6265,14 +6266,11 @@ public sealed partial class Lowering
         // independently. Snapshot before Then, restore before Else, so both branches may reuse the
         // same dead cell (at runtime only one does).
         var reuseTokensAtIf = new List<ReuseToken>(_reuseTokens);
+        request = WithReconcilableFreshStringJoinRequest(iff, request);
+        bool normalizeStaticStringBranches = ShouldNormalizeStaticStringIfBranches(iff, request);
 
         int slot = NewLocal();
-        var thenCredits = BeginExclusiveBranch([iff.Else]);
-        var (tTemp, tType) = LowerExpr(iff.Then, request);
-        EndExclusiveBranch(thenCredits);
-        var thenType = Prune(tType);
-        tTemp = TransferDirectRuntimeManagedBranchResult(iff.Then, tTemp);
-        Emit(new IrInst.StoreLocal(slot, tTemp));
+        var (tTemp, thenType) = LowerIfBranchIntoSlot(iff.Then, iff.Else, request, null, normalizeStaticStringBranches, slot);
 
         Emit(new IrInst.Jump(endLabel));
         Emit(new IrInst.Label(elseLabel));
@@ -6281,12 +6279,7 @@ public sealed partial class Lowering
         _reuseTokens.AddRange(reuseTokensAtIf);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-        var elseCredits = BeginExclusiveBranch([iff.Then]);
-        var (eTemp, eType) = LowerIfElseBranch(iff.Else, request, thenType);
-        EndExclusiveBranch(elseCredits);
-        var elseType = Prune(eType);
-        eTemp = TransferDirectRuntimeManagedBranchResult(iff.Else, eTemp);
-        Emit(new IrInst.StoreLocal(slot, eTemp));
+        var (eTemp, elseType) = LowerIfBranchIntoSlot(iff.Else, iff.Then, request, thenType, normalizeStaticStringBranches, slot);
 
         // if expression result: put into a temp (phi) by storing chosen into target
         int target = NewTemp();
@@ -6352,13 +6345,42 @@ public sealed partial class Lowering
         return TransferDirectRuntimeManagedMatchResult(branch, branchTemp);
     }
 
-    private LoweredValue LowerIfElseBranch(
+    private (int Temp, TypeRef Type) LowerIfElseBranch(
         Expr expression,
         LoweredValueRequest request,
-        TypeRef expectedType)
+        TypeRef expectedType,
+        bool normalizeStaticString)
     {
         using var diagnosticContext = PushDiagnosticContext("in if branches");
-        return LowerExpr(expression, request.WithExpectedType(expectedType));
+        return LowerIfBranch(expression, request.WithExpectedType(expectedType), normalizeStaticString);
+    }
+
+    private (int Temp, TypeRef Type) LowerIfBranch(
+        Expr branch,
+        LoweredValueRequest request,
+        bool normalizeStaticString)
+        => (normalizeStaticString ? TryLowerStaticStringNormalizedBranch(branch, request) : null)
+            ?? LowerExpr(branch, request).AsPair();
+
+    // One branch of an if, lowered exclusively of its sibling (the then branch without an expected
+    // type, the else branch expected to have the then branch's type), its owner reference
+    // transferred to the join, and stored into the join slot.
+    private (int Temp, TypeRef Type) LowerIfBranchIntoSlot(
+        Expr branch,
+        Expr sibling,
+        LoweredValueRequest request,
+        TypeRef? expectedType,
+        bool normalizeStaticString,
+        int slot)
+    {
+        var credits = BeginExclusiveBranch([sibling]);
+        var (temp, type) = expectedType is null
+            ? LowerIfBranch(branch, request, normalizeStaticString)
+            : LowerIfElseBranch(branch, request, expectedType, normalizeStaticString);
+        EndExclusiveBranch(credits);
+        temp = TransferDirectRuntimeManagedBranchResult(branch, temp);
+        Emit(new IrInst.StoreLocal(slot, temp));
+        return (temp, Prune(type));
     }
 
     private void MarkUniformRuntimeManagedResult(
@@ -7370,7 +7392,24 @@ public sealed partial class Lowering
         }
         while (changed);
 
-        PromoteRuntimeManagedStringConcats(managedTemps);
+        PromoteLoopBoundStringConcats(tco, managedTemps, managedLocals, reachableInstructions, bodyTemp);
+    }
+
+    // The concatenations the walk reached become reference-counted when their value ends at a loop
+    // parameter's store or the body's result, outside any mixed join; the body's result itself is
+    // then runtime-managed when the walk reached it.
+    private void PromoteLoopBoundStringConcats(
+        TcoContext tco,
+        HashSet<int> managedTemps,
+        HashSet<int> managedLocals,
+        bool[] reachableInstructions,
+        int bodyTemp)
+    {
+        HashSet<int> mixedJoinSources = MixedJoinSources(tco, managedTemps, managedLocals, reachableInstructions);
+        HashSet<int> loopBound = TempsFlowingToLoopParameters(tco, reachableInstructions, bodyTemp);
+        PromoteRuntimeManagedStringConcats(
+            managedTemps,
+            temp => loopBound.Contains(temp) && !mixedJoinSources.Contains(temp));
 
         if (managedTemps.Contains(bodyTemp))
         {
@@ -7378,12 +7417,146 @@ public sealed partial class Lowering
         }
     }
 
-    private void PromoteRuntimeManagedStringConcats(IReadOnlySet<int> managedTemps)
+    // The temps whose value reaches a loop parameter's store or the body's result, through the
+    // locals they are stored into and the borrows and duplicates read back out of them: the only
+    // values a promoted concatenation may become, since the back edge releases the parameter's
+    // old value and the caller releases the result. A concatenation that flows anywhere else (an
+    // inlined callee's parameter slot, a value a builtin reads) has no release of its own and stays
+    // in the arena the iteration reclaims.
+    private HashSet<int> TempsFlowingToLoopParameters(TcoContext tco, bool[] reachableInstructions, int bodyTemp)
+    {
+        (Dictionary<int, List<int>> storesByTemp, Dictionary<int, List<int>> loadsBySlot, Dictionary<int, List<int>> aliasesBySource) =
+            CollectLoopFlowEdges(reachableInstructions);
+        var flowing = new HashSet<int>();
+        if (bodyTemp >= 0)
+        {
+            flowing.Add(bodyTemp);
+        }
+
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach ((int temp, List<int> slots) in storesByTemp)
+            {
+                if (flowing.Contains(temp))
+                {
+                    continue;
+                }
+
+                foreach (int slot in slots)
+                {
+                    if (tco.IsRuntimeManagedSlot(slot)
+                        || loadsBySlot.TryGetValue(slot, out List<int>? loads) && loads.Any(flowing.Contains))
+                    {
+                        changed |= flowing.Add(temp);
+                        break;
+                    }
+                }
+            }
+
+            foreach ((int source, List<int> aliases) in aliasesBySource)
+            {
+                if (!flowing.Contains(source) && aliases.Any(flowing.Contains))
+                {
+                    changed |= flowing.Add(source);
+                }
+            }
+        }
+        while (changed);
+
+        return flowing;
+    }
+
+    // The value flow the promotion walk follows: each temp's stores by slot, each slot's loads, and
+    // each temp's borrows and duplicates.
+    private (Dictionary<int, List<int>> StoresByTemp, Dictionary<int, List<int>> LoadsBySlot, Dictionary<int, List<int>> AliasesBySource)
+        CollectLoopFlowEdges(bool[] reachableInstructions)
+    {
+        var storesByTemp = new Dictionary<int, List<int>>();
+        var loadsBySlot = new Dictionary<int, List<int>>();
+        var aliasesBySource = new Dictionary<int, List<int>>();
+        for (int index = 0; index < _inst.Count; index++)
+        {
+            if (!reachableInstructions[index])
+            {
+                continue;
+            }
+
+            switch (_inst[index])
+            {
+                case IrInst.StoreLocal store:
+                    AddEdge(storesByTemp, store.Source, store.Slot);
+                    break;
+                case IrInst.LoadLocal load:
+                    AddEdge(loadsBySlot, load.Slot, load.Target);
+                    break;
+                case IrInst.Borrow borrow:
+                    AddEdge(aliasesBySource, borrow.SourceTemp, borrow.Target);
+                    break;
+                case IrInst.RcDup duplicate:
+                    AddEdge(aliasesBySource, duplicate.SourceTemp, duplicate.Target);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        return (storesByTemp, loadsBySlot, aliasesBySource);
+    }
+
+    private static void AddEdge(Dictionary<int, List<int>> edges, int from, int to)
+    {
+        if (!edges.TryGetValue(from, out List<int>? targets))
+        {
+            targets = [];
+            edges[from] = targets;
+        }
+
+        targets.Add(to);
+    }
+
+    // The temps stored into a join slot that also receives a value the walk did not reach (a
+    // literal beside a concatenation of the parameter): the slot stays an arena join the back edge
+    // copies out, so a concatenation feeding it must stay in the arena too, or the copy-out would
+    // orphan its reference-counted value.
+    private HashSet<int> MixedJoinSources(
+        TcoContext tco,
+        IReadOnlySet<int> managedTemps,
+        IReadOnlySet<int> managedLocals,
+        bool[] reachableInstructions)
+    {
+        var sources = new HashSet<int>();
+        foreach (IGrouping<int, IrInst.StoreLocal> stores in _inst
+                     .Where((_, instructionIndex) => reachableInstructions[instructionIndex])
+                     .OfType<IrInst.StoreLocal>()
+                     .GroupBy(store => store.Slot))
+        {
+            // A loop parameter's own slot receives every successor, arena ones normalized by the
+            // back edge at their store: it is a parameter, not a join.
+            if (tco.IsRuntimeManagedSlot(stores.Key)
+                || managedLocals.Contains(stores.Key)
+                || !stores.Any(store => managedTemps.Contains(store.Source)))
+            {
+                continue;
+            }
+
+            foreach (IrInst.StoreLocal store in stores)
+            {
+                sources.Add(store.Source);
+            }
+        }
+
+        return sources;
+    }
+
+    private void PromoteRuntimeManagedStringConcats(IReadOnlySet<int> managedTemps, Func<int, bool> promotable)
     {
         for (int index = 0; index < _inst.Count; index++)
         {
             if (_inst[index] is IrInst.ConcatStr { RuntimeManaged: false } concat
-                && managedTemps.Contains(concat.Target))
+                && managedTemps.Contains(concat.Target)
+                && promotable(concat.Target))
             {
                 IrInst promoted = concat with { RuntimeManaged = true };
                 _inst[index] = promoted;

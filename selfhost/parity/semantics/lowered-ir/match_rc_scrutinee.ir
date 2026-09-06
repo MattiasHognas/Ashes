@@ -20,7 +20,7 @@ function lambda_0  [SourceFunction from shout]
     Return                Source=6
 
 function lambda_1  [SourceFunction from label]
-  locals=11 temps=10
+  locals=12 temps=15
     LoadLocal             Target=0 Slot=1   (match_rc_scrutinee.ash:9:30)
     TextFromInt           Target=1 ValueTemp=0   (match_rc_scrutinee.ash:9:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
@@ -40,8 +40,10 @@ function lambda_1  [SourceFunction from label]
   match_next_9:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=6 Value=8   (match_rc_scrutinee.ash:11:35)
-    TextFromInt           Target=7 ValueTemp=6   (match_rc_scrutinee.ash:11:16)
+    TextFromInt           Target=7 ValueTemp=6 RuntimeManaged=true   (match_rc_scrutinee.ash:11:16)
     StoreLocal            Slot=2 Source=7   (match_rc_scrutinee.ash:9:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
     Jump                  Target=match_end_7   (match_rc_scrutinee.ash:9:5)
   match_arm_cleanup_11:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
@@ -52,10 +54,22 @@ function lambda_1  [SourceFunction from label]
     StoreLocal            Slot=2 Source=8   (match_rc_scrutinee.ash:9:5)
   match_end_7:
     LoadLocal             Target=9 Slot=2   (match_rc_scrutinee.ash:9:5)
-    Return                Source=9
+    LoadArgumentOwnership Target=10
+    LoadConstInt          Target=11 Value=1
+    ShrInt                Target=12 Left=10 Right=11
+    JumpIfFalse           CondTemp=12 Target=rc_result_owned_12
+    CopyOutArena          DestTemp=13 SrcTemp=9 Purpose=ArenaResultBoundary
+    RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=11 Source=13
+    Jump                  Target=rc_result_done_13
+  rc_result_owned_12:
+    StoreLocal            Slot=11 Source=9
+  rc_result_done_13:
+    LoadLocal             Target=14 Slot=11
+    Return                Source=14
 
 function _start_main  [ProgramEntry]
-  locals=41 temps=41
+  locals=40 temps=39
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
@@ -112,7 +126,7 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=22 Source=17
     SaveArenaState        CursorLocalSlot=23 EndLocalSlot=24
     LoadConstInt          Target=18 Value=0
-    MakeClosureStack      Target=19 FuncLabel=lambda_1 EnvPtrTemp=18 EnvSizeBytes=0
+    MakeClosureStack      Target=19 FuncLabel=lambda_1 EnvPtrTemp=18 EnvSizeBytes=0 ReturnsRuntimeManaged=true
     StoreLocal            Slot=25 Source=19
     SaveArenaState        CursorLocalSlot=26 EndLocalSlot=27
     LoadLocal             Target=20 Slot=22   (match_rc_scrutinee.ash:13:30)
@@ -130,38 +144,30 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=27 Value=63   (match_rc_scrutinee.ash:15:16)
     ShrInt                Target=28 Left=26 Right=27   (match_rc_scrutinee.ash:15:16)
     CallClosure           Target=29 ClosureTemp=24 ArgTemp=25   (match_rc_scrutinee.ash:15:16)
-    StoreLocal            Slot=32 Source=29   (match_rc_scrutinee.ash:15:16)
     RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=31
-    JumpIfFalse           CondTemp=28 Target=call_copy_arena_result_12   (match_rc_scrutinee.ash:15:16)
-    Jump                  Target=call_reclaim_owned_result_13   (match_rc_scrutinee.ash:15:16)
-  call_copy_arena_result_12:
-    CopyOutArena          DestTemp=30 SrcTemp=29 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=32 Source=30   (match_rc_scrutinee.ash:15:16)
-  call_reclaim_owned_result_13:
     ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=31
-    LoadLocal             Target=31 Slot=32   (match_rc_scrutinee.ash:15:16)
-    PrintStr              Source=31   (match_rc_scrutinee.ash:15:1)
-    RcDrop                SourceTemp=31 TypeName=String RuntimeManaged=true
-    AllocAdt              Target=32 Tag=0 FieldCount=0   (match_rc_scrutinee.ash:15:1)
-    StoreLocal            Slot=33 Source=32
-    RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=34
-    CopyOutArena          DestTemp=34 SrcTemp=32 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=34
-    StoreLocal            Slot=35 Source=34
-    LoadLocal             Target=35 Slot=25
-    CleanupResource       SourceTemp=35 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=36
-    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=36
-    LoadLocal             Target=36 Slot=35
-    StoreLocal            Slot=37 Source=36
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=38
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=38
-    LoadLocal             Target=38 Slot=37
-    StoreLocal            Slot=39 Source=38
-    LoadLocal             Target=39 Slot=2
-    CleanupResource       SourceTemp=39 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=40
-    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=40
-    LoadLocal             Target=40 Slot=39
-    Return                Source=40
+    PrintStr              Source=29   (match_rc_scrutinee.ash:15:1)
+    RcDrop                SourceTemp=29 TypeName=String RuntimeManaged=true
+    AllocAdt              Target=30 Tag=0 FieldCount=0   (match_rc_scrutinee.ash:15:1)
+    StoreLocal            Slot=32 Source=30
+    RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=33
+    CopyOutArena          DestTemp=32 SrcTemp=30 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=33
+    StoreLocal            Slot=34 Source=32
+    LoadLocal             Target=33 Slot=25
+    CleanupResource       SourceTemp=33 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=35
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=35
+    LoadLocal             Target=34 Slot=34
+    StoreLocal            Slot=36 Source=34
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=37
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=37
+    LoadLocal             Target=36 Slot=36
+    StoreLocal            Slot=38 Source=36
+    LoadLocal             Target=37 Slot=2
+    CleanupResource       SourceTemp=37 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=39
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=39
+    LoadLocal             Target=38 Slot=38
+    Return                Source=38
 

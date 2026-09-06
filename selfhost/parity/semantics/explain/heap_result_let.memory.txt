@@ -4,7 +4,7 @@ Memory report
 Function: shout
   ownership
     n: consumed, move-safe yes
-    result fresh: no
+    result fresh: yes
   perceus [lambda_0]
     dup:                  0
     drop:                 1

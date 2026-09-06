@@ -8,7 +8,7 @@ Function: shout
       move-safe: yes
       unique:    yes
   Result
-    fresh:    no
-    poisoned: yes
+    fresh:    yes
+    poisoned: no
     aliases:  (none)
 

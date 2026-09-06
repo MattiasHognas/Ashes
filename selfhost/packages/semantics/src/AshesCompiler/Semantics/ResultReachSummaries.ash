@@ -14,6 +14,7 @@
 //   lowering recomputes from the binding it lowers.
 
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CoreBuiltinLowering.freshRcBuiltinCall
 import AshesCompiler.Semantics.OwnershipSummary
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
@@ -1152,6 +1153,14 @@ and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
                                         stepOf(reachPoisoned(UnmodelledReach))(token)
                             | None ->
                                 stepOf(reachPoisoned(UnmodelledReach))(token)
+        | (ExprQualifiedVar(moduleName, memberName), arguments) ->
+            if arguments
+            |> length
+            |> freshRcBuiltinCall(moduleName)(memberName)
+            then
+                stepOf(reachBottom(Unit))(token)
+            else
+                stepOf(reachPoisoned(UnmodelledReach))(token)
         | _ ->
             stepOf(reachPoisoned(UnmodelledReach))(token)
 and constructorReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (constructor: ReachConstructor) (arguments: List(Expr)) =

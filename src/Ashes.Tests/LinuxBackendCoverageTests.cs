@@ -2585,6 +2585,36 @@ public sealed class LinuxBackendCoverageTests
     }
 
     /// <summary>
+    /// A runtime-managed <c>Str</c> loop parameter its successor reads more than once: joined with
+    /// a literal behind a guard on its length, doubled and sliced by the byte builtin, and doubled
+    /// and handed to a helper whose literal arms join the slice. Each leaked one string per
+    /// iteration before the join normalization, the flow-bound concatenation promotion, and the
+    /// fresh-builtin result reach were in place.
+    /// </summary>
+    [Test]
+    public async Task Linux_backend_llvm_runtime_rc_string_parameter_read_twice_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> joinSuccessor = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcStringJoinSuccessorMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> readTwice = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcStringReadTwiceMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> freshArgumentHelper = await MeasureMemoryGrowthAsync(
+            BuildRuntimeRcStringFreshArgumentHelperMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("runtime-RC string join successor", joinSuccessor);
+        AssertMemoryPlateaus("runtime-RC string read twice", readTwice);
+        AssertMemoryPlateaus("runtime-RC string fresh argument helper", freshArgumentHelper);
+    }
+
+    /// <summary>
     /// A TCO loop's own exit arm building a multi-constructor ADT (<c>| Pr(a, b)</c>, not a
     /// zero-cost single-payload wrapper) directly from the loop's own runtime-managed accumulator
     /// parameters. Unlike every ADT shape in
@@ -7599,6 +7629,47 @@ public sealed class LinuxBackendCoverageTests
                         | Error(_e) -> 0 - 1
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // A runtime-managed string loop parameter whose successor joins a literal with a fresh append of
+    // the parameter to itself: the join must be uniformly reference-counted, or the back edge's copy
+    // out of the arena join orphans the append.
+    private static string BuildRuntimeRcStringJoinSuccessorMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop (n: Int) (text: Str) (total: Int) =
+                if n <= 0 then total
+                else
+                    loop(n - 1)(if Ashes.Text.byteLength(text) >= 512 then "ab" else text + text)(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})("ab")(0))
+            """;
+
+    // A runtime-managed string loop parameter read twice by a byte slice of its own doubling, the
+    // fresh doubled string handed to the builtin and left behind by the slice.
+    private static string BuildRuntimeRcStringReadTwiceMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop (n: Int) (text: Str) (total: Int) =
+                if n <= 0 then total
+                else loop(n - 1)(Ashes.Byte.subText(Ashes.Byte.fromText(text + text))(1)(64))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")(0))
+            """;
+
+    // The same doubling and slice behind a helper whose literal arms join the fresh slice, called
+    // with the fresh doubled string as its argument: the helper's result reaches nothing, so the
+    // argument is released after the call whether the helper is inlined or not.
+    private static string BuildRuntimeRcStringFreshArgumentHelperMemoryProgram(int iterations)
+        => $$"""
+            let cut (text: Str) (count: Int) =
+                if count <= 0
+                then ""
+                else Ashes.Byte.subText(Ashes.Byte.fromText(text))(1)(count)
+
+            let recursive loop (n: Int) (text: Str) (total: Int) =
+                if n <= 0 then total
+                else loop(n - 1)(cut(text + text)(64))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")(0))
             """;
 
     private static string BuildRuntimeRcHigherOrderResultMemoryProgram(int iterations)

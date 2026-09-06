@@ -3992,6 +3992,14 @@ public sealed partial class Lowering
             return CallReachConstructor(ctor, args, env, scope);
         }
 
+        // A builtin declared to produce a fresh, uniquely owned reference-counted value (a byte
+        // slice, a concatenation, a number's text) copies what it reads: its result reaches none
+        // of its arguments, so a caller handing it a parameter keeps nothing past the call.
+        if (TryGetFreshRcBuiltinProducerKind(e, out _))
+        {
+            return ReachBottom();
+        }
+
         string? name = head switch
         {
             Expr.Var v => v.Name,

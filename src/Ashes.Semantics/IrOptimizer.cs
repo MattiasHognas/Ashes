@@ -258,8 +258,11 @@ public static partial class IrOptimizer
 
     // Walks backward from a chain's outermost ConcatStr (`root`, at index `rootIndex`) via each
     // link's Left operand, for as long as that operand is itself defined by exactly one ConcatStr
-    // with a single use (this same link) and a matching RuntimeManaged flag. Returns the visited
-    // instruction indices in outermost-to-innermost order.
+    // with a single use (this same link) and a compatible placement: the same RuntimeManaged flag,
+    // or an arena inner link under a reference-counted outer one (an intermediate the fold
+    // removes, with no release of its own to strand; a reference-counted intermediate under an
+    // arena root has one, so it ends the chain). Returns the visited instruction indices in
+    // outermost-to-innermost order.
     private static List<int> CollectConcatChainIndices(
         List<IrInst> instructions,
         Dictionary<int, int> defCount,
@@ -278,7 +281,7 @@ public static partial class IrOptimizer
                 && useCount.GetValueOrDefault(link.Left) == 1
                 && defIndex.TryGetValue(link.Left, out int leftDefIndex)
                 && instructions[leftDefIndex] is IrInst.ConcatStr innerLink
-                && innerLink.RuntimeManaged == link.RuntimeManaged)
+                && (innerLink.RuntimeManaged == link.RuntimeManaged || !innerLink.RuntimeManaged))
             {
                 current = leftDefIndex;
                 link = innerLink;

@@ -18,6 +18,9 @@ export (
     value standardBuiltinLayouts,
     value reservedBuiltinTypeVariableCount,
     value emitCoreBuiltin,
+    value isFreshStringBuiltinKind,
+    value isFreshRcBuiltinKind,
+    value freshRcBuiltinCall,
 )
 
 type CoreBuiltinKind =
@@ -1139,7 +1142,7 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
             target3(start)(value)(from)(count)(given (target) ->
                 given (bytes) ->
                     given (offset) ->
-                        given (length) -> BytesSubText(target)(bytes)(offset)(length)(false))
+                        given (length) -> BytesSubText(target)(bytes)(offset)(length)(runtimeManaged))
         | (CoreBytesSubView, value :: from :: count :: [], _types) -> target3(start)(value)(from)(count)(BytesSubView)
         | (CoreBytesAppend, left :: right :: [], _types) -> managedTarget2(start)(left)(right)(BytesAppend)
         | (CoreBytesAppendByte, value :: byte :: [], _types) -> managedTarget2(start)(value)(byte)(BytesAppendByte)
@@ -1204,3 +1207,56 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
         | (CoreProcessWaitForExit, process :: [], _types) -> target1(start)(process)(ProcessWaitForExit)
         | (CoreProcessKill, process :: [], _types) -> target1(start)(process)(ProcessKill)
         | _ -> emissionFailure(start)("builtin arguments do not match the registered arity")
+
+// The builtins whose result is a fresh string of their own, stage 0's `FreshRcResultKind.String`.
+let isFreshStringBuiltinKind (kind: CoreBuiltinKind) =
+    match kind with
+        | CoreTextFromInt -> true
+        | CoreTextFromFloat -> true
+        | CoreTextFormatFloat -> true
+        | CoreBigIntToString -> true
+        | CoreTextToHex -> true
+        | CoreTextAsciiCase(_upper) -> true
+        | CoreRuneToText -> true
+        | CoreBytesSubText -> true
+        | _ -> false
+
+// The builtins whose result is a fresh, uniquely owned reference-counted value of their own (a
+// string, a byte buffer, or a big integer), stage 0's `ProducesFreshRcResult`: such a result
+// copies what the builtin read, so it reaches none of the builtin's arguments.
+let isFreshRcBuiltinKind (kind: CoreBuiltinKind) =
+    match kind with
+        | CoreBigIntFromInt -> true
+        | CoreBigIntBinary(_operator) -> true
+        | CoreBytesEmpty -> true
+        | CoreBytesSingleton -> true
+        | CoreBytesAppend -> true
+        | CoreBytesAppendByte -> true
+        | CoreBytesAllocate -> true
+        | CoreBytesCopyRange -> true
+        | CoreBytesSet -> true
+        | CoreBytesSetU16Le -> true
+        | CoreBytesSetU32Le -> true
+        | CoreBytesSetU64Le -> true
+        | CoreBytesFromList -> true
+        | CoreBytesU16Le -> true
+        | CoreBytesU32Le -> true
+        | CoreBytesU64Le -> true
+        | _ -> isFreshStringBuiltinKind(kind)
+
+let recursive schemeArity (semanticType: SemanticType) (count: Int) =
+    match semanticType with
+        | SemFunction(_parameter, result, _row) -> schemeArity(result)(count + 1)
+        | _ -> count
+
+let recursive freshRcBuiltinCallIn (layouts: List(CoreBuiltinLayout)) (moduleName: Str) (memberName: Str) (argumentCount: Int) =
+    match layouts with
+        | [] -> false
+        | CoreBuiltinLayout { moduleName = candidateModule, memberName = candidateMember, scheme = TypeScheme { body = body }, kind = kind } :: rest ->
+            if candidateModule == moduleName && candidateMember == memberName
+            then isFreshRcBuiltinKind(kind) && schemeArity(body)(0) == argumentCount
+            else freshRcBuiltinCallIn(rest)(moduleName)(memberName)(argumentCount)
+
+// Whether a saturated call to `moduleName.memberName` is a standard builtin producing a fresh
+// reference-counted value.
+let freshRcBuiltinCall (moduleName: Str) (memberName: Str) (argumentCount: Int) = freshRcBuiltinCallIn(standardBuiltinLayouts)(moduleName)(memberName)(argumentCount)

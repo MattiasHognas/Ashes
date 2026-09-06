@@ -45,8 +45,6 @@ public sealed partial class Lowering
         // arms that don't reference the accumulator again (so its cell is dead).
         (string? reuseScrutineeName, TypeRef.TNamedType? runtimeReuseType) =
             GetMatchReuseScrutinee(match, valueType, savedTailPos);
-        bool normalizeStaticStringArms = ShouldNormalizeStaticStringMatchArms(match.Cases);
-
         List<MatchArmResultOwnership>? runtimeManagedResultArms = LowerMatchArms(
             match, valueTemp, valueType, resultType, resultSlot,
             endLabel,
@@ -54,8 +52,8 @@ public sealed partial class Lowering
             savedTailPos,
             reuseScrutineeName,
             runtimeReuseType,
-            normalizeStaticStringArms,
-            request);
+            ShouldNormalizeStaticStringMatchArms(match.Cases),
+            WithReconcilableFreshStringJoinRequest(match, request));
 
         Emit(new IrInst.Label(noMatchLabel));
         EmitMatchExhaustivenessDiagnostics(match, diagnosticCases, valueType, hasAnyTuplePattern);
@@ -150,6 +148,70 @@ public sealed partial class Lowering
         }
         _runtimeManagedMatchResultArms.Pop();
         return runtimeManagedResultArms;
+    }
+
+    // An `if` lowered under a request for a runtime-managed string normalizes a literal branch
+    // beside a fresh branch exactly as a match normalizes its arms: a join of a static literal and a
+    // reference-counted value is an arena join, and the copy-out that later normalizes it orphans
+    // the fresh branch's reference-counted value.
+    private bool ShouldNormalizeStaticStringIfBranches(Expr.If conditional, LoweredValueRequest request)
+        => request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)
+            && IsReconcilableFreshStringJoin(conditional);
+
+    // A reconcilable join asks its branches for a runtime-managed string whatever its consumer
+    // asked for: the fresh branch then produces its value on the reference-counted heap and the
+    // literal branches copy theirs, so the join is uniformly runtime-managed wherever it flows (an
+    // inlined callee body under a loop's back-edge request included). A consumer that wanted an
+    // arena value reads the runtime-managed result through the ordinary temp ownership facts.
+    private LoweredValueRequest WithReconcilableFreshStringJoinRequest(Expr join, LoweredValueRequest request)
+        => AllowsAsyncIndependentRcPlacement
+            && AllowsOrdinaryRcPlacement
+            && !request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)
+            && IsReconcilableFreshStringJoin(join)
+                ? request.AddRuntime(true, LoweredValueRuntimeRepresentation.String)
+                : request;
+
+    // A control-flow join an escaping runtime-managed string request reconciles: every branch is a
+    // literal (copied to the reference-counted heap inside its branch), a fresh producer, or a
+    // value that never reaches the join, and at least one branch is fresh. Deciding the request on
+    // the whole join keeps a nested fresh branch from taking the representation alone, which would
+    // leave the literal beside it as an arena value in a mixed join.
+    private bool IsReconcilableFreshStringJoin(Expr body)
+        => body switch
+        {
+            Expr.If conditional => IsRuntimeManagedStringMatchArm(conditional.Then, out bool thenFresh)
+                && IsRuntimeManagedStringMatchArm(conditional.Else, out bool elseFresh)
+                && (thenFresh || elseFresh),
+            Expr.Match match => ShouldNormalizeStaticStringMatchArms(match.Cases),
+            _ => false,
+        };
+
+    // A literal string branch takes a reference-counted copy of the constant; a static constructor
+    // branch is built in the arena as usual and deep-copied to the reference-counted heap, its
+    // literal string children included. Any other branch has no static form to normalize.
+    private (int Temp, TypeRef Type)? TryLowerStaticStringNormalizedBranch(Expr body, LoweredValueRequest request)
+    {
+        if (body is Expr.StrLit literal)
+        {
+            var (sourceTemp, sourceType) = LowerStr(literal);
+            int resultTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(
+                resultTemp,
+                sourceTemp,
+                -1,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            MarkRuntimeManagedTemp(resultTemp);
+            return (resultTemp, sourceType);
+        }
+
+        if (IsStaticConstructorArm(body, out TypeRef.TNamedType? staticType) && staticType is not null)
+        {
+            var (arenaTemp, arenaType) = LowerExpr(body, request).AsPair();
+            return (EmitRuntimeManagedTcoDeepCopy(arenaTemp, staticType), arenaType);
+        }
+
+        return null;
     }
 
     private bool ShouldNormalizeStaticStringMatchArms(IReadOnlyList<MatchCase> cases)
@@ -844,29 +906,9 @@ public sealed partial class Lowering
         request = request.WithRuntimeAdtContext(
             childBindings: null,
             reuseType: runtimeReuseType);
-        if (normalizeStaticStringArm && body is Expr.StrLit literal)
+        if (normalizeStaticStringArm && TryLowerStaticStringNormalizedBranch(body, request) is { } normalized)
         {
-            var (sourceTemp, sourceType) = LowerStr(literal);
-            int resultTemp = NewTemp();
-            Emit(new IrInst.CopyOutArena(
-                resultTemp,
-                sourceTemp,
-                -1,
-                RuntimeManaged: true,
-                IrInst.CopyOutPurpose.RcNormalization));
-            MarkRuntimeManagedTemp(resultTemp);
-            return (resultTemp, sourceType);
-        }
-
-        // A static constructor arm is built in the arena as usual and deep-copied to the
-        // reference-counted heap, its literal string children included, so the arm joins a retained
-        // sibling uniformly.
-        if (normalizeStaticStringArm
-            && IsStaticConstructorArm(body, out TypeRef.TNamedType? staticType)
-            && staticType is not null)
-        {
-            var (arenaTemp, arenaType) = LowerExpr(body, request).AsPair();
-            return (EmitRuntimeManagedTcoDeepCopy(arenaTemp, staticType), arenaType);
+            return normalized;
         }
 
         return LowerExpr(body, request).AsPair();
