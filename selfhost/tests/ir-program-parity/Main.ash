@@ -104,6 +104,10 @@ let checkFixture root name =
 // call, and the list loops pass a pattern binding of a loop parameter whose placement finalize
 // still decides through the pending argument-retain skeleton, its ownership flag zeroed at
 // finalize when the frame keeps the parameter in the arena.
+// tco_list_walk adds the curried stages of a loop function capturing its runtime-managed list
+// parameter: each stage's `lambda_N$env_normalize` copies the captured list out for a closure
+// that escapes, and the shared `__rc_cdrop_N` closure dropper walks it, both synthesized when
+// the stage's closure is emitted.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 // match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
@@ -118,9 +122,7 @@ let checkFixture root name =
 // the fixed and per-iteration watermarks and the stack pointer saved around the `lambda_N_body`
 // label, the affine accumulator's reservation slots, and the back edge's argument temps, old
 // parameter loads, parameter stores, deferred owner releases and arena reset, stack restore,
-// and jump, with the unread chain parameter's synthetic slot. tco_list_walk (a runtime-managed
-// list parameter) keeps its loop-function comparison in
-// `selfhost/tests/semantics/TcoLoopLoweringTests.ash`.
+// and jump, with the unread chain parameter's synthetic slot.
 // owned_let_list_drop adds a `let`-owned runtime list of fresh strings (the list request, the
 // runtime-managed cells and heads, and the inline unique-spine walk at the scope exit) and
 // aggregate_children_retain the escaping tuple, list literal, and cons cell that retain the owned
@@ -159,6 +161,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("self_call_operand_string_result"))
         |> (given (_) -> checkFixture(root)("unannotated_parameter_record"))
         |> (given (_) -> checkFixture(root)("tco_non_tail_self_call_in_operator_operand"))
+        |> (given (_) -> checkFixture(root)("tco_list_walk"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))
