@@ -201,6 +201,10 @@ let expectBuiltinRegistry unit =
             | Some(CoreRegexCaptures) -> Unit
             | _ -> test.fail("regex captures are absent from the core builtin registry"))
     |> (given (_) ->
+        match coreBuiltinKind("Ashes.Internal")("deepCopy") with
+            | Some(CoreInternalDeepCopy) -> Unit
+            | _ -> test.fail("the deep copy intrinsic is absent from the core builtin registry"))
+    |> (given (_) ->
         match coreBuiltinKind("Ashes.Task")("run") with
             | None -> Unit
             | _ -> test.fail("the builtin registry consumed an operation owned by async lowering"))

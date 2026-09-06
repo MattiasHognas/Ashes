@@ -1952,7 +1952,7 @@ same public behavior.
 - [ ] **CG-15** Generate verified object files for `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` from the
   corresponding native host compiler bundle (`LlvmTargetSetup.EnsureInitialized` per target,
   `VerifyModule` before emission; `ASH_DBG_DUMP_IR` dumps the module text on a verifier failure).
-- [ ] **CG-16** Lower the builtins the self-hosted compiler still rejects with
+- [~] **CG-16** Lower the builtins the self-hosted compiler still rejects with
   `UnknownLoweringBinding`: `Ashes.Text.fromBigInt`, `Ashes.Text.formatFloat`,
   `Ashes.Rune.isAsciiLetter`, and `Ashes.Internal.deepCopy`, each through the semantic builtin
   table and the backend emitter, placed by the runtime-managed flag like the other fresh-value
@@ -1961,7 +1961,24 @@ same public behavior.
   `runtime_rc_multi_bigint_tco`, and `runtime_rc_whole_string_pattern_recursion` out of the loop
   sweep and `stdlib_string` out of the compile-time timing set. `Ashes.Trait.Show.show` and
   `Ashes.Trait.Hash.hash` (the remaining sweep and timing failures) are trait dictionary lowering
-  and stay under TRT-13..TRT-15.
+  and stay under TRT-13..TRT-15. Done (2026-09-06): the rejections came from the builtin type
+  table (`standardBuiltinLayouts`), which lacked the schemes although the kinds and their
+  emission arms existed, so `Text.fromFloat`, `Text.formatFloat`, `Text.asciiUpper`,
+  `Text.asciiLower`, `Rune.isAsciiLetter`, `Rune.isAsciiDigit`, `Rune.isAsciiWhiteSpace`, and
+  `Internal.deepCopy` now carry theirs (`deepCopy` under a fifth reserved type variable), the
+  ASCII case builtins honor the runtime request, and `deepCopy` lowers through the structural
+  copier synthesis (`lowerInternalDeepCopy`, an argument whose type is still a variable passing
+  through and recorded for the body's second lowering, as stage 0 defers it). The backend gained
+  the float text emitters (`IrCodegen.FloatText.ash`: `TextFromFloat` and `TextFormatFloat`
+  written forward into one stack buffer, sign, integer digits, fraction with half-up rounding
+  and carry, trailing-zero trim for `fromFloat`, the `e+N` form past the signed 64-bit range,
+  the decimal count clamped to 0..18) and the ASCII case mapper (`IrCodegen.AsciiCase.ash`),
+  both placed by the flag; `tco_list_of_adt_accumulator` joins the sweep and the backend suite
+  pins float text, case mapping, the rune class, and the deep copy. Open: `Text.fromBigInt` and
+  the BigInt arithmetic the three BigInt fixtures compute with need the BigInt runtime
+  (`BigIntFromInt`/`ToString`/`ToInt`/`FromString`/`Binary`/`Compare`, stage 0's
+  `LlvmCodegenBuiltins.BigInt.cs`), the milestone 6 slice of CG-11 pulled forward here;
+  `runtime_rc_whole_string_pattern_recursion` now stops at SEM-18's comparison default instead.
 
 #### Object parsing and executable linking
 

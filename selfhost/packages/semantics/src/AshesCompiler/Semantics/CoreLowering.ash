@@ -11481,9 +11481,22 @@ let finishBuiltinEmission resultType lower consumedOperand state emission =
             |> releaseConsumedBuiltinOperand(consumedOperand)
             |> finishBuiltinResult(resultType)(lower)(result)
 
+// Stage 0's `LowerInternalDeepCopy`: the argument's independent clone, synthesized by its
+// resolved type. An argument whose type is still a variable passes through as it is and its
+// type is recorded, so the body is lowered again once the type resolves (stage 0 defers the
+// copy to that point).
+let lowerInternalDeepCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNever -> success(temp)(SemNever)(state)
+        | SemVariable(_id) as unresolved -> success(temp)(unresolved)((state with unresolvedCallResults = unresolved :: state.unresolvedCallResults))
+        | resolved ->
+            match emitTcoDeepCopy(temp)(resolved)(state) with
+                | (copied, resultTemp) -> success(resultTemp)(resolved)(copied)
+
 let emitBuiltin layout resultType lower runtimeManaged lowered =
     match (layout, lowered) with
         | (_, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
+        | (CoreBuiltinLayout { kind = CoreInternalDeepCopy }, LoweredCoreValues { state = state, temps = temp :: [], semanticTypes = semanticType :: [], error = None }) -> lowerInternalDeepCopy(temp)(semanticType)(state)
         | (CoreBuiltinLayout { kind = kind }, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
             match state with
                 | CoreLoweringState { nextTemp = nextTemp } ->

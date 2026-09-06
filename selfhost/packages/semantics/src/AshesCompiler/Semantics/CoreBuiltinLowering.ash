@@ -79,6 +79,7 @@ type CoreBuiltinKind =
     | CoreBigIntFromString
     | CoreBigIntBinary(Str)
     | CoreBigIntCompare
+    | CoreInternalDeepCopy
     | CoreRegexCompile
     | CoreRegexCompileError
     | CoreRegexFind
@@ -274,6 +275,11 @@ let bigIntBuiltinKind memberName =
         | "compare" -> Some(CoreBigIntCompare)
         | _ -> None
 
+let internalBuiltinKind memberName =
+    match memberName with
+        | "deepCopy" -> Some(CoreInternalDeepCopy)
+        | _ -> None
+
 let regexBuiltinKind memberName =
     match memberName with
         | "compileRaw" -> Some(CoreRegexCompile)
@@ -365,6 +371,7 @@ let coreBuiltinKind moduleName memberName =
         | "Ashes.Text" -> textBuiltinKind(memberName)
         | "Ashes.Rune" -> runeBuiltinKind(memberName)
         | "Ashes.Number.BigInt" -> bigIntBuiltinKind(memberName)
+        | "Ashes.Internal" -> internalBuiltinKind(memberName)
         | "Ashes.Internal.Regex" -> regexBuiltinKind(memberName)
         | "Ashes.Byte" -> bytesBuiltinKind(memberName)
         | "Ashes.Number.UInt" ->
@@ -403,6 +410,7 @@ let isIntrinsicBuiltinModule moduleName =
         | "Ashes.Text" -> true
         | "Ashes.Rune" -> true
         | "Ashes.Number.BigInt" -> true
+        | "Ashes.Internal" -> true
         | "Ashes.Internal.Regex" -> true
         | "Ashes.Byte" -> true
         | "Ashes.Number.UInt" -> true
@@ -455,7 +463,8 @@ let processType = SemNamed(0)("Process")([])
 // reserved ids across two different static schemes (as `None`/`Some` do) is safe — each
 // `instantiate` call mints its own independent substitution — only a *live* supply value colliding
 // with a *reserved* id is the hazard. Bump this whenever a new entry introduces another distinct id.
-let reservedBuiltinTypeVariableCount = 4
+// `Ashes.Internal.deepCopy`'s `forall a. a -> a` takes `(4, "a")`.
+let reservedBuiltinTypeVariableCount = 5
 
 let standardBuiltinLayouts =
     [
@@ -683,6 +692,30 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.Text")("fromInt")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("fromFloat")(
+            TypeScheme(quantified = [], body = SemFunction(SemFloat)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("formatFloat")(
+            TypeScheme(quantified = [], body = SemFunction(SemFloat)(SemFunction(SemInt)(SemString)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("asciiUpper")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("asciiLower")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Rune")("isAsciiLetter")(
+            TypeScheme(quantified = [], body = SemFunction(SemRune)(SemBool)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Rune")("isAsciiDigit")(
+            TypeScheme(quantified = [], body = SemFunction(SemRune)(SemBool)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Rune")("isAsciiWhiteSpace")(
+            TypeScheme(quantified = [], body = SemFunction(SemRune)(SemBool)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Internal")("deepCopy")(
+            TypeScheme(quantified = [(4, "a")], body = SemFunction(SemVariable(4))(SemVariable(4))(None), constraints = [])
         ),
         standardBuiltinLayout("Ashes.Text")("byteLength")(
             TypeScheme(quantified = [], body = SemFunction(SemString)(SemInt)(None), constraints = [])
@@ -1026,7 +1059,7 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
         | (CoreTextToHex, value :: [], _types) -> runtimeTarget1(start)(value)(runtimeManaged)(TextToHex)
         | (CoreTextAsciiCase(upper), text :: [], _types) ->
             target1(start)(text)(given (target) ->
-                given (source) -> TextAsciiCase(target)(source)(upper)(false))
+                given (source) -> TextAsciiCase(target)(source)(upper)(runtimeManaged))
         | (CoreMathToFloat, value :: [], _types) -> target1(start)(value)(IntToFloat)
         | (CoreMathFloatUnary(name), value :: [], _types) ->
             target1(start)(value)(given (target) ->
