@@ -2,18 +2,20 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from makeItems]
-  locals=3 temps=9
+  locals=3 temps=11
     LoadLocal             Target=5 Slot=1
     LoadArgumentOwnership Target=6
-    JumpIfFalse           CondTemp=6 Target=rc_arg_normalize_copy_0
+    LoadConstInt          Target=7 Value=1
+    AndInt                Target=8 Left=6 Right=7
+    JumpIfFalse           CondTemp=8 Target=rc_arg_normalize_copy_0
     StoreLocal            Slot=2 Source=5
     Jump                  Target=rc_arg_normalize_done_1
   rc_arg_normalize_copy_0:
-    CopyOutArena          DestTemp=7 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=2 Source=7
+    CopyOutArena          DestTemp=9 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=9
   rc_arg_normalize_done_1:
-    LoadLocal             Target=8 Slot=2
-    StoreLocal            Slot=1 Source=8
+    LoadLocal             Target=10 Slot=2
+    StoreLocal            Slot=1 Source=10
     LoadConstInt          Target=0 Value=0   (consumed_list_argument.ash:1:29)
     LoadLocal             Target=1 Slot=1   (consumed_list_argument.ash:1:36)
     Alloc                 Target=2 SizeBytes=16   (consumed_list_argument.ash:1:29)
@@ -107,9 +109,11 @@ function _start_main  [ProgramEntry]
   rc_call_argument_not_retained_9:
     LoadLocal             Target=21 Slot=12   (consumed_list_argument.ash:8:35)
     CallClosure           Target=22 ClosureTemp=5 ArgTemp=21 RuntimeManagedArgumentFlagTemp=19   (consumed_list_argument.ash:8:35)
-    StoreLocal            Slot=13 Source=14   (consumed_list_argument.ash:8:35)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=13
+    StoreLocal            Slot=14 Source=14   (consumed_list_argument.ash:8:35)
   rcdrop_list_10:
-    LoadLocal             Target=23 Slot=13   (consumed_list_argument.ash:8:35)
+    LoadLocal             Target=23 Slot=14   (consumed_list_argument.ash:8:35)
     LoadConstInt          Target=24 Value=0   (consumed_list_argument.ash:8:35)
     CmpIntNe              Target=25 Left=23 Right=24   (consumed_list_argument.ash:8:35)
     JumpIfFalse           CondTemp=25 Target=rcdrop_list_end_12   (consumed_list_argument.ash:8:35)
@@ -119,14 +123,12 @@ function _start_main  [ProgramEntry]
     RcDrop                SourceTemp=27 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=28 BasePtr=23 OffsetBytes=8   (consumed_list_argument.ash:8:35)
     RcDrop                SourceTemp=23 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=13 Source=28   (consumed_list_argument.ash:8:35)
+    StoreLocal            Slot=14 Source=28   (consumed_list_argument.ash:8:35)
     Jump                  Target=rcdrop_list_10   (consumed_list_argument.ash:8:35)
   rcdrop_list_shared_11:
     RcDrop                SourceTemp=23 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_12   (consumed_list_argument.ash:8:35)
   rcdrop_list_end_12:
-    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=14
-    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=14
     TextFromInt           Target=29 ValueTemp=22   (consumed_list_argument.ash:8:16)
     PrintStr              Source=29   (consumed_list_argument.ash:8:1)
     AllocAdt              Target=30 Tag=0 FieldCount=0   (consumed_list_argument.ash:8:1)

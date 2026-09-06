@@ -1486,12 +1486,29 @@ same public behavior.
   of spine-only (`resultDeepCopied` through `LowerCallRestoreArena` to
   `LowerCallDropConsumedRuntimeArguments`); `tests/generic_append_map_churn_plateau.ash` leaked
   every record and string once per iteration before (32.8 MB at 200000 iterations, 8.2 MB at
-  20000). Still open on the same fixture: a parameter that always reaches the result is copied
-  into an owned value at entry (`LowerLambdaCoreNormalizeAlwaysReturnedParameter`) but the fresh
-  record storing it stays arena-placed, so the owned copy is orphaned when the caller copies the
-  record out (about 23 bytes per `map` call in stage 0, and the same shape in the selfhost, which
-  also lacks the generic deep-copy path entirely, so its growth is larger). The owned parameter
-  must count as a fresh owned child of the record it is stored into. Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
+  20000). Done (2026-09-06, both compilers): the arena-result boundary. A generic body applying
+  a closure parameter has no static layout for the result, stores it wherever an arena value
+  goes, and its own caller deep-copies the whole result out, so a reference-counted result
+  returned into it was never released (a `map` over a function returning a fresh string or
+  record leaked one value per element). Such a call site now sets bit 1 of the hidden ownership
+  word (`RequestsArenaResult`, a type variable anywhere in the application's result type), and a
+  callee whose result is reference-counted honors it in its epilogue
+  (`LowerLambdaCoreNormalizeRequestedArenaResult` / `normalizeRequestedArenaResult`): the
+  result is deep-copied into the arena (`CopyOutPurpose.ArenaResultBoundary`) and the original
+  released; the entry normalization masks bit 0 for its own flag. Beside it, a string parameter
+  the entry normalization owns because the result always reaches it now counts as a fresh owned
+  child of the record storing it (`IsNormalizedAlwaysReturnedStringParameterRead`), so that
+  record is placed on the RC heap and releases the owned copy with itself; the selfhost decides
+  the normalization before the body is lowered for the same reason (`withNormalizedAlwaysReturnedParameter`)
+  and computes the function-body request against the prepared body state, not the outer one.
+  The churn fixture is flat at 8.2 MB (stage 0) and 5.6 MB (selfhost) at both 20000 and 200000
+  iterations. Still open: the same loop over a string-returning function grows slowly in stage 0
+  (8.2 MB to 12.3 MB), because the conditional list copy-out with string heads copies the heads
+  on its arena branch but the consumed first argument is still released spine-only there (the
+  sibling of the deep-copy release above, on `LowerCallConditionalCopyOutResult`'s branch); an
+  un-annotated parameter misses the pre-body decision (its type resolves only inside the body),
+  so its record stays arena-placed as before; and the selfhost still lacks the generic list
+  deep-copy call path (`LowerCallDeepCopyOutListResult`). Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
   an aggregate is never retained at the store. For a runtime-RC aggregate that retain would be
   balanced by its dropper and is the Perceus-correct rule; for an arena aggregate (the self-hosted
   lowering's emitted instruction records, say) there is no dropper to balance it, so the arena

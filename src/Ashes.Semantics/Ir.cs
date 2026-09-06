@@ -688,8 +688,8 @@ public abstract record IrInst
     /// <param name="Target">Temp receiving the call result.</param>
     /// <param name="ClosureTemp">Temp holding the closure object to invoke.</param>
     /// <param name="ArgTemp">Temp holding the argument value.</param>
-    /// <param name="RuntimeManagedArgumentFlagTemp">Temp holding the ownership-transfer flag for the argument;
-    /// -1 when unused.</param>
+    /// <param name="RuntimeManagedArgumentFlagTemp">Temp holding the hidden ownership word for the call
+    /// (see <see cref="LoadArgumentOwnership"/>); -1 when the call passes none.</param>
     public sealed record CallClosure(
         int Target,
         int ClosureTemp,
@@ -724,9 +724,12 @@ public abstract record IrInst
         bool EnvironmentIsStackAllocated = false
     ) : IrInst;
     /// <summary>
-    /// Loads the hidden closure-call ownership flag. A true value means the caller transferred an
+    /// Loads the hidden closure-call ownership word. Bit 0 set means the caller transferred an
     /// already runtime-managed argument, so an RC-normalizing function entry may adopt it instead
-    /// of deep-copying it. Unknown and arena-managed calls pass false.
+    /// of deep-copying it; unknown and arena-managed calls pass a clear bit. Bit 1 set means the
+    /// caller cannot own a reference-counted result (its result type has no static layout there)
+    /// and asks for an arena-placed one (<see cref="CopyOutPurpose.ArenaResultBoundary"/>). The
+    /// word is an ordinary temp at the call site; readers mask the bit they need.
     /// </summary>
     public sealed record LoadArgumentOwnership(int Target) : IrInst;
 
@@ -1385,6 +1388,10 @@ public abstract record IrInst
         ArenaTcoCompaction,
         /// <summary>Explicit copy producing an independent clone of a value.</summary>
         IndependentClone,
+        /// <summary>A reference-counted result deep-copied into the arena because the caller asked for an
+        /// arena result through the hidden ownership word (<see cref="LoadArgumentOwnership"/>); the
+        /// original is released.</summary>
+        ArenaResultBoundary,
     }
 
     /// <summary>

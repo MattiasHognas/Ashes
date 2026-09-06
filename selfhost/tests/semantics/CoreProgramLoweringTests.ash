@@ -638,6 +638,31 @@ let expectDisabledReuseWithholdsTokens unit =
                 |> Ashes.Text.contains(disabled)
                 |> test.assertEqual(true)))
 
+// Stage 0's arena-result boundary: a function returning a fresh runtime-managed string reads
+// bit 1 of the hidden ownership word in its epilogue and, when set, clones the string into the
+// arena and releases its own; the generic body applying a closure parameter, whose result has
+// no static layout, passes that request word (`LoadConstInt 2`) beside the call.
+let expectGenericCallerRequestsArenaResult unit =
+    "let shout (s: Str) = s + \"!\"\n\nlet apply f x = f(x)\n\nAshes.IO.print(apply(shout)(\"hi\"))\n"
+    |> dumpSource
+    |> Ashes.Text.join("\n")
+    |> (given (text) ->
+        "rc_result_owned_"
+        |> Ashes.Text.contains(text)
+        |> test.assertEqual(true)
+        |> (given (_) ->
+            "Purpose=ArenaResultBoundary"
+            |> Ashes.Text.contains(text)
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            "LoadConstInt          Target=3 Value=2"
+            |> Ashes.Text.contains(text)
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            "RuntimeManagedArgumentFlagTemp="
+            |> Ashes.Text.contains(text)
+            |> test.assertEqual(true)))
+
 // A returned local lambda that captures the enclosing parameter and ignores its own: the
 // captured parameter's type variable was unified with the constructor's field variable, and
 // generalizing `go` against the unsubstituted environment quantified that field variable away,
@@ -653,6 +678,7 @@ let expectCapturedParameterTypeSurvivesLocalLambdaGeneralization unit =
 
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectGenericCallerRequestsArenaResult
     |> expectCapturedParameterTypeSurvivesLocalLambdaGeneralization
     |> expectDisabledReuseWithholdsTokens
     |> expectFieldAccessOnUnresolvedReceiverResolvesByUniqueField

@@ -339,6 +339,11 @@ type CoreLoweringState =
     // is the armed accumulator, read by the string concatenation emitter and cleared after it.
     | affineAppendReservation: Maybe((Int, Int))
     | bodyRuntimeManagedByLabel: List((Str, Bool))
+    // The parameter of the function being lowered that its entry copies into an owned
+    // runtime-managed value because the result always reaches it (stage 0's
+    // `_normalizedAlwaysReturnedParameter`): its name, its slot, and its type. A read of it
+    // counts as a fresh owned child of the aggregate storing it.
+    | normalizedAlwaysReturnedParameter: Maybe((Str, Int, SemanticType))
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | letLambdaLabels: List((Str, Str))
@@ -608,6 +613,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         affineAppendContext = None,
         affineAppendReservation = None,
         bodyRuntimeManagedByLabel = [],
+        normalizedAlwaysReturnedParameter = None,
         runtimeNormalizedArgumentLabels = [],
         recursiveGroupNames = [],
         letLambdaLabels = [],
@@ -2755,6 +2761,17 @@ let namedTypeNameOf (semanticType: SemanticType) =
 
 let isFreshStringChild (expression: Expr) (state: CoreLoweringState) = isRuntimeRcStringProducer(expression)(state) && isCaptureSafeStringProducer(expression)(state)
 
+// Stage 0's `IsNormalizedAlwaysReturnedStringParameterRead`: a read of the string parameter the
+// entry normalization owns moves the owned copy (or the adopted argument) into the aggregate
+// storing it, so that aggregate can live on the RC heap and release the string with itself.
+let isNormalizedAlwaysReturnedStringParameterRead (expression: Expr) (state: CoreLoweringState) =
+    match (state.normalizedAlwaysReturnedParameter, unspanArgument(expression)) with
+        | (Some((name, slot, parameterType)), ExprVar(candidate)) ->
+            candidate == name && resolveType(state)(parameterType) == SemString && (match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { location = CoreLocal(readSlot) }) -> readSlot == slot
+                | _ -> false)
+        | _ -> false
+
 let isVariableOrCall (expression: Expr) =
     match unspanArgument(expression) with
         | ExprVar(_name) -> true
@@ -2800,7 +2817,7 @@ let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: Sem
     then true
     else
         match (resolveType(state)(fieldType), unspanArgument(expression)) with
-            | (SemString, _expression) -> isFreshStringChild(expression)(state)
+            | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state)
             | (SemList(element), _expression) -> resultSurvivesReset(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression))
             | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
             | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state)
@@ -4681,7 +4698,7 @@ let recursive allArgumentsCompactable (arguments: List(TcoResetArgument)) (state
 let emitTcoDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
 
 let emitCompactionShallowCopy (sourceTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
@@ -4931,14 +4948,145 @@ let resolvePendingTcoResets (state: CoreLoweringState) =
             |> reverse
             |> (given (instructions: List(IrInstruction)) -> spliceTcoResets(instructions)(resets)((state with reversedInstructions = [], pendingTcoResets = [])))
 
+let arenaDeepCopySupported (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { arenaDeepCopySupported = supported } -> supported
+
+// Stage 0's `CanNormalizeRuntimeManagedResultIntoArena`: the result types the arena deep copy
+// clones completely, strings and bytes, tuples and lists over such values or copy types, and
+// the ADTs with an arena deep copy.
+let recursive canNormalizeResultIntoArena (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> true
+        | SemBytes -> true
+        | SemTuple(elements) -> allElementsNormalizeIntoArena(elements)(state)
+        | SemList(element) ->
+            match resolveType(state)(element) with
+                | SemString -> true
+                | SemList(inner) -> resultSurvivesReset(inner)(state)
+                | resolvedElement ->
+                    resultSurvivesReset(resolvedElement)(state) || arenaDeepCopySupported(heapFactsOf(resolvedElement)(state))
+        | SemNamed(_symbolId, name, _arguments) as named ->
+            !isResourceTypeName(name) && arenaDeepCopySupported(heapFactsOf(named)(state))
+        | _ -> false
+and allElementsNormalizeIntoArena (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest -> (resultSurvivesReset(element)(state) || canNormalizeResultIntoArena(element)(state)) && allElementsNormalizeIntoArena(rest)(state)
+
+// The values the arena clone produces, recorded as placements the way stage 0's per-instruction
+// temp facts record every allocation and copy-out it emits: the clone's cells, its leaf copies,
+// and the copier closure and call of a named type.
+let recursive recordArenaCopyPlacements (instructions: List(IrInstructionKind)) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> state
+        | instruction :: rest ->
+            match instruction with
+                | Alloc(target, _sizeBytes, _runtimeManaged) ->
+                    state
+                    |> recordValuePlacement(target)(semanticType)
+                    |> recordArenaCopyPlacements(rest)(semanticType)
+                | CopyOutArena(destTemp, _source, _size, _runtimeManaged, _purpose, _location) ->
+                    state
+                    |> recordValuePlacement(destTemp)(semanticType)
+                    |> recordArenaCopyPlacements(rest)(semanticType)
+                | CopyOutList(destTemp, _source, _headCopy, _runtimeManaged, _purpose) ->
+                    state
+                    |> recordValuePlacement(destTemp)(semanticType)
+                    |> recordArenaCopyPlacements(rest)(semanticType)
+                | MakeClosure(target, _label, _environment, _size, _runtimeManaged, _returnsRuntimeManaged, _acceptsRuntimeManaged) ->
+                    state
+                    |> recordValuePlacement(target)(semanticType)
+                    |> recordArenaCopyPlacements(rest)(semanticType)
+                | CallClosure(target, _closure, _argument, _flag) ->
+                    state
+                    |> recordValuePlacement(target)(semanticType)
+                    |> recordArenaCopyPlacements(rest)(semanticType)
+                | _ -> recordArenaCopyPlacements(rest)(semanticType)(state)
+
+// The arena clone of a reference-counted result on its arena-result boundary, spliced in place.
+let emitArenaResultDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(ArenaResultBoundary) with
+                | (synthesis, resultTemp) ->
+                    (state
+                    |> spliceInlineReleaseWith(emit)(synthesis)
+                    |> recordArenaCopyPlacements(synthesis.instructions)(semanticType), resultTemp)
+
+// The type name of a single-allocation drop, stage 0's `TcoRuntimeManagedTypeName`.
+let arenaResultDropTypeName (semanticType: SemanticType) =
+    match semanticType with
+        | SemBigInt -> "BigInt"
+        | SemTuple(_elements) -> "Tuple"
+        | SemNamed(_symbolId, name, _arguments) -> name
+        | SemFunction(_argument, _result, _row) -> "Function"
+        | _ -> "String"
+
+// Stage 0's `EmitRuntimeManagedResultDrop`: the structural release of the reference-counted
+// original once its arena clone stands in for it, or a single typed drop when the value is one
+// allocation.
+let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                | Some(synthesis) -> spliceInlineReleaseWith(emit)(synthesis)(state)
+                | None ->
+                    emit(RcDrop(valueTemp)(semanticType
+                    |> resolveType(state)
+                    |> arenaResultDropTypeName)(-1)(true)(false)(None))(state)
+
+// Stage 0's `LowerLambdaCoreNormalizeRequestedArenaResult`: a callee whose result is
+// reference-counted can be invoked from a body that cannot own such a result (a generic function
+// applying a closure parameter has no static layout for the result and its own caller later
+// deep-copies the whole result out), so that call site asks for an arena result through bit 1 of
+// the hidden ownership word, and the callee honors it here by deep-copying its result into the
+// arena and releasing the original. Only result types the arena deep copy reproduces completely
+// qualify.
+let normalizeRequestedArenaResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if isRuntimeTemp(bodyTemp)(state) && canNormalizeResultIntoArena(bodyType)(state)
+    then
+        match freshTemp(state) with
+            | FreshTemp { state = wordState, temp = wordTemp } ->
+                match freshTemp(wordState) with
+                    | FreshTemp { state = shiftState, temp = shiftTemp } ->
+                        match freshTemp(shiftState) with
+                            | FreshTemp { state = requestedState, temp = requestedTemp } ->
+                                match freshLocal(requestedState) with
+                                    | FreshLocal { state = slotState, local = resultSlot } ->
+                                        match freshLabel("rc_result_owned")(slotState) with
+                                            | FreshLabel { state = ownedState, label = ownedLabel } ->
+                                                match freshLabel("rc_result_done")(ownedState) with
+                                                    | FreshLabel { state = doneState, label = doneLabel } ->
+                                                        match doneState
+                                                        |> emit(LoadArgumentOwnership(wordTemp))
+                                                        |> emit(LoadConstInt(shiftTemp)(1))
+                                                        |> emit(ShrInt(requestedTemp)(wordTemp)(shiftTemp))
+                                                        |> emit(JumpIfFalse(requestedTemp)(ownedLabel))
+                                                        |> emitArenaResultDeepCopy(bodyTemp)(bodyType) with
+                                                            | (copied, copiedTemp) ->
+                                                                match copied
+                                                                |> emitArenaResultRelease(bodyTemp)(bodyType)
+                                                                |> emit(StoreLocal(resultSlot)(copiedTemp))
+                                                                |> emit(Jump(doneLabel))
+                                                                |> emit(Label(ownedLabel))
+                                                                |> emit(StoreLocal(resultSlot)(bodyTemp))
+                                                                |> emit(Label(doneLabel))
+                                                                |> freshTemp with
+                                                                    | FreshTemp { state = resultState, temp = resultTemp } ->
+                                                                        (emit(LoadLocal(resultTemp)(resultSlot))(resultState), resultTemp)
+    else (state, bodyTemp)
+
 let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = loweredBody, temp = bodyTemp, semanticType = bodyType, error = None } ->
             let returned =
-                loweredBody
-                |> emit(Return(bodyTemp))
-                |> resolvePendingTcoResets
+                match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
+                    | (normalized, returnedTemp) ->
+                        normalized
+                        |> emit(Return(returnedTemp))
+                        |> resolvePendingTcoResets
             in
                 match pruneDeadCaptures(captures)(returned.reversedInstructions) with
                     | (survivors, prunedInstructions) ->
@@ -5039,32 +5187,38 @@ let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
 // Stage 0's `LowerEscapingResult` at a function body, from an empty request.
 let functionBodyRequest (body: Expr) (state: CoreLoweringState) = escapingResultRequest(body)(emptyConsumerRequest)(state)
 
-// Stage 0's `EmitRuntimeManagedTcoArgumentNormalization`: the hidden ownership flag says whether
-// the caller handed over a retained reference; a borrowed argument is copied into an owned value,
-// and either lands in the result slot.
+// Stage 0's `EmitRuntimeManagedTcoArgumentNormalization`: bit 0 of the hidden ownership word says
+// whether the caller handed over a retained reference; a borrowed argument is copied into an
+// owned value, and either lands in the result slot.
 let emitArgumentOwnershipNormalization (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = slotState, local = resultSlot } ->
             match freshTemp(slotState) with
-                | FreshTemp { state = ownershipState, temp = ownershipTemp } ->
-                    match freshLabel("rc_arg_normalize_copy")(ownershipState) with
-                        | FreshLabel { state = copyLabelState, label = copyLabel } ->
-                            match freshLabel("rc_arg_normalize_done")(copyLabelState) with
-                                | FreshLabel { state = labelState, label = doneLabel } ->
-                                    match labelState
-                                    |> emit(LoadArgumentOwnership(ownershipTemp))
-                                    |> emit(JumpIfFalse(ownershipTemp)(copyLabel))
-                                    |> emit(StoreLocal(resultSlot)(sourceTemp))
-                                    |> emit(Jump(doneLabel))
-                                    |> emit(Label(copyLabel))
-                                    |> emitArgumentCopy(sourceTemp)(plan) with
-                                        | (copied, copiedTemp) ->
-                                            match copied
-                                            |> emit(StoreLocal(resultSlot)(copiedTemp))
-                                            |> emit(Label(doneLabel))
-                                            |> freshTemp with
-                                                | FreshTemp { state = resultState, temp = resultTemp } ->
-                                                    (emit(LoadLocal(resultTemp)(resultSlot))(resultState), resultTemp)
+                | FreshTemp { state = wordState, temp = wordTemp } ->
+                    match freshTemp(wordState) with
+                        | FreshTemp { state = maskState, temp = maskTemp } ->
+                            match freshTemp(maskState) with
+                                | FreshTemp { state = ownershipState, temp = ownershipTemp } ->
+                                    match freshLabel("rc_arg_normalize_copy")(ownershipState) with
+                                        | FreshLabel { state = copyLabelState, label = copyLabel } ->
+                                            match freshLabel("rc_arg_normalize_done")(copyLabelState) with
+                                                | FreshLabel { state = labelState, label = doneLabel } ->
+                                                    match labelState
+                                                    |> emit(LoadArgumentOwnership(wordTemp))
+                                                    |> emit(LoadConstInt(maskTemp)(1))
+                                                    |> emit(AndInt(ownershipTemp)(wordTemp)(maskTemp))
+                                                    |> emit(JumpIfFalse(ownershipTemp)(copyLabel))
+                                                    |> emit(StoreLocal(resultSlot)(sourceTemp))
+                                                    |> emit(Jump(doneLabel))
+                                                    |> emit(Label(copyLabel))
+                                                    |> emitArgumentCopy(sourceTemp)(plan) with
+                                                        | (copied, copiedTemp) ->
+                                                            match copied
+                                                            |> emit(StoreLocal(resultSlot)(copiedTemp))
+                                                            |> emit(Label(doneLabel))
+                                                            |> freshTemp with
+                                                                | FreshTemp { state = resultState, temp = resultTemp } ->
+                                                                    (emit(LoadLocal(resultTemp)(resultSlot))(resultState), resultTemp)
 
 // The entry block of a function that normalizes its argument: the argument is reloaded from
 // slot 1, normalized, and stored back, ahead of the body already lowered.
@@ -5092,6 +5246,23 @@ let recursive constructorLayoutNames (layouts: List(CoreConstructorLayout)) =
 // argument: it advertises that it accepts one and copies a borrowed argument into an owned value
 // at entry. Only a string or ADT parameter with a copy plan is normalized; a scalar parameter,
 // or one whose type has no plan yet, is left as it is.
+// Stage 0's `NormalizesAlwaysReturnedParameter`: decided before the body is lowered (so the
+// body's aggregates can count a read of the parameter as a fresh owned child) and again after
+// it, when the parameter's type may have resolved further; the later decision can only add the
+// normalization, never withdraw it.
+let normalizesAlwaysReturnedParameter parameter body label parameterType (state: CoreLoweringState) =
+    match entryNormalizationPlanOf(parameterType)(state) with
+        | None -> false
+        | Some(_plan) ->
+            !acceptsRuntimeManagedArgument(label)(state) && resultAlwaysReachesVariable(constructorLayoutNames(state.constructorLayouts))(state.letLambdas)(body)(parameter)
+
+// The entry-normalized parameter (if any) made visible to the body's placement decisions; the
+// direct argument lives in local slot 1.
+let withNormalizedAlwaysReturnedParameter parameter body label parameterType (state: CoreLoweringState) =
+    if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
+    then state with normalizedAlwaysReturnedParameter = Some((parameter, 1, parameterType))
+    else state with normalizedAlwaysReturnedParameter = None
+
 let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
@@ -5099,9 +5270,9 @@ let normalizeAlwaysReturnedParameter parameter body label parameterType lowered 
             match entryNormalizationPlanOf(parameterType)(bodyState) with
                 | None -> lowered
                 | Some(plan) ->
-                    if acceptsRuntimeManagedArgument(label)(bodyState) || !resultAlwaysReachesVariable(constructorLayoutNames(bodyState.constructorLayouts))(bodyState.letLambdas)(body)(parameter)
-                    then lowered
-                    else lowered with state = emitEntryArgumentNormalization(plan)(label)(bodyState)
+                    if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(bodyState)
+                    then lowered with state = emitEntryArgumentNormalization(plan)(label)(bodyState)
+                    else lowered
 
 // A TCO loop parameter's runtime-managed placement (stage 0's `TcoContext` slot placement,
 // narrowed to the one shape this port covers): a `Str`-typed parameter the affine self-append
@@ -6156,9 +6327,11 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
+            |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> enterLambdaTcoLoop
             |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
-            |> withLoopBodyRequest(functionBodyRequest(body)(typedOuter))
+            |> (given (prepared: CoreLoweringState) ->
+                withLoopBodyRequest(functionBodyRequest(body)(prepared))(prepared))
             |> lower(body)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
@@ -6597,6 +6770,47 @@ let emitResultOwnershipFlag (context: CoreCallContext) (arity: Int) (resultType:
             then emitReturnsRuntimeManagedFlag(functionTemp)(state)
             else (state, -1)
 
+// Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
+// value's layout.
+let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemList(element) -> containsUnresolvedLayout(element)(state)
+        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
+        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
+        | _ -> false
+and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
+
+// Stage 0's `RequestsArenaResult`: a call whose result has no static layout here (a generic body
+// applying a closure parameter, or a result type inference has not resolved yet) cannot own a
+// reference-counted result, so it asks the callee for an arena result.
+let requestsArenaResult (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemFunction(_argument, _result, _row) -> false
+        | _ -> containsUnresolvedLayout(resultType)(state)
+
+// Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
+// request (bit 1) beside the argument ownership flag (bit 0), when the call passes one.
+let emitArenaResultRequestWord (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    if requestsArenaResult(resultType)(state)
+    then
+        match freshTemp(state) with
+            | FreshTemp { state = requestState, temp = requestTemp } ->
+                let loaded =
+                    emit(LoadConstInt(requestTemp)(2))(requestState)
+                in
+                    if argumentFlagTemp < 0
+                    then (loaded, requestTemp)
+                    else
+                        match freshTemp(loaded) with
+                            | FreshTemp { state = wordState, temp = wordTemp } ->
+                                (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
+    else (state, argumentFlagTemp)
+
 let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) unifiedState =
     match prepareCallArgument(handOff)(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
         | (preparedState, passedTemp, argumentFlagTemp) ->
@@ -6604,13 +6818,15 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                 | (flaggedState, resultFlagTemp) ->
                     match freshTemp(flaggedState) with
                         | FreshTemp { state = targetState, temp = target } ->
-                            CoreCallStage(
-                                lowered = targetState
-                                |> emit(CallClosure(target)(functionTemp)(passedTemp)(argumentFlagTemp))
-                                |> success(target)(resolveType(unifiedState)(resultType)),
-                                consumedArguments = consumedArgumentsWith(handOff)(argumentTemp)(argumentType)(consumed),
-                                resultFlagTemp = resultFlagTemp
-                            )
+                            match emitArenaResultRequestWord(argumentFlagTemp)(resultType)(targetState) with
+                                | (wordState, wordTemp) ->
+                                    CoreCallStage(
+                                        lowered = wordState
+                                        |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
+                                        |> success(target)(resolveType(unifiedState)(resultType)),
+                                        consumedArguments = consumedArgumentsWith(handOff)(argumentTemp)(argumentType)(consumed),
+                                        resultFlagTemp = resultFlagTemp
+                                    )
 
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
 // the callee facts and the argument temp, the retain and the flags are emitted, and the call
@@ -6944,17 +7160,20 @@ let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: 
     then markRuntimeTemp(temp)(RuntimeNewlyProduced)(state)
     else state
 
-// After the last application, stage 0's `LowerCallGeneral` tail: the fresh arguments the callee
-// did not take are released, and a result the callee is known to place on the reference-counted
-// heap is marked newly produced.
-let finishCallSpine (context: CoreCallContext) (stage: CoreCallStage) =
+// After the last application, stage 0's `LowerCallGeneral` tail: a result the callee is known
+// to place on the reference-counted heap is marked newly produced.
+let markCallSpineResult (context: CoreCallContext) (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
-        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } as lowered, consumedArguments = consumed } ->
-            state
-            |> releaseConsumedArguments(context)(semanticType)(consumed)
-            |> markCallResultOwnership(context)(temp)(semanticType)
-            |> (given (finished: CoreLoweringState) -> stage with lowered = (lowered with state = finished))
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } as lowered } -> stage with lowered = (lowered with state = markCallResultOwnership(context)(temp)(semanticType)(state))
+
+// Stage 0's `LowerCallFinish` tail: the fresh arguments the callee did not take are released
+// only once the call's window is closed and its result copied out of it, since an arena-placed
+// result can still reference the arguments' parts until the copy-out has copied them.
+let releaseCallSpineArguments (context: CoreCallContext) (consumed: List(CoreConsumedArgument)) (closed: LoweredCoreValue) =
+    match closed with
+        | LoweredCoreValue { error = Some(_error) } -> closed
+        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } -> closed with state = releaseConsumedArguments(context)(semanticType)(consumed)(state)
 
 // Stage 0's `LowerCallConditionalCopyOutResult`: the result is spilled to a slot, the arena is
 // restored, and the callee's returns bit selects between reclaiming the window as is (the
@@ -7074,10 +7293,13 @@ let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool
             opened
             |> callContextOf(spine)
             |> (given (context: CoreCallContext) ->
-                opened
+                match opened
                 |> lowerCallSpineStage(function)(argument)(context)(expected)(1)(transfers)(lower)
-                |> finishCallSpine(context))
-            |> closeCallWindow(cursorSlot)(endSlot)
+                |> markCallSpineResult(context) with
+                    | CoreCallStage { consumedArguments = consumed } as stage ->
+                        stage
+                        |> closeCallWindow(cursorSlot)(endSlot)
+                        |> releaseCallSpineArguments(context)(consumed))
 
 let failedIfPlan state error =
     CoreIfPlan(

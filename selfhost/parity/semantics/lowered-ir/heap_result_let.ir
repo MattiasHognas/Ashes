@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from shout]
-  locals=6 temps=3
+  locals=7 temps=8
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadLocal             Target=0 Slot=1   (heap_result_let.ash:2:35)
     TextFromInt           Target=1 ValueTemp=0 RuntimeManaged=true   (heap_result_let.ash:2:16)
@@ -10,7 +10,19 @@ function lambda_0  [SourceFunction from shout]
     LoadLocal             Target=2 Slot=4   (heap_result_let.ash:3:8)
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=5
-    Return                Source=2
+    LoadArgumentOwnership Target=3
+    LoadConstInt          Target=4 Value=1
+    ShrInt                Target=5 Left=3 Right=4
+    JumpIfFalse           CondTemp=5 Target=rc_result_owned_0
+    CopyOutArena          DestTemp=6 SrcTemp=2 Purpose=ArenaResultBoundary
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=6 Source=6
+    Jump                  Target=rc_result_done_1
+  rc_result_owned_0:
+    StoreLocal            Slot=6 Source=2
+  rc_result_done_1:
+    LoadLocal             Target=7 Slot=6
+    Return                Source=7
 
 function _start_main  [ProgramEntry]
   locals=8 temps=9

@@ -1,15 +1,52 @@
 IR (lowered)
 ============
 
+function __deepcopy_1  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1
+    LoadEnv               Target=1 Index=0
+    LoadConstInt          Target=2 Value=0
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_1_default
+  __deepcopy_1_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0
+    CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6
+    Return                Source=3
+  __deepcopy_1_default:
+    Return                Source=0
+
 function lambda_0  [SourceFunction from label]
-  locals=2 temps=4
+  locals=3 temps=13
     LoadLocal             Target=0 Slot=1   (lambda_returns_record.ash:5:47)
     TextFromInt           Target=1 ValueTemp=0 RuntimeManaged=true   (lambda_returns_record.ash:5:28)
     LoadLocal             Target=2 Slot=1   (lambda_returns_record.ash:5:59)
     AllocAdt              Target=3 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (lambda_returns_record.ash:5:15)
     SetAdtField           Ptr=3 FieldIndex=0 Source=1 Tagless=true   (lambda_returns_record.ash:5:15)
     SetAdtField           Ptr=3 FieldIndex=1 Source=2 Tagless=true   (lambda_returns_record.ash:5:15)
-    Return                Source=3
+    LoadArgumentOwnership Target=4
+    LoadConstInt          Target=5 Value=1
+    ShrInt                Target=6 Left=4 Right=5
+    JumpIfFalse           CondTemp=6 Target=rc_result_owned_0
+    Alloc                 Target=7 SizeBytes=8
+    MakeClosure           Target=8 FuncLabel=__deepcopy_1 EnvPtrTemp=7 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=3
+    RcIsUnique            Target=10 SourceTemp=3
+    JumpIfFalse           CondTemp=10 Target=rc_drop_shared_2
+    GetAdtField           Target=11 Ptr=3 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=11 TypeName=String RuntimeManaged=true
+  rc_drop_shared_2:
+    RcDrop                SourceTemp=3 TypeName=Label RuntimeManaged=true
+    StoreLocal            Slot=2 Source=9
+    Jump                  Target=rc_result_done_1
+  rc_result_owned_0:
+    StoreLocal            Slot=2 Source=3
+  rc_result_done_1:
+    LoadLocal             Target=12 Slot=2
+    Return                Source=12
 
 function _start_main  [ProgramEntry]
   locals=19 temps=24
@@ -31,7 +68,7 @@ function _start_main  [ProgramEntry]
     SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
     LoadConstInt          Target=8 Value=0   (lambda_returns_record.ash:9:1)
     CmpIntNe              Target=9 Left=7 Right=8   (lambda_returns_record.ash:9:1)
-    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_2   (lambda_returns_record.ash:9:1)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_5   (lambda_returns_record.ash:9:1)
     GetAdtField           Target=10 Ptr=7 FieldIndex=0 Tagless=true   (lambda_returns_record.ash:9:1)
     StoreLocal            Slot=12 Source=10   (lambda_returns_record.ash:9:1)
     LoadLocal             Target=11 Slot=12   (lambda_returns_record.ash:10:47)
@@ -44,23 +81,23 @@ function _start_main  [ProgramEntry]
     CopyOutArena          DestTemp=15 SrcTemp=13 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
     StoreLocal            Slot=9 Source=15   (lambda_returns_record.ash:9:1)
-    Jump                  Target=match_end_0   (lambda_returns_record.ash:9:1)
-  match_arm_cleanup_2:
+    Jump                  Target=match_end_3   (lambda_returns_record.ash:9:1)
+  match_arm_cleanup_5:
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=14
-    Jump                  Target=match_none_1   (lambda_returns_record.ash:9:1)
-  match_none_1:
+    Jump                  Target=match_none_4   (lambda_returns_record.ash:9:1)
+  match_none_4:
     LoadConstInt          Target=16 Value=0   (lambda_returns_record.ash:9:1)
     StoreLocal            Slot=9 Source=16   (lambda_returns_record.ash:9:1)
-  match_end_0:
+  match_end_3:
     LoadLocal             Target=17 Slot=9   (lambda_returns_record.ash:9:1)
     StoreLocal            Slot=15 Source=17
     LoadLocal             Target=18 Slot=8
     RcIsUnique            Target=19 SourceTemp=18
-    JumpIfFalse           CondTemp=19 Target=rc_drop_shared_3
+    JumpIfFalse           CondTemp=19 Target=rc_drop_shared_6
     GetAdtField           Target=20 Ptr=18 FieldIndex=0 Tagless=true
     RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true
-  rc_drop_shared_3:
+  rc_drop_shared_6:
     RcDrop                SourceTemp=18 TypeName=Label RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=16

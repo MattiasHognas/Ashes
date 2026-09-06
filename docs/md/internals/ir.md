@@ -248,13 +248,22 @@ duplicate stays identity-preserving so an empty value is its own result.
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
 | `MakeClosure` | `Target`, `FuncLabel`, `EnvPtrTemp`, `EnvSizeBytes`, ownership flags | Allocate a closure payload, optionally behind an RC header |
-| `CallClosure` | `Target`, `ClosureTemp`, `ArgTemp`, `RuntimeManagedArgumentFlagTemp` | Call closure with an optional retained-RC argument ownership flag |
-| `CallKnown` | `Target`, `FuncLabel`, `EnvTemp`, `ArgTemp`, ownership flag, `EnvironmentIsStackAllocated` | Devirtualized closure call with explicit environment lifetime provenance |
+| `CallClosure` | `Target`, `ClosureTemp`, `ArgTemp`, `RuntimeManagedArgumentFlagTemp` | Call closure with an optional hidden ownership word |
+| `CallKnown` | `Target`, `FuncLabel`, `EnvTemp`, `ArgTemp`, ownership word, `EnvironmentIsStackAllocated` | Devirtualized closure call with explicit environment lifetime provenance |
+| `LoadArgumentOwnership` | `Target` | Read the hidden ownership word the caller passed |
 
 A closure payload is 32 bytes:
 `[code, env, packed_env_size_and_ownership, dropper]`. The packed word uses bit 63
 for runtime-managed result ownership, bit 62 for RC-argument adoption, and the
 low 62 bits for the environment size.
+
+Every lifted function takes a hidden third parameter, the ownership word, which a call passes
+through `RuntimeManagedArgumentFlagTemp` (zero when the call passes none). Bit 0 set means the
+caller transferred a retained runtime-managed argument, which an RC-normalizing entry adopts
+instead of copying. Bit 1 set means the caller cannot own a runtime-managed result: a generic
+body applying a closure parameter has no static layout for the result and its own caller
+deep-copies the whole result out later, so a callee whose result is reference-counted deep-copies
+it into the arena (`ArenaResultBoundary`) and releases the original before returning.
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the
@@ -295,6 +304,7 @@ tag identifying the variant. Each field occupies 8 bytes. Total size is
 | `ArenaCallBoundary` | Preserve scheduler/capability state across a call reset |
 | `ArenaTcoCompaction` | Preserve live state at a region-managed TCO edge |
 | `IndependentClone` | Explicit deep copy, worker publication, or reuse defense |
+| `ArenaResultBoundary` | A reference-counted result deep-copied into the arena for a caller that cannot own it; the original is released |
 
 `AllocAdtToSpace` and `CopyOutArenaToSpace` are separate instructions for
 the persistent `Map`/`HashMap` specialization and do not represent general

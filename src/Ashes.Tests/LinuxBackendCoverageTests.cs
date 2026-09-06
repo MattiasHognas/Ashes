@@ -2651,6 +2651,28 @@ public sealed class LinuxBackendCoverageTests
     }
 
     /// <summary>
+    /// A generic `map` applying a function that returns a fresh runtime-managed record (its
+    /// always-returned string parameter owned at entry): the generic body cannot own the result,
+    /// so it asks for an arena result and the callee clones the record into the arena and
+    /// releases its own; the caller then deep-copies the list out of the call window. Before the
+    /// arena-result boundary every record and string leaked once per element.
+    /// </summary>
+    [Test]
+    public async Task Linux_backend_llvm_generic_map_returning_records_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureImportedMemoryGrowthAsync(
+            BuildGenericMapRecordResultMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("generic map returning records", samples);
+    }
+
+    /// <summary>
     /// Root-cause probe for the leak above: the ADT shell built at the TCO loop's exit arm must be
     /// runtime-managed (RC) whenever it stores runtime-managed children, exactly like the equivalent
     /// tuple shape already is (see <see cref="AssertRuntimeRcTupleTcoProbe"/>'s sibling coverage).
@@ -2663,7 +2685,13 @@ public sealed class LinuxBackendCoverageTests
     public void Linux_backend_llvm_tco_exit_adt_constructor_shell_is_runtime_managed()
     {
         IrProgram probe = LowerProgramWithImports(BuildTcoExitAdtConstructorMemoryProgram(1));
-        List<IrInst> instructions = AllInstructions(probe).ToList();
+        // The synthesized arena deep copiers build arena shells by design; only the source
+        // functions' own shells are under test.
+        List<IrInst> instructions = probe.Functions
+            .Where(function => !function.Label.StartsWith("__deepcopy", StringComparison.Ordinal))
+            .Prepend(probe.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .ToList();
 
         instructions.Any(instruction => instruction is IrInst.RcDup { RuntimeManaged: true })
             .ShouldBeTrue(
@@ -7238,6 +7266,26 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match findHeavy(build(12)([]))(6) with
                         | found -> loop(count - 1)(total + found.weight + Ashes.Text.byteLength(found.name))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildGenericMapRecordResultMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.List as list
+
+            type Item =
+                | name: Str
+                | flag: Bool
+
+            let toEntry (n: Str) = Item(name = n, flag = true)
+
+            let recursive loop i acc =
+                if i == 0
+                then acc
+                else
+                    let entries = list.append(list.map(toEntry)([Ashes.Text.fromInt(i)]))(list.map(toEntry)(["Testing"]))
+                    in loop(i - 1)(acc + list.length(entries))
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;

@@ -175,14 +175,15 @@ let letAliasOfParameterSource = "let recursive loop n acc =\n    (let r = acc\n 
 // self-call, so `acc` itself IS placed on the reference-counted heap: one predecessor release at
 // the back edge (`acc`'s value before the fresh `r + "x"` replaces it) and one release at the
 // loop's own exit, skipped exactly when the returned value is that same still-live reference (the
-// `n == 0` arm, which returns `r` unchanged). Two releases total, and no duplicate — `r`'s own
-// reads never add a third.
+// `n == 0` arm, which returns `r` unchanged). Two releases from the loop itself, and no
+// duplicate — `r`'s own reads never add one; the third is the arena-result boundary's release
+// of the returned string, taken only when a caller asks for an arena result.
 let expectLetAliasOfParameterIsNotAnOwner unit =
     letAliasOfParameterSource
     |> loopFunctionLines("[ClosureHelper from loop]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the back-edge predecessor release and the exit-guarded release, no more")(countContaining("RcDrop")(lines) == 2))
+        |> (given (_) -> check("the back-edge predecessor release, the exit-guarded release, and the arena-result boundary's release, no more")(countContaining("RcDrop")(lines) == 3 && countContainingBoth("CopyOutArena")("ArenaResultBoundary")(lines) == 1))
         |> (given (_) -> check("no retain of the alias or the parameter")(countContaining("RcDup")(lines) == 0)))
 
 // The `acc` of `count` grows by one cons cell at every tail self-call, and the head it stores
@@ -307,9 +308,9 @@ let expectCopyAdtLoopParameterIsRuntimeManaged unit =
     |> loopFunctionLines("[ClosureHelper from bump]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
         |> (given (_) -> check("the entry copy and the back-edge copy of the cell")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true")(lines) == 2))
-        |> (given (_) -> check("the predecessor and exit releases under the type name")(countContainingBoth("RcDrop")("TypeName=Counter RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the predecessor, exit, and arena-result boundary releases under the type name")(countContainingBoth("RcDrop")("TypeName=Counter RuntimeManaged=true")(lines) == 3))
         |> (given (_) -> check("the back edge restores the loop-entry watermark")(countContaining("RestoreArenaState")(lines) == 1))
         |> (given (_) -> check("the exit transfers the parameter's own value to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
 
@@ -340,13 +341,13 @@ let expectOwnedChildRecordLoopParameterIsRuntimeManaged unit =
     |> loopFunctionLines("[ClosureHelper from step]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
         |> (given (_) -> check("the entry copy and the back-edge copy of the cell")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true")(lines) == 2))
         |> (given (_) -> check("the string child copies out with each cell copy")(countContainingBoth("CopyOutArena")("SrcTemp")(lines) == 4))
         |> (given (_) -> check("the copied child is stored into the copy twice")(countContainingBoth("SetAdtField")("FieldIndex=0")(lines) >= 2))
-        |> (given (_) -> check("the successor's own string, the predecessor's and the exit's children release as strings")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 3))
-        |> (given (_) -> check("the children release under a uniqueness test")(countContaining("RcIsUnique")(lines) == 2))
-        |> (given (_) -> check("the predecessor and exit releases under the type name")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 2))
+        |> (given (_) -> check("the successor's own string, the predecessor's, the exit's, and the arena-result boundary's children release as strings")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 4))
+        |> (given (_) -> check("the children release under a uniqueness test")(countContaining("RcIsUnique")(lines) == 3))
+        |> (given (_) -> check("the predecessor, exit, and arena-result boundary releases under the type name")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 3))
         |> (given (_) -> check("the exit transfers the parameter's own value to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
 
 let stringFieldIntoSuccessorSource = "type State =\n    | label: Str\n    | count: Int\n\nlet recursive step (n: Int) (s: State) =\n    if n == 0\n    then s\n    else step(n - 1)(State(label = s.label, count = s.count + n))\n\nlet final = step(10)(State(label = Ashes.Text.fromInt(12345), count = 0))\n\nAshes.IO.print(final.label)"
@@ -362,7 +363,7 @@ let expectStringFieldReadIntoSuccessorIsRetained unit =
         Unit
         |> (given (_) -> check("the field read is retained before the successor stores it")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
         |> (given (_) -> check("no identity marker is left behind")(countContaining("RcDup")(lines) == 1))
-        |> (given (_) -> check("the successor's own string, the predecessor's and the exit's children still release")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 3)))
+        |> (given (_) -> check("the successor's own string, the predecessor's, the exit's, and the arena-result boundary's children still release")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 4)))
 
 let nestedRecordLoopSource = "type State =\n    | label: Str\n    | count: Int\n\ntype Pair =\n    | previous: State\n    | current: State\n\nlet recursive walk (n: Int) (pair: Pair) =\n    if n == 0\n    then pair\n    else walk(n - 1)(Pair(previous = State(label = Ashes.Text.fromInt(n), count = n), current = pair.current))\n\nlet final = walk(3)(Pair(previous = State(label = \"a\", count = 0), current = State(label = \"b\", count = 0)))\n\nlet current = final.current\n\nAshes.IO.print(current.label)"
 
@@ -376,11 +377,11 @@ let expectNestedRecordLoopParameterIsRuntimeManaged unit =
     |> loopFunctionLines("[ClosureHelper from walk]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
         |> (given (_) -> check("the field read is retained before the successor stores it")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
-        |> (given (_) -> check("the retained child, the predecessor's children and the exit's children release as State")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 5))
-        |> (given (_) -> check("the predecessor and exit releases under the pair's name")(countContainingBoth("RcDrop")("TypeName=Pair RuntimeManaged=true")(lines) == 2))
-        |> (given (_) -> check("a fresh literal child is never tested for uniqueness")(countContaining("RcIsUnique")(lines) == 7)))
+        |> (given (_) -> check("the retained child, the predecessor's, the exit's, and the arena-result boundary's children release as State")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 7))
+        |> (given (_) -> check("the predecessor, exit, and arena-result boundary releases under the pair's name")(countContainingBoth("RcDrop")("TypeName=Pair RuntimeManaged=true")(lines) == 3))
+        |> (given (_) -> check("a fresh literal child is never tested for uniqueness")(countContaining("RcIsUnique")(lines) == 10)))
 
 let recordListAccumulatorSource = "type State =\n    | label: Str\n    | count: Int\n\nlet recursive collect (n: Int) (s: State) (acc: List(State)) =\n    if n == 0\n    then s :: acc\n    else collect(n - 1)(State(label = Ashes.Text.fromInt(n), count = s.count + 1))(s :: acc)\n\nlet items = collect(10)(State(label = \"seed\", count = 0))([])\n\nAshes.IO.print(1)"
 
@@ -450,7 +451,7 @@ let expectConsumedRecordHeadsEscapeIntoAccumulator unit =
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the list is normalized at entry through the cell walk")(countContaining("rc_normalize_list")(lines) > 0))
-        |> (given (_) -> check("the accumulator is normalized under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
+        |> (given (_) -> check("the accumulator is normalized under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
         |> (given (_) -> check("the head's owner release names the structural dropper in both branches")(countContainingBoth("TypeName=Item OwnerSlot=")("StructuralDropperLabel=__rcdrop_structural")(lines) == 2))
         |> (given (_) -> check("the head is retained by its owner and once more for the successor")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 4))
         |> (given (_) -> check("the exit transfers the accumulator to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
@@ -590,9 +591,9 @@ let expectAffineStrAccumulatorGrowsInPlace unit =
             Unit
             |> (given (_) -> check("the append grows the reservation in place on the reference-counted heap")(countContainingBoth("ConcatStrTip")("RuntimeManaged=true")(lines) == 1))
             |> (given (_) -> check("no copying concatenation")(countContaining("ConcatStr ")(lines) == 0))
-            |> (given (_) -> check("the entry copies the borrowed argument out under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1 && countContainingBoth("CopyOutArena")("RuntimeManaged=true")(lines) == 1))
+            |> (given (_) -> check("the entry copies the borrowed argument out under the ownership flag, and the epilogue reads the word again for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2 && countContainingBoth("CopyOutArena")("RuntimeManaged=true")(lines) == 1))
             |> (given (_) -> check("the back edge restores the fixed loop-entry watermark")(countContaining("RestoreArenaState")(lines) == 1 && countContaining("ReclaimArenaChunks")(lines) == 1))
-            |> (given (_) -> check("the exit's guarded release is the only release")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 1 && countContaining("rc_tco_exit_drop_inactive")(lines) > 0))
+            |> (given (_) -> check("the exit's guarded release and the arena-result boundary's release are the only releases")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 2 && countContaining("rc_tco_exit_drop_inactive")(lines) > 0 && countContainingBoth("CopyOutArena")("ArenaResultBoundary")(lines) == 1))
             |> (given (_) -> check("the exit transfers the value to the caller when it is the result")(countContaining("rc_tco_exit_transfer_not_selected")(lines) > 0))))
     |> (given (_) ->
         affineStrAccumulatorSource

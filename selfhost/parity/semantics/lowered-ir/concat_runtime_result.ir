@@ -4,8 +4,20 @@ IR (lowered)
 trait evidence
   resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9024)
 
+function __deepcopy_1  [AdtDeepCopier]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1
+    LoadEnv               Target=1 Index=0
+    GetAdtTag             Target=2 Ptr=0
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_1_default
+  __deepcopy_1_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0
+    Return                Source=3
+  __deepcopy_1_default:
+    Return                Source=0
+
 function lambda_0  [SourceFunction from report]
-  locals=7 temps=9
+  locals=8 temps=16
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadLocal             Target=0 Slot=1   (concat_runtime_result.ash:2:35)
     TextFromInt           Target=1 ValueTemp=0   (concat_runtime_result.ash:2:16)
@@ -21,7 +33,22 @@ function lambda_0  [SourceFunction from report]
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=6
     CopyOutArena          DestTemp=8 SrcTemp=6 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=6
-    Return                Source=8
+    LoadArgumentOwnership Target=9
+    LoadConstInt          Target=10 Value=1
+    ShrInt                Target=11 Left=9 Right=10
+    JumpIfFalse           CondTemp=11 Target=rc_result_owned_0
+    Alloc                 Target=12 SizeBytes=8
+    MakeClosure           Target=13 FuncLabel=__deepcopy_1 EnvPtrTemp=12 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=13
+    CallClosure           Target=14 ClosureTemp=13 ArgTemp=8
+    RcDrop                SourceTemp=8 TypeName=Unit RuntimeManaged=true
+    StoreLocal            Slot=7 Source=14
+    Jump                  Target=rc_result_done_1
+  rc_result_owned_0:
+    StoreLocal            Slot=7 Source=8
+  rc_result_done_1:
+    LoadLocal             Target=15 Slot=7
+    Return                Source=15
 
 function _start_main  [ProgramEntry]
   locals=8 temps=11
