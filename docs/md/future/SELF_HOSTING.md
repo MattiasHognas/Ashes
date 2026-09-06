@@ -1549,7 +1549,35 @@ same public behavior.
   its structural dropper (`transferScrutineeChildResult`, stage 0's
   `EmitRuntimeManagedParentFieldTransfer`), the dropper's instructions carrying the match's
   location as stage 0's do; parity fixtures `match_fresh_scrutinee_owner_release` and
-  `match_fresh_scrutinee_head_returned`. Still open (cosmetic): the selfhost attaches no source
+  `match_fresh_scrutinee_head_returned`. Done (2026-09-06): the self-hosted lowering infers as it
+  lowers, where stage 0 lowers against the whole program's finished inference, so a call whose
+  result type a later expression of the same body resolves (a self call under a string
+  concatenation, `"a" + go(n - 1)`, whose result only the concatenation pins) still saw a type
+  variable at the call: it asked the callee for an arena result and skipped the returns-bit read
+  and the copy-out stage 0 emits. The lowering now records every call whose result type was
+  unresolved when it was lowered (`unresolvedCallResults`), and a function body that finishes
+  with such a type resolved is lowered a second time from its entry state
+  (`lowerFunctionBodyResolvingCalls`) carrying only the finished substitution and variable
+  supply, so counters, labels, and lifted functions are numbered as in one pass over resolved
+  types; a body whose call results stay unresolved (a generic function's own parameter) keeps
+  the single pass, and compile time of the larger tests is unchanged. A recursive member's
+  epilogue now also honors the arena-result request (`normalizeRequestedArenaResult`) as a
+  plain lambda's does. Parity fixture `self_call_operand_string_result`. Resolving the type
+  exposed a second gap the arena path had hidden: the heap-typed bindings a pattern bound out of
+  a fresh reference-counted scrutinee (`library :: reversedSymbol` over a `reverse` result) were
+  read as borrows nothing owned, so a constructor or call carrying one past the arm's release
+  stored the freed string (`tests/escaping_tuple_nested_adt_lifetime.ash` printed the other
+  call's library). Stage 0 aliases such a binding to the arm's scrutinee owner; the self-hosted
+  lowering now records the same aliases (`runtimeOwnerAliases`, `aliasArmBindingsToOwner`) and
+  resolves them wherever a live owner is looked up (`liveRuntimeOwnerSlot`,
+  `namesRuntimeOwner`), so the transfer retain, the aggregate child retain, and the call
+  argument hand-off treat the binding as the owner's value. Still open: a self call
+  passing a pattern binding of a loop parameter whose placement is not settled yet (a list
+  walk's `1 + count(tail)`) takes stage 0's pending argument-retain skeleton
+  (`_pendingRuntimeArgumentFlags`, zeroed at finalize for an arena-placed root), which the
+  self-hosted lowering has no counterpart for; and a curried stage capturing a runtime-managed
+  list gets no environment normalizer or closure dropper (`lambda_N$env_normalize`,
+  `__rc_cdrop_N`) yet. Still open (cosmetic): the selfhost attaches no source
   location to instructions synthesized outside any located expression (a curried stage's
   closure construction, epilogue blocks), where stage 0 attaches the declaration span. Still open: an
   un-annotated parameter misses the pre-body decision (its type resolves only inside the body),
