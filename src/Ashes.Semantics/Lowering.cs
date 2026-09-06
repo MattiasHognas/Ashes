@@ -7543,6 +7543,148 @@ public sealed partial class Lowering
         {
             Unify(paramTy, ResolveAnnotationType(inlineAnnotation));
         }
+
+        LowerLambdaCoreSeedParamTypeFromConstructorFields(lam, paramTy);
+    }
+
+    // An un-annotated parameter whose type is still a variable takes the declared type of the first
+    // constructor field it is passed to directly anywhere in the body (the bare parameter as a
+    // record literal field or a positional constructor argument, outside any binder that shadows
+    // it), when that field holds a string or a named type: the unification the body performs
+    // later, made before the body so the entry normalization decided ahead of the body
+    // (NormalizesAlwaysReturnedParameter) sees the resolved type and the aggregate storing the
+    // parameter is placed accordingly. Inference is interleaved with lowering, so without the seed
+    // the decision saw a variable, the record stayed in the arena, and the owned copy the later
+    // decision added was orphaned in it.
+    private void LowerLambdaCoreSeedParamTypeFromConstructorFields(Expr.Lambda lam, TypeRef paramTy)
+    {
+        if (Prune(paramTy) is TypeRef.TVar)
+        {
+            SeedParameterTypeFromConstructorFields(lam.Body, lam.ParamName, paramTy);
+        }
+    }
+
+    private void SeedParameterTypeFromConstructorFields(Expr expression, string parameterName, TypeRef paramTy)
+    {
+        if (Prune(paramTy) is not TypeRef.TVar)
+        {
+            return;
+        }
+
+        if (TryDescribeConstructorExpression(expression, out ConstructorSymbol? constructor, out List<Expr>? arguments, out TypeRef.TNamedType? resultType)
+            && constructor is not null
+            && arguments is not null
+            && resultType is not null)
+        {
+            for (int index = 0; index < arguments.Count; index++)
+            {
+                if (arguments[index] is Expr.Var variable
+                    && string.Equals(variable.Name, parameterName, StringComparison.Ordinal)
+                    && Prune(InstantiateConstructorParameterType(constructor, index, resultType)) is TypeRef.TStr or TypeRef.TNamedType)
+                {
+                    Unify(paramTy, InstantiateConstructorParameterType(constructor, index, resultType));
+                    return;
+                }
+            }
+        }
+
+        foreach (Expr child in ParameterSeedChildren(expression, parameterName))
+        {
+            SeedParameterTypeFromConstructorFields(child, parameterName, paramTy);
+        }
+    }
+
+    // The sub-expressions in which the parameter is still the lambda's own: a binder reusing its
+    // name shadows it in the scope the binder covers.
+    private static IEnumerable<Expr> ParameterSeedChildren(Expr expression, string parameterName)
+    {
+        switch (expression)
+        {
+            case Expr.Call call:
+                yield return call.Func;
+                yield return call.Arg;
+                break;
+            case Expr.If conditional:
+                yield return conditional.Cond;
+                yield return conditional.Then;
+                yield return conditional.Else;
+                break;
+            case Expr.Match match:
+                yield return match.Value;
+                foreach (MatchCase matchCase in match.Cases)
+                {
+                    if (PatternBinds(matchCase.Pattern, parameterName))
+                    {
+                        continue;
+                    }
+
+                    if (matchCase.Guard is not null)
+                    {
+                        yield return matchCase.Guard;
+                    }
+
+                    yield return matchCase.Body;
+                }
+
+                break;
+            case Expr.Perform perform:
+                yield return perform.Operation;
+                break;
+            case Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda:
+                foreach (Expr child in ParameterSeedBinderChildren(expression, parameterName))
+                {
+                    yield return child;
+                }
+
+                break;
+            default:
+                foreach (Expr child in EnumerateChildren(expression))
+                {
+                    yield return child;
+                }
+
+                break;
+        }
+    }
+
+    private static IEnumerable<Expr> ParameterSeedBinderChildren(Expr expression, string parameterName)
+    {
+        switch (expression)
+        {
+            case Expr.Let let:
+                yield return let.Value;
+                if (!string.Equals(let.Name, parameterName, StringComparison.Ordinal))
+                {
+                    yield return let.Body;
+                }
+
+                break;
+            case Expr.LetResult letResult:
+                yield return letResult.Value;
+                if (!string.Equals(letResult.Name, parameterName, StringComparison.Ordinal))
+                {
+                    yield return letResult.Body;
+                }
+
+                break;
+            case Expr.LetRecursive letRecursive:
+                if (!string.Equals(letRecursive.Name, parameterName, StringComparison.Ordinal))
+                {
+                    yield return letRecursive.Value;
+                    yield return letRecursive.Body;
+                }
+
+                break;
+            case Expr.Lambda lambda:
+                if (!string.Equals(lambda.ParamName, parameterName, StringComparison.Ordinal))
+                {
+                    yield return lambda.Body;
+                }
+
+                break;
+            default:
+                break;
+        }
     }
 
     private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels, int CaptureAllocIndex, List<CaptureFillRange>? CaptureFillRanges) LowerLambdaCoreBuildEnv(

@@ -95,6 +95,10 @@ let checkFixture root name =
 // whose result type only the concatenation resolves: the call reads the callee's returns bit and
 // copies its result out like a call to any other function, instead of asking for an arena result
 // because its type was still a variable when the call was lowered.
+// unannotated_parameter_record adds a record builder whose parameter carries no annotation
+// (`let toEntry n = Item(name = n, flag = true)`): the parameter's type is seeded from the field
+// it is stored into before the body is lowered, so the entry normalization decided ahead of the
+// body places the record on the reference-counted heap as it does for an annotated parameter.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 // match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
@@ -148,6 +152,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("match_fresh_scrutinee_owner_release"))
         |> (given (_) -> checkFixture(root)("match_fresh_scrutinee_head_returned"))
         |> (given (_) -> checkFixture(root)("self_call_operand_string_result"))
+        |> (given (_) -> checkFixture(root)("unannotated_parameter_record"))
         |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
         |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
         |> (given (_) -> checkFixture(root)("tco_scalar_loop"))

@@ -6407,6 +6407,146 @@ let requestsArenaResult (resultType: SemanticType) (state: CoreLoweringState) =
         | SemFunction(_argument, _result, _row) -> false
         | _ -> containsUnresolvedLayout(resultType)(state)
 
+let recursive parameterArgumentIndex (parameter: Str) (arguments: List(Expr)) (index: Int) =
+    match arguments with
+        | [] -> None
+        | argument :: rest ->
+            match unspanArgument(argument) with
+                | ExprVar(name) ->
+                    if name == parameter
+                    then Some(index)
+                    else parameterArgumentIndex(parameter)(rest)(index + 1)
+                | _ -> parameterArgumentIndex(parameter)(rest)(index + 1)
+
+let recursive typeAtIndex (index: Int) (types: List(SemanticType)) =
+    match types with
+        | [] -> None
+        | semanticType :: rest ->
+            if index == 0
+            then Some(semanticType)
+            else typeAtIndex(index - 1)(rest)
+
+// The declared type of the constructor field the bare parameter is passed to in `expression`'s
+// own constructor application, when that field holds a string or a named type.
+let seededConstructorFieldType (parameter: Str) (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, arguments)) ->
+            match parameterArgumentIndex(parameter)(arguments)(0) with
+                | Some(index) ->
+                    match instantiateConstructor(layout)(state) with
+                        | CoreConstructorShape { state = shaped, parameterTypes = fieldTypes } ->
+                            match typeAtIndex(index)(fieldTypes) with
+                                | Some(fieldType) ->
+                                    match resolveType(shaped)(fieldType) with
+                                        | SemString -> Some((fieldType, (shaped with runtimeAdtRequested = state.runtimeAdtRequested)))
+                                        | SemNamed(_symbolId, _name, _arguments) -> Some((fieldType, (shaped with runtimeAdtRequested = state.runtimeAdtRequested)))
+                                        | _ -> None
+                                | None -> None
+                | None -> None
+        | None -> None
+
+// Stage 0's `LowerLambdaCoreSeedParamTypeFromConstructorFields`: an un-annotated parameter whose
+// type is still a variable takes the declared type of the first constructor field it is passed to
+// directly anywhere in the body (the bare parameter as a record literal field or a positional
+// constructor argument, outside any binder that shadows it), when that field holds a string or a
+// named type: the unification the body performs later, made before the body so the entry
+// normalization decided ahead of the body (`withNormalizedAlwaysReturnedParameter`) sees the
+// resolved type and the aggregate storing the parameter is placed accordingly.
+let recursive seedParameterFromConstructorFields (parameter: Str) (parameterType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
+    match resolveType(state)(parameterType) with
+        | SemVariable(_id) ->
+            match seededConstructorFieldType(parameter)(expression)(state) with
+                | Some((fieldType, shaped)) ->
+                    match bindType(parameterType)(fieldType)(shaped) with
+                        | (bound, _error) -> bound
+                | None -> seedParameterFromChildren(parameter)(parameterType)(expression)(state)
+        | _ -> state
+and seedParameterFromChildren (parameter: Str) (parameterType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
+    match expression with
+        | ExprAt(_span, inner) -> seedParameterFromConstructorFields(parameter)(parameterType)(inner)(state)
+        | ExprCall(function, argument, _isSugar, _layout) -> seedParameterFromEach(parameter)(parameterType)([function, argument])(state)
+        | ExprLet(name, value, body, _params, _annotation, _requirements) -> seedParameterFromBinder(parameter)(parameterType)(name)(value)(body)(state)
+        | ExprLetResult(name, value, body) -> seedParameterFromBinder(parameter)(parameterType)(name)(value)(body)(state)
+        | ExprLetRecursive(name, value, body, _params, _annotation, _requirements) ->
+            if name == parameter
+            then state
+            else seedParameterFromEach(parameter)(parameterType)([value, body])(state)
+        | ExprLambda(name, body, _annotation) ->
+            if name == parameter
+            then state
+            else seedParameterFromConstructorFields(parameter)(parameterType)(body)(state)
+        | ExprIf(condition, thenBranch, elseBranch) -> seedParameterFromEach(parameter)(parameterType)([condition, thenBranch, elseBranch])(state)
+        | ExprMatch(value, cases, _position) ->
+            state
+            |> seedParameterFromConstructorFields(parameter)(parameterType)(value)
+            |> seedParameterFromCases(parameter)(parameterType)(cases)
+        | ExprTuple(elements) -> seedParameterFromEach(parameter)(parameterType)(elements)(state)
+        | ExprList(elements, _isMultiline) -> seedParameterFromEach(parameter)(parameterType)(elements)(state)
+        | ExprRecord(_name, fields, _isMultiline) -> seedParameterFromFields(parameter)(parameterType)(fields)(state)
+        | ExprRecordUpdate(target, fields) ->
+            state
+            |> seedParameterFromConstructorFields(parameter)(parameterType)(target)
+            |> seedParameterFromFields(parameter)(parameterType)(fields)
+        | ExprCons(head, tail) -> seedParameterFromEach(parameter)(parameterType)([head, tail])(state)
+        | ExprAdd(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprSubtract(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprMultiply(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprDivide(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprModulo(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprBitwiseAnd(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprBitwiseOr(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprBitwiseXor(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprShiftLeft(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprShiftRight(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprLogicalAnd(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprLogicalOr(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprGreaterThan(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprLessThan(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprGreaterOrEqual(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprLessOrEqual(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprEqual(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprNotEqual(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprResultPipe(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprResultMapErrorPipe(left, right) -> seedParameterFromEach(parameter)(parameterType)([left, right])(state)
+        | ExprBitwiseNot(operand) -> seedParameterFromConstructorFields(parameter)(parameterType)(operand)(state)
+        | ExprLogicalNot(operand) -> seedParameterFromConstructorFields(parameter)(parameterType)(operand)(state)
+        | ExprAwait(operand) -> seedParameterFromConstructorFields(parameter)(parameterType)(operand)(state)
+        | ExprPerform(operand) -> seedParameterFromConstructorFields(parameter)(parameterType)(operand)(state)
+        | _ -> state
+and seedParameterFromEach (parameter: Str) (parameterType: SemanticType) (expressions: List(Expr)) (state: CoreLoweringState) =
+    match expressions with
+        | [] -> state
+        | expression :: rest ->
+            state
+            |> seedParameterFromConstructorFields(parameter)(parameterType)(expression)
+            |> seedParameterFromEach(parameter)(parameterType)(rest)
+and seedParameterFromBinder (parameter: Str) (parameterType: SemanticType) (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    if name == parameter
+    then seedParameterFromConstructorFields(parameter)(parameterType)(value)(state)
+    else seedParameterFromEach(parameter)(parameterType)([value, body])(state)
+and seedParameterFromCases (parameter: Str) (parameterType: SemanticType) (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match cases with
+        | [] -> state
+        | (pattern, body, guard) :: rest ->
+            if patternBindsName(parameter)(pattern)
+            then seedParameterFromCases(parameter)(parameterType)(rest)(state)
+            else
+                state
+                |> seedParameterFromGuard(parameter)(parameterType)(guard)
+                |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
+                |> seedParameterFromCases(parameter)(parameterType)(rest)
+and seedParameterFromGuard (parameter: Str) (parameterType: SemanticType) (guard: Maybe(Expr)) (state: CoreLoweringState) =
+    match guard with
+        | Some(expression) -> seedParameterFromConstructorFields(parameter)(parameterType)(expression)(state)
+        | None -> state
+and seedParameterFromFields (parameter: Str) (parameterType: SemanticType) (fields: List((Str, Expr))) (state: CoreLoweringState) =
+    match fields with
+        | [] -> state
+        | (_field, expression) :: rest ->
+            state
+            |> seedParameterFromConstructorFields(parameter)(parameterType)(expression)
+            |> seedParameterFromFields(parameter)(parameterType)(rest)
+
 // A function body starts in tail position under the request its shape asks for.
 let withFunctionBodyRequest (body: Expr) (prepared: CoreLoweringState) =
     (let request = functionBodyRequest(body)(prepared)
@@ -6512,7 +6652,7 @@ let lowerLambda parameter body annotation stackAllocate lower state =
                                 | (expectedState, None) ->
                                     match lowerLambdaParameterType(annotation)(parameterType)(expectedState) with
                                         | (checkedState, Some(error)) -> failure(checkedState)(error)
-                                        | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = checkedState, semanticType = parameterType))
+                                        | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = seedParameterFromConstructorFields(parameter)(parameterType)(body)(checkedState), semanticType = parameterType))
 
 // Reserves `count` consecutive temps and returns the first; the run is `temp .. temp + count - 1`.
 let freshTempRun (count: Int) (state: CoreLoweringState) =
@@ -9859,6 +9999,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                     |> sourceFunctionOrigin(label)(sourceFunctionOriginFor(name)(labeled))
                     |> (given (origin) ->
                         labeled
+                        |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
                         |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
                         |> lowerFunctionBodyResolvingCalls(sugarChainBody(body)(labeled.recursiveDeclarationSpan))(given (entered: CoreLoweringState) ->
                             entered

@@ -1579,9 +1579,21 @@ same public behavior.
   list gets no environment normalizer or closure dropper (`lambda_N$env_normalize`,
   `__rc_cdrop_N`) yet. Still open (cosmetic): the selfhost attaches no source
   location to instructions synthesized outside any located expression (a curried stage's
-  closure construction, epilogue blocks), where stage 0 attaches the declaration span. Still open: an
-  un-annotated parameter misses the pre-body decision (its type resolves only inside the body),
-  so its record stays arena-placed as before; and the selfhost still lacks the generic list
+  closure construction, epilogue blocks), where stage 0 attaches the declaration span. Done
+  (2026-09-06, both compilers): an un-annotated parameter missed the pre-body decision in both
+  compilers, since both interleave inference with lowering and the parameter's type resolved
+  only inside the body: `let toEntry n = Item(name = n, flag = true)` normalized its argument
+  after the body but kept the record in the arena, orphaning the owned copy
+  (`tests/generic_append_map_churn_unannotated_plateau.ash` grew from 8.2 MB to 20.5 MB in
+  stage 0 and from 7.4 MB to 24 MB in the selfhost at 200000 iterations). Before the body is
+  lowered, an un-annotated parameter whose type is still a variable now takes the declared type
+  of the first constructor field it is passed to directly anywhere in the body (the bare
+  parameter as a record literal field or a positional constructor argument, outside any binder
+  that shadows it) when that field holds a string or a named type
+  (`LowerLambdaCoreSeedParamTypeFromConstructorFields` / `seedParameterFromConstructorFields`),
+  the unification the body would perform later; the fixture is flat in both compilers and the
+  un-annotated builder lowers exactly as the annotated one (parity fixture
+  `unannotated_parameter_record`). Still open: the selfhost still lacks the generic list
   deep-copy call path (`LowerCallDeepCopyOutListResult`). Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
   an aggregate is never retained at the store. For a runtime-RC aggregate that retain would be
   balanced by its dropper and is the Perceus-correct rule; for an arena aggregate (the self-hosted
