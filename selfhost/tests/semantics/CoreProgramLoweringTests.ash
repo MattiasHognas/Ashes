@@ -40,6 +40,20 @@ let expectPlainTopLevelLetsProduceIr unit =
     |> loweredProgramSource
     |> (given (_) -> Unit)
 
+let recursive pipeChainStages (count: Int) (acc: Str) =
+    if count == 0
+    then acc
+    else pipeChainStages(count - 1)(acc + "\n|> (given (_) -> Ashes.IO.print(Ashes.Text.fromInt(" + Ashes.Text.fromInt(count) + ")))")
+
+// A top-level owned `let` followed by a trailing pipe chain of forty stages: placement's
+// dominator computation walks a block per stage and a dominator set per block, and overflowed
+// the native stack while those walks recursed once per block and once per set element.
+let expectLongTrailingChainUnderOwnedLetLowers unit =
+    "let s = \"abc\"\n\nUnit"
+    |> pipeChainStages(40)
+    |> loweredProgramSource
+    |> (given (_) -> Unit)
+
 let expectSelfRecursiveTopLevelLetLowers unit =
     "let recursive fact n = if n <= 1 then 1 else n * fact(n - 1)\nfact(5)"
     |> loweredProgramSource
@@ -678,6 +692,7 @@ let expectCapturedParameterTypeSurvivesLocalLambdaGeneralization unit =
 
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectLongTrailingChainUnderOwnedLetLowers
     |> expectGenericCallerRequestsArenaResult
     |> expectCapturedParameterTypeSurvivesLocalLambdaGeneralization
     |> expectDisabledReuseWithholdsTokens

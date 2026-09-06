@@ -118,6 +118,7 @@ import AshesCompiler.Backend.IrCodegen.Console
 import AshesCompiler.Backend.IrCodegen.TextBytes
 import AshesCompiler.Backend.IrCodegen.FloatText
 import AshesCompiler.Backend.IrCodegen.AsciiCase
+import AshesCompiler.Backend.IrCodegen.BigInt
 import Ashes.Number.UInt
 export (
     value codegenEntryFunction,
@@ -180,6 +181,7 @@ type CodegenContext =
     | consoleGlobals: ConsoleGlobals
     | arenaRuntime: ArenaRuntime
     | copyRuntime: Maybe(CopyRuntime)
+    | bigIntRuntime: Maybe(BigIntRuntime)
     | isEntry: Bool
 
 // Everything shared by every function in one module — computed once by `codegenFunctions`, then
@@ -196,6 +198,7 @@ type ModuleCodegen =
     | moduleConsoleGlobals: ConsoleGlobals
     | moduleArenaRuntime: ArenaRuntime
     | moduleCopyRuntime: Maybe(CopyRuntime)
+    | moduleBigIntRuntime: Maybe(BigIntRuntime)
     | moduleBuilder: LLVMBuilderRef
 
 // `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
@@ -339,7 +342,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -519,6 +522,30 @@ let codegenInstructionKind cx builder kind state =
                                             |> lookupIndexed(decimals)
                                             |> emitTextFormatFloat(context)(function_)(builder)(i64)(i8)(given (srcBytesAddr) ->
                                                 given (len) -> emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(srcBytesAddr)(len)("format_float"))(lookupIndexed(value)(tempEnv))) :: tempEnv, terminated)
+                                        | BigIntFromInt(target, value, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(value)
+                                            |> emitBigIntFromInt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(managed)) :: tempEnv, terminated)
+                                        | BigIntToString(target, value, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(value)
+                                            |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)) :: tempEnv, terminated)
+                                        | BigIntToInt(target, value, _managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(value)
+                                            |> emitBigIntToInt(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                        | BigIntFromString(target, value, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(value)
+                                            |> emitBigIntFromString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
+                                        | BigIntBinary(target, left, right, operation, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(right)
+                                            |> emitBigIntBinary(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)(operation)(lookupIndexed(left)(tempEnv))) :: tempEnv, terminated)
+                                        | BigIntCompare(target, left, right) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(right)
+                                            |> emitBigIntCompare(builder)(ptrType)(bigIntRuntimeOf(bigIntRuntime))(lookupIndexed(left)(tempEnv))) :: tempEnv, terminated)
                                         | TextAsciiCase(target, source, upper, managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(source)
@@ -1574,6 +1601,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         consoleGlobals = mc.moduleConsoleGlobals,
                                                         arenaRuntime = arena,
                                                         copyRuntime = mc.moduleCopyRuntime,
+                                                        bigIntRuntime = mc.moduleBigIntRuntime,
                                                         isEntry = isEntry
                                                     )
                                                 in (cx, instructions)
@@ -1646,6 +1674,24 @@ let recursive functionsUseCopyOut functions =
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsUseCopyOut(instructions) || functionsUseCopyOut(rest)
 
+// Whether any instruction is one of the BigInt family: only then does the module get the BigInt
+// runtime helpers (`IrCodegen.BigInt`).
+let recursive instructionsUseBigInt instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = BigIntFromInt(_target, _value, _managed) } :: _ -> true
+        | IrInstruction { instruction = BigIntToString(_target, _value, _managed) } :: _ -> true
+        | IrInstruction { instruction = BigIntToInt(_target, _value, _managed) } :: _ -> true
+        | IrInstruction { instruction = BigIntFromString(_target, _value, _managed) } :: _ -> true
+        | IrInstruction { instruction = BigIntBinary(_target, _left, _right, _operation, _managed) } :: _ -> true
+        | IrInstruction { instruction = BigIntCompare(_target, _left, _right) } :: _ -> true
+        | _ :: rest -> instructionsUseBigInt(rest)
+
+let recursive functionsUseBigInt functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseBigInt(instructions) || functionsUseBigInt(rest)
+
 // Builds `void <name>()` for `entryFunction` plus `i64 <label>(i64, i64, i64)` for every function
 // in `functions`, all in one fresh module, and returns `(module_, builder)`, matching every other
 // module builder's shape in `selfhost/tests/backend` so the same `emitModule` verification
@@ -1704,6 +1750,12 @@ let codegenFunctions name context entryFunction functions stringLiterals =
                                                         then
                                                             arena
                                                             |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
+                                                            |> Some
+                                                        else None,
+                                                        moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
+                                                        then
+                                                            types.ptrType
+                                                            |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
                                                             |> Some
                                                         else None,
                                                         moduleBuilder = builder

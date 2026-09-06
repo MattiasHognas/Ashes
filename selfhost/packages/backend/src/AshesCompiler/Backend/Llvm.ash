@@ -52,6 +52,8 @@ export (
     value disposeBuilder,
     value positionBuilderAtEnd,
     value int32Type,
+    value intType,
+    value buildAShr,
     value functionType,
     value addFunction,
     value appendBasicBlock,
@@ -175,6 +177,8 @@ external LLVMCreateBuilderInContext(LLVMContextRef) -> LLVMBuilderRef = "LLVMCre
 external LLVMDisposeBuilder(LLVMBuilderRef) -> void = "LLVMDisposeBuilder@libLLVM.so"
 external LLVMPositionBuilderAtEnd(LLVMBuilderRef, LLVMBasicBlockRef) -> void = "LLVMPositionBuilderAtEnd@libLLVM.so"
 external LLVMInt32TypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMInt32TypeInContext@libLLVM.so"
+external LLVMIntTypeInContext(LLVMContextRef, u32) -> LLVMTypeRef = "LLVMIntTypeInContext@libLLVM.so"
+external LLVMBuildAShr(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAShr@libLLVM.so"
 external LLVMFunctionType(LLVMTypeRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef = "LLVMFunctionType@libLLVM.so"
 external LLVMAddFunction(LLVMModuleRef, Str, LLVMTypeRef) -> LLVMValueRef = "LLVMAddFunction@libLLVM.so"
 external LLVMAppendBasicBlockInContext(LLVMContextRef, LLVMValueRef, Str) -> LLVMBasicBlockRef = "LLVMAppendBasicBlockInContext@libLLVM.so"
@@ -278,6 +282,10 @@ let disposeBuilder builder = LLVMDisposeBuilder(builder)
 let positionBuilderAtEnd builder block = LLVMPositionBuilderAtEnd(builder)(block)
 
 let int32Type context = LLVMInt32TypeInContext(context)
+
+let intType context (bits: u32) = LLVMIntTypeInContext(context)(bits)
+
+let buildAShr builder lhs rhs name = LLVMBuildAShr(builder)(lhs)(rhs)(name)
 
 let addFunction module_ name type_ = LLVMAddFunction(module_)(name)(type_)
 

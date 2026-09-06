@@ -1952,7 +1952,7 @@ same public behavior.
 - [ ] **CG-15** Generate verified object files for `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` from the
   corresponding native host compiler bundle (`LlvmTargetSetup.EnsureInitialized` per target,
   `VerifyModule` before emission; `ASH_DBG_DUMP_IR` dumps the module text on a verifier failure).
-- [~] **CG-16** Lower the builtins the self-hosted compiler still rejects with
+- [x] **CG-16** Lower the builtins the self-hosted compiler still rejects with
   `UnknownLoweringBinding`: `Ashes.Text.fromBigInt`, `Ashes.Text.formatFloat`,
   `Ashes.Rune.isAsciiLetter`, and `Ashes.Internal.deepCopy`, each through the semantic builtin
   table and the backend emitter, placed by the runtime-managed flag like the other fresh-value
@@ -1974,11 +1974,30 @@ same public behavior.
   and carry, trailing-zero trim for `fromFloat`, the `e+N` form past the signed 64-bit range,
   the decimal count clamped to 0..18) and the ASCII case mapper (`IrCodegen.AsciiCase.ash`),
   both placed by the flag; `tco_list_of_adt_accumulator` joins the sweep and the backend suite
-  pins float text, case mapping, the rune class, and the deep copy. Open: `Text.fromBigInt` and
-  the BigInt arithmetic the three BigInt fixtures compute with need the BigInt runtime
-  (`BigIntFromInt`/`ToString`/`ToInt`/`FromString`/`Binary`/`Compare`, stage 0's
-  `LlvmCodegenBuiltins.BigInt.cs`), the milestone 6 slice of CG-11 pulled forward here;
-  `runtime_rc_whole_string_pattern_recursion` now stops at SEM-18's comparison default instead.
+  pins float text, case mapping, the rune class, and the deep copy. Done (2026-09-06): the
+  BigInt runtime, the milestone 6 slice of CG-11 pulled forward because `Text.fromBigInt` and
+  the arithmetic the three BigInt fixtures compute with need it. `IrCodegen.BigInt.ash` ports
+  stage 0's `LlvmCodegenBuiltins.BigInt.cs`: the internal helper functions
+  (`bi_normalize`/`bi_cmp_mag`/`bi_add_mag`/`bi_sub_mag`, `bignum_from_i64`/`_cmp`/`_add`/
+  `_sub`/`_mul`/`_divmod`/`_to_decimal`/`_from_decimal`) emitted once per program whose IR
+  carries a BigInt instruction, division as Knuth's Algorithm D over 32-bit digits, and the
+  call sites (`BigIntFromInt`/`ToString`/`ToInt`/`FromString`/`Binary`/`Compare`) that read the
+  operand limb counts and place the result and scratch buffers where the instruction asks (a
+  reference-counted cell released after the call for a scratch, an arena value or block
+  otherwise). The `Ashes.Number.BigInt` members and `Text.fromBigInt`/`parseBigInt` carry their
+  schemes, so `tco_fixed_watermark_whole_value_accumulators`, `runtime_rc_branch_late_tco_promotion`,
+  and `runtime_rc_multi_bigint_tco` join the sweep (51 ok); a 33-case probe (sums past a limb,
+  the most negative machine value, forty-digit quotients and remainders of both signs, products,
+  comparisons, the machine conversions at both ends of the range, and parses of valid, empty,
+  sign-only, and malformed text) matches stage 0 byte for byte, and the backend suite pins a
+  representative slice. Found and fixed on the way, not a BigInt defect: the self-hosted
+  lowering overflowed its 8 MB native stack on a top-level owned `let` followed by a trailing
+  pipe chain of some thirty stages, because placement's dominator computation
+  (`IrControlFlowGraph.ash`) walked the blocks with a cons recursion per block and intersected
+  dominator sets with one per element, and a deep block's dominator set holds every block above
+  it; both walks now gather through an accumulator, and `CoreProgramLoweringTests` lowers a
+  forty-stage chain under such a `let`. `runtime_rc_whole_string_pattern_recursion` now stops at
+  SEM-18's comparison default instead.
 
 #### Object parsing and executable linking
 

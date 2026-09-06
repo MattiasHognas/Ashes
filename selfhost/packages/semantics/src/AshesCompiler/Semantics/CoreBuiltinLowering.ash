@@ -699,6 +699,36 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.Text")("formatFloat")(
             TypeScheme(quantified = [], body = SemFunction(SemFloat)(SemFunction(SemInt)(SemString)(None))(None), constraints = [])
         ),
+        standardBuiltinLayout("Ashes.Text")("fromBigInt")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("parseBigInt")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemBigInt]))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("fromInt")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemBigInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("toInt")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemNamed(0)("Result")([SemString, SemInt]))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("add")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemFunction(SemBigInt)(SemBigInt)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("sub")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemFunction(SemBigInt)(SemBigInt)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("mul")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemFunction(SemBigInt)(SemBigInt)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("div")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemFunction(SemBigInt)(SemBigInt)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("mod")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemFunction(SemBigInt)(SemBigInt)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.BigInt")("compare")(
+            TypeScheme(quantified = [], body = SemFunction(SemBigInt)(SemFunction(SemBigInt)(SemInt)(None))(None), constraints = [])
+        ),
         standardBuiltinLayout("Ashes.Text")("asciiUpper")(
             TypeScheme(quantified = [], body = SemFunction(SemString)(SemString)(None), constraints = [])
         ),
