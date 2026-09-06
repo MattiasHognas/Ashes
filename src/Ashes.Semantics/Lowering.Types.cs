@@ -106,6 +106,14 @@ public sealed partial class Lowering
         }
     }
 
+    private sealed class UnificationDiagnosticSuppressionScope(Lowering lowering) : IDisposable
+    {
+        public void Dispose()
+        {
+            lowering._suppressedUnificationDiagnostics--;
+        }
+    }
+
     private sealed class DiagnosticCodeScope(Stack<string> diagnosticCodes) : IDisposable
     {
         public void Dispose()

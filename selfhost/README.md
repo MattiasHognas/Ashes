@@ -121,6 +121,19 @@ Only fixtures whose IR needs no ownership/reuse arena bracketing or constructor-
 match yet (currently `simple_arith`); the rest are covered by `SelfhostIrParityTests` on the stage-0
 side only until that machinery is ported.
 
+Run the shared stage-0/self-hosted semantic diagnostic parity fixtures (the diagnostics lowering
+reports, in the frontend's `ashes-diagnostic-v1` format) with:
+
+```bash
+dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/SelfhostSemanticDiagnosticParityTests/**"
+dotnet run --project src/Ashes.Cli -- compile \
+  --project selfhost/tests/semantics-diagnostic-parity/ashes.json \
+  -o /tmp/ashes-selfhost-semantics-diagnostic-parity-tests
+/tmp/ashes-selfhost-semantics-diagnostic-parity-tests selfhost/parity/semantics/diagnostics
+```
+
+The same `ASHES_UPDATE_PARITY_FIXTURES=1` regenerates the `.diagnostics` files from stage 0.
+
 The fixture schema and extension rules are documented in [`parity/README.md`](parity/README.md).
 
 Run the self-hosted formatter tests with:

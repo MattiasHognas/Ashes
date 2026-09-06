@@ -65,6 +65,25 @@ public sealed partial class Lowering
         _diag.Error(span, $"{message} Context: {string.Join(" -> ", _diagnosticContext.AsEnumerable().Reverse())}.", CurrentDiagnosticCodeOrDefault(code));
     }
 
+    // A unification whose mismatch the caller reports itself with its own span and context: a
+    // call argument is unified against its parameter type while it is lowered (the expected type),
+    // by the literal pre-constraint, and by the call site; only the call site reports.
+    private IDisposable SuppressUnificationDiagnostics()
+    {
+        _suppressedUnificationDiagnostics++;
+        return new UnificationDiagnosticSuppressionScope(this);
+    }
+
+    private void ReportUnificationDiagnostic(string message, string? code)
+    {
+        if (_suppressedUnificationDiagnostics > 0)
+        {
+            return;
+        }
+
+        ReportDiagnostic(0, message, code);
+    }
+
     private IDisposable PushDiagnosticSpan(Expr expr)
     {
         return PushDiagnosticSpan(GetSpan(expr));

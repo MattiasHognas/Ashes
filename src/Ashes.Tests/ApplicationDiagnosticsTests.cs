@@ -35,43 +35,72 @@ public sealed class ApplicationDiagnosticsTests
     }
 
     [Test]
-    public void Call_argument_type_mismatch_reports_argument_context()
+    public void Call_argument_type_mismatch_reports_argument_context_once_at_the_call()
     {
-        var diag = LowerExpression("let add = given (x, y) -> x + y in Ashes.IO.print(add(1, \"x\"))");
+        const string source = "let add = given (x, y) -> x + y in Ashes.IO.print(add(1, \"x\"))";
+        var diag = LowerExpression(source);
 
-        diag.Errors.ShouldContain(x =>
-            x.Contains("Type mismatch: Int vs Str.", StringComparison.Ordinal)
-            && x.Contains("Context: in argument #2 of call to 'add'.", StringComparison.Ordinal));
+        DiagnosticEntry mismatch = diag.StructuredErrors.ShouldHaveSingleItem();
+        mismatch.Message.ShouldBe("Type mismatch: Int vs Str. Context: in argument #2 of call to 'add'.");
+        mismatch.Code.ShouldBe("ASH002");
+        source.Substring(mismatch.Start, mismatch.End - mismatch.Start).ShouldBe("add(1, \"x\")");
     }
 
     [Test]
-    public void Tail_self_call_argument_mismatch_against_annotated_parameter_is_reported_at_the_argument()
+    public void Call_argument_call_result_mismatch_is_reported_once_per_call()
     {
         var diag = LowerExpression(
+            "let shout = given (s: Str) -> s + \"!\" in\n"
+            + "let add = given (x: Int, y: Int) -> x + y in\n"
+            + "Ashes.IO.print(add(1, shout(2)))");
+
+        diag.StructuredErrors.Count.ShouldBe(2);
+        diag.Errors.ShouldContain(x => x.Contains("Type mismatch: Int vs Str. Context: in argument #2 of call to 'add'.", StringComparison.Ordinal));
+        diag.Errors.ShouldContain(x => x.Contains("Type mismatch: Str vs Int. Context: in argument #1 of call to 'shout'.", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void List_literal_argument_element_mismatch_is_reported_once()
+    {
+        var diag = LowerExpression(
+            "let sum = given (xs: List(Int)) -> match xs with | [] -> 0 | x :: _ -> x in\n"
+            + "Ashes.IO.print(sum([\"y\"]))");
+
+        DiagnosticEntry mismatch = diag.StructuredErrors.ShouldHaveSingleItem();
+        mismatch.Message.ShouldBe("Type mismatch: Str vs Int.");
+        mismatch.Code.ShouldBe("ASH005");
+    }
+
+    [Test]
+    public void Tail_self_call_argument_mismatch_against_annotated_parameter_is_reported_once_at_the_call()
+    {
+        const string source =
             "let recursive f = given (xs: List(Int)) -> given (n: Int) ->\n"
             + "    match xs with\n"
             + "        | [] -> n\n"
             + "        | _ :: rest -> f(rest)(rest)\n"
-            + "in Ashes.IO.print(f([1])(0))");
+            + "in Ashes.IO.print(f([1])(0))";
+        var diag = LowerExpression(source);
 
-        diag.Errors.ShouldContain(x =>
-            x.Contains("Type mismatch: Int vs List<Int>.", StringComparison.Ordinal)
-            && x.Contains("Context: in argument #2 of call to 'f'.", StringComparison.Ordinal));
+        DiagnosticEntry mismatch = diag.StructuredErrors.ShouldHaveSingleItem();
+        mismatch.Message.ShouldBe("Type mismatch: Int vs List<Int>. Context: in argument #2 of call to 'f'.");
+        source.Substring(mismatch.Start, mismatch.End - mismatch.Start).ShouldBe("f(rest)(rest)");
     }
 
     [Test]
-    public void Tail_self_call_first_argument_mismatch_is_reported_at_the_argument()
+    public void Tail_self_call_first_argument_mismatch_is_reported_once_at_the_call()
     {
-        var diag = LowerExpression(
+        const string source =
             "let recursive f = given (xs: List(Int)) -> given (n: Int) ->\n"
             + "    match xs with\n"
             + "        | [] -> n\n"
             + "        | _ :: rest -> f(0)(n)\n"
-            + "in Ashes.IO.print(f([1])(0))");
+            + "in Ashes.IO.print(f([1])(0))";
+        var diag = LowerExpression(source);
 
-        diag.Errors.ShouldContain(x =>
-            x.Contains("Type mismatch: List<Int> vs Int.", StringComparison.Ordinal)
-            && x.Contains("Context: in argument #1 of call to 'f'.", StringComparison.Ordinal));
+        DiagnosticEntry mismatch = diag.StructuredErrors.ShouldHaveSingleItem();
+        mismatch.Message.ShouldBe("Type mismatch: List<Int> vs Int. Context: in argument #1 of call to 'f'.");
+        source.Substring(mismatch.Start, mismatch.End - mismatch.Start).ShouldBe("f(0)(n)");
     }
 
     [Test]

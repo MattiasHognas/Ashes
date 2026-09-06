@@ -62,6 +62,7 @@ import TcoOwnershipRulesTests
 import PatternBindingOwnershipTests
 import TcoLoopLoweringTests
 import OwnedAggregateReleaseTests
+import LoweringDiagnosticsTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -124,6 +125,7 @@ let run unit =
     |> (given (_) -> TcoOwnershipRulesTests.runTcoOwnershipRulesTests(Unit))
     |> (given (_) -> TcoLoopLoweringTests.runTcoLoopLoweringTests(Unit))
     |> (given (_) -> OwnedAggregateReleaseTests.runOwnedAggregateReleaseTests(Unit))
+    |> (given (_) -> LoweringDiagnosticsTests.runLoweringDiagnosticsTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)

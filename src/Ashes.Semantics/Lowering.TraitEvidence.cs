@@ -1860,7 +1860,6 @@ public sealed partial class Lowering
     }
 
     private void PreconstrainKnownCallArgumentTypes(
-        Expr rootExpression,
         IReadOnlyList<Expr> arguments,
         TypeRef functionType)
     {
@@ -1878,11 +1877,7 @@ public sealed partial class Lowering
                 return;
             }
 
-            string? calleeName = TryGetCalleeDisplayName(rootExpression);
-            string context = calleeName is null
-                ? $"in argument #{index + 1} of function call"
-                : $"in argument #{index + 1} of call to '{calleeName}'";
-            using (PushDiagnosticContext(context))
+            using (SuppressUnificationDiagnostics())
             {
                 ConstrainKnownExpressionType(arguments[index], function.Arg);
             }
@@ -1914,14 +1909,36 @@ public sealed partial class Lowering
             }
             cursor = function.Ret;
         }
-        Unify(cursor, expectedType);
+
+        // The result meets the expected type again once the arguments are applied
+        // (LowerCallFinish); that unification carries the report.
+        using (SuppressUnificationDiagnostics())
+        {
+            Unify(cursor, expectedType);
+        }
     }
 
-    private void UnifyExpectedType(TypeRef actualType, TypeRef? expectedType)
+    private void UnifyExpectedType(TypeRef actualType, LoweredValueRequest request)
     {
-        if (expectedType is not null)
+        if (request.ExpectedType is not null)
         {
-            Unify(actualType, expectedType);
+            UnifyUnderRequest(actualType, request.ExpectedType, request);
+        }
+    }
+
+    // The unification a request's expected type asks for, silent when the requester reports the
+    // mismatch itself.
+    private void UnifyUnderRequest(TypeRef a, TypeRef b, LoweredValueRequest request)
+    {
+        if (!request.ExpectedTypeMismatchReportedByCaller)
+        {
+            Unify(a, b);
+            return;
+        }
+
+        using (SuppressUnificationDiagnostics())
+        {
+            Unify(a, b);
         }
     }
 
@@ -2062,7 +2079,7 @@ public sealed partial class Lowering
         string functionName,
         TextSpan span)
     {
-        PreconstrainKnownCallArgumentTypes(new Expr.Var(functionName), arguments, functionType);
+        PreconstrainKnownCallArgumentTypes(arguments, functionType);
         List<int> argumentTemps = [];
         TypeRef resultType = functionType;
         foreach (Expr argument in arguments)
@@ -2082,7 +2099,7 @@ public sealed partial class Lowering
                 TryLowerTraitDictionaryFunctionValue(argument, function.Arg)
                 ?? LowerExpr(
                     argument,
-                    LoweredValueRequest.None.WithExpectedType(function.Arg)).AsPair();
+                    LoweredValueRequest.None.WithCallerReportedExpectedType(function.Arg)).AsPair();
             argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
             argumentTemps.Add(argumentTemp);
             Unify(function.Arg, argumentType);

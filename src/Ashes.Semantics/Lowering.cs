@@ -97,6 +97,7 @@ public sealed partial class Lowering
     private readonly IReadOnlyDictionary<string, IReadOnlySet<string>> _constructorModulesByName;
     private readonly List<string> _diagnosticContext = [];
     private readonly Stack<TextSpan> _diagnosticSpans = new();
+    private int _suppressedUnificationDiagnostics;
     private readonly Stack<string> _diagnosticCodes = new();
 
 
@@ -2830,7 +2831,7 @@ public sealed partial class Lowering
             forwardsExpectedType ? request : request.WithoutExpectedType());
         if (expectedType is not null && !forwardsExpectedType)
         {
-            Unify(expectedType, lowered.Type);
+            UnifyUnderRequest(expectedType, lowered.Type, request);
             lowered = (lowered.Temp, Prune(lowered.Type));
         }
 
@@ -10093,7 +10094,6 @@ public sealed partial class Lowering
             newArgTypes[i] = argType;
             if (parameterType is not null)
             {
-                using (PushDiagnosticSpan(collectedArgs[i]))
                 using (PushDiagnosticContext($"in argument #{i + 1} of call to '{calleeName}'"))
                 {
                     Unify(parameterType, argType);
@@ -10154,7 +10154,7 @@ public sealed partial class Lowering
                         : null);
             if (expectedType is not null)
             {
-                request = request.WithExpectedType(expectedType);
+                request = request.WithCallerReportedExpectedType(expectedType);
             }
             (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
@@ -11020,7 +11020,7 @@ public sealed partial class Lowering
         List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         int runtimeManagedResultFlagTemp)
     {
-        UnifyExpectedType(currentType, request.ExpectedType);
+        UnifyExpectedType(currentType, request);
         var callResultType = Prune(currentType);
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
@@ -11470,7 +11470,7 @@ public sealed partial class Lowering
         out int runtimeManagedResultFlagTemp)
     {
         runtimeManagedResultFlagTemp = -1;
-        PreconstrainKnownCallArgumentTypes(rootExpr, collectedArgs, currentType);
+        PreconstrainKnownCallArgumentTypes(collectedArgs, currentType);
         for (int i = 0; i < collectedArgs.Count; i++)
         {
             currentType = Prune(currentType);
@@ -11528,7 +11528,7 @@ public sealed partial class Lowering
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
             ?? LowerExpr(
                 collectedArgs[i],
-                LoweredValueRequest.None.WithExpectedType(funType.Arg)).AsPair();
+                LoweredValueRequest.None.WithCallerReportedExpectedType(funType.Arg)).AsPair();
 
         var calleeName = TryGetCalleeDisplayName(rootExpr);
         var callContext = calleeName is not null
@@ -13303,7 +13303,7 @@ public sealed partial class Lowering
                 LoweredValueRuntimeRepresentation.Tuple);
         if (expectedElementType is not null)
         {
-            elementRequest = elementRequest.WithExpectedType(expectedElementType);
+            elementRequest = elementRequest.WithCallerReportedExpectedType(expectedElementType);
         }
         LoweredValue lowered = LowerExpr(element, elementRequest);
         if (runtimeManagedList)

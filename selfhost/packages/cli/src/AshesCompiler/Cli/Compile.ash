@@ -37,8 +37,11 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.DecisionSnapshot
+import AshesCompiler.Semantics.IrOrigins
+import AshesCompiler.Semantics.LoweringDiagnostics
 import AshesCompiler.Semantics.ExplainReport
 import AshesCompiler.Semantics.ExplainReportFormatter
 import AshesCompiler.Semantics.Ir
@@ -272,12 +275,30 @@ let loadShippedModules unit =
 // The lowered program, its optimized form (the one handed to code generation), and every value's
 // placement fact lowering recorded on the way — the explain report's memory representation needs
 // that last one, correlated to the un-optimized `lowered` it was captured against.
+let locationPrefix (location: Maybe(IrSourceLocation)) =
+    match location with
+        | Some(IrSourceLocation { filePath = filePath, line = line, column = column }) -> filePath + ":" + Ashes.Text.fromInt(line) + ":" + Ashes.Text.fromInt(column) + " "
+        | None -> ""
+
+let codePrefix (code: Maybe(Str)) =
+    match code with
+        | Some(text) -> text + " "
+        | None -> ""
+
+// A lowering error with a stage-0 rendering prints as stage 0 prints it, `path:line:col CODE
+// message`; every other error prints its structural form.
+let loweringErrorText (error: CoreLoweringError) =
+    match loweringErrorDiagnostic(error) with
+        | Some(DiagnosticEntry { message = message, code = code }) ->
+            locationPrefix(loweringErrorLocation(error)) + codePrefix(code) + message
+        | None -> Ashes.Trait.Show.show(error)
+
 let lowerStitchedProgram reuseEnabled inputPath source program =
     match lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(program) with
         | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements } -> Ok((lowered, optimizeIrProgram(lowered), valuePlacements))
         | CoreLoweringResult { error = Some(error) } ->
             error
-            |> Ashes.Trait.Show.show
+            |> loweringErrorText
             |> Error
         | _ -> Error("Lowering produced no program.")
 
