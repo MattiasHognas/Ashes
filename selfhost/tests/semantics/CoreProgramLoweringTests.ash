@@ -443,6 +443,38 @@ let recursive anyLineContains (fragment: Str) (lines: List(Str)) =
         | [] -> false
         | line :: rest -> Ashes.Text.contains(line)(fragment) || anyLineContains(fragment)(rest)
 
+// `lit == ch` compares two type variables; the constructor field `text = lit` pins them to `Str`
+// afterwards, so the body is lowered again and the comparison is the string one.
+let expectEqualityPinnedLaterInTheBodyComparesStrings unit =
+    "type Entry =\n    | text: Str\n    | n: Int\n\nlet recursive lookup ch tbl =\n    match tbl with\n        | [] -> None\n        | pair :: rest ->\n            match pair with\n                | (lit, n) ->\n                    if lit == ch\n                    then Some(Entry(text = lit, n = n))\n                    else lookup(ch)(rest)\n\nlookup(\"=\")([(\"=\", 1)])"
+    |> dumpSource
+    |> anyLineContains("CmpStrEq")
+    |> test.assertEqual(true)
+
+// A comparison inside a lambda whose operand the enclosing body pins only after the lambda
+// (`keep`'s element type comes from the list argument) compares strings once the enclosing body
+// is lowered again.
+let expectEqualityPinnedAfterTheLambdaComparesStrings unit =
+    "let recursive keep pred items =\n    match items with\n        | [] -> []\n        | head :: rest ->\n            if pred(head)\n            then head :: keep(pred)(rest)\n            else keep(pred)(rest)\n\nlet pick needle = keep(given (item) -> item != needle)([\"a\", \"b\"])\n\npick(\"a\")"
+    |> dumpSource
+    |> anyLineContains("CmpStrNe")
+    |> test.assertEqual(true)
+
+// A comparison no body pins seals to the integer comparison and the binding stays generic.
+let expectUnpinnedEqualityLowersToIntegerCompare unit =
+    "let recursive has item items =\n    match items with\n        | [] -> false\n        | head :: rest ->\n            if head == item\n            then true\n            else has(item)(rest)\n\nhas(3)([1, 2])"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> anyLineContains("CmpStrEq")
+            |> test.assertEqual(false))
+        |> (given (_) ->
+            lines
+            |> anyLineContains("CmpIntEq")
+            |> test.assertEqual(true)))
+
 // A dead top-level constructor binding whose payload reaches past its cell names the type's
 // structural dropper on its release; the dropper walks the list payload and is registered as a
 // function of its own.
@@ -693,6 +725,9 @@ let expectCapturedParameterTypeSurvivesLocalLambdaGeneralization unit =
 let runCoreProgramLoweringTests unit =
     unit
     |> expectLongTrailingChainUnderOwnedLetLowers
+    |> expectEqualityPinnedLaterInTheBodyComparesStrings
+    |> expectEqualityPinnedAfterTheLambdaComparesStrings
+    |> expectUnpinnedEqualityLowersToIntegerCompare
     |> expectGenericCallerRequestsArenaResult
     |> expectCapturedParameterTypeSurvivesLocalLambdaGeneralization
     |> expectDisabledReuseWithholdsTokens

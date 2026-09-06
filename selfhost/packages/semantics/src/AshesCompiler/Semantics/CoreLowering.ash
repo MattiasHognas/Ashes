@@ -12508,46 +12508,102 @@ let emitDeferredCoreAdd binary =
                                         |> success(target)(leftType)
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 
+// `==` and `!=` over two still-unresolved type variables (`lit == ch` before the constructor
+// field that pins `lit` to `Str`) take the same path as `+`: the operands are unified with each
+// other, an integer comparison is emitted speculatively and recorded under its target temp for
+// the finalization rewrite, and the shared variable joins the body's unresolved call results, so
+// a body that resolves it later is lowered a second time against the resolved type, as stage 0
+// re-lowers a binding whose trait-mapped comparison needed a late type hint. A variable no body
+// resolves seals to the integer comparison.
+let emitDeferredCoreEquality kind binary =
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = left, leftType = leftType, rightTemp = right, rightType = rightType, error = None } ->
+            match bindType(leftType)(rightType)(state) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (typedState, None) ->
+                    match freshTemp(typedState) with
+                        | FreshTemp { state = targetState, temp = target } ->
+                            match targetState with
+                                | CoreLoweringState { pendingOperatorDefaults = pending, unresolvedCallResults = unresolved } ->
+                                    let recorded = targetState with pendingOperatorDefaults = (target, Ashes.Internal.deepCopy(leftType)) :: pending, unresolvedCallResults = Ashes.Internal.deepCopy(leftType) :: unresolved
+                                    in
+                                        recorded
+                                        |> emit(kind(target)(left)(right))
+                                        |> success(target)(SemBool)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let deferredCoreOperatorEmitter operator =
+    match operator with
+        | CoreAddOperator -> Some(emitDeferredCoreAdd)
+        | CoreEqualOperator ->
+            CmpIntEq
+            |> emitDeferredCoreEquality
+            |> Some
+        | CoreNotEqualOperator ->
+            CmpIntNe
+            |> emitDeferredCoreEquality
+            |> Some
+        | _ -> None
+
 let emitPreparedCoreBinary operator binary =
     match binary with
         | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None } ->
-            match operator with
-                | CoreAddOperator ->
-                    match (resolveType(state)(leftType), resolveType(state)(rightType)) with
-                        | (SemVariable(_leftId), SemVariable(_rightId)) -> emitDeferredCoreAdd(binary)
-                        | _ ->
-                            binary
-                            |> resolvedCoreBinary
-                            |> emitResolvedCoreBinary(operator)
+            match (deferredCoreOperatorEmitter(operator), resolveType(state)(leftType), resolveType(state)(rightType)) with
+                | (Some(emitDeferred), SemVariable(_leftId), SemVariable(_rightId)) -> emitDeferred(binary)
                 | _ ->
                     binary
                     |> resolvedCoreBinary
                     |> emitResolvedCoreBinary(operator)
         | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
 
-let resolveDeferredAddKind state semanticType target left right =
-    match resolveType(state)(semanticType) with
-        | SemString -> ConcatStr(target)(left)(right)(false)
-        | SemFloat -> AddFloat(target)(left)(right)
-        | SemBigInt -> BigIntBinary(target)(left)(right)("add")(false)
-        | _ -> AddInt(target)(left)(right)
+// The instructions a speculative operator becomes once its operand type is final, with the
+// function's temp count after them: a BigInt comparison needs two temps of its own.
+let resolveDeferredOperator state semanticType (kind: IrInstructionKind) (tempCount: Int) =
+    match (resolveType(state)(semanticType), kind) with
+        | (SemString, AddInt(target, left, right)) -> ([ConcatStr(target)(left)(right)(false)], tempCount)
+        | (SemFloat, AddInt(target, left, right)) -> ([AddFloat(target)(left)(right)], tempCount)
+        | (SemBigInt, AddInt(target, left, right)) -> ([BigIntBinary(target)(left)(right)("add")(false)], tempCount)
+        | (SemString, CmpIntEq(target, left, right)) -> ([CmpStrEq(target)(left)(right)], tempCount)
+        | (SemString, CmpIntNe(target, left, right)) -> ([CmpStrNe(target)(left)(right)], tempCount)
+        | (SemFloat, CmpIntEq(target, left, right)) -> ([CmpFloatEq(target)(left)(right)], tempCount)
+        | (SemFloat, CmpIntNe(target, left, right)) -> ([CmpFloatNe(target)(left)(right)], tempCount)
+        | (SemBigInt, CmpIntEq(target, left, right)) -> ([BigIntCompare(tempCount)(left)(right), LoadConstInt(tempCount + 1)(0), CmpIntEq(target)(tempCount)(tempCount + 1)], tempCount + 2)
+        | (SemBigInt, CmpIntNe(target, left, right)) -> ([BigIntCompare(tempCount)(left)(right), LoadConstInt(tempCount + 1)(0), CmpIntNe(target)(tempCount)(tempCount + 1)], tempCount + 2)
+        | (_, other) -> ([other], tempCount)
 
-let recursive rewriteDeferredAdd state pendingTarget semanticType instructions =
+let deferredOperatorTarget (kind: IrInstructionKind) =
+    match kind with
+        | AddInt(target, _left, _right) -> Some(target)
+        | CmpIntEq(target, _left, _right) -> Some(target)
+        | CmpIntNe(target, _left, _right) -> Some(target)
+        | _ -> None
+
+let locatedInstructions location (kinds: List(IrInstructionKind)) =
+    Ashes.Collection.List.map(given (kind: IrInstructionKind) -> IrInstruction(instruction = kind, location = location))(kinds)
+
+let recursive rewriteDeferredOperatorInto state pendingTarget semanticType instructions tempCount reversed =
     match instructions with
-        | [] -> []
-        | (IrInstruction { instruction = AddInt(target, left, right), location = location } as instruction) :: rest ->
-            if target == pendingTarget
-            then IrInstruction(instruction = resolveDeferredAddKind(state)(semanticType)(target)(left)(right), location = location) :: rest
-            else instruction :: rewriteDeferredAdd(state)(pendingTarget)(semanticType)(rest)
-        | instruction :: rest -> instruction :: rewriteDeferredAdd(state)(pendingTarget)(semanticType)(rest)
+        | [] -> (reverse(reversed), tempCount)
+        | (IrInstruction { instruction = kind, location = location } as instruction) :: rest ->
+            match deferredOperatorTarget(kind) with
+                | Some(target) ->
+                    if target == pendingTarget
+                    then
+                        match resolveDeferredOperator(state)(semanticType)(kind)(tempCount) with
+                            | (resolved, resolvedCount) ->
+                                (rest
+                                |> append(locatedInstructions(location)(resolved))
+                                |> append(reverse(reversed)), resolvedCount)
+                    else rewriteDeferredOperatorInto(state)(pendingTarget)(semanticType)(rest)(tempCount)(instruction :: reversed)
+                | None -> rewriteDeferredOperatorInto(state)(pendingTarget)(semanticType)(rest)(tempCount)(instruction :: reversed)
 
-let recursive applyDeferredAdds state pending instructions =
-    match pending with
-        | [] -> instructions
-        | (pendingTarget, semanticType) :: rest ->
-            instructions
-            |> rewriteDeferredAdd(state)(pendingTarget)(semanticType)
-            |> applyDeferredAdds(state)(rest)
+let recursive applyDeferredOperators state pending (rewritten: (List(IrInstruction), Int)) =
+    match (pending, rewritten) with
+        | ([], _) -> rewritten
+        | ((pendingTarget, semanticType) :: rest, (instructions, tempCount)) ->
+            []
+            |> rewriteDeferredOperatorInto(state)(pendingTarget)(semanticType)(instructions)(tempCount)
+            |> applyDeferredOperators(state)(rest)
 
 let recursive sealedDeferredFor (label: Str) (sealed: List((Str, Int, SemanticType))) =
     match sealed with
@@ -12557,11 +12613,12 @@ let recursive sealedDeferredFor (label: Str) (sealed: List((Str, Int, SemanticTy
             then (position, semanticType) :: sealedDeferredFor(label)(rest)
             else sealedDeferredFor(label)(rest)
 
-let recursive applySealedDeferredAdds state sealed functions =
+let recursive applySealedDeferredOperators state sealed functions =
     match functions with
         | [] -> []
-        | (IrFunction { label = label, instructions = instructions } as function) :: rest ->
-            (function with instructions = applyDeferredAdds(state)(sealedDeferredFor(label)(sealed))(instructions)) :: applySealedDeferredAdds(state)(sealed)(rest)
+        | (IrFunction { label = label, instructions = instructions, tempCount = tempCount } as function) :: rest ->
+            match applyDeferredOperators(state)(sealedDeferredFor(label)(sealed))((instructions, tempCount)) with
+                | (resolvedInstructions, resolvedCount) -> (function with instructions = resolvedInstructions, tempCount = resolvedCount) :: applySealedDeferredOperators(state)(sealed)(rest)
 
 let prepareCoreBinary operator left binary =
     match operator with
@@ -14602,62 +14659,59 @@ let buildProgram lowered =
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match state with
                 | CoreLoweringState { reversedInstructions = instructions, functions = functions, externalFunctions = externalFunctions, externalOpaqueTypes = externalOpaqueTypes, nextLocal = localCount, nextTemp = tempCount, stringLiterals = stringLiterals, pendingOperatorDefaults = pendingOperatorDefaults, sealedOperatorDefaults = sealedOperatorDefaults } ->
-                    let resolvedEntryInstructions =
-                        instructions
-                        |> entryInstructions(temp)
-                        |> applyDeferredAdds(state)(pendingOperatorDefaults)
-                    in
-                        let resolvedFunctions =
-                            functions
-                            |> applySealedDeferredAdds(state)(sealedOperatorDefaults)
-                            |> insertClosureNormalizers(reverse(state.pendingClosureNormalizers))(operatorDefaultedVariables([]
-                            |> sealedOperatorTypes(sealedOperatorDefaults)
-                            |> append(pendingOperatorTypes(pendingOperatorDefaults)([])))(state))(state)
-                        in
-                            let entry =
-                                IrFunction(
-                                    label = "_start_main",
-                                    instructions = resolvedEntryInstructions,
-                                    localCount = localCount,
-                                    tempCount = tempCount,
-                                    hasEnvAndArgParams = false,
-                                    coroutine = None,
-                                    localNames = [],
-                                    localTypes = [],
-                                    origin = Some(entryOrigin),
-                                    lifetimesPlaced = false
-                                )
+                    match applyDeferredOperators(state)(pendingOperatorDefaults)((entryInstructions(temp)(instructions), tempCount)) with
+                        | (resolvedEntryInstructions, entryTempCount) ->
+                            let resolvedFunctions =
+                                functions
+                                |> applySealedDeferredOperators(state)(sealedOperatorDefaults)
+                                |> insertClosureNormalizers(reverse(state.pendingClosureNormalizers))(operatorDefaultedVariables([]
+                                |> sealedOperatorTypes(sealedOperatorDefaults)
+                                |> append(pendingOperatorTypes(pendingOperatorDefaults)([])))(state))(state)
                             in
-                                match collectCoreFunctionUses(
-                                    resolvedFunctions
-                                )(
-                                    collectCoreInstructionUses(resolvedEntryInstructions)(emptyCoreProgramUses)
-                                ) with
-                                    | CoreProgramUses { printInt = usesPrintInt, printStr = usesPrintStr, printBool = usesPrintBool, concatStr = usesConcatStr } ->
-                                        CoreLoweringResult(
-                                            program = IrProgram(
-                                                entryFunction = entry,
-                                                functions = resolvedFunctions,
-                                                stringLiterals = stringLiterals,
-                                                externalFunctions = externalFunctions,
-                                                externalOpaqueTypes = externalOpaqueTypes,
-                                                usesPrintInt = usesPrintInt,
-                                                usesPrintStr = usesPrintStr,
-                                                usesPrintBool = usesPrintBool,
-                                                usesConcatStr = usesConcatStr,
-                                                usesClosures = hasFunctions(functions),
-                                                usesAsync = false,
-                                                capabilityHandlerGlobals = 0,
-                                                traitEvidence = emptyTraitEvidenceAnnotations
+                                let entry =
+                                    IrFunction(
+                                        label = "_start_main",
+                                        instructions = resolvedEntryInstructions,
+                                        localCount = localCount,
+                                        tempCount = entryTempCount,
+                                        hasEnvAndArgParams = false,
+                                        coroutine = None,
+                                        localNames = [],
+                                        localTypes = [],
+                                        origin = Some(entryOrigin),
+                                        lifetimesPlaced = false
+                                    )
+                                in
+                                    match collectCoreFunctionUses(
+                                        resolvedFunctions
+                                    )(
+                                        collectCoreInstructionUses(resolvedEntryInstructions)(emptyCoreProgramUses)
+                                    ) with
+                                        | CoreProgramUses { printInt = usesPrintInt, printStr = usesPrintStr, printBool = usesPrintBool, concatStr = usesConcatStr } ->
+                                            CoreLoweringResult(
+                                                program = IrProgram(
+                                                    entryFunction = entry,
+                                                    functions = resolvedFunctions,
+                                                    stringLiterals = stringLiterals,
+                                                    externalFunctions = externalFunctions,
+                                                    externalOpaqueTypes = externalOpaqueTypes,
+                                                    usesPrintInt = usesPrintInt,
+                                                    usesPrintStr = usesPrintStr,
+                                                    usesPrintBool = usesPrintBool,
+                                                    usesConcatStr = usesConcatStr,
+                                                    usesClosures = hasFunctions(functions),
+                                                    usesAsync = false,
+                                                    capabilityHandlerGlobals = 0,
+                                                    traitEvidence = emptyTraitEvidenceAnnotations
+                                                )
+                                                |> placeLifetimes
+                                                |> Some,
+                                                semanticType = resolveType(state)(semanticType),
+                                                error = None,
+                                                valuePlacements = state.valuePlacements
+                                                |> dedupeValuePlacements([])
+                                                |> finalizeValuePlacements(state)
                                             )
-                                            |> placeLifetimes
-                                            |> Some,
-                                            semanticType = resolveType(state)(semanticType),
-                                            error = None,
-                                            valuePlacements = state.valuePlacements
-                                            |> dedupeValuePlacements([])
-                                            |> finalizeValuePlacements(state)
-                                        )
 
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered
 // top-level functions, the verdict `markCallArgumentsMoved` consults for hand-offs.
