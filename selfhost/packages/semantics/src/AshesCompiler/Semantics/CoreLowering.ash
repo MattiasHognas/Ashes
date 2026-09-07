@@ -2280,6 +2280,14 @@ let pendingOperatorScheme state =
                 constraints = []
             )
 
+// Generalizes an already resolved binding type against the outer bindings. A type with no free
+// variables generalizes to itself whatever the environment holds, so the outer bindings are only
+// resolved when there is a candidate variable to hold back.
+let generalizeResolvedType (outerBindings: List(CoreBinding)) (state: CoreLoweringState) (resolvedType: SemanticType) =
+    match freeTypeVariables(resolvedType) with
+        | [] -> generalize([])(resolvedType)([])
+        | _ -> generalize(pendingOperatorScheme(state) :: resolvedBindingSchemes(outerBindings)(state))(resolvedType)([])
+
 // A `let` bound to a newly produced reference-counted value owns it: the value temp is handed on
 // to the slot, and a body that returns the binding itself (through nested lets) hands the slot's
 // reference on again instead of borrowing it, stage 0's tail-forwarded binding result.
@@ -2376,7 +2384,9 @@ let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTe
                 emit(StoreLocal(local)(valueTemp))(state)
             in
                 let scheme =
-                    generalize(pendingOperatorScheme(storedState) :: resolvedBindingSchemes(outerBindings)(storedState))(resolveType(storedState)(valueType))([])
+                    valueType
+                    |> resolveType(storedState)
+                    |> generalizeResolvedType(outerBindings)(storedState)
                 in
                     storedState
                     |> registerTopLevelFunctionRef(name)(valueTemp)(scheme)
@@ -11415,7 +11425,9 @@ let recursive addRecursiveGroupContinuationBindings members outerBindings state 
         | [] -> state
         | PreparedCoreRecursiveBinding { name = name, slot = slot, semanticType = semanticType } :: rest ->
             let scheme =
-                generalize(pendingOperatorScheme(state) :: resolvedBindingSchemes(outerBindings)(state))(resolveType(state)(semanticType))([])
+                semanticType
+                |> resolveType(state)
+                |> generalizeResolvedType(outerBindings)(state)
             in
                 state
                 |> addBinding(name)(scheme)(CoreLocal(slot))

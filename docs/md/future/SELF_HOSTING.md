@@ -2253,16 +2253,23 @@ same public behavior.
   the whole compile of the semantics test program from 68 s to 52 s wall; the stage-1 CLI package
   from 65 s to 50 s; peak memory unchanged at about 8 GB. The entry keeps its `optnone`
   treatment; a global-slot rewrite is not worth its risk while the entry is 5 s.
-- [ ] **OPT-55** Self-hosted mirror of OPT-54's two shapes that stage 1 shares.
-  `IrOptimizer.ash`'s `devirtualizeReturnedClosureCallsInFunction` recomputes a function's
-  single-definition facts on every rewrite round and the known-returned fixpoint recomputes them
-  for every function on every round; stage 0 now computes them once per instruction list and
-  skips a function with no `CallClosure` before computing anything. `TypeSchemes.ash`'s
-  `generalize` walks the whole environment's types at every generalization; stage 0 now
-  remembers each monomorphic binding's variable nodes at first sight and prunes only those.
-  Stage 1's deferred TCO resets already splice per function, and its free-variable walks use
-  persistent lists, so those two need nothing. Time the stage-1 compile of the semantics test
-  program before and after.
+- [x] **OPT-55** Self-hosted mirror of OPT-54's two shapes that stage 1 shares.
+  `IrOptimizer.ash`'s known-returned fixpoint now computes every function's single-definition
+  facts once (`withSingleDefinitions`) ahead of every round instead of per function per round,
+  and both per-function devirtualizations return a function without a `CallClosure` untouched
+  before counting anything (`containsCallClosure`). `TypeSchemes.ash`'s `generalize` computes
+  the candidate variables first and never scans the environment when there are none, and the
+  lowering's `generalizeResolvedType` skips resolving every outer binding's scheme for a
+  variable-free type. Stage 1's deferred TCO resets already splice per function, and its
+  free-variable walks use persistent lists, so those two needed nothing. Not measurable on the
+  one program shape stage 1 compiles today: the stage-1 CLI takes a single file, and the largest
+  single-file test (`tests/text_json_parser_smoke.ash`, 22 KB) compiles in 1.45 s of user time
+  before and after, with 17.5 GB of peak RSS and as much system time as user time, so its cost is
+  the leaking arena and RC stand-ins milestone 2 retires, not these passes; re-measure once
+  stage 1 compiles a package (CLI-4). Stage 1's `countDefinitions`, `countUses`, and
+  `collectSingleDefiningInstructions` remain association lists with a linear lookup per temp,
+  quadratic per function; `Ashes.Collection.Map` (unused in the semantics package so far) is the
+  replacement when that shows up.
 - [ ] **OPT-56** The remaining stage-0 compile-time levers, each 1 s to 4 s of the semantics test
   program, in profile order: lifetime placement rebuilds the block list and rescans the whole
   function for every owner (`PlaceOwner`'s `BuildBlocks`, `FindOwnerUses`, and
