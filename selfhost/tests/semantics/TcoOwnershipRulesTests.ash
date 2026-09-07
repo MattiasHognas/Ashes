@@ -198,13 +198,16 @@ let letAliasOfParameterSource = "let recursive loop n acc =\n    (let r = acc\n 
 // loop's own exit, skipped exactly when the returned value is that same still-live reference (the
 // `n == 0` arm, which returns `r` unchanged). Two releases from the loop itself, and no
 // duplicate — `r`'s own reads never add one; the third is the arena-result boundary's release
-// of the returned string, taken only when a caller asks for an arena result.
+// of the returned string, taken only when a caller asks for an arena result; the fourth is
+// `r`'s own scope-exit anchor (`OwnerSlot`), never promoted to a runtime-managed release
+// since the let holds the parameter's borrowed reference, which stage 0 emits too once the
+// body's `+` has it lowered against its closed type.
 let expectLetAliasOfParameterIsNotAnOwner unit =
     letAliasOfParameterSource
     |> loopFunctionLines("[ClosureHelper from loop]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the back-edge predecessor release, the exit-guarded release, and the arena-result boundary's release, no more")(countContaining("RcDrop")(lines) == 3 && countContainingBoth("CopyOutArena")("ArenaResultBoundary")(lines) == 1))
+        |> (given (_) -> check("the back-edge predecessor release, the exit-guarded release, the arena-result boundary's release, and the alias's own unpromoted anchor, no more")(countContaining("RcDrop")(lines) == 4 && countContaining("OwnerSlot")(lines) == 1 && countContainingBoth("CopyOutArena")("ArenaResultBoundary")(lines) == 1))
         |> (given (_) -> check("no retain of the alias or the parameter")(countContaining("RcDup")(lines) == 0)))
 
 // The `acc` of `count` grows by one cons cell at every tail self-call, and the head it stores
@@ -255,8 +258,10 @@ let consumedTailListSource = "let recursive total xs acc =\n    match xs with\n 
 // The `xs` of `total` is consumed through its own pattern-bound tail at every tail self-call
 // over string heads, so it is a runtime-managed list: the chain parameter is always copied at
 // entry (no ownership flag reaches a captured parameter), the back edge retains the successor
-// tail null-tolerantly before releasing the old root under the active flag, and the loop exit
-// releases whatever the slot still holds.
+// tail null-tolerantly (the transfer of the pattern-bound tail), walks the old root
+// unconditionally and clears its active flag ahead of the parameter stores, keeps the reset's
+// release under the active flag (which then stands down), and the loop exit releases whatever
+// the slot still holds: three shared-cell walks in all, stage 0's shape.
 let expectConsumedTailListIsRuntimeManaged unit =
     consumedTailListSource
     |> loopFunctionLines("[ClosureHelper from total]")
@@ -270,7 +275,7 @@ let expectConsumedTailListIsRuntimeManaged unit =
         |> (given (_) -> check("the successor tail retained null-tolerantly at the back edge")(countContaining("MayBeEmpty=true")(lines) == 1))
         |> (given (_) -> check("the old root released under the active flag at the back edge")(countContaining("rc_tco_drop_inactive")(lines) == 2))
         |> (given (_) -> check("the exit release under the active flag")(countContaining("rc_tco_exit_drop_inactive")(lines) == 2))
-        |> (given (_) -> check("one list walk at the back edge and one at the exit")(countContaining("rcdrop_list_shared")(lines) == 4)))
+        |> (given (_) -> check("the transfer's unconditional walk, the guarded walk, and the exit walk")(countContaining("rcdrop_list_shared")(lines) == 6)))
 
 let forwardedStrHeadSource = "let recursive last (n: Int) (xs: List(Str)) (keep: Str) =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
 

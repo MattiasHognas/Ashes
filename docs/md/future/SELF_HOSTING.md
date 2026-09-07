@@ -1207,6 +1207,36 @@ same public behavior.
   normalization, back-edge retain/drop, and the exit transfer check, gated on the parameter
   being rebuilt only through `+` — read through a plain-variable alias too — or passed straight
   through at every tail self-call, `TcoRuntimeManagedParams.ash`'s `runtimeManagedStrOrdinals`).
+  The match-bodied consumed list loop (`sumTextLengths xs total = match xs with [] -> total |
+  s :: rest -> sumTextLengths(rest)(total + byteLength(s))`) now lowers as stage 0's shape:
+  stage 0 lowers a binding that encountered a trait requirement against the closed type its
+  discovery pass inferred (`ElaborateInferredTraitBindings` rewrites the binding with that type
+  as its annotation), so the head `s` is `Str` at its pattern and is tracked, borrowed, and
+  anchored, while the same head in a body with no mapped operator (`bang(head) :: stamp(tail)`,
+  `non_tail_self_call_list_result`) stays untracked; the self-hosted lowering reaches the same
+  point by lowering a body that applies a mapped operator (`exprAppliesMappedOperator`, stage
+  0's `GetMappedOperatorTraitName` set) a second time when its first pass closed a scope type
+  it entered with as a variable (`bodyEncounteredRequirementClosedScope`,
+  `pattern_head_read_under_operator` pins the rule); a tail self-call argument
+  that reads the pattern binding the ownership facts proved to be its root parameter's
+  unchanged successor (`PatternTransferredToSameParameter`) takes one reference before the old
+  root is walked unconditionally and its active flag cleared, ahead of the old-parameter loads
+  and the stores (stage 0's `LowerCallTcoTransferPatternBindings`, decided at the back edge from
+  the parameters' resolved types, deferred to the body's next lowering while any is a
+  variable), and the reset stores the already runtime-managed successor without a second
+  retain, its guarded release standing down; the exit checks every runtime-managed slot against
+  a reference-counted body result under one selection flag whatever the result's type (stage
+  0's `IsRuntimeManagedResultTemp` gate, replacing the per-kind type gates); and the deferred
+  reset blocks take their labels from a separate range per function, renumbered once the whole
+  program is lowered, entry first and lifted functions in order (stage 0 resolves the blocks at
+  the end of lowering with the program-global label counter). `tco_consumed_list_parameter_borrowed_head`
+  and `tco_consumed_list_parameter_returned_head` are whole-program parity fixtures. Open
+  beside it: an affine accumulator's concatenation through a `let` alias (`let r = acc in ...
+  loop(n - 1)(r + "x")`, `TcoOwnershipRulesTests`' alias program) is still built in the arena
+  and copied out at the reset, where stage 0's `PromoteLoopBoundStringConcats` promotes the
+  `ConcatStr` through the alias slot (a fixed point over the loads of managed slots and the
+  slots stored only from managed temps, promoting the concatenations that flow to a parameter
+  store or the body result outside a mixed join).
   Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
@@ -1364,8 +1394,9 @@ same public behavior.
   (`retainConstructorLoopParameterArguments`, stage 0's
   `RetainRuntimeManagedTcoConstructorArguments`) ahead of the owned-child retains instead of
   landing at the read; and a fresh string successor of a `Str` parameter placed by type takes
-  the reference-counted request only when its concatenation reads the parameter itself
-  (`concatChainReadsParameter`), the shape stage 0's promotion reaches from the parameter; a
+  the reference-counted request only when its concatenation reads the parameter itself or a
+  `let` bound to a plain read of it (`concatChainReadsParameter`, `variableReadsParameterSlot`),
+  the shape stage 0's promotion reaches from the parameter through such an alias; a
   successor reading no parameter (`fromInt(n) + "-x"`) is built in the arena and copied out by
   the back edge, stage 0's shape since before OPT-46 (checked against a build of the pre-OPT-46
   commit), where the self-hosted request for a reference-counted successor was the divergence.
@@ -1375,14 +1406,18 @@ same public behavior.
   the closure environment normalizer emits its leaf `CopyOutArena` without a location, as stage
   0's deep-copy emitter does. A survey of the
   fifteen import-free loop fixtures against stage 0's lowered IR
-  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches five
+  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches eight
   exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
-  `str_param_non_affine`, and `tco_tuple_parameter_rebuild`/`tco_str_parameter_fresh_successor`
-  as whole-program parity fixtures); `owned_child_record_accumulator` and
+  `str_param_non_affine`, `list_accumulator`, `str_accumulator`, `find_string_head`, and
+  `tco_tuple_parameter_rebuild`/`tco_str_parameter_fresh_successor`/
+  `tco_consumed_list_parameter_borrowed_head`/`tco_consumed_list_parameter_returned_head` as
+  whole-program parity fixtures); `owned_child_record_accumulator` and
   `param_string_field_into_successor` differ only by two temps stage 0 allocates before the
-  back-edge copy without emitting an instruction for them; the rest carry the match-bodied list
-  loop divergences of OPT-25's tail (scrutinee owners, the `Borrow` of a pattern binding read by
-  a builtin, the exit-arm arena bracket). Related interim narrowing: the
+  back-edge copy without emitting an instruction for them; the record-head loops
+  (`find_record_head` 681, `consumed_record_heads_escape` 1044, `record_list_accumulator` 118,
+  `record_param_consed_into_sibling_accumulator` 1094, `param_field_read_into_successor` 452
+  masked lines) and `tco_arena_variant_accumulator_plateau` (395) carry the record-typed head
+  divergences of OPT-25's aggregate tail. Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per

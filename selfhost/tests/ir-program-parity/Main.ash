@@ -151,6 +151,15 @@ let checkFixture root name =
 // the pattern-owner marker of a destructured element stored into the fresh cell;
 // tco_str_parameter_fresh_successor a `Str` parameter placed by type whose successor is a
 // fresh string built in the arena and copied out by the back edge.
+// tco_consumed_list_parameter_borrowed_head walks a consumed list parameter whose pattern-bound
+// head a builtin reads and whose tail is the parameter's unchanged successor (the transfer takes
+// its reference, the old root is released before the stores, and the reset's guarded release
+// stands down); tco_consumed_list_parameter_returned_head returns the head out of the same
+// loop, so the exit checks every runtime-managed slot against the reference-counted result.
+// pattern_head_read_under_operator reads a pattern-bound head through a builtin beside a mapped
+// operator in a plain recursion: the body is lowered against its closed inferred type, so the
+// head is tracked, borrowed, and anchored (non_tail_self_call_list_result keeps the same head
+// untracked with no operator in the body).
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -195,5 +204,8 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("helper_call_without_inline_trigger"))
         |> (given (_) -> checkFixture(root)("tco_tuple_parameter_rebuild"))
         |> (given (_) -> checkFixture(root)("tco_str_parameter_fresh_successor"))
+        |> (given (_) -> checkFixture(root)("tco_consumed_list_parameter_borrowed_head"))
+        |> (given (_) -> checkFixture(root)("tco_consumed_list_parameter_returned_head"))
+        |> (given (_) -> checkFixture(root)("pattern_head_read_under_operator"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
