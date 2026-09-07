@@ -6142,7 +6142,7 @@ public sealed class LinuxBackendCoverageTests
         (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain(expectedOutput);
     }
 
-    private static IrProgram LowerProgramWithImports(string source)
+    internal static IrProgram LowerProgramWithImports(string source)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
@@ -6230,7 +6230,7 @@ public sealed class LinuxBackendCoverageTests
         return await CompileRunWithLinuxLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode, environmentVariables).ConfigureAwait(false);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(
+    internal static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(
         IrProgram ir,
         IReadOnlyList<string>? args = null,
         string? stdin = null,
@@ -9551,7 +9551,7 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
-    private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
+    internal readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
     private readonly record struct LinuxMeasuredExecution(
         string Stdout,
         string Stderr,

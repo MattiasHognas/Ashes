@@ -308,8 +308,9 @@ the target ID.
 
 ### Parallel code generation
 
-A large linux-x64 program is split into several LLVM modules that are optimized and turned into
-object code on separate threads and linked as several objects. The partition count depends only
+A large Linux program is split into several LLVM modules that are optimized and turned into
+object code on separate threads, merged into one relocatable object, and linked as usual. The
+partition count depends only
 on the program's size (one partition per 1024 lifted functions, at most 16), so the image is
 reproducible across machines; `ASHES_LLVM_JOBS` overrides it, `1` keeps a single module, and
 debug builds always use a single module. Each partition is its own LLVM context and module: it
@@ -318,11 +319,17 @@ it owns, only partition 0 defines the entry function, and the runtime helper fun
 defined in every module so they still inline. The globals partition 0 defines (the arena cursors,
 the capability handler slots, the string literals its functions use) are exported from it and
 replaced by external declarations in the other partitions, so every object shares one set of
-runtime state; a literal only a later partition uses stays that partition's own. The vendored
-bitcode payloads are linked into partition 0 alone. The ELF linker then lays the objects' text
-sections out one after another behind the entry trampoline, their allocated data sections one
-after another in the data segment, and resolves an undefined symbol in one object through a
-merged table of every object's global symbols; local symbols stay private to their object.
+runtime state; a literal only a later partition uses stays that partition's own, and the
+libc-named helpers every module defines (`memcpy`, `memset`, `memcmp`, `bcmp`, `strlen`) are weak
+definitions outside partition 0. The vendored bitcode payloads are linked into partition 0
+alone. The partitions' objects are then merged into one ELF relocatable object the way `ld -r`
+does (`ElfRelocatableObjects`): sections of the same name are concatenated at their alignment
+(`.text`, the `.rodata*` constant pools, `.bss`, and the arm64 `.tbss` arena cursors alike),
+every symbol is rebased into the merged section it lands in, section symbols collapse to one per
+merged section with the relocation addends adjusted, an undefined global in one object resolves
+to the definition another provides, and relocations keep their types, so the merge is the same
+for both architectures. The merged object then goes through the target's ordinary single-object
+linker. Windows targets still compile as a single module until the COFF merge exists.
 
 ### External dependencies
 

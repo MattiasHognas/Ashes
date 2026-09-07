@@ -40,7 +40,8 @@ public enum LlvmRealPredicate
 public enum LlvmCodeGenOptLevel { None = 0, Less = 1, Default = 2, Aggressive = 3 }
 public enum LlvmRelocMode { Default = 0, Static = 1, PIC = 2, DynamicNoPic = 3 }
 public enum LlvmCodeModel { Default = 0, JITDefault = 1, Tiny = 2, Small = 3, Kernel = 4, Medium = 5, Large = 6 }
-public enum LlvmLinkage { External = 0, Internal = 8 }
+public enum LlvmLinkage { External = 0, WeakOdr = 6, Internal = 8 }
+public enum LlvmThreadLocalMode { NotThreadLocal = 0, GeneralDynamic = 1, LocalDynamic = 2, InitialExec = 3, LocalExec = 4 }
 public enum LlvmCodeGenFileType { Assembly = 0, Object = 1 }
 public enum LlvmVerifierFailureAction { AbortProcess = 0, PrintMessage = 1, ReturnStatus = 2 }
 public enum LlvmTailCallKind { None = 0, Tail = 1, MustTail = 2, NoTail = 3 }
@@ -313,6 +314,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMSetLinkage")]
     public static partial void SetLinkage(LlvmValueHandle global, LlvmLinkage linkage);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMGetLinkage")]
+    public static partial LlvmLinkage GetLinkage(LlvmValueHandle global);
+
     [LibraryImport(Lib, EntryPoint = "LLVMSetInitializer")]
     public static partial void SetInitializer(LlvmValueHandle global, LlvmValueHandle constant);
 
@@ -323,6 +327,12 @@ internal static partial class LlvmApi
     // the local-exec TLS access sequence (mrs tpidr_el0 + TPREL add), which the ELF linker resolves.
     [LibraryImport(Lib, EntryPoint = "LLVMSetThreadLocal")]
     public static partial void SetThreadLocal(LlvmValueHandle global, int isThreadLocal);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMIsThreadLocal")]
+    public static partial int IsThreadLocal(LlvmValueHandle global);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetThreadLocalMode")]
+    public static partial void SetThreadLocalMode(LlvmValueHandle global, LlvmThreadLocalMode mode);
 
     [LibraryImport(Lib, EntryPoint = "LLVMSetUnnamedAddr")]
     public static partial void SetUnnamedAddr(LlvmValueHandle global, int unnamedAddr);

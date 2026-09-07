@@ -45,8 +45,7 @@ internal static partial class LlvmCodegen
 
     private static bool ParallelObjectsSupported(string targetId) => targetId switch
     {
-        Backends.TargetIds.LinuxX64 => true,
-        Backends.TargetIds.LinuxArm64 => ElfRelocatableObjects.MergeSupported,
+        Backends.TargetIds.LinuxX64 or Backends.TargetIds.LinuxArm64 => ElfRelocatableObjects.MergeSupported,
         Backends.TargetIds.WindowsX64 or Backends.TargetIds.WindowsArm64 => CoffRelocatableObjects.MergeSupported,
         _ => false,
     };
@@ -134,22 +133,38 @@ internal static partial class LlvmCodegen
         }
     }
 
-    // Links the partitions' objects into the target's executable: the linux-x64 linker takes the
-    // objects directly; the other targets merge them into one relocatable object first and link
-    // that as usual.
-    private static byte[] LinkPartitionObjects(string targetId, byte[][] objects, IReadOnlyDictionary<string, string>? externalLibraries) =>
-        targetId switch
+    // Merges the partitions' objects into one relocatable object and links that into the target's
+    // executable through the target's ordinary single-object linker.
+    private static byte[] LinkPartitionObjects(string targetId, byte[][] objects, IReadOnlyDictionary<string, string>? externalLibraries)
+    {
+        byte[] merged = targetId switch
         {
-            Backends.TargetIds.LinuxX64 => LlvmImageLinker.LinkLinuxExecutable(objects, "entry", null, externalLibraries),
-            Backends.TargetIds.LinuxArm64 => LlvmImageLinker.LinkLinuxArm64Executable(ElfRelocatableObjects.Merge(objects), "entry", null, externalLibraries),
-            Backends.TargetIds.WindowsX64 => LlvmImageLinker.LinkWindowsExecutable(CoffRelocatableObjects.Merge(objects), "entry", null, externalLibraries),
-            Backends.TargetIds.WindowsArm64 => LlvmImageLinker.LinkWindowsArm64Executable(CoffRelocatableObjects.Merge(objects), "entry", null, externalLibraries),
+            Backends.TargetIds.LinuxX64 or Backends.TargetIds.LinuxArm64 => ElfRelocatableObjects.Merge(objects),
+            Backends.TargetIds.WindowsX64 or Backends.TargetIds.WindowsArm64 => CoffRelocatableObjects.Merge(objects),
             _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
         };
+        DumpObject("merged.o", merged);
+        return targetId switch
+        {
+            Backends.TargetIds.LinuxX64 => LlvmImageLinker.LinkLinuxExecutable(merged, "entry", null, externalLibraries),
+            Backends.TargetIds.LinuxArm64 => LlvmImageLinker.LinkLinuxArm64Executable(merged, "entry", null, externalLibraries),
+            Backends.TargetIds.WindowsX64 => LlvmImageLinker.LinkWindowsExecutable(merged, "entry", null, externalLibraries),
+            Backends.TargetIds.WindowsArm64 => LlvmImageLinker.LinkWindowsArm64Executable(merged, "entry", null, externalLibraries),
+            _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
+        };
+    }
 
     // Writes each partition's object next to each other under the directory ASHES_DUMP_OBJECTS
-    // names, for inspecting what the linker receives.
+    // names, for inspecting what the merge receives; the merged object joins them as merged.o.
     private static void DumpPartitionObjects(byte[][] objects)
+    {
+        for (int partition = 0; partition < objects.Length; partition++)
+        {
+            DumpObject($"partition{partition}.o", objects[partition]);
+        }
+    }
+
+    private static void DumpObject(string fileName, byte[] bytes)
     {
         string? directory = Environment.GetEnvironmentVariable("ASHES_DUMP_OBJECTS");
         if (string.IsNullOrEmpty(directory))
@@ -158,10 +173,7 @@ internal static partial class LlvmCodegen
         }
 
         Directory.CreateDirectory(directory);
-        for (int partition = 0; partition < objects.Length; partition++)
-        {
-            File.WriteAllBytes(Path.Combine(directory, $"partition{partition}.o"), objects[partition]);
-        }
+        File.WriteAllBytes(Path.Combine(directory, fileName), bytes);
     }
 
     // Optimizes one partition's module and emits its object code on the calling thread. The
@@ -190,7 +202,9 @@ internal static partial class LlvmCodegen
     // externally in the others; exports partition 0's globals and replaces the other partitions'
     // definitions of the same names by declarations, so the runtime state and the string literals
     // partition 0 holds are shared. A global only a later partition defines (a literal partition 0
-    // never uses) stays that partition's own.
+    // never uses) stays that partition's own. The externally visible runtime functions every
+    // module defines (memcpy and the other libc-named helpers LLVM's lowering may call) become
+    // weak definitions outside partition 0, so the merged object keeps partition 0's copy.
     private static void ExportPartitionSymbols(
         LlvmTargetContext[] targets,
         IReadOnlyDictionary<string, int> assignment,
@@ -213,14 +227,18 @@ internal static partial class LlvmCodegen
             }
         }
 
-        foreach (LlvmTargetContext target in targets)
+        for (int partition = 0; partition < targets.Length; partition++)
         {
-            for (LlvmValueHandle function = LlvmApi.GetFirstFunction(target.Module); function.Ptr != 0; function = LlvmApi.GetNextFunction(function))
+            for (LlvmValueHandle function = LlvmApi.GetFirstFunction(targets[partition].Module); function.Ptr != 0; function = LlvmApi.GetNextFunction(function))
             {
                 string name = LlvmApi.GetValueName(function);
                 if (assignment.ContainsKey(name) || string.Equals(name, entryFunctionName, StringComparison.Ordinal))
                 {
                     LlvmApi.SetLinkage(function, LlvmLinkage.External);
+                }
+                else if (partition > 0 && LlvmApi.IsDeclaration(function) == 0 && LlvmApi.GetLinkage(function) == LlvmLinkage.External)
+                {
+                    LlvmApi.SetLinkage(function, LlvmLinkage.WeakOdr);
                 }
             }
         }
@@ -244,7 +262,8 @@ internal static partial class LlvmCodegen
     }
 
     // Replaces a defined global by an external declaration of the same name, type, constness,
-    // and alignment.
+    // and alignment. A thread-local global stays thread-local under the local-exec model, so the
+    // partition addresses it through the same TPREL sequence as the partition that defines it.
     private static void ReplaceGlobalWithDeclaration(LlvmModuleHandle module, LlvmValueHandle global)
     {
         string name = LlvmApi.GetValueName(global);
@@ -254,6 +273,11 @@ internal static partial class LlvmCodegen
         LlvmApi.SetLinkage(declaration, LlvmLinkage.External);
         LlvmApi.SetGlobalConstant(declaration, LlvmApi.IsGlobalConstant(global));
         LlvmApi.SetAlignment(declaration, LlvmApi.GetAlignment(global));
+        if (LlvmApi.IsThreadLocal(global) != 0)
+        {
+            LlvmApi.SetThreadLocalMode(declaration, LlvmThreadLocalMode.LocalExec);
+        }
+
         LlvmApi.ReplaceAllUsesWith(global, declaration);
         LlvmApi.DeleteGlobal(global);
     }

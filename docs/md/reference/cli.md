@@ -240,8 +240,8 @@ lowering with lifetime placement), `optimize` (the IR optimizer), and `backend` 
 with one `backend.partition<N>.llvm-passes` and `backend.partition<N>.object-code` pair per
 partition instead). The generated code is unaffected.
 
-A large linux-x64 program (1024 lifted functions or more) is optimized and turned into object
-code in parallel partitions and linked as several objects; see
+A large Linux program (1024 lifted functions or more) is optimized and turned into object code
+in parallel partitions that are merged into one relocatable object before linking; see
 [Parallel code generation](../internals/architecture.md#parallel-code-generation). Set
 `ASHES_LLVM_JOBS` to the number of partitions to use, or to `1` to keep a single module. The
 partition count is derived from the program's size by default, so the same source produces the
