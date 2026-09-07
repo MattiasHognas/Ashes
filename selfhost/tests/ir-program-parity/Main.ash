@@ -217,5 +217,6 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("tco_record_string_field_into_successor"))
         |> (given (_) -> checkFixture(root)("tco_record_field_read_into_successor"))
         |> (given (_) -> checkFixture(root)("tco_consumed_record_list_tuple_result"))
+        |> (given (_) -> checkFixture(root)("tco_record_head_consed_into_sibling_accumulator"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
