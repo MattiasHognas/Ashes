@@ -33,16 +33,18 @@ internal static partial class LlvmCodegen
 
     // Closure layout: {code@0, env@8, packed_env_size@16, dropper@24}. The high bit of the packed
     // size records runtime-managed immediate results; the next bit records whether the function can
-    // adopt a transferred RC argument. The low 62 bits retain the environment size.
+    // adopt a transferred RC argument; the bit below records that the closure object and its
+    // environment are reference-counted. The low 61 bits retain the environment size.
     // The result flag lets an indirect caller reclaim call scratch without copying an independent
-    // runtime-RC result. The dropper is a code pointer that
-    // closes resources moved into the closure's env (set only when a captured resource escapes with
-    // the closure — see SetClosureDropper); 0 for ordinary closures. Invoked when the closure is
-    // cleaned up (CleanupResource "Function").
+    // runtime-RC result. The dropper is a code pointer that releases what the closure's env owns:
+    // resources moved into an arena closure (see SetClosureDropper), invoked when that closure is
+    // cleaned up (CleanupResource "Function"); or the owned captures of a reference-counted
+    // closure, invoked by the closure's last RcDrop. 0 for ordinary closures.
     private const int ClosureSizeBytes = 32;
     private const ulong ClosureResultOwnershipBit = 1UL << 63;
     private const ulong ClosureArgumentOwnershipBit = 1UL << 62;
-    private const ulong ClosureEnvironmentSizeMask = ClosureArgumentOwnershipBit - 1;
+    private const ulong ClosureRuntimeManagedBit = 1UL << 61;
+    private const ulong ClosureEnvironmentSizeMask = ClosureRuntimeManagedBit - 1;
 
     private static LlvmValueHandle EmitMakeClosure(
         LlvmCodegenState state,
@@ -61,15 +63,35 @@ internal static partial class LlvmCodegen
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_env_store_{funcLabel}");
         ulong packedEnvironmentSize = (ulong)(uint)envSizeBytes
             | (returnsRuntimeManaged ? ClosureResultOwnershipBit : 0)
-            | (acceptsRuntimeManagedArgument ? ClosureArgumentOwnershipBit : 0);
+            | (acceptsRuntimeManagedArgument ? ClosureArgumentOwnershipBit : 0)
+            | (runtimeManaged ? ClosureRuntimeManagedBit : 0);
         StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, packedEnvironmentSize, 0), $"closure_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_dropper_store_{funcLabel}");
         return closurePtr;
     }
 
+    /// <summary>
+    /// Releases one reference to a reference-counted closure. On the last reference the closure's
+    /// dropper (when set) releases the owned captures, then the environment cell and the closure
+    /// cell are released; a shared closure only gives up its count.
+    /// </summary>
     private static bool EmitRuntimeRcClosureDrop(LlvmCodegenState state, LlvmValueHandle closurePtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle allocationBase = LlvmApi.BuildSub(builder, closurePtr,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_closure_base");
+        LlvmValueHandle count = LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_closure_count");
+        LlvmValueHandle isLast = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
+            LlvmApi.ConstInt(state.I64, 1, 0), "rc_closure_last");
+        LlvmBasicBlockHandle releaseOwnedBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_closure_release_owned");
+        LlvmBasicBlockHandle dropClosureBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_closure_drop_value");
+        LlvmApi.BuildCondBr(builder, isLast, releaseOwnedBlock, dropClosureBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, releaseOwnedBlock);
+        EmitClosureDropperCall(state, closurePtr, "rc_closure");
         LlvmValueHandle packedEnvironmentSize = LoadMemory(state, closurePtr, 16, "rc_closure_env_size");
         LlvmValueHandle envSize = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
             LlvmApi.ConstInt(state.I64, ClosureEnvironmentSizeMask, 0), "rc_closure_env_size_masked");
@@ -77,8 +99,6 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 0, 0), "rc_closure_has_env");
         LlvmBasicBlockHandle dropEnvBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "rc_closure_drop_env");
-        LlvmBasicBlockHandle dropClosureBlock = LlvmApi.AppendBasicBlockInContext(
-            state.Target.Context, state.Function, "rc_closure_drop_value");
         LlvmApi.BuildCondBr(builder, hasEnv, dropEnvBlock, dropClosureBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, dropEnvBlock);
@@ -88,6 +108,37 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(state.Target.Builder, dropClosureBlock);
         return EmitRuntimeRcDrop(state, closurePtr);
+    }
+
+    /// <summary>
+    /// Invokes the dropper stored at closure+24 as <c>dropper(0, env, 0)</c> when it is non-zero.
+    /// </summary>
+    private static void EmitClosureDropperCall(LlvmCodegenState state, LlvmValueHandle closure, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle dropperCode = LoadMemory(state, closure, 24, prefix + "_dropper");
+        LlvmValueHandle isNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            dropperCode, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_dropper_is_null");
+        LlvmBasicBlockHandle callBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, prefix + "_dropper_call");
+        LlvmBasicBlockHandle endBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, prefix + "_dropper_end");
+        LlvmApi.BuildCondBr(builder, isNull, endBlock, callBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, callBlock);
+        LlvmValueHandle env = LoadMemory(state, closure, 8, prefix + "_dropper_env");
+        LlvmTypeHandle dropperType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
+        LlvmValueHandle dropperPtr = LlvmApi.BuildIntToPtr(builder, dropperCode,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0), prefix + "_dropper_ptr");
+        LlvmApi.BuildCall2(builder, dropperType, dropperPtr,
+            [
+                LlvmApi.ConstInt(state.I64, 0, 0),
+                env,
+                LlvmApi.ConstInt(state.I64, 0, 0)
+            ], prefix + "_dropper_invoke");
+        LlvmApi.BuildBr(builder, endBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, endBlock);
     }
 
     private static LlvmValueHandle EmitMakeClosureStack(

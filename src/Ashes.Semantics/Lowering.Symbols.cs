@@ -1802,7 +1802,45 @@ public sealed partial class Lowering
         bool runtimeManagedParent,
         LoweredValueRequest parentRequest)
     {
-        LoweredValueRequest request = parentRequest
+        LoweredValueRequest request = BuildRuntimeManagedConstructorArgumentRequest(
+            argument,
+            fieldType,
+            runtimeManagedParent,
+            parentRequest);
+        LoweredValue loweredValue = LowerExpr(argument, request);
+        if (runtimeManagedParent && fieldType is TypeRef.TBytes)
+        {
+            loweredValue = NormalizeRuntimeManagedBytesValue(loweredValue);
+        }
+
+        (int Temp, TypeRef Type) lowered = loweredValue.AsPair();
+        if (runtimeManagedParent
+            && fieldType is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element))
+            && !IsRuntimeManagedResultTemp(lowered.Temp))
+        {
+            int normalizedTemp = NewTemp();
+            Emit(new IrInst.CopyOutList(
+                normalizedTemp,
+                lowered.Temp,
+                IrInst.ListHeadCopyKind.Inline,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            MarkRuntimeManagedTemp(normalizedTemp);
+            lowered = (normalizedTemp, lowered.Type);
+        }
+        return lowered;
+    }
+
+    // The representation a constructor field's producer may emit: a fresh producer of the field's
+    // type stores an owned value straight into a runtime-managed parent.
+    private LoweredValueRequest BuildRuntimeManagedConstructorArgumentRequest(
+        Expr argument,
+        TypeRef fieldType,
+        bool runtimeManagedParent,
+        LoweredValueRequest parentRequest)
+    {
+        return parentRequest
             .AddRuntime(
                 runtimeManagedParent
                     && (fieldType is TypeRef.TStr
@@ -1836,30 +1874,12 @@ public sealed partial class Lowering
                         || fieldType is TypeRef.TVar or TypeRef.TTypeParam)
                     && argument is Expr.TupleLit,
                 LoweredValueRuntimeRepresentation.Tuple)
+            .AddRuntime(
+                runtimeManagedParent
+                    && fieldType is TypeRef.TFun
+                    && IsRuntimeRcOwningClosureExpression(argument),
+                LoweredValueRuntimeRepresentation.Closure)
             .WithRuntimeAdtContext(parentRequest.RuntimeAdtChildBindings);
-        LoweredValue loweredValue = LowerExpr(argument, request);
-        if (runtimeManagedParent && fieldType is TypeRef.TBytes)
-        {
-            loweredValue = NormalizeRuntimeManagedBytesValue(loweredValue);
-        }
-
-        (int Temp, TypeRef Type) lowered = loweredValue.AsPair();
-        if (runtimeManagedParent
-            && fieldType is TypeRef.TList list
-            && CanArenaReset(Prune(list.Element))
-            && !IsRuntimeManagedResultTemp(lowered.Temp))
-        {
-            int normalizedTemp = NewTemp();
-            Emit(new IrInst.CopyOutList(
-                normalizedTemp,
-                lowered.Temp,
-                IrInst.ListHeadCopyKind.Inline,
-                RuntimeManaged: true,
-                IrInst.CopyOutPurpose.RcNormalization));
-            MarkRuntimeManagedTemp(normalizedTemp);
-            lowered = (normalizedTemp, lowered.Type);
-        }
-        return lowered;
     }
 
     /// <summary>

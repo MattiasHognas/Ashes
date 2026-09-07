@@ -965,6 +965,21 @@ owned RC children. When an arena value must escape as RC, lowering normalizes
 the complete owned graph rather than copying only its root. A moved child needs
 no count change; a retained child receives exactly one `RcDup`.
 
+A closure is such a child when its object and environment are reference-counted.
+The packed word at closure offset 16 records that (bit 61, beside the result and
+argument ownership bits), and the closure's dropper at offset 24 releases the
+owned captures the environment took over: a closure literal whose captures are
+inline values beside the entry-normalized parameter it moves into the
+environment is a fresh owned child of the record storing it, so the record is
+placed on the RC heap and released with its closure. The last `RcDrop` of an RC
+closure runs the dropper, then releases the environment and the closure cell; a
+shared closure only gives up its count. `CleanupResource` on a closure is the
+arena closure's resource cleanup and is a no-op on a reference-counted one. An
+RC copy of a closure (`CopyOutClosure`) runs the closure's environment
+normalizer, which copies each capture into an owned value and attaches the
+dropper to the copy; an arena copy of a reference-counted closure shares the
+captures the original still owns and carries no dropper.
+
 The IR makes every remaining copy operation declare its purpose:
 
 | `CopyOutPurpose` | Meaning |

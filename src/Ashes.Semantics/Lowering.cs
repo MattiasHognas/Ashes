@@ -1955,14 +1955,7 @@ public sealed partial class Lowering
                 }
                 break;
             case TypeRef.TTuple tuple:
-                Emit(new IrInst.Alloc(resultTemp, tuple.Elements.Count * 8, RuntimeManaged: true));
-                for (int i = 0; i < tuple.Elements.Count; i++)
-                {
-                    int childTemp = NewTemp();
-                    Emit(new IrInst.LoadMemOffset(childTemp, sourceTemp, i * 8));
-                    int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, tuple.Elements[i]);
-                    Emit(new IrInst.StoreMemOffset(resultTemp, i * 8, copiedChild));
-                }
+                EmitRuntimeManagedTcoTupleDeepCopy(resultTemp, sourceTemp, tuple);
                 break;
             case TypeRef.TNamedType named when CanCopyOutAdt(named, out int sizeBytes):
                 Emit(new IrInst.CopyOutArena(
@@ -1974,12 +1967,32 @@ public sealed partial class Lowering
                 break;
             case TypeRef.TNamedType named when CanRuntimeManageTcoAdt(named):
                 return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named, releaseAdtSourceChildren, sourceExpression);
+            case TypeRef.TFun:
+                // The environment normalizer copies each capture and attaches the new dropper.
+                Emit(new IrInst.CopyOutClosure(
+                    resultTemp,
+                    sourceTemp,
+                    RuntimeManaged: true,
+                    IrInst.CopyOutPurpose.RcNormalization));
+                break;
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
         }
 
         MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
+    }
+
+    private void EmitRuntimeManagedTcoTupleDeepCopy(int resultTemp, int sourceTemp, TypeRef.TTuple tuple)
+    {
+        Emit(new IrInst.Alloc(resultTemp, tuple.Elements.Count * 8, RuntimeManaged: true));
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            int childTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(childTemp, sourceTemp, i * 8));
+            int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, tuple.Elements[i]);
+            Emit(new IrInst.StoreMemOffset(resultTemp, i * 8, copiedChild));
+        }
     }
 
     private bool CanRuntimeManageTcoAdt(TypeRef.TNamedType named)
@@ -4371,6 +4384,44 @@ public sealed partial class Lowering
                 && IsRuntimeRcCopyClosureProducer(conditional.Else),
             _ => false,
         };
+    }
+
+    // A closure literal a runtime-managed aggregate owns as a fresh child. Its environment holds
+    // the entry-normalized parameter the capture moves into it, beside inline values only, so the
+    // environment lives on the reference-counted heap with a dropper releasing that parameter when
+    // the closure's last reference goes; the aggregate storing the closure releases it as a child.
+    private bool IsRuntimeRcOwningClosureExpression(Expr expression)
+    {
+        if (expression is Expr.If conditional)
+        {
+            return IsRuntimeRcOwningClosureExpression(conditional.Then)
+                && IsRuntimeRcOwningClosureExpression(conditional.Else);
+        }
+
+        if (expression is not Expr.Lambda lambda)
+        {
+            return false;
+        }
+
+        HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
+        bool ownsNormalizedParameter = false;
+        foreach (string name in FreeVars(lambda.Body, bound))
+        {
+            if (IsNormalizedAlwaysReturnedStringParameterRead(new Expr.Var(name)))
+            {
+                ownsNormalizedParameter = true;
+                continue;
+            }
+
+            Binding? binding = Lookup(name);
+            if (binding is not (Binding.Local or Binding.Env or Binding.Scheme or Binding.EnvScheme)
+                || !CanArenaReset(Prune(binding.Type)))
+            {
+                return false;
+            }
+        }
+
+        return ownsNormalizedParameter;
     }
 
     private bool ClosureCapturesRuntimeManagedHeapValue(Expr expression)
@@ -9318,34 +9369,9 @@ public sealed partial class Lowering
             closureTemp, label, envPtrTemp, envSizeBytes, stackAllocateClosure,
             returnsRuntimeManaged, acceptsRuntimeManagedArgument, request);
 
-        // Record any resource captured by this closure, with its env offset (capture i lives at
-        // env+i*8) and type. Ownership scopes are separate from binding scopes, so the captured
-        // names still resolve to their owning bindings here.
-        var resourceCaptures = new List<(int EnvOffset, string Name, TypeRef Type)>();
-        var runtimeManagedCaptures = new List<(int EnvOffset, TypeRef Type)>();
-        for (int ci = 0; ci < captures.Count; ci++)
-        {
-            var owned = LookupOwnedValue(captures[ci]);
-            if (owned is not null && (owned.IsResource || owned.IsResourceBearing))
-            {
-                // The resource now lives inside this closure's environment. If the closure outlives
-                // the owning scope — directly, via an aggregate, or through a chain of closures — the
-                // scope must not close the resource at exit. Mark the owner so scope-exit drop
-                // transfers ownership to the closure instead (see OwnershipInfo.CapturedByClosure).
-                owned.CapturedByClosure = true;
-                if (owned.IsResource && owned.Type is not null)
-                {
-                    resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
-                }
-            }
-            else if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
-                && owned is { RuntimeManaged: true, Type: not null })
-            {
-                owned.CapturedByClosure = true;
-                owned.ReleaseKind = ResourceReleaseKind.Moved;
-                runtimeManagedCaptures.Add((ci * 8, owned.Type));
-            }
-        }
+        (List<(int EnvOffset, string Name, TypeRef Type)> resourceCaptures,
+            List<(int EnvOffset, TypeRef Type)> runtimeManagedCaptures) =
+            ClassifyLambdaClosureCaptures(captures, request);
 
         if (resourceCaptures.Count > 0)
         {
@@ -9362,6 +9388,52 @@ public sealed partial class Lowering
         AttachRuntimeManagedClosureNormalizer(label, captures);
 
         return closureTemp;
+    }
+
+    // Records any resource captured by this closure, with its env offset (capture i lives at
+    // env+i*8) and type, and every owned runtime-managed value the environment takes over.
+    // Ownership scopes are separate from binding scopes, so the captured names still resolve to
+    // their owning bindings here.
+    private (List<(int EnvOffset, string Name, TypeRef Type)> ResourceCaptures,
+        List<(int EnvOffset, TypeRef Type)> RuntimeManagedCaptures) ClassifyLambdaClosureCaptures(
+        IReadOnlyList<string> captures,
+        LoweredValueRequest request)
+    {
+        var resourceCaptures = new List<(int EnvOffset, string Name, TypeRef Type)>();
+        var runtimeManagedCaptures = new List<(int EnvOffset, TypeRef Type)>();
+        bool runtimeManagedClosure = request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure);
+        for (int ci = 0; ci < captures.Count; ci++)
+        {
+            var owned = LookupOwnedValue(captures[ci]);
+            if (owned is not null && (owned.IsResource || owned.IsResourceBearing))
+            {
+                // The resource now lives inside this closure's environment. If the closure outlives
+                // the owning scope — directly, via an aggregate, or through a chain of closures — the
+                // scope must not close the resource at exit. Mark the owner so scope-exit drop
+                // transfers ownership to the closure instead (see OwnershipInfo.CapturedByClosure).
+                owned.CapturedByClosure = true;
+                if (owned.IsResource && owned.Type is not null)
+                {
+                    resourceCaptures.Add((ci * 8, ResolveOwnershipAlias(captures[ci]), owned.Type));
+                }
+            }
+            else if (runtimeManagedClosure && owned is { RuntimeManaged: true, Type: not null })
+            {
+                owned.CapturedByClosure = true;
+                owned.ReleaseKind = ResourceReleaseKind.Moved;
+                runtimeManagedCaptures.Add((ci * 8, owned.Type));
+            }
+            else if (runtimeManagedClosure
+                && owned is null
+                && IsNormalizedAlwaysReturnedStringParameterRead(new Expr.Var(captures[ci])))
+            {
+                // The entry-normalized parameter is an owned string with no scope owner of its own:
+                // the capture moved it into this environment, so the closure's dropper releases it.
+                runtimeManagedCaptures.Add((ci * 8, new TypeRef.TStr()));
+            }
+        }
+
+        return (resourceCaptures, runtimeManagedCaptures);
     }
 
     private void EmitLambdaClosureObject(

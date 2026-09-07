@@ -976,6 +976,11 @@ public sealed partial class Lowering
             case TypeRef.TBigInt:
                 Emit(new IrInst.RcDrop(valueTemp, "BigInt", RuntimeManaged: true));
                 break;
+            case TypeRef.TFun:
+                // A reference-counted closure child: the release runs the closure's dropper on the
+                // last reference, then releases the environment and the closure cell.
+                Emit(new IrInst.RcDrop(valueTemp, "Function", RuntimeManaged: true));
+                break;
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed aggregate child.");
         }
@@ -2360,6 +2365,7 @@ public sealed partial class Lowering
                 TypeRef.TTuple tuple => arguments[i] is Expr.TupleLit tupleExpression
                     && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
                 TypeRef.TVar or TypeRef.TTypeParam => IsRuntimeManageableFreshGenericPayload(arguments[i]),
+                TypeRef.TFun => IsRuntimeRcOwningClosureExpression(arguments[i]),
                 _ => false,
             };
             if (!supported)
@@ -2484,6 +2490,7 @@ public sealed partial class Lowering
             TypeRef.TNamedType named => (expression is Expr.RecordLit
                     && IsFreshRuntimeManageableRecordTree(expression))
                 || IsFreshTcoOwnedChildAdtConstructorApplication(expression, named),
+            TypeRef.TFun => IsRuntimeRcOwningClosureExpression(expression),
             _ => false,
         };
     }

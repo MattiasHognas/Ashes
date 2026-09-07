@@ -2066,19 +2066,40 @@ same public behavior.
   (`handle Tag.tag(s) with | Tag.tag(text) -> resume(text)`) leaks the arm's
   reference-counted copy of `text`, which the perform site takes for an arena value and the
   handle copies at its scope boundary (about 615 bytes per call in stage 0); a record holding a
-  closure that captures the normalized parameter (`Box(reader = given (u) -> s)`) leaks the
-  owned string, stored in an arena environment the caller's copy-out duplicates (about 800
-  bytes per call in stage 0). `tests/consumed_argument_*` pin the correct output of every shape
+  closure that captures the normalized parameter (`Box(reader = given (u) -> s)`) leaked the
+  owned string through an arena environment nothing released, fixed in stage 0 by OPT-49b
+  below (the closure owns the capture on the reference-counted heap and the record releases
+  the closure as a child). `tests/consumed_argument_*` pin the correct output of every shape
   through stage 0. The remaining work is split below.
 - [ ] **OPT-49a** Stage 0: the perform site adopts a handler arm's reference-counted result.
   Read the arm closure's returns bit at the call, take the value as newly produced on that
   branch and copy it out otherwise, so the handle's scope-boundary copy no longer duplicates a
   value nothing releases; the arm closure built by `LowerHandleLowerArmClosures` must carry the
   returns bit its lowered body earned.
-- [ ] **OPT-49b** Stage 0: a closure capturing an entry-normalized parameter owns the capture.
+- [x] **OPT-49b** Stage 0: a closure capturing an entry-normalized parameter owns the capture.
   The environment holding the owned string (or record) is placed on the reference-counted heap
   with its dropper, and the record storing that closure counts it as a fresh owned child, so the
   caller's copy-out of the record retains rather than duplicates the value.
+  Done (2026-09-07): a closure literal whose captures are inline values beside the
+  entry-normalized string parameter is a fresh owned child of the record storing it
+  (`IsRuntimeRcOwningClosureExpression`, consulted by both fresh-child predicates and by the
+  field request, which lowers the lambda under the `Closure` representation). The capture
+  moves the owned string into a reference-counted environment, the closure carries the
+  `__rc_cdrop` dropper releasing it, and the record is placed on the RC heap with a `Closure`
+  child drop kind (`OrdinaryHeapChildDropKind.Closure`; records and owned-child ADTs admit a
+  function field, `CanDropAdtGraph` counts it droppable, and the runtime-managed deep copy
+  copies it with `CopyOutClosure RuntimeManaged`). The caller adopts the record through the
+  compiled-body fact and its structural release drops the closure as a child. The backend's
+  closure release is now count-aware: `RcDrop Function` runs the dropper on the last reference
+  only, then releases the environment and the cell; the packed closure word carries a
+  runtime-managed bit (bit 61) so `CleanupResource` on a borrowed reference-counted closure is a
+  no-op, and an arena `CopyOutClosure` of a reference-counted closure carries no dropper.
+  Measured on `tests/consumed_argument_captured_by_lambda.ash`: 40,972 KB at 40000 iterations
+  and 159,756 KB at 200000 before; 8,204 KB and 4,108 KB after, output unchanged.
+  `tests/consumed_argument_captured_by_lambda_plateau.ash` pins the 200000-iteration output;
+  `closure_record_parameter_entry_normalized.ash` and `closure_record_accumulator_loop.ash` pin
+  a closure-bearing record through entry normalization and as a loop accumulator. The
+  self-hosted backend mirror needs the same closure-word bit and count-aware release.
 - [ ] **OPT-49c** Self-hosted: the whole-program lowering takes capability declarations, `|?>`
   and `async`/`await` lower as core expressions (`UnknownLoweringBinding("async")` today), and a
   record may hold a function-typed field (`UnsupportedTypeDeclaration` today); until then the

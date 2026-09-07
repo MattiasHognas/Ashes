@@ -65,32 +65,26 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Drops a closure: if it carries a resource dropper at offset 24 (non-zero), invoke it as
-    /// <c>dropper(0, env)</c> to close the resources the closure owns. Ordinary closures have a zero
-    /// dropper and this is a no-op.
+    /// Cleans up an arena closure: if it carries a resource dropper at offset 24 (non-zero), invoke
+    /// it as <c>dropper(0, env)</c> to close the resources the closure owns. Ordinary closures have
+    /// a zero dropper and this is a no-op. A reference-counted closure is skipped: its dropper runs
+    /// with its last <c>RcDrop</c>, once every reference is gone.
     /// </summary>
     private static void EmitClosureDrop(LlvmCodegenState state, LlvmValueHandle closure)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle dropperCode = LoadMemory(state, closure, 24, "closure_dropper");
-        LlvmValueHandle isNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            dropperCode, LlvmApi.ConstInt(state.I64, 0, 0), "closure_dropper_is_null");
+        LlvmValueHandle packedEnvironmentSize = LoadMemory(state, closure, 16, "closure_drop_env_size");
+        LlvmValueHandle runtimeManaged = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
+            LlvmApi.ConstInt(state.I64, ClosureRuntimeManagedBit, 0), "closure_drop_runtime_managed");
+        LlvmValueHandle isArena = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            runtimeManaged, LlvmApi.ConstInt(state.I64, 0, 0), "closure_drop_is_arena");
 
-        var callBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "closure_drop_call");
+        var arenaBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "closure_drop_arena");
         var endBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "closure_drop_end");
-        LlvmApi.BuildCondBr(builder, isNull, endBlock, callBlock);
+        LlvmApi.BuildCondBr(builder, isArena, arenaBlock, endBlock);
 
-        LlvmApi.PositionBuilderAtEnd(builder, callBlock);
-        LlvmValueHandle env = LoadMemory(state, closure, 8, "closure_dropper_env");
-        LlvmTypeHandle dropperType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
-        LlvmValueHandle dropperPtr = LlvmApi.BuildIntToPtr(builder, dropperCode,
-            LlvmApi.PointerTypeInContext(state.Target.Context, 0), "closure_dropper_ptr");
-        LlvmApi.BuildCall2(builder, dropperType, dropperPtr,
-            [
-                LlvmApi.ConstInt(state.I64, 0, 0),
-                env,
-                LlvmApi.ConstInt(state.I64, 0, 0)
-            ], "closure_dropper_call");
+        LlvmApi.PositionBuilderAtEnd(builder, arenaBlock);
+        EmitClosureDropperCall(state, closure, "closure_drop");
         LlvmApi.BuildBr(builder, endBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, endBlock);
