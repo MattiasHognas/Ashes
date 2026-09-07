@@ -305,13 +305,14 @@ public sealed partial class Lowering
             return;
         }
 
-        CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal));
-        ComputeLiveHandlerEffects();
-        ComputeResultReach();
-        ComputeFunctionResultProvenanceFixpoint();
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.calls", () =>
+            CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal)));
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.handlers", ComputeLiveHandlerEffects);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.reach", ComputeResultReach);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.provenance", ComputeFunctionResultProvenanceFixpoint);
         _maAnalyzed = true;
-        ComputeOpenWorldInspectOnlyParams();
-        BuildOwnershipSummaries();
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.inspect-only", ComputeOpenWorldInspectOnlyParams);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.summaries", BuildOwnershipSummaries);
     }
 
     private void BuildOwnershipSummaries()

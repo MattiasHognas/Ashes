@@ -16,12 +16,15 @@ internal static class PerceusLifetimePlacement
 {
     public static IrProgram Place(IrProgram program, IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls = null)
     {
-        IrFunction entry = Place(program.EntryFunction, borrowedArgumentCalls);
+        IrFunction entry = Ashes.Frontend.CompilePhaseTiming.Measure("lower.placement.entry", () => Place(program.EntryFunction, borrowedArgumentCalls));
         var functions = new List<IrFunction>(program.Functions.Count);
-        foreach (IrFunction function in program.Functions)
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.placement.functions", () =>
         {
-            functions.Add(Place(function, borrowedArgumentCalls));
-        }
+            foreach (IrFunction function in program.Functions)
+            {
+                functions.Add(Place(function, borrowedArgumentCalls));
+            }
+        });
 
         return program with { EntryFunction = entry, Functions = functions };
     }

@@ -16,7 +16,7 @@ public static partial class IrOptimizer
         // Aggressive compile-time evaluation runs first: it reduces pure, constant-argument
         // calls to constants, after which the per-function passes below eliminate the now-dead
         // argument/closure construction and the redundant arena brackets around the removed call.
-        program = IrCompileTimeEval.Evaluate(program);
+        program = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.compile-time-eval", () => IrCompileTimeEval.Evaluate(program));
 
         // Local CSE (below) needs to know which CallKnown targets are provably pure; reuse the
         // same whole-program purity oracle IrCompileTimeEval.Evaluate just computed for folding,
@@ -31,26 +31,32 @@ public static partial class IrOptimizer
         }
         var evaluableFunctions = IrCompileTimeEval.ComputeEvaluableFunctions(functionsByLabel);
 
-        var optimizedEntry = OptimizeFunction(program.EntryFunction, evaluableFunctions);
-        var optimizedFuncs = program.Functions.Select(f => OptimizeFunction(f, evaluableFunctions)).ToList();
+        var optimizedEntry = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.entry", () => OptimizeFunction(program.EntryFunction, evaluableFunctions));
+        var optimizedFuncs = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.functions", () => program.Functions.Select(f => OptimizeFunction(f, evaluableFunctions)).ToList());
 
-        (optimizedEntry, optimizedFuncs) = RunInterproceduralClosurePasses(optimizedEntry, optimizedFuncs);
+        (optimizedEntry, optimizedFuncs) = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.closures", () => RunInterproceduralClosurePasses(optimizedEntry, optimizedFuncs));
 
         // Interprocedural: strip arena save/restore/reclaim brackets that provably guard no
         // allocation. Runs after the per-function passes so devirtualized calls (CallKnown) and
         // dead MakeClosures are already resolved, and needs whole-program non-allocation
         // summaries for known callees.
-        var nonAllocating = ComputeNonAllocatingFunctions(optimizedEntry, optimizedFuncs);
-        optimizedEntry = StripRedundantArenaBrackets(optimizedEntry, nonAllocating);
-        optimizedFuncs = optimizedFuncs.Select(f => StripRedundantArenaBrackets(f, nonAllocating)).ToList();
+        var nonAllocating = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.non-allocating", () => ComputeNonAllocatingFunctions(optimizedEntry, optimizedFuncs));
+        Ashes.Frontend.CompilePhaseTiming.Measure("optimize.brackets", () =>
+        {
+            optimizedEntry = StripRedundantArenaBrackets(optimizedEntry, nonAllocating);
+            optimizedFuncs = optimizedFuncs.Select(f => StripRedundantArenaBrackets(f, nonAllocating)).ToList();
+        });
 
         // Last: folds a left-nested ConcatStr chain into one ConcatStrN. Placed after every pass
         // above (rather than in the per-function pipeline) so ComputeNonAllocatingFunctions/
         // StripRedundantArenaBrackets — and every other pass — only ever see plain ConcatStr, the
         // one instruction shape they already know how to reason about; only the backend needs to
         // learn ConcatStrN, not the rest of this pipeline.
-        optimizedEntry = FoldConcatStrChains(optimizedEntry);
-        optimizedFuncs = optimizedFuncs.Select(FoldConcatStrChains).ToList();
+        Ashes.Frontend.CompilePhaseTiming.Measure("optimize.concat", () =>
+        {
+            optimizedEntry = FoldConcatStrChains(optimizedEntry);
+            optimizedFuncs = optimizedFuncs.Select(FoldConcatStrChains).ToList();
+        });
 
         return program with
         {
@@ -63,14 +69,29 @@ public static partial class IrOptimizer
     private static (IrFunction Entry, List<IrFunction> Functions) RunInterproceduralClosurePasses(
         IrFunction entry, List<IrFunction> functions)
     {
+        t_tempDefUseFactsCache = new Dictionary<List<IrInst>, (Dictionary<int, int>, Dictionary<int, int>, Dictionary<int, int>)>(
+            ReferenceEqualityComparer.Instance);
+        try
+        {
+            return RunInterproceduralClosurePassesCore(entry, functions);
+        }
+        finally
+        {
+            t_tempDefUseFactsCache = null;
+        }
+    }
+
+    private static (IrFunction Entry, List<IrFunction> Functions) RunInterproceduralClosurePassesCore(
+        IrFunction entry, List<IrFunction> functions)
+    {
         // A call through a captured closure whose label every creation site of the enclosing
         // function agrees on becomes direct (a stitched module's alias bindings are the common
         // case), then a saturated chain of now-direct curried stages collapses into one call with a
         // caller-frame environment. Both run before scalarization, whose target shape (a stack
         // environment feeding a devirtualized CallKnown) the stage inlining produces.
-        (entry, functions) = DevirtualizeCapturedClosureCalls(entry, functions);
-        (entry, functions) = DevirtualizeReturnedClosureCalls(entry, functions);
-        (entry, functions) = InlineCurryingStages(entry, functions);
+        (entry, functions) = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.closures.captured", () => DevirtualizeCapturedClosureCalls(entry, functions));
+        (entry, functions) = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.closures.returned", () => DevirtualizeReturnedClosureCalls(entry, functions));
+        (entry, functions) = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.closures.currying", () => InlineCurryingStages(entry, functions));
 
         // Skip the environment allocation entirely for a single-scalar-capture stack closure whose
         // only use is already a devirtualized CallKnown. Runs after the per-function passes so
@@ -79,7 +100,7 @@ public static partial class IrOptimizer
         // AllocStack/StoreMemOffset/CallKnown shape this pass looks for. May append newly generated
         // scalar-parameter callee variants to the function list, so it runs before the
         // non-allocation summary (a scalarized callee is strictly less allocating, never more).
-        (entry, functions) = ScalarizeSingleCaptureStackClosures(entry, functions);
+        (entry, functions) = Ashes.Frontend.CompilePhaseTiming.Measure("optimize.closures.scalarize", () => ScalarizeSingleCaptureStackClosures(entry, functions));
 
         // Devirtualize a CallClosure whose closure temp reaches a CallKnown to a function already
         // proven to always return one specific closure label (a curried call's second and later
@@ -87,7 +108,7 @@ public static partial class IrOptimizer
         // at what a called function is known to return). Runs again after scalarization (its own
         // scalarization target shape is unaffected by this) and before the non-allocation summary,
         // so a newly-direct call is visible to it.
-        return DevirtualizeReturnedClosureCalls(entry, functions);
+        return Ashes.Frontend.CompilePhaseTiming.Measure("optimize.closures.returned-again", () => DevirtualizeReturnedClosureCalls(entry, functions));
     }
 
     // String-concatenation chain folding
@@ -418,6 +439,11 @@ public static partial class IrOptimizer
     private static (IrFunction, bool) DevirtualizeReturnedClosureCallsOnce(
         IrFunction function, Dictionary<string, string> knownReturnedLabel)
     {
+        if (!ContainsCallClosure(function.Instructions))
+        {
+            return (function, false);
+        }
+
         (var defCount, var defIndex, _) = ComputeTempDefUseFacts(function.Instructions);
         List<IrInst> instructions = function.Instructions;
         var result = new List<IrInst>(instructions.Count);
@@ -628,8 +654,45 @@ public static partial class IrOptimizer
         return true;
     }
 
+    // Def-use facts keyed by instruction list identity, live only while the closure passes run: a
+    // pass hands back a fresh list whenever it changes a function, so an unchanged function's list
+    // keeps its facts across the passes and the fixpoint rounds within them.
+    [ThreadStatic]
+    private static Dictionary<List<IrInst>, (Dictionary<int, int> DefCount, Dictionary<int, int> DefIndex, Dictionary<int, int> UseCount)>? t_tempDefUseFactsCache;
+
+    private static bool ContainsCallClosure(List<IrInst> instructions)
+    {
+        foreach (IrInst inst in instructions)
+        {
+            if (inst is IrInst.CallClosure)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static (Dictionary<int, int> DefCount, Dictionary<int, int> DefIndex, Dictionary<int, int> UseCount)
         ComputeTempDefUseFacts(List<IrInst> instructions)
+    {
+        if (t_tempDefUseFactsCache is { } cache)
+        {
+            if (cache.TryGetValue(instructions, out var cached))
+            {
+                return cached;
+            }
+
+            var computed = ComputeTempDefUseFactsCore(instructions);
+            cache[instructions] = computed;
+            return computed;
+        }
+
+        return ComputeTempDefUseFactsCore(instructions);
+    }
+
+    private static (Dictionary<int, int> DefCount, Dictionary<int, int> DefIndex, Dictionary<int, int> UseCount)
+        ComputeTempDefUseFactsCore(List<IrInst> instructions)
     {
         var defCount = new Dictionary<int, int>();
         var defIndex = new Dictionary<int, int>();

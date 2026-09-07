@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace Ashes.Backend;
+namespace Ashes.Frontend;
 
 /// <summary>
 /// Reports how long each compile phase takes, on stderr, when the <c>ASHES_TIMING</c> environment

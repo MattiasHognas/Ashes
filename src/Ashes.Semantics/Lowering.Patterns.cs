@@ -3208,9 +3208,10 @@ public sealed partial class Lowering
             return false;
         }
 
+        Dictionary<string, List<Pattern>> patternsByName = GroupPatternsByConstructorName(patterns);
         foreach (var ctor in constructors)
         {
-            var ctorPatterns = patterns.Where(p => IsPatternForConstructor(p, ctor)).ToList();
+            List<Pattern> ctorPatterns = PatternsForConstructor(patternsByName, ctor);
             if (ctorPatterns.Count == 0)
             {
                 missingPattern = CreateMissingConstructorPattern(ctor, -1, null);
@@ -3331,6 +3332,62 @@ public sealed partial class Lowering
         }
 
         return false;
+    }
+
+    // Buckets the constructor and bare-name patterns by the name they spell, in source order, so
+    // each constructor's candidates come from one lookup rather than a scan of every pattern.
+    private static Dictionary<string, List<Pattern>> GroupPatternsByConstructorName(IReadOnlyList<Pattern> patterns)
+    {
+        var byName = new Dictionary<string, List<Pattern>>(StringComparer.Ordinal);
+        foreach (Pattern pattern in patterns)
+        {
+            string? name = pattern switch
+            {
+                Pattern.Constructor ctorPattern => ctorPattern.Name,
+                Pattern.Var varPattern => varPattern.Name,
+                _ => null,
+            };
+            if (name is null)
+            {
+                continue;
+            }
+
+            if (!byName.TryGetValue(name, out List<Pattern>? bucket))
+            {
+                bucket = [];
+                byName[name] = bucket;
+            }
+
+            bucket.Add(pattern);
+        }
+
+        return byName;
+    }
+
+    // The patterns IsPatternForConstructor accepts for ctor: every constructor pattern of its name,
+    // plus the bare-name patterns when the constructor is nullary.
+    private static List<Pattern> PatternsForConstructor(Dictionary<string, List<Pattern>> patternsByName, ConstructorSymbol ctor)
+    {
+        if (!patternsByName.TryGetValue(ctor.Name, out List<Pattern>? bucket))
+        {
+            return [];
+        }
+
+        if (ctor.Arity == 0)
+        {
+            return bucket;
+        }
+
+        var constructorsOnly = new List<Pattern>(bucket.Count);
+        foreach (Pattern pattern in bucket)
+        {
+            if (pattern is Pattern.Constructor)
+            {
+                constructorsOnly.Add(pattern);
+            }
+        }
+
+        return constructorsOnly;
     }
 
     private bool IsPatternForConstructor(Pattern pattern, ConstructorSymbol ctor)
