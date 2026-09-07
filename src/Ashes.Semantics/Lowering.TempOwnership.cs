@@ -224,7 +224,7 @@ internal sealed record LoweredTempOwnershipFact(
 
 public sealed partial class Lowering
 {
-    private readonly Dictionary<int, LoweredTempOwnershipFact> _tempOwnershipFacts = [];
+    private Dictionary<int, LoweredTempOwnershipFact> _tempOwnershipFacts = [];
 
     private HashSet<int> SnapshotRuntimeManagedTemps()
     {
