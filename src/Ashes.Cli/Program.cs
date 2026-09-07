@@ -182,7 +182,8 @@ static byte[] CompileToImage(
         sourceLayout?.ConstructorModules,
         new LoweringConfiguration(
             EnableReuse: !disableReuse,
-            EnableTraitOperatorSpecialization: !disableTraitOperatorSpecialization));
+            EnableTraitOperatorSpecialization: !disableTraitOperatorSpecialization,
+            CollectHoverTypes: false));
     if (sourceLayout is { } layout)
     {
         lowering.SetSourceContext(layout);

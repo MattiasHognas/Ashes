@@ -1066,7 +1066,12 @@ public static class Runner
         var program = new Parser(source, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var lowering = new Lowering(diag, importedStdModules, moduleAliases, constructorModulesByName);
+        var lowering = new Lowering(
+            diag,
+            importedStdModules,
+            moduleAliases,
+            constructorModulesByName,
+            new LoweringConfiguration(CollectHoverTypes: false));
         if (sourceLayout is { } layout)
         {
             lowering.SetSourceContext(layout);

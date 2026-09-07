@@ -495,6 +495,10 @@ public sealed partial class Lowering
         {
             _hoverParameterDefinitionStarts.Add(span.Start);
         }
+        if (!_configuration.CollectHoverTypes)
+        {
+            return;
+        }
 
         _hoverTypes.Add(new HoverTypeInfo(
             span,

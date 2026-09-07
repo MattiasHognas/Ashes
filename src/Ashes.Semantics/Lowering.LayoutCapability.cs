@@ -5,6 +5,9 @@ public sealed partial class Lowering
     private readonly Dictionary<TypeRef, OrdinaryHeapLayoutCapability> _ordinaryHeapLayoutCapabilities =
         new(ConcreteTypeRefEqualityComparer.Instance);
 
+    // Monomorphic declarations whose every constructor field is a resolved layout type.
+    private readonly HashSet<TypeSymbol> _resolvedLayoutTypeSymbols = [];
+
     private sealed class ConcreteTypeRefEqualityComparer : IEqualityComparer<TypeRef>
     {
         public static ConcreteTypeRefEqualityComparer Instance { get; } = new();
@@ -767,6 +770,10 @@ public sealed partial class Lowering
                 return tuple.Elements.Any(element =>
                     ContainsUnresolvedLayoutType(element, path));
             case TypeRef.TNamedType named:
+                if (named.TypeArgs.Count == 0 && _resolvedLayoutTypeSymbols.Contains(named.Symbol))
+                {
+                    return false;
+                }
                 if (!path.Add(named.Symbol))
                 {
                     return false;
@@ -780,6 +787,12 @@ public sealed partial class Lowering
                                 InstantiateConstructorParameterType(constructor, index, named),
                                 path)));
                 path.Remove(named.Symbol);
+                // A monomorphic declaration's fields are closed types, so a resolved answer never
+                // changes; remember it instead of walking the declaration at every value.
+                if (!unresolved && named.TypeArgs.Count == 0)
+                {
+                    _resolvedLayoutTypeSymbols.Add(named.Symbol);
+                }
                 return unresolved;
             default:
                 return false;
