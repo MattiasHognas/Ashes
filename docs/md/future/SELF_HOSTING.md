@@ -1288,7 +1288,34 @@ same public behavior.
   zeroing stands down like a runtime argument's (`resetArgumentIsManaged`); and the deferred
   reset's inline release of an iteration owner runs with the span cleared, as stage 0 resolves
   the deferred blocks without a location. `tco_returned_record_head` and
-  `tco_record_head_stored_into_copy_adt_successor` are whole-program parity fixtures.
+  `tco_record_head_stored_into_copy_adt_successor` are whole-program parity fixtures. The arena
+  variant loop followed, which was stage 0's direct in-place reuse of a loop accumulator: a
+  parameter the loop body matches directly by a constructor pattern
+  (`collectCtorMatchedScrutinees`, recorded on the loop context), not placed on the
+  reference-counted heap at the provisional entry, of a non-resource ADT with no whole-cell
+  shallow copy but a synthesizable arena copier, is a linear reuse root
+  (`scanDirectReuseAccumulators`, stage 0's `LowerLambdaCoreScanDirectReuse`): its copier is
+  synthesized at the loop entry (so it takes the lambda id ahead of the body's compaction
+  labels, as stage 0's `TrySynthesizeAdtCopier` in the scan does), its name joins
+  `linearReuseNames`, and a match on it hands each arm's dead matched cell out as an arena
+  reuse token (`DropReuse` without the runtime flag, no rebuild requirement, an unconsumed
+  token merely discarded) unless the first arm's constructor carries a heap field (stage 0's
+  `IsArenaReuseUnsafeForRuntimeManagedChildren`); a same-constructor rebuild consumes the token
+  in place (`AllocReusing` in the arena, its fields unguarded), the resolved back edge keeps a
+  linear root out of reference-counted placement (stage 0's `ReuseAccumulator` placement
+  reason), and once the body is lowered a body without a field-bearing `AllocReusing` reverts
+  its nullary reuses to fresh allocations and omits the entry copies (`PrepareDirectReuseBody`),
+  while a structural rebuild's entry deep copy is elided when the whole-program move analysis
+  proves the accumulator uniquely owned at every call (`moveSafetyProof` over the program's
+  top-level functions and call sites, now carried on the lowering state) and emitted at the
+  loop-entry splice point otherwise. `tco_variant_parameter_reused_in_place` is a whole-program
+  parity fixture; the nullary-revert and shared-accumulator entry-copy shapes are checked
+  against stage 0 by scratch programs only. Found beside it and left open: a bare nullary
+  constructor passed directly as a variant parameter's successor (`count(n - 1)(Empty)(acc)`)
+  is a reference-counted candidate in stage 0 (`AllocAdt RuntimeManaged=true`) while the
+  self-hosted request keeps it in the arena, and a copier stage 0 synthesizes at a deferred
+  reset lands after the lambdas in the function list, where the self-hosted one is appended as
+  the body is lowered.
   Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
@@ -1458,22 +1485,21 @@ same public behavior.
   the closure environment normalizer emits its leaf `CopyOutArena` without a location, as stage
   0's deep-copy emitter does. A survey of the
   fifteen import-free loop fixtures against stage 0's lowered IR
-  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches fourteen
-  exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
+  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches all
+  fifteen exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
   `str_param_non_affine`, `list_accumulator`, `str_accumulator`, `find_string_head`,
   `record_list_accumulator`, `owned_child_record_accumulator`,
   `param_string_field_into_successor`, `param_field_read_into_successor`,
   `record_param_consed_into_sibling_accumulator`, `find_record_head`,
-  `consumed_record_heads_escape`, and the whole-program parity fixtures
+  `consumed_record_heads_escape`, `tco_arena_variant_accumulator_plateau`, and the
+  whole-program parity fixtures
   `tco_tuple_parameter_rebuild`, `tco_str_parameter_fresh_successor`,
   `tco_consumed_list_parameter_borrowed_head`, `tco_consumed_list_parameter_returned_head`,
   `tco_record_parameter_exit_before_list_accumulator`, `tco_owned_child_record_accumulator`,
   `tco_record_string_field_into_successor`, `tco_record_field_read_into_successor`,
   `tco_consumed_record_list_tuple_result`, `tco_record_head_consed_into_sibling_accumulator`,
-  `tco_returned_record_head`, `tco_record_head_stored_into_copy_adt_successor`);
-  `tco_arena_variant_accumulator_plateau` (366 masked lines: the reuse-specialization and dead
-  retention-flag blocks stage 0 still emits around the arena back edge) carries the remaining
-  divergence of OPT-25's aggregate tail. Related interim narrowing: the
+  `tco_returned_record_head`, `tco_record_head_stored_into_copy_adt_successor`,
+  `tco_variant_parameter_reused_in_place`); the loop survey carries no remaining divergence. Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per

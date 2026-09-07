@@ -51,6 +51,9 @@ import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
+import AshesCompiler.Semantics.OwnershipInference.MoveCallSite
+import AshesCompiler.Semantics.OwnershipInference.collectAllCallSites
+import AshesCompiler.Semantics.OwnershipInference.moveSafetyProof
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.ResultReach.resultAlwaysReachesVariable
 import AshesCompiler.Semantics.StructuralDroppers
@@ -252,6 +255,10 @@ type CoreTcoLoop =
     | runtimeManagedOrdinals: List(Int)
     | argumentShapes: List(TcoArgumentShape)
     | patternFacts: List(PatternBindingFact)
+    // Every parameter the loop body matches directly by a constructor pattern, with the first such
+    // constructor, in the order the body first matches them (stage 0's
+    // `CollectCtorMatchedScrutinees`).
+    | matchedAccumulators: List((Str, Str))
     | emitsLoop: Bool
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
@@ -360,6 +367,17 @@ type CoreLoweringState =
     | runtimeOwners: List((Int, Bool))
     | reuseTransferredNames: List(Str)
     | reuseEnabled: Bool
+    // The loop parameters stage 0's `_linearReuseNames` holds: accumulators the loop body matches
+    // by a constructor pattern, whose dead matched cell each arm hands to a rebuild as an arena
+    // reuse token.
+    | linearReuseNames: List(Str)
+    // Each linear accumulator's slot, type, name, and whether the whole-program move analysis
+    // proves it uniquely owned at every call of the loop function, which elides its entry deep copy.
+    | directReuseCandidates: List((Int, SemanticType, Str, Bool))
+    // The program's top-level functions and every call site among them, the census the
+    // move-safety proof of a loop parameter is drawn from.
+    | moveFunctionTable: List((Str, List(Str), Expr))
+    | moveCallSites: List(MoveCallSite)
     | patternOwnerSites: List(PatternOwnerSite)
     // The temps holding a pattern owner's retained reference as a branch result, and the joins
     // every reaching branch stored one into: such a result crosses an arm's reset without a copy.
@@ -514,7 +532,9 @@ type CoreMatchPlan =
     | armResults: List(MatchArmResult)
     | scrutineeOwner: Maybe(MatchScrutineeOwner)
     | normalizeStaticStrings: Bool
-    | reuseScrutineeName: Maybe(Str)
+    // The reuse-eligible scrutinee's name with whether its tokens are reference-counted cells
+    // (a `let`-owned value) or arena cells (a linear loop accumulator).
+    | reuseScrutineeName: Maybe((Str, Bool))
     | error: Maybe(CoreLoweringError)
 
 // One lowered arm: its lowered value, and what it contributed to the match's result.
@@ -694,6 +714,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeOwners = [],
         reuseTransferredNames = [],
         reuseEnabled = true,
+        linearReuseNames = [],
+        directReuseCandidates = [],
+        moveFunctionTable = [],
+        moveCallSites = [],
         patternOwnerSites = [],
         patternOwnerResultTemps = [],
         tcoParameterRetainSites = [],
@@ -3701,7 +3725,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
@@ -6039,23 +6063,65 @@ type TcoManagedCandidate =
     | listElement: Maybe(SemanticType)
     | adtCopy: Maybe((SemanticType, Str))
 
+let recursive loopParameterNameAt (ordinal: Int) (names: List(Str)) =
+    match names with
+        | [] -> None
+        | name :: rest ->
+            if ordinal == 0
+            then Some(name)
+            else loopParameterNameAt(ordinal - 1)(rest)
+
+let recursive loopShapeAtOrdinal (ordinal: Int) (shapes: List(TcoArgumentShape)) =
+    match shapes with
+        | [] -> None
+        | shape :: rest ->
+            if ordinal == 0
+            then Some(shape)
+            else loopShapeAtOrdinal(ordinal - 1)(rest)
+
+let recursive loopSlotAtOrdinal (ordinal: Int) (slots: List(Int)) =
+    match slots with
+        | [] -> None
+        | slot :: rest ->
+            if ordinal == 0
+            then Some(slot)
+            else loopSlotAtOrdinal(ordinal - 1)(rest)
+
+let recursive parameterOrdinalOf (name: Str) (names: List(Str)) (ordinal: Int) =
+    match names with
+        | [] -> None
+        | candidate :: rest ->
+            if candidate == name
+            then Some(ordinal)
+            else parameterOrdinalOf(name)(rest)(ordinal + 1)
+
+// Stage 0's `TcoPlacementReason.ReuseAccumulator`: a linear reuse root keeps the arena, its
+// matched cells being rebuilt in place, so the resolved back edge never places it on the
+// reference-counted heap.
+let loopParameterIsLinearReuseRoot (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match loopParameterNameAt(ordinal)(loop.parameterNames) with
+        | Some(name) -> containsName(name)(state.linearReuseNames)
+        | None -> false
+
 let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (slots, shapes) with
         | (slot :: restSlots, shape :: restShapes) ->
-            (let strManaged = containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            (let linearReuse = loopParameterIsLinearReuseRoot(ordinal)(loop)(state)
             in
-                TcoManagedCandidate(
-                    ordinal = ordinal,
-                    slot = slot,
-                    shape = shape,
-                    strManaged = strManaged,
-                    listElement = if isTcoListShape(shape)
-                    then tcoListSlotElement(slot)(shape)(ordinal)(state)
-                    else None,
-                    adtCopy = if strManaged
-                    then None
-                    else tcoAdtSlotCopy(slot)(shape)(state)
-                )) :: tcoManagedCandidates(ordinal + 1)(restSlots)(restShapes)(loop)(state)
+                let strManaged = !linearReuse && containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+                in
+                    TcoManagedCandidate(
+                        ordinal = ordinal,
+                        slot = slot,
+                        shape = shape,
+                        strManaged = strManaged,
+                        listElement = if !linearReuse && isTcoListShape(shape)
+                        then tcoListSlotElement(slot)(shape)(ordinal)(state)
+                        else None,
+                        adtCopy = if strManaged || linearReuse
+                        then None
+                        else tcoAdtSlotCopy(slot)(shape)(state)
+                    )) :: tcoManagedCandidates(ordinal + 1)(restSlots)(restShapes)(loop)(state)
         | _ -> []
 
 let candidateListManaged (candidate: TcoManagedCandidate) =
@@ -6691,12 +6757,78 @@ let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Co
 // the lambda's own `Return`, for every parameter the affine-append analysis and the resolved
 // type together admit to runtime-managed `Str` placement and every list parameter its self-call
 // shape and resolved type admit.
+let recursive bodyHasStructuralReuse (count: Int) (instructions: List(IrInstruction)) =
+    if count <= 0
+    then false
+    else
+        match instructions with
+            | [] -> false
+            | IrInstruction { instruction = AllocReusing(_target, _tag, fieldCount, _token, _runtimeManaged, _flag, _tagless) } :: rest -> fieldCount > 0 || bodyHasStructuralReuse(count - 1)(rest)
+            | _instruction :: rest -> bodyHasStructuralReuse(count - 1)(rest)
+
+let recursive revertReuseAllocations (count: Int) (instructions: List(IrInstruction)) =
+    if count <= 0
+    then instructions
+    else
+        match instructions with
+            | [] -> []
+            | IrInstruction { instruction = AllocReusing(target, tag, fieldCount, _token, _runtimeManaged, _flag, tagless), location = location } :: rest -> IrInstruction(instruction = AllocAdt(target)(tag)(fieldCount)(false)(tagless), location = location) :: revertReuseAllocations(count - 1)(rest)
+            | instruction :: rest -> instruction :: revertReuseAllocations(count - 1)(rest)
+
+let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
+                | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
+
+// The entry deep copy of every direct-reuse accumulator the move analysis did not prove unique:
+// the accumulator is loaded, cloned, and stored back, so the loop body may overwrite its
+// matched cells in place.
+let recursive emitDirectReuseEntryCopies (candidates: List((Int, SemanticType, Str, Bool))) (state: CoreLoweringState) =
+    match candidates with
+        | [] -> state
+        | (_slot, _semanticType, _name, true) :: rest -> emitDirectReuseEntryCopies(rest)(state)
+        | (slot, semanticType, _name, false) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = loaded } ->
+                    match allocated
+                    |> emit(LoadLocal(loaded)(slot))
+                    |> emitLocatedDeepCopy(loaded)(semanticType) with
+                        | (copied, copyTemp) ->
+                            copied
+                            |> emit(StoreLocal(slot)(copyTemp))
+                            |> emitDirectReuseEntryCopies(rest)
+
+// Stage 0's `PrepareDirectReuseBody` and `LowerLambdaCoreSpliceReuseCopies`, once the loop body
+// is lowered: a direct-reuse entry deep copy is worth its cost only when the body rebuilt the
+// accumulator's structure in place (an `AllocReusing` with fields); otherwise the copies are
+// omitted and the body's nullary reuses, no longer backed by a copy, revert to fresh arena
+// allocations. A copy that stays is elided when the move analysis proves the accumulator
+// uniquely owned at every call, and spliced in at the loop-entry point otherwise.
+let finalizeDirectReuse (frame: CoreTcoLoopFrame) lowered =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state, temp = bodyTemp, semanticType = semanticType, error = None } ->
+            match state.directReuseCandidates with
+                | [] -> lowered
+                | candidates ->
+                    let bodyCount = length(state.reversedInstructions) - frame.entrySpliceCount
+                    in
+                        if bodyHasStructuralReuse(bodyCount)(state.reversedInstructions)
+                        then
+                            match emitDirectReuseEntryCopies(candidates)((state with reversedInstructions = [])) with
+                                | generated -> success(bodyTemp)(semanticType)((generated with reversedInstructions = spliceGeneratedInstructions(bodyCount)([])(state.reversedInstructions)(generated.reversedInstructions)))
+                        else success(bodyTemp)(semanticType)((state with reversedInstructions = revertReuseAllocations(bodyCount)(state.reversedInstructions)))
+
 let finalizeTcoRuntimeManagedParams (label: Str) lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = state, temp = bodyTemp, semanticType = semanticType, error = None } ->
             match (state.tcoLoopFrame, state.tcoLoop) with
-                | (Some(frame), Some(loop)) -> finalizeTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(state)
+                | (Some(frame), Some(loop)) ->
+                    state
+                    |> finalizeTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)
+                    |> finalizeDirectReuse(frame)
                 | _ -> lowered
 
 // Stage 0's `TcoContext`: a recursive binding whose innermost lambda body has a tail self-call
@@ -6713,6 +6845,59 @@ let recursive nullaryConstructorNamesOf (layouts: List(CoreConstructorLayout)) =
         | [] -> []
         | CoreConstructorLayout { scheme = TypeScheme { body = SemFunction(_, _, _) } } :: rest -> nullaryConstructorNamesOf(rest)
         | CoreConstructorLayout { name = name } :: rest -> name :: nullaryConstructorNamesOf(rest)
+
+let recursive unwrapPatternSpan (pattern: Pattern) =
+    match pattern with
+        | PatternAt(_span, inner) -> unwrapPatternSpan(inner)
+        | other -> other
+
+let recursive firstConstructorPatternName (cases: List((Pattern, Expr, Maybe(Expr)))) =
+    match cases with
+        | [] -> None
+        | (pattern, _body, _guard) :: rest ->
+            match unwrapPatternSpan(pattern) with
+                | PatternConstructor(name, _subPatterns) -> Some(name)
+                | _ -> firstConstructorPatternName(rest)
+
+let recursive matchedAccumulatorRecorded (name: Str) (found: List((Str, Str))) =
+    match found with
+        | [] -> false
+        | (candidate, _constructorName) :: rest -> candidate == name || matchedAccumulatorRecorded(name)(rest)
+
+// Stage 0's `CollectCtorMatchedScrutinees`: the loop parameters the loop body matches directly by
+// a constructor pattern, each with the first such constructor, in the order the body first
+// matches them; the walk follows `if` branches, `let` bodies, and match arms.
+let recursive collectCtorMatchedScrutinees (parameters: List(Str)) (expression: Expr) (found: List((Str, Str))) =
+    match expression with
+        | ExprAt(_span, inner) -> collectCtorMatchedScrutinees(parameters)(inner)(found)
+        | ExprIf(_condition, thenBranch, elseBranch) ->
+            found
+            |> collectCtorMatchedScrutinees(parameters)(thenBranch)
+            |> collectCtorMatchedScrutinees(parameters)(elseBranch)
+        | ExprLet(_name, _value, body, _parameters, _annotation, _constraints) -> collectCtorMatchedScrutinees(parameters)(body)(found)
+        | ExprLetRecursive(_name, _value, body, _parameters, _annotation, _constraints) -> collectCtorMatchedScrutinees(parameters)(body)(found)
+        | ExprMatch(value, cases, _position) ->
+            found
+            |> recordMatchedAccumulator(parameters)(value)(cases)
+            |> collectCtorMatchedScrutineesInCases(parameters)(cases)
+        | _ -> found
+and recordMatchedAccumulator (parameters: List(Str)) (value: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (found: List((Str, Str))) =
+    match unspanArgument(value) with
+        | ExprVar(name) ->
+            if containsName(name)(parameters) && !matchedAccumulatorRecorded(name)(found)
+            then
+                match firstConstructorPatternName(cases) with
+                    | Some(constructorName) -> append(found)([(name, constructorName)])
+                    | None -> found
+            else found
+        | _ -> found
+and collectCtorMatchedScrutineesInCases (parameters: List(Str)) (cases: List((Pattern, Expr, Maybe(Expr)))) (found: List((Str, Str))) =
+    match cases with
+        | [] -> found
+        | (_pattern, body, _guard) :: rest ->
+            found
+            |> collectCtorMatchedScrutinees(parameters)(body)
+            |> collectCtorMatchedScrutineesInCases(parameters)(rest)
 
 let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) =
     (let arity = 1 + countLambdaArity(0)(body)
@@ -6734,6 +6919,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             runtimeManagedOrdinals = runtimeManagedStrOrdinals(name)(parameters)(innermost),
                             argumentShapes = shapes,
                             patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
+                            matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
                             emitsLoop = emitsLoop
                         ))
                     else None)
@@ -6874,11 +7060,75 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
                                             |> openArenaBracket
                                             |> finishTcoLoopEntry(label)(slots)(fixedCursorSlot)(fixedEndSlot)(compactionSizeSlot)(entrySpliceCount)(affineReservations)(listActiveSlots)
 
+// A loop parameter the provisional loop entry already places on the reference-counted heap: a
+// list-shaped or copy-ADT slot, or an affine `Str` accumulator.
+let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match loopShapeAtOrdinal(ordinal)(loop.argumentShapes) with
+        | Some(shape) -> isTcoListShape(shape) || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+        | None -> false
+
+// A non-resource ADT whose whole cell has no shallow copy but whose arena deep copy is
+// synthesizable: the only accumulators whose in-place rebuild pays, a shallow-copied cell being
+// bounded by its copy-out already (stage 0's `LowerLambdaCoreScanDirectReuse` type test).
+let directReuseAccumulatorType (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    match heapFactsOf(named)(state) with
+        | HeapLayoutFacts { containsResource = containsResource, structuralCopy = structuralCopy, arenaDeepCopySupported = deepCopySupported } ->
+            match structuralCopy with
+                | ShallowCopy -> false
+                | _ -> !isResourceTypeName(typeName) && !containsResource && deepCopySupported
+
+let recursive moveCensusConstructorArities (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { name = name } as layout) :: rest -> (name, constructorArity(layout)) :: moveCensusConstructorArities(rest)
+
+// Stage 0's `ReuseAccumulatorIsUnique`: the whole-program move analysis proves the loop
+// function's accumulator parameter uniquely owned at every call, so the entry deep copy that
+// would make it unique is redundant.
+let reuseAccumulatorIsUnique (functionName: Str) (parameter: Str) (state: CoreLoweringState) =
+    match moveSafetyProof(state.moveFunctionTable)(state.moveCallSites)(moveCensusConstructorArities(state.constructorLayouts))(state.reachSummaries)(functionName)(parameter) with
+        | ParameterMoveSafetyProof { isMoveSafe = safe } -> safe
+
+// The accumulator type's arena copier, synthesized ahead of the loop body as stage 0's
+// `TrySynthesizeAdtCopier` in the scan does (the copier takes the next lambda id); the inline
+// clone the synthesis emits alongside is discarded, only the copier, the cache, and the counters
+// it advanced are kept.
+let synthesizeAccumulatorCopier (named: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeDeepCopy(0)(named)(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
+                | (InlineReleaseSynthesis { cache = copierCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
+                    state with dropperLabels = copierCache, functions = append(state.functions)(map(locateSynthesizedFunction(state))(synthesized)), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId
+
+// Stage 0's `LowerLambdaCoreScanDirectReuse`: every accumulator the loop body matches by a
+// constructor pattern, not placed on the reference-counted heap at the provisional entry and of a
+// direct-reuse type, becomes a linear reuse root: its copier is synthesized now, its name joins
+// `linearReuseNames` so the matches on it hand their dead cells out as arena tokens, and its
+// entry-copy candidate records whether the move analysis proves it unique.
+let recursive scanDirectReuseAccumulators (loop: CoreTcoLoop) (slots: List(Int)) (accumulators: List((Str, Str))) (state: CoreLoweringState) =
+    match accumulators with
+        | [] -> state
+        | (accumulator, constructorName) :: rest ->
+            match (parameterOrdinalOf(accumulator)(loop.parameterNames)(0), constructorLayout(constructorName)(state)) with
+                | (Some(ordinal), Some(layout)) ->
+                    match (loopSlotAtOrdinal(ordinal)(slots), layoutFieldTypes(layout)(state)) with
+                        | (Some(slot), (_fieldTypes, SemNamed(_symbolId, typeName, _arguments) as named)) ->
+                            if !provisionallyRuntimeManagedLoopSlot(ordinal)(slot)(loop)(state) && directReuseAccumulatorType(typeName)(named)(state)
+                            then
+                                state
+                                |> synthesizeAccumulatorCopier(named)
+                                |> (given (synthesized: CoreLoweringState) -> synthesized with linearReuseNames = accumulator :: synthesized.linearReuseNames, directReuseCandidates = append(synthesized.directReuseCandidates)([(slot, named, accumulator, reuseAccumulatorIsUnique(loop.selfName)(accumulator)(synthesized))]))
+                                |> scanDirectReuseAccumulators(loop)(slots)(rest)
+                            else scanDirectReuseAccumulators(loop)(slots)(rest)(state)
+                        | _ -> scanDirectReuseAccumulators(loop)(slots)(rest)(state)
+                | _ -> scanDirectReuseAccumulators(loop)(slots)(rest)(state)
+
 // The loop body of a loop function (stage 0's `LowerLambdaCoreEnterTcoLoop`): once the innermost
-// chain lambda is entered, its parameters get their back-edge slots and the loop entry is emitted
-// before the body. The instruction count is captured right before any loop-entry bracket is
-// opened, so the runtime-managed parameter entry normalization the whole body's resolved types
-// decide (`finalizeTcoRuntimeManagedParams`) can be spliced back in ahead of it.
+// chain lambda is entered, its parameters get their back-edge slots, the direct-reuse
+// accumulators are scanned, and the loop entry is emitted before the body. The instruction count
+// is captured right before any loop-entry bracket is opened, so the runtime-managed parameter
+// entry normalization the whole body's resolved types decide (`finalizeTcoRuntimeManagedParams`)
+// can be spliced back in ahead of it.
 let enterTcoLoopBody (label: Str) (parameter: Str) (state: CoreLoweringState) =
     match state.tcoLoop with
         | Some(CoreTcoLoop { pendingCurried = 0, emitsLoop = true, parameterNames = names } as loop) ->
@@ -6886,7 +7136,9 @@ let enterTcoLoopBody (label: Str) (parameter: Str) (state: CoreLoweringState) =
             |> bindChainParameterSlots(names)(parameter)(state.bindings)
             |> buildLoopParameterSlots(names)([]) with
                 | (slotted, slots) ->
-                    emitTcoLoopEntry(label)(slots)(loop)(length(slotted.reversedInstructions))(slotted)
+                    slotted
+                    |> scanDirectReuseAccumulators(loop)(slots)(loop.matchedAccumulators)
+                    |> emitTcoLoopEntry(label)(slots)(loop)(length(slotted.reversedInstructions))
         | _ -> state
 
 // A lambda entered inside a loop function: the next curried parameter's lambda stays in the loop
@@ -10070,17 +10322,51 @@ let reuseEligibleScrutineeName (scrutinee: Expr) (cases: List((Pattern, Expr, Ma
                 | None -> None
         | _ -> None
 
+let recursive anyFieldKeepsHeap (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match fieldTypes with
+        | [] -> false
+        | fieldType :: rest -> !resultSurvivesReset(fieldType)(state) || anyFieldKeepsHeap(rest)(state)
+
+// Stage 0's `IsArenaReuseUnsafeForRuntimeManagedChildren`: the arena in-place reuse of a loop
+// accumulator's cell is declined when the first arm's constructor carries a heap field, whose
+// reference-counted child the back edge's deferred release would re-read out of the overwritten
+// cell.
+let arenaReuseUnsafeForHeapChildren (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match cases with
+        | [] -> false
+        | (pattern, _body, _guard) :: _rest ->
+            match reuseCaseConstructorLayout(pattern)(state) with
+                | None -> false
+                | Some(layout) ->
+                    match layoutFieldTypes(layout)(state) with
+                        | (fieldTypes, _resultType) -> anyFieldKeepsHeap(fieldTypes)(state)
+
+// Stage 0's `GetMatchReuseScrutinee`, first half: a linear reuse root matched directly hands its
+// dead cell to every arm as an arena token, with no rebuild requirement attached (an unconsumed
+// arena token is merely discarded).
+let linearReuseScrutineeName (scrutinee: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match unspanArgument(scrutinee) with
+        | ExprVar(name) ->
+            if containsName(name)(state.linearReuseNames) && !arenaReuseUnsafeForHeapChildren(cases)(state)
+            then Some(name)
+            else None
+        | _ -> None
+
 // A reuse-eligible scrutinee's owner hands its reference to the arms' tokens: each arm's
 // `DropReuse` releases or reuses the cell, so the binding's own scope-exit release is retired
-// and no arm adopts the scrutinee as an owner of its own.
+// and no arm adopts the scrutinee as an owner of its own. A linear loop accumulator's cells are
+// arena tokens and have no owner to retire.
 let withReuseScrutinee (scrutinee: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
         | CoreMatchPlan { state = CoreLoweringState { reuseEnabled = false } } -> plan with reuseScrutineeName = None
         | CoreMatchPlan { state = state } ->
-            match reuseEligibleScrutineeName(scrutinee)(cases)(state) with
-                | Some((name, slot)) -> plan with reuseScrutineeName = Some(name), scrutineeOwner = None, state = (state with runtimeOwners = releaseRuntimeOwner(slot)(state.runtimeOwners))
-                | None -> plan with reuseScrutineeName = None
+            match linearReuseScrutineeName(scrutinee)(cases)(state) with
+                | Some(name) -> plan with reuseScrutineeName = Some((name, false))
+                | None ->
+                    match reuseEligibleScrutineeName(scrutinee)(cases)(state) with
+                        | Some((name, slot)) -> plan with reuseScrutineeName = Some((name, true)), scrutineeOwner = None, state = (state with runtimeOwners = releaseRuntimeOwner(slot)(state.runtimeOwners))
+                        | None -> plan with reuseScrutineeName = None
 
 // Publishes the arm's own DropReuse token when the match found a reuse-eligible scrutinee, this
 // arm's pattern names one of its constructors, and the arm's body does not mention the scrutinee
@@ -10091,13 +10377,13 @@ let recursive reuseFieldBindingNames (bindings: List((Int, Str))) =
         | [] -> []
         | (_index, name) :: rest -> name :: reuseFieldBindingNames(rest)
 
-let reuseTokenIfEligible (reuseScrutineeName: Maybe(Str)) (pattern: Pattern) (body: Expr) (valueTemp: Int) (patternResult: LoweredCorePattern) =
+let reuseTokenIfEligible (reuseScrutineeName: Maybe((Str, Bool))) (pattern: Pattern) (body: Expr) (valueTemp: Int) (patternResult: LoweredCorePattern) =
     match patternResult with
         | LoweredCorePattern { error = Some(_error) } -> (patternResult, None)
         | LoweredCorePattern { state = state } ->
             match reuseScrutineeName with
                 | None -> (patternResult, None)
-                | Some(scrutineeName) ->
+                | Some((scrutineeName, runtimeManagedToken)) ->
                     if exprMentionsName(scrutineeName)(body)
                     then (patternResult, None)
                     else
@@ -10118,14 +10404,14 @@ let reuseTokenIfEligible (reuseScrutineeName: Maybe(Str)) (pattern: Pattern) (bo
                                                         temp = tokenTemp,
                                                         fieldCount = arity,
                                                         tagless = tagless,
-                                                        runtimeManaged = true,
+                                                        runtimeManaged = runtimeManagedToken,
                                                         constructorName = ctorName,
                                                         fieldBindings = reusePatternFieldBindings(pattern)
                                                     )
                                                 in
                                                     (LoweredCorePattern(
                                                         state = allocatedState
-                                                        |> emit(DropReuse(tokenTemp)(valueTemp)(arity)(true))
+                                                        |> emit(DropReuse(tokenTemp)(valueTemp)(arity)(runtimeManagedToken))
                                                         |> (given (published: CoreLoweringState) ->
                                                             published with reuseTokens = token :: published.reuseTokens, reuseTransferredNames = reuseFieldBindingNames(reusePatternFieldBindings(pattern))),
                                                         error = None
@@ -10197,7 +10483,7 @@ let registerPatternOwnerSites (outerBindings: List(CoreBinding)) (patternResult:
                 | None -> patternResult
         | _ -> patternResult
 
-let finishPatternArm (reuseScrutineeName: Maybe(Str)) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
+let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
     match patternResult
     |> registerPatternOwnerSites(outerBindings)
     |> reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp) with
@@ -10916,7 +11202,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
@@ -11711,16 +11997,20 @@ let recursive reuseApplyTransferredChildren (index: Int) (pointerIndices: List(I
                 match reuseApplyTransferredChildren(index + 1)(pointerIndices)(tokenTemp)(rest)(state) with
                     | (finalState, restTemps) -> (finalState, fieldTemp :: restTemps)
 
-// The cell's temp is taken before the transferred children are guarded, stage 0's order.
+// The cell's temp is taken before the transferred children are guarded, stage 0's order. Only a
+// reference-counted token's transferred children are guarded; an arena token's cell keeps the
+// arena and its fields pass straight through.
 let allocateReusedConstructorCell (token: CoreReuseToken) (tag: Int) (fieldCount: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (temps: List(Int)) (state: CoreLoweringState) =
     match (layoutFieldTypes(layout)(state), freshTemp(state)) with
         | ((fieldTypes, _fieldsResultType), FreshTemp { state = allocatedState, temp = resultTemp }) ->
-            match reuseApplyTransferredChildren(0)(reusePointerFieldIndices(fieldTypes)(allocatedState))(token.temp)(temps)(allocatedState) with
+            match reuseApplyTransferredChildren(0)(if token.runtimeManaged
+            then reusePointerFieldIndices(fieldTypes)(allocatedState)
+            else [])(token.temp)(temps)(allocatedState) with
                 | (transferredState, transferredTemps) ->
                     transferredState
-                    |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(true)(false)(tagless))
+                    |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(token.runtimeManaged)(false)(tagless))
                     |> emitAdtFields(resultTemp)(0)(tagless)(transferredTemps)
-                    |> markAggregateRuntimeManaged(resultTemp)(true)
+                    |> markAggregateRuntimeManaged(resultTemp)(token.runtimeManaged)
                     |> success(resultTemp)(resolveType(transferredState)(resultType))
 
 // A live token of the rebuilt constructor's layout is consumed whatever the consumer's own
@@ -15811,7 +16101,8 @@ let buildProgram lowered =
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered
 // top-level functions, the verdict `markCallArgumentsMoved` consults for hand-offs.
 let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
-    state with programParameterOwnership = inferProgramParameterOwnership(topLevelFunctions(program)), reachSummaries = programReachSummaries(program)
+    (let functionTable = topLevelFunctions(program)
+    in state with programParameterOwnership = inferProgramParameterOwnership(functionTable), reachSummaries = programReachSummaries(program), moveFunctionTable = functionTable, moveCallSites = collectAllCallSites(functionTable)(program.body))
 
 // Seeds the state with the result-reach summaries of the functions a bare expression binds.
 let withExpressionReachSummaries (expression: Expr) (state: CoreLoweringState) = state with reachSummaries = expressionReachSummaries(expression)
