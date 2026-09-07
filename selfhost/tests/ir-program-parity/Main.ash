@@ -165,6 +165,12 @@ let checkFixture root name =
 // into the loop closure through an environment normalizer with a closure dropper;
 // tco_owned_child_record_accumulator and tco_record_string_field_into_successor copy a record
 // successor at the back edge behind the two temps stage 0's emitters burn ahead of the copy.
+// tco_returned_record_head returns a consumed list's matched record head beside a static
+// record arm (the head's fields are read through the receiver without a pattern-owner borrow);
+// tco_record_head_stored_into_copy_adt_successor stores the matched head into a copy-ADT
+// successor's field under a transferring request and passes the record parameter through at a
+// mixed-shape back edge, where the pass-through is retained rather than copied and the
+// caller's pattern-owner root is released inline by the deferred reset without a location.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -218,5 +224,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("tco_record_field_read_into_successor"))
         |> (given (_) -> checkFixture(root)("tco_consumed_record_list_tuple_result"))
         |> (given (_) -> checkFixture(root)("tco_record_head_consed_into_sibling_accumulator"))
+        |> (given (_) -> checkFixture(root)("tco_returned_record_head"))
+        |> (given (_) -> checkFixture(root)("tco_record_head_stored_into_copy_adt_successor"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

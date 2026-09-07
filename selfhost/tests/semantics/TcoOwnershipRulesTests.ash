@@ -470,9 +470,10 @@ let consumedRecordHeadsEscapeSource = "type Item =\n    | name: Str\n    | weigh
 
 // A consumed list of records whose matched head escapes into a sibling record accumulator is
 // admitted like a list of strings: the list is normalized at entry through the cell walk, the
-// head's pattern owner is retained once more for the successor, and its promoted release names
-// the record's structural dropper in both branches of the arm, since the release reaches the
-// record's string child.
+// head's pattern owner is retained once more for the successor, the accumulator passed through
+// unchanged is retained at its back edge rather than copied, and the head's promoted release
+// names the record's structural dropper in both branches of the arm, since the release reaches
+// the record's string child.
 let expectConsumedRecordHeadsEscapeIntoAccumulator unit =
     consumedRecordHeadsEscapeSource
     |> loopFunctionLines("[ClosureHelper from heaviest]")
@@ -481,7 +482,7 @@ let expectConsumedRecordHeadsEscapeIntoAccumulator unit =
         |> (given (_) -> check("the list is normalized at entry through the cell walk")(countContaining("rc_normalize_list")(lines) > 0))
         |> (given (_) -> check("the accumulator is normalized under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
         |> (given (_) -> check("the head's owner release names the structural dropper in both branches")(countContainingBoth("TypeName=Item OwnerSlot=")("StructuralDropperLabel=__rcdrop_structural")(lines) == 2))
-        |> (given (_) -> check("the head is retained by its owner and once more for the successor")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 4))
+        |> (given (_) -> check("the head is retained by its owner and once more for the successor, and the passed-through accumulator at its back edge")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 5))
         |> (given (_) -> check("the exit transfers the accumulator to the caller")(countContaining("rc_tco_exit_transfer")(lines) > 0)))
 
 let findStringHeadSource = "let recursive findLong (items: List(Str)) (limit: Int) =\n    match items with\n        | [] -> \"none\"\n        | head :: rest ->\n            if Ashes.Text.byteLength(head) > limit\n            then head\n            else findLong(rest)(limit)\n\nAshes.IO.print(findLong([\"a\", \"bb\"])(1))"

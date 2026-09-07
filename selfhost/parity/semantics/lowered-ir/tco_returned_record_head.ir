@@ -1,0 +1,683 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
+  resolved requirement=Ashes.Trait.Ord(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:2928)
+  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
+
+function __deepcopy_3  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (tco_returned_record_head.ash:11:1)
+    LoadEnv               Target=1 Index=0   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=2 Value=0   (tco_returned_record_head.ash:11:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_3_default   (tco_returned_record_head.ash:11:1)
+  __deepcopy_3_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (tco_returned_record_head.ash:11:1)
+    CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6   (tco_returned_record_head.ash:11:1)
+    Return                Source=3   (tco_returned_record_head.ash:11:1)
+  __deepcopy_3_default:
+    Return                Source=0   (tco_returned_record_head.ash:11:1)
+
+function __deepcopy_list_2  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (tco_returned_record_head.ash:11:1)
+    LoadEnv               Target=1 Index=0   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=2 Value=0   (tco_returned_record_head.ash:11:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_2_copy   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=4 Value=0   (tco_returned_record_head.ash:11:1)
+    Return                Source=4   (tco_returned_record_head.ash:11:1)
+  __deepcopy_list_2_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_returned_record_head.ash:11:1)
+    Alloc                 Target=7 SizeBytes=8   (tco_returned_record_head.ash:11:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_3 EnvPtrTemp=7 EnvSizeBytes=8   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (tco_returned_record_head.ash:11:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (tco_returned_record_head.ash:11:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (tco_returned_record_head.ash:11:1)
+    Alloc                 Target=11 SizeBytes=16   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (tco_returned_record_head.ash:11:1)
+    Return                Source=11   (tco_returned_record_head.ash:11:1)
+
+function lambda_1  [ClosureHelper from build]
+  locals=21 temps=82
+    LoadEnv               Target=0 Index=0   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=2 Source=0   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=27 Slot=1   (tco_returned_record_head.ash:11:1)
+    LoadArgumentOwnership Target=28   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=29 Value=1   (tco_returned_record_head.ash:11:1)
+    AndInt                Target=30 Left=28 Right=29   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=30 Target=rc_arg_normalize_copy_3   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=12 Source=27   (tco_returned_record_head.ash:11:1)
+    Jump                  Target=rc_arg_normalize_done_4   (tco_returned_record_head.ash:11:1)
+  rc_arg_normalize_copy_3:
+    LoadConstInt          Target=32 Value=0   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=13 Source=27   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=14 Source=32   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=15 Source=32   (tco_returned_record_head.ash:11:1)
+  rc_normalize_list_5:
+    LoadLocal             Target=33 Slot=13   (tco_returned_record_head.ash:11:1)
+    CmpIntNe              Target=34 Left=33 Right=32   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=34 Target=rc_normalize_list_end_6   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=35 BasePtr=33 OffsetBytes=0   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=36 BasePtr=33 OffsetBytes=8   (tco_returned_record_head.ash:11:1)
+    CopyOutArena          DestTemp=38 SrcTemp=35 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=39 Ptr=35 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:11:1)
+    CopyOutArena          DestTemp=40 SrcTemp=39 RuntimeManaged=true Purpose=RcNormalization
+    SetAdtField           Ptr=38 FieldIndex=0 Source=40 Tagless=true   (tco_returned_record_head.ash:11:1)
+    Alloc                 Target=41 SizeBytes=16 RuntimeManaged=true   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=41 OffsetBytes=0 Source=38   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=41 OffsetBytes=8 Source=32   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=42 Slot=14   (tco_returned_record_head.ash:11:1)
+    CmpIntNe              Target=43 Left=42 Right=32   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=43 Target=rc_normalize_list_first_7   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=44 Slot=15   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=44 OffsetBytes=8 Source=41   (tco_returned_record_head.ash:11:1)
+    Jump                  Target=rc_normalize_list_linked_8   (tco_returned_record_head.ash:11:1)
+  rc_normalize_list_first_7:
+    StoreLocal            Slot=14 Source=41   (tco_returned_record_head.ash:11:1)
+  rc_normalize_list_linked_8:
+    StoreLocal            Slot=15 Source=41   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=13 Source=36   (tco_returned_record_head.ash:11:1)
+    Jump                  Target=rc_normalize_list_5   (tco_returned_record_head.ash:11:1)
+  rc_normalize_list_end_6:
+    LoadLocal             Target=45 Slot=14   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=12 Source=45   (tco_returned_record_head.ash:11:1)
+  rc_arg_normalize_done_4:
+    LoadLocal             Target=46 Slot=12   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=1 Source=46   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=47 Value=1   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=6 Source=47   (tco_returned_record_head.ash:11:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=5 Source=1   (tco_returned_record_head.ash:11:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=2 Slot=2   (tco_returned_record_head.ash:12:8)
+    LoadConstInt          Target=3 Value=0   (tco_returned_record_head.ash:12:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_returned_record_head.ash:12:8)
+    JumpIfFalse           CondTemp=4 Target=else_0   (tco_returned_record_head.ash:12:5)
+    LoadLocal             Target=5 Slot=1   (tco_returned_record_head.ash:13:10)
+    StoreLocal            Slot=10 Source=5   (tco_returned_record_head.ash:12:5)
+    Jump                  Target=endif_1   (tco_returned_record_head.ash:12:5)
+  else_0:
+    LoadLocal             Target=6 Slot=2   (tco_returned_record_head.ash:14:16)
+    LoadConstInt          Target=7 Value=1   (tco_returned_record_head.ash:14:20)
+    SubInt                Target=8 Left=6 Right=7   (tco_returned_record_head.ash:14:16)
+    LoadLocal             Target=9 Slot=2   (tco_returned_record_head.ash:14:54)
+    TextFromInt           Target=10 ValueTemp=9   (tco_returned_record_head.ash:14:35)
+    LoadLocal             Target=11 Slot=2   (tco_returned_record_head.ash:14:67)
+    LoadConstInt          Target=12 Value=0   (tco_returned_record_head.ash:14:23)
+    StoreLocal            Slot=11 Source=11   (tco_returned_record_head.ash:14:23)
+    JumpIfFalse           CondTemp=12 Target=rc_constructor_field_not_retained_2   (tco_returned_record_head.ash:14:23)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=11 Source=13   (tco_returned_record_head.ash:14:23)
+  rc_constructor_field_not_retained_2:
+    LoadLocal             Target=14 Slot=11   (tco_returned_record_head.ash:14:23)
+    AllocAdt              Target=15 Tag=0 FieldCount=2 Tagless=true   (tco_returned_record_head.ash:14:23)
+    SetAdtField           Ptr=15 FieldIndex=0 Source=10 Tagless=true   (tco_returned_record_head.ash:14:23)
+    SetAdtField           Ptr=15 FieldIndex=1 Source=14 Tagless=true   (tco_returned_record_head.ash:14:23)
+    CopyOutArena          DestTemp=18 SrcTemp=15 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=19 Ptr=15 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:14:23)
+    CopyOutArena          DestTemp=20 SrcTemp=19 RuntimeManaged=true Purpose=RcNormalization
+    SetAdtField           Ptr=18 FieldIndex=0 Source=20 Tagless=true   (tco_returned_record_head.ash:14:23)
+    LoadLocal             Target=21 Slot=1   (tco_returned_record_head.ash:14:73)
+    Alloc                 Target=22 SizeBytes=16 RuntimeManaged=true   (tco_returned_record_head.ash:14:23)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=18   (tco_returned_record_head.ash:14:23)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=21   (tco_returned_record_head.ash:14:23)
+    LoadLocal             Target=23 Slot=2   (tco_returned_record_head.ash:14:10)
+    LoadLocal             Target=24 Slot=1   (tco_returned_record_head.ash:14:10)
+    StoreLocal            Slot=2 Source=8   (tco_returned_record_head.ash:14:10)
+    StoreLocal            Slot=1 Source=22   (tco_returned_record_head.ash:14:10)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=20
+    StoreLocal            Slot=1 Source=22
+    LoadConstInt          Target=81 Value=1
+    StoreLocal            Slot=6 Source=81
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=20
+    RestoreStackPointer   Slot=9   (tco_returned_record_head.ash:14:10)
+    Jump                  Target=lambda_1_body   (tco_returned_record_head.ash:14:10)
+    LoadConstInt          Target=25 Value=0   (tco_returned_record_head.ash:14:10)
+    StoreLocal            Slot=10 Source=25   (tco_returned_record_head.ash:12:5)
+  endif_1:
+    LoadLocal             Target=26 Slot=10   (tco_returned_record_head.ash:12:5)
+    LoadConstInt          Target=48 Value=0   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=16 Source=48   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=49 Slot=1   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=50 Slot=6   (tco_returned_record_head.ash:11:1)
+    CmpIntEq              Target=51 Left=49 Right=26   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=52 Slot=16   (tco_returned_record_head.ash:11:1)
+    CmpIntEq              Target=53 Left=52 Right=48   (tco_returned_record_head.ash:11:1)
+    AndInt                Target=54 Left=50 Right=51   (tco_returned_record_head.ash:11:1)
+    AndInt                Target=55 Left=54 Right=53   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=55 Target=rc_tco_exit_transfer_not_selected_9   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=56 Value=1   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=16 Source=56   (tco_returned_record_head.ash:11:1)
+    Jump                  Target=rc_tco_exit_transfer_done_10   (tco_returned_record_head.ash:11:1)
+  rc_tco_exit_transfer_not_selected_9:
+    LoadLocal             Target=57 Slot=6   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=57 Target=rc_tco_exit_drop_inactive_11   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=17 Source=49   (tco_returned_record_head.ash:11:1)
+  rcdrop_list_12:
+    LoadLocal             Target=58 Slot=17   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=59 Value=0   (tco_returned_record_head.ash:11:1)
+    CmpIntNe              Target=60 Left=58 Right=59   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_end_14   (tco_returned_record_head.ash:11:1)
+    RcIsUnique            Target=61 SourceTemp=58
+    JumpIfFalse           CondTemp=61 Target=rcdrop_list_shared_13   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=62 BasePtr=58 OffsetBytes=0   (tco_returned_record_head.ash:11:1)
+    RcIsUnique            Target=63 SourceTemp=62
+    JumpIfFalse           CondTemp=63 Target=rc_drop_shared_15   (tco_returned_record_head.ash:11:1)
+    GetAdtField           Target=64 Ptr=62 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:11:1)
+    RcDrop                SourceTemp=64 TypeName=String RuntimeManaged=true
+  rc_drop_shared_15:
+    RcDrop                SourceTemp=62 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=65 BasePtr=58 OffsetBytes=8   (tco_returned_record_head.ash:11:1)
+    RcDrop                SourceTemp=58 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=17 Source=65   (tco_returned_record_head.ash:11:1)
+    Jump                  Target=rcdrop_list_12   (tco_returned_record_head.ash:11:1)
+  rcdrop_list_shared_13:
+    RcDrop                SourceTemp=58 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_14   (tco_returned_record_head.ash:11:1)
+  rcdrop_list_end_14:
+  rc_tco_exit_drop_inactive_11:
+  rc_tco_exit_transfer_done_10:
+    LoadArgumentOwnership Target=66   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=67 Value=1   (tco_returned_record_head.ash:11:1)
+    ShrInt                Target=68 Left=66 Right=67   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=68 Target=rc_result_owned_16   (tco_returned_record_head.ash:11:1)
+    Alloc                 Target=69 SizeBytes=8   (tco_returned_record_head.ash:11:1)
+    MakeClosure           Target=70 FuncLabel=__deepcopy_list_2 EnvPtrTemp=69 EnvSizeBytes=8   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=69 OffsetBytes=0 Source=70   (tco_returned_record_head.ash:11:1)
+    CallClosure           Target=71 ClosureTemp=70 ArgTemp=26   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=19 Source=26   (tco_returned_record_head.ash:11:1)
+  rcdrop_list_18:
+    LoadLocal             Target=72 Slot=19   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=73 Value=0   (tco_returned_record_head.ash:11:1)
+    CmpIntNe              Target=74 Left=72 Right=73   (tco_returned_record_head.ash:11:1)
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_20   (tco_returned_record_head.ash:11:1)
+    RcIsUnique            Target=75 SourceTemp=72
+    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_19   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=76 BasePtr=72 OffsetBytes=0   (tco_returned_record_head.ash:11:1)
+    RcIsUnique            Target=77 SourceTemp=76
+    JumpIfFalse           CondTemp=77 Target=rc_drop_shared_21   (tco_returned_record_head.ash:11:1)
+    GetAdtField           Target=78 Ptr=76 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:11:1)
+    RcDrop                SourceTemp=78 TypeName=String RuntimeManaged=true
+  rc_drop_shared_21:
+    RcDrop                SourceTemp=76 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=79 BasePtr=72 OffsetBytes=8   (tco_returned_record_head.ash:11:1)
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=19 Source=79   (tco_returned_record_head.ash:11:1)
+    Jump                  Target=rcdrop_list_18   (tco_returned_record_head.ash:11:1)
+  rcdrop_list_shared_19:
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_20   (tco_returned_record_head.ash:11:1)
+  rcdrop_list_end_20:
+    StoreLocal            Slot=18 Source=71   (tco_returned_record_head.ash:11:1)
+    Jump                  Target=rc_result_done_17   (tco_returned_record_head.ash:11:1)
+  rc_result_owned_16:
+    StoreLocal            Slot=18 Source=26   (tco_returned_record_head.ash:11:1)
+  rc_result_done_17:
+    LoadLocal             Target=80 Slot=18   (tco_returned_record_head.ash:11:1)
+    Return                Source=80   (tco_returned_record_head.ash:11:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from build]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (tco_returned_record_head.ash:11:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=3 Value=0   (tco_returned_record_head.ash:11:1)
+    Return                Source=3   (tco_returned_record_head.ash:11:1)
+
+function lambda_0  [SourceFunction from build]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_returned_record_head.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (tco_returned_record_head.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_returned_record_head.ash:11:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_returned_record_head.ash:11:1)
+    Return                Source=4
+
+function __rcdrop_structural_6  [StructuralOwnerDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (tco_returned_record_head.ash:16:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_33   (tco_returned_record_head.ash:16:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:16:1)
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+  rc_drop_shared_33:
+    RcDrop                SourceTemp=0 TypeName=Item RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (tco_returned_record_head.ash:16:1)
+    Return                Source=3   (tco_returned_record_head.ash:16:1)
+
+function lambda_5  [ClosureHelper from findHeavy]
+  locals=31 temps=101
+    LoadEnv               Target=0 Index=0   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=2 Source=0   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=47 Slot=2   (tco_returned_record_head.ash:16:1)
+    LoadConstInt          Target=49 Value=0   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=23 Source=47   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=24 Source=49   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=25 Source=49   (tco_returned_record_head.ash:16:1)
+  rc_normalize_list_34:
+    LoadLocal             Target=50 Slot=23   (tco_returned_record_head.ash:16:1)
+    CmpIntNe              Target=51 Left=50 Right=49   (tco_returned_record_head.ash:16:1)
+    JumpIfFalse           CondTemp=51 Target=rc_normalize_list_end_35   (tco_returned_record_head.ash:16:1)
+    LoadMemOffset         Target=52 BasePtr=50 OffsetBytes=0   (tco_returned_record_head.ash:16:1)
+    LoadMemOffset         Target=53 BasePtr=50 OffsetBytes=8   (tco_returned_record_head.ash:16:1)
+    CopyOutArena          DestTemp=55 SrcTemp=52 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=56 Ptr=52 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:16:1)
+    CopyOutArena          DestTemp=57 SrcTemp=56 RuntimeManaged=true Purpose=RcNormalization
+    SetAdtField           Ptr=55 FieldIndex=0 Source=57 Tagless=true   (tco_returned_record_head.ash:16:1)
+    Alloc                 Target=58 SizeBytes=16 RuntimeManaged=true   (tco_returned_record_head.ash:16:1)
+    StoreMemOffset        BasePtr=58 OffsetBytes=0 Source=55   (tco_returned_record_head.ash:16:1)
+    StoreMemOffset        BasePtr=58 OffsetBytes=8 Source=49   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=59 Slot=24   (tco_returned_record_head.ash:16:1)
+    CmpIntNe              Target=60 Left=59 Right=49   (tco_returned_record_head.ash:16:1)
+    JumpIfFalse           CondTemp=60 Target=rc_normalize_list_first_36   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=61 Slot=25   (tco_returned_record_head.ash:16:1)
+    StoreMemOffset        BasePtr=61 OffsetBytes=8 Source=58   (tco_returned_record_head.ash:16:1)
+    Jump                  Target=rc_normalize_list_linked_37   (tco_returned_record_head.ash:16:1)
+  rc_normalize_list_first_36:
+    StoreLocal            Slot=24 Source=58   (tco_returned_record_head.ash:16:1)
+  rc_normalize_list_linked_37:
+    StoreLocal            Slot=25 Source=58   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=23 Source=53   (tco_returned_record_head.ash:16:1)
+    Jump                  Target=rc_normalize_list_34   (tco_returned_record_head.ash:16:1)
+  rc_normalize_list_end_35:
+    LoadLocal             Target=62 Slot=24   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=2 Source=62   (tco_returned_record_head.ash:16:1)
+    LoadConstInt          Target=63 Value=1   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=6 Source=63   (tco_returned_record_head.ash:16:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=5 Source=1   (tco_returned_record_head.ash:16:1)
+  lambda_5_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=2 Slot=2   (tco_returned_record_head.ash:17:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=3 Value=0   (tco_returned_record_head.ash:17:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_returned_record_head.ash:17:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_25   (tco_returned_record_head.ash:17:5)
+    LoadConstStr          Target=5 StrLabel=str_0   (tco_returned_record_head.ash:18:29)
+    LoadConstInt          Target=6 Value=0   (tco_returned_record_head.ash:18:46)
+    AllocAdt              Target=7 Tag=0 FieldCount=2 Tagless=true   (tco_returned_record_head.ash:18:17)
+    SetAdtField           Ptr=7 FieldIndex=0 Source=5 Tagless=true   (tco_returned_record_head.ash:18:17)
+    SetAdtField           Ptr=7 FieldIndex=1 Source=6 Tagless=true   (tco_returned_record_head.ash:18:17)
+    CopyOutArena          DestTemp=9 SrcTemp=7 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=10 Ptr=7 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:17:5)
+    CopyOutArena          DestTemp=11 SrcTemp=10 RuntimeManaged=true Purpose=RcNormalization
+    SetAdtField           Ptr=9 FieldIndex=0 Source=11 Tagless=true   (tco_returned_record_head.ash:17:5)
+    StoreLocal            Slot=10 Source=9   (tco_returned_record_head.ash:17:5)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    Jump                  Target=match_end_22   (tco_returned_record_head.ash:17:5)
+  match_arm_cleanup_25:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_24   (tco_returned_record_head.ash:17:5)
+  match_next_24:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=12 Value=0   (tco_returned_record_head.ash:17:5)
+    CmpIntNe              Target=13 Left=2 Right=12   (tco_returned_record_head.ash:17:5)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_26   (tco_returned_record_head.ash:17:5)
+    LoadMemOffset         Target=14 BasePtr=2 OffsetBytes=0   (tco_returned_record_head.ash:17:5)
+    LoadMemOffset         Target=15 BasePtr=2 OffsetBytes=8   (tco_returned_record_head.ash:17:5)
+    StoreLocal            Slot=17 Source=14   (tco_returned_record_head.ash:17:5)
+    StoreLocal            Slot=18 Source=15   (tco_returned_record_head.ash:17:5)
+    LoadLocal             Target=45 Slot=17   (tco_returned_record_head.ash:16:1)
+    RcDup                 Target=46 SourceTemp=45 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=46   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=16 Slot=17   (tco_returned_record_head.ash:20:16)
+    GetAdtField           Target=17 Ptr=16 FieldIndex=1 Tagless=true   (tco_returned_record_head.ash:20:16)
+    LoadLocal             Target=18 Slot=1   (tco_returned_record_head.ash:20:30)
+    CmpIntGt              Target=19 Left=17 Right=18   (tco_returned_record_head.ash:20:16)
+    JumpIfFalse           CondTemp=19 Target=else_27   (tco_returned_record_head.ash:20:13)
+    RcDrop                SourceTemp=15 TypeName=List OwnerSlot=18
+    LoadLocal             Target=20 Slot=17   (tco_returned_record_head.ash:21:18)
+    Borrow                Target=21 SourceTemp=20
+    RcDup                 Target=22 SourceTemp=21 RuntimeManaged=true
+    RcDrop                SourceTemp=14 TypeName=Item OwnerSlot=17 RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_6
+    StoreLocal            Slot=19 Source=22   (tco_returned_record_head.ash:20:13)
+    Jump                  Target=endif_28   (tco_returned_record_head.ash:20:13)
+  else_27:
+    RcDrop                SourceTemp=14 TypeName=Item OwnerSlot=17 RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_6
+    LoadLocal             Target=23 Slot=18   (tco_returned_record_head.ash:22:28)
+    Borrow                Target=24 SourceTemp=23
+    LoadLocal             Target=25 Slot=1   (tco_returned_record_head.ash:22:34)
+    RcDup                 Target=26 SourceTemp=24 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=15 TypeName=List OwnerSlot=18
+    LoadLocal             Target=27 Slot=2   (tco_returned_record_head.ash:22:18)
+    StoreLocal            Slot=20 Source=27   (tco_returned_record_head.ash:22:18)
+  rcdrop_list_29:
+    LoadLocal             Target=28 Slot=20   (tco_returned_record_head.ash:22:18)
+    LoadConstInt          Target=29 Value=0   (tco_returned_record_head.ash:22:18)
+    CmpIntNe              Target=30 Left=28 Right=29   (tco_returned_record_head.ash:22:18)
+    JumpIfFalse           CondTemp=30 Target=rcdrop_list_end_31   (tco_returned_record_head.ash:22:18)
+    RcIsUnique            Target=31 SourceTemp=28
+    JumpIfFalse           CondTemp=31 Target=rcdrop_list_shared_30   (tco_returned_record_head.ash:22:18)
+    LoadMemOffset         Target=32 BasePtr=28 OffsetBytes=0   (tco_returned_record_head.ash:22:18)
+    RcIsUnique            Target=33 SourceTemp=32
+    JumpIfFalse           CondTemp=33 Target=rc_drop_shared_32   (tco_returned_record_head.ash:22:18)
+    GetAdtField           Target=34 Ptr=32 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:22:18)
+    RcDrop                SourceTemp=34 TypeName=String RuntimeManaged=true
+  rc_drop_shared_32:
+    RcDrop                SourceTemp=32 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=35 BasePtr=28 OffsetBytes=8   (tco_returned_record_head.ash:22:18)
+    RcDrop                SourceTemp=28 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=20 Source=35   (tco_returned_record_head.ash:22:18)
+    Jump                  Target=rcdrop_list_29   (tco_returned_record_head.ash:22:18)
+  rcdrop_list_shared_30:
+    RcDrop                SourceTemp=28 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_31   (tco_returned_record_head.ash:22:18)
+  rcdrop_list_end_31:
+    LoadConstInt          Target=36 Value=0   (tco_returned_record_head.ash:22:18)
+    StoreLocal            Slot=6 Source=36   (tco_returned_record_head.ash:22:18)
+    LoadLocal             Target=37 Slot=2   (tco_returned_record_head.ash:22:18)
+    LoadLocal             Target=38 Slot=1   (tco_returned_record_head.ash:22:18)
+    StoreLocal            Slot=2 Source=26   (tco_returned_record_head.ash:22:18)
+    StoreLocal            Slot=1 Source=25   (tco_returned_record_head.ash:22:18)
+    LoadLocal             Target=91 Slot=6
+    JumpIfFalse           CondTemp=91 Target=rc_tco_drop_inactive_61
+    StoreLocal            Slot=30 Source=37
+  rcdrop_list_62:
+    LoadLocal             Target=92 Slot=30
+    LoadConstInt          Target=93 Value=0
+    CmpIntNe              Target=94 Left=92 Right=93
+    JumpIfFalse           CondTemp=94 Target=rcdrop_list_end_64
+    RcIsUnique            Target=95 SourceTemp=92
+    JumpIfFalse           CondTemp=95 Target=rcdrop_list_shared_63
+    LoadMemOffset         Target=96 BasePtr=92 OffsetBytes=0
+    RcIsUnique            Target=97 SourceTemp=96
+    JumpIfFalse           CondTemp=97 Target=rc_drop_shared_65
+    GetAdtField           Target=98 Ptr=96 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=98 TypeName=String RuntimeManaged=true
+  rc_drop_shared_65:
+    RcDrop                SourceTemp=96 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=99 BasePtr=92 OffsetBytes=8
+    RcDrop                SourceTemp=92 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=99
+    Jump                  Target=rcdrop_list_62
+  rcdrop_list_shared_63:
+    RcDrop                SourceTemp=92 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_64
+  rcdrop_list_end_64:
+  rc_tco_drop_inactive_61:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
+    StoreLocal            Slot=2 Source=26
+    LoadConstInt          Target=100 Value=1
+    StoreLocal            Slot=6 Source=100
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=29
+    RestoreStackPointer   Slot=9   (tco_returned_record_head.ash:22:18)
+    Jump                  Target=lambda_5_body   (tco_returned_record_head.ash:22:18)
+    LoadConstInt          Target=39 Value=0   (tco_returned_record_head.ash:22:18)
+    StoreLocal            Slot=19 Source=39   (tco_returned_record_head.ash:20:13)
+  endif_28:
+    LoadLocal             Target=40 Slot=19   (tco_returned_record_head.ash:20:13)
+    StoreLocal            Slot=10 Source=40   (tco_returned_record_head.ash:17:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    Jump                  Target=match_end_22   (tco_returned_record_head.ash:17:5)
+  match_arm_cleanup_26:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=22
+    Jump                  Target=match_none_23   (tco_returned_record_head.ash:17:5)
+  match_none_23:
+    LoadConstInt          Target=43 Value=0   (tco_returned_record_head.ash:17:5)
+    StoreLocal            Slot=10 Source=43   (tco_returned_record_head.ash:17:5)
+  match_end_22:
+    LoadLocal             Target=44 Slot=10   (tco_returned_record_head.ash:17:5)
+    LoadConstInt          Target=64 Value=0   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=26 Source=64   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=65 Slot=2   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=66 Slot=6   (tco_returned_record_head.ash:16:1)
+    CmpIntEq              Target=67 Left=65 Right=44   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=68 Slot=26   (tco_returned_record_head.ash:16:1)
+    CmpIntEq              Target=69 Left=68 Right=64   (tco_returned_record_head.ash:16:1)
+    AndInt                Target=70 Left=66 Right=67   (tco_returned_record_head.ash:16:1)
+    AndInt                Target=71 Left=70 Right=69   (tco_returned_record_head.ash:16:1)
+    JumpIfFalse           CondTemp=71 Target=rc_tco_exit_transfer_not_selected_38   (tco_returned_record_head.ash:16:1)
+    LoadConstInt          Target=72 Value=1   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=26 Source=72   (tco_returned_record_head.ash:16:1)
+    Jump                  Target=rc_tco_exit_transfer_done_39   (tco_returned_record_head.ash:16:1)
+  rc_tco_exit_transfer_not_selected_38:
+    LoadLocal             Target=73 Slot=6   (tco_returned_record_head.ash:16:1)
+    JumpIfFalse           CondTemp=73 Target=rc_tco_exit_drop_inactive_40   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=27 Source=65   (tco_returned_record_head.ash:16:1)
+  rcdrop_list_41:
+    LoadLocal             Target=74 Slot=27   (tco_returned_record_head.ash:16:1)
+    LoadConstInt          Target=75 Value=0   (tco_returned_record_head.ash:16:1)
+    CmpIntNe              Target=76 Left=74 Right=75   (tco_returned_record_head.ash:16:1)
+    JumpIfFalse           CondTemp=76 Target=rcdrop_list_end_43   (tco_returned_record_head.ash:16:1)
+    RcIsUnique            Target=77 SourceTemp=74
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_shared_42   (tco_returned_record_head.ash:16:1)
+    LoadMemOffset         Target=78 BasePtr=74 OffsetBytes=0   (tco_returned_record_head.ash:16:1)
+    RcIsUnique            Target=79 SourceTemp=78
+    JumpIfFalse           CondTemp=79 Target=rc_drop_shared_44   (tco_returned_record_head.ash:16:1)
+    GetAdtField           Target=80 Ptr=78 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:16:1)
+    RcDrop                SourceTemp=80 TypeName=String RuntimeManaged=true
+  rc_drop_shared_44:
+    RcDrop                SourceTemp=78 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=81 BasePtr=74 OffsetBytes=8   (tco_returned_record_head.ash:16:1)
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=81   (tco_returned_record_head.ash:16:1)
+    Jump                  Target=rcdrop_list_41   (tco_returned_record_head.ash:16:1)
+  rcdrop_list_shared_42:
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_43   (tco_returned_record_head.ash:16:1)
+  rcdrop_list_end_43:
+  rc_tco_exit_drop_inactive_40:
+  rc_tco_exit_transfer_done_39:
+    LoadArgumentOwnership Target=82   (tco_returned_record_head.ash:16:1)
+    LoadConstInt          Target=83 Value=1   (tco_returned_record_head.ash:16:1)
+    ShrInt                Target=84 Left=82 Right=83   (tco_returned_record_head.ash:16:1)
+    JumpIfFalse           CondTemp=84 Target=rc_result_owned_45   (tco_returned_record_head.ash:16:1)
+    Alloc                 Target=85 SizeBytes=8   (tco_returned_record_head.ash:16:1)
+    MakeClosure           Target=86 FuncLabel=__deepcopy_3 EnvPtrTemp=85 EnvSizeBytes=8   (tco_returned_record_head.ash:16:1)
+    StoreMemOffset        BasePtr=85 OffsetBytes=0 Source=86   (tco_returned_record_head.ash:16:1)
+    CallClosure           Target=87 ClosureTemp=86 ArgTemp=44   (tco_returned_record_head.ash:16:1)
+    RcIsUnique            Target=88 SourceTemp=44
+    JumpIfFalse           CondTemp=88 Target=rc_drop_shared_47   (tco_returned_record_head.ash:16:1)
+    GetAdtField           Target=89 Ptr=44 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:16:1)
+    RcDrop                SourceTemp=89 TypeName=String RuntimeManaged=true
+  rc_drop_shared_47:
+    RcDrop                SourceTemp=44 TypeName=Item RuntimeManaged=true
+    StoreLocal            Slot=28 Source=87   (tco_returned_record_head.ash:16:1)
+    Jump                  Target=rc_result_done_46   (tco_returned_record_head.ash:16:1)
+  rc_result_owned_45:
+    StoreLocal            Slot=28 Source=44   (tco_returned_record_head.ash:16:1)
+  rc_result_done_46:
+    LoadLocal             Target=90 Slot=28   (tco_returned_record_head.ash:16:1)
+    Return                Source=90   (tco_returned_record_head.ash:16:1)
+
+function lambda_4  [SourceFunction from findHeavy]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_returned_record_head.ash:16:1)
+    LoadLocal             Target=1 Slot=1   (tco_returned_record_head.ash:16:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_returned_record_head.ash:16:1)
+    MakeClosure           Target=4 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (tco_returned_record_head.ash:16:1)
+    Return                Source=4
+
+function lambda_8  [ClosureHelper from run]
+  locals=26 temps=61
+    LoadEnv               Target=0 Index=0   (tco_returned_record_head.ash:24:1)
+    StoreLocal            Slot=2 Source=0   (tco_returned_record_head.ash:24:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_returned_record_head.ash:24:1)
+    StoreLocal            Slot=5 Source=1   (tco_returned_record_head.ash:24:1)
+  lambda_8_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (tco_returned_record_head.ash:24:1)
+    LoadLocal             Target=2 Slot=2   (tco_returned_record_head.ash:25:8)
+    LoadConstInt          Target=3 Value=0   (tco_returned_record_head.ash:25:17)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_returned_record_head.ash:25:8)
+    JumpIfFalse           CondTemp=4 Target=else_48   (tco_returned_record_head.ash:25:5)
+    LoadLocal             Target=5 Slot=1   (tco_returned_record_head.ash:26:10)
+    StoreLocal            Slot=9 Source=5   (tco_returned_record_head.ash:25:5)
+    Jump                  Target=endif_49   (tco_returned_record_head.ash:25:5)
+  else_48:
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadEnv               Target=6 Index=1   (tco_returned_record_head.ash:28:15)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=7 Index=2   (tco_returned_record_head.ash:28:25)
+    LoadConstInt          Target=8 Value=12   (tco_returned_record_head.ash:28:31)
+    CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (tco_returned_record_head.ash:28:25)
+    LoadConstInt          Target=10 Value=0   (tco_returned_record_head.ash:28:35)
+    CallClosure           Target=11 ClosureTemp=9 ArgTemp=10   (tco_returned_record_head.ash:28:25)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    LoadMemOffset         Target=12 BasePtr=6 OffsetBytes=16   (tco_returned_record_head.ash:28:15)
+    LoadConstInt          Target=13 Value=62   (tco_returned_record_head.ash:28:15)
+    ShrInt                Target=14 Left=12 Right=13   (tco_returned_record_head.ash:28:15)
+    LoadConstInt          Target=15 Value=1   (tco_returned_record_head.ash:28:15)
+    AndInt                Target=16 Left=14 Right=15   (tco_returned_record_head.ash:28:15)
+    StoreLocal            Slot=15 Source=11   (tco_returned_record_head.ash:28:15)
+    JumpIfFalse           CondTemp=16 Target=rc_call_argument_not_retained_50   (tco_returned_record_head.ash:28:15)
+    RcDup                 Target=17 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=15 Source=17   (tco_returned_record_head.ash:28:15)
+  rc_call_argument_not_retained_50:
+    LoadLocal             Target=18 Slot=15   (tco_returned_record_head.ash:28:15)
+    CallClosure           Target=19 ClosureTemp=6 ArgTemp=18 RuntimeManagedArgumentFlagTemp=16   (tco_returned_record_head.ash:28:15)
+    LoadConstInt          Target=20 Value=6   (tco_returned_record_head.ash:28:40)
+    CallClosure           Target=21 ClosureTemp=19 ArgTemp=20   (tco_returned_record_head.ash:28:15)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=16
+    StoreLocal            Slot=17 Source=11   (tco_returned_record_head.ash:28:15)
+  rcdrop_list_51:
+    LoadLocal             Target=22 Slot=17   (tco_returned_record_head.ash:28:15)
+    LoadConstInt          Target=23 Value=0   (tco_returned_record_head.ash:28:15)
+    CmpIntNe              Target=24 Left=22 Right=23   (tco_returned_record_head.ash:28:15)
+    JumpIfFalse           CondTemp=24 Target=rcdrop_list_end_53   (tco_returned_record_head.ash:28:15)
+    RcIsUnique            Target=25 SourceTemp=22
+    JumpIfFalse           CondTemp=25 Target=rcdrop_list_shared_52   (tco_returned_record_head.ash:28:15)
+    LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=0   (tco_returned_record_head.ash:28:15)
+    RcIsUnique            Target=27 SourceTemp=26
+    JumpIfFalse           CondTemp=27 Target=rc_drop_shared_54   (tco_returned_record_head.ash:28:15)
+    GetAdtField           Target=28 Ptr=26 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:28:15)
+    RcDrop                SourceTemp=28 TypeName=String RuntimeManaged=true
+  rc_drop_shared_54:
+    RcDrop                SourceTemp=26 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=29 BasePtr=22 OffsetBytes=8   (tco_returned_record_head.ash:28:15)
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=17 Source=29   (tco_returned_record_head.ash:28:15)
+    Jump                  Target=rcdrop_list_51   (tco_returned_record_head.ash:28:15)
+  rcdrop_list_shared_52:
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_53   (tco_returned_record_head.ash:28:15)
+  rcdrop_list_end_53:
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    StoreLocal            Slot=21 Source=21   (tco_returned_record_head.ash:28:9)
+    LoadLocal             Target=30 Slot=2   (tco_returned_record_head.ash:30:21)
+    LoadConstInt          Target=31 Value=1   (tco_returned_record_head.ash:30:29)
+    SubInt                Target=32 Left=30 Right=31   (tco_returned_record_head.ash:30:21)
+    LoadLocal             Target=33 Slot=21   (tco_returned_record_head.ash:30:35)
+    GetAdtField           Target=34 Ptr=33 FieldIndex=1 Tagless=true   (tco_returned_record_head.ash:30:35)
+    LoadLocal             Target=35 Slot=21   (tco_returned_record_head.ash:30:72)
+    GetAdtField           Target=36 Ptr=35 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:30:72)
+    TextByteLength        Target=37 TextTemp=36   (tco_returned_record_head.ash:30:50)
+    AddInt                Target=38 Left=34 Right=37   (tco_returned_record_head.ash:30:35)
+    LoadLocal             Target=39 Slot=1   (tco_returned_record_head.ash:30:86)
+    CmpIntGt              Target=40 Left=38 Right=39   (tco_returned_record_head.ash:30:35)
+    JumpIfFalse           CondTemp=40 Target=else_58   (tco_returned_record_head.ash:30:32)
+    LoadLocal             Target=41 Slot=21   (tco_returned_record_head.ash:31:22)
+    GetAdtField           Target=42 Ptr=41 FieldIndex=1 Tagless=true   (tco_returned_record_head.ash:31:22)
+    LoadLocal             Target=43 Slot=21   (tco_returned_record_head.ash:31:59)
+    GetAdtField           Target=44 Ptr=43 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:31:59)
+    TextByteLength        Target=45 TextTemp=44   (tco_returned_record_head.ash:31:37)
+    AddInt                Target=46 Left=42 Right=45   (tco_returned_record_head.ash:31:22)
+    StoreLocal            Slot=22 Source=46   (tco_returned_record_head.ash:30:32)
+    Jump                  Target=endif_59   (tco_returned_record_head.ash:30:32)
+  else_58:
+    LoadLocal             Target=47 Slot=1   (tco_returned_record_head.ash:32:22)
+    StoreLocal            Slot=22 Source=47   (tco_returned_record_head.ash:30:32)
+  endif_59:
+    LoadLocal             Target=48 Slot=22   (tco_returned_record_head.ash:30:32)
+    LoadLocal             Target=49 Slot=2   (tco_returned_record_head.ash:30:17)
+    LoadLocal             Target=50 Slot=1   (tco_returned_record_head.ash:30:17)
+    StoreLocal            Slot=2 Source=32   (tco_returned_record_head.ash:30:17)
+    StoreLocal            Slot=1 Source=48   (tco_returned_record_head.ash:30:17)
+    LoadLocal             Target=58 Slot=21
+    RcIsUnique            Target=59 SourceTemp=58
+    JumpIfFalse           CondTemp=59 Target=rc_drop_shared_66
+    GetAdtField           Target=60 Ptr=58 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=60 TypeName=String RuntimeManaged=true
+  rc_drop_shared_66:
+    RcDrop                SourceTemp=58 TypeName=Item RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=25
+    RestoreStackPointer   Slot=8   (tco_returned_record_head.ash:30:17)
+    Jump                  Target=lambda_8_body   (tco_returned_record_head.ash:30:17)
+    LoadConstInt          Target=51 Value=0   (tco_returned_record_head.ash:30:17)
+    StoreLocal            Slot=18 Source=51   (tco_returned_record_head.ash:28:9)
+    LoadLocal             Target=52 Slot=21   (tco_returned_record_head.ash:28:9)
+    RcIsUnique            Target=53 SourceTemp=52
+    JumpIfFalse           CondTemp=53 Target=rc_drop_shared_60   (tco_returned_record_head.ash:28:9)
+    GetAdtField           Target=54 Ptr=52 FieldIndex=0 Tagless=true   (tco_returned_record_head.ash:28:9)
+    RcDrop                SourceTemp=54 TypeName=String RuntimeManaged=true
+  rc_drop_shared_60:
+    RcDrop                SourceTemp=52 TypeName=Item RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=23
+    Jump                  Target=match_end_55   (tco_returned_record_head.ash:28:9)
+  match_arm_cleanup_57:
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=24
+    Jump                  Target=match_none_56   (tco_returned_record_head.ash:28:9)
+  match_none_56:
+    LoadConstInt          Target=55 Value=0   (tco_returned_record_head.ash:28:9)
+    StoreLocal            Slot=18 Source=55   (tco_returned_record_head.ash:28:9)
+  match_end_55:
+    LoadLocal             Target=56 Slot=18   (tco_returned_record_head.ash:28:9)
+    StoreLocal            Slot=9 Source=56   (tco_returned_record_head.ash:25:5)
+  endif_49:
+    LoadLocal             Target=57 Slot=9   (tco_returned_record_head.ash:25:5)
+    Return                Source=57   (tco_returned_record_head.ash:24:1)
+
+function lambda_7  [SourceFunction from run]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=24   (tco_returned_record_head.ash:24:1)
+    LoadLocal             Target=1 Slot=1   (tco_returned_record_head.ash:24:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_returned_record_head.ash:24:1)
+    LoadEnv               Target=2 Index=0   (tco_returned_record_head.ash:24:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_returned_record_head.ash:24:1)
+    LoadEnv               Target=3 Index=1   (tco_returned_record_head.ash:24:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (tco_returned_record_head.ash:24:1)
+    MakeClosure           Target=6 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=24   (tco_returned_record_head.ash:24:1)
+    Return                Source=6
+
+function _start_main  [ProgramEntry]
+  locals=6 temps=15
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    LoadConstInt          Target=2 Value=0
+    MakeClosure           Target=3 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=0
+    StoreLocal            Slot=1 Source=3
+    Alloc                 Target=4 SizeBytes=16
+    LoadLocal             Target=5 Slot=1
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5
+    LoadLocal             Target=6 Slot=0
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6
+    MakeClosure           Target=7 FuncLabel=lambda_7 EnvPtrTemp=4 EnvSizeBytes=16
+    StoreLocal            Slot=2 Source=7
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=8 Slot=2   (tco_returned_record_head.ash:34:35)
+    LoadConstInt          Target=9 Value=300000   (tco_returned_record_head.ash:34:39)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (tco_returned_record_head.ash:34:35)
+    LoadConstInt          Target=11 Value=0   (tco_returned_record_head.ash:34:47)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (tco_returned_record_head.ash:34:35)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    TextFromInt           Target=13 ValueTemp=12   (tco_returned_record_head.ash:34:16)
+    PrintStr              Source=13   (tco_returned_record_head.ash:34:1)
+    AllocAdt              Target=14 Tag=0 FieldCount=0   (tco_returned_record_head.ash:34:1)
+    Return                Source=14
+
