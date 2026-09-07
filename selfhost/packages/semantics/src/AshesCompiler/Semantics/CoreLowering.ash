@@ -335,6 +335,8 @@ type CoreLoweringState =
     | nextLocal: Int
     | nextLambdaId: Int
     | nextLabelId: Int
+    | deferredLabelNext: Int
+    | deferredLabelGroups: List((Int, Int))
     | nextStringId: Int
     | stringLiterals: List(IrStringLiteral)
     | typeSupply: TypeVariableSupply
@@ -639,6 +641,10 @@ let emptyScheme semanticType =
         constraints = []
     )
 
+// The first label id of the range the deferred reset blocks are emitted with, past any id a
+// program allocates on its own.
+let deferredLabelBase = 1000000
+
 let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount unit =
     CoreLoweringState(
         reversedInstructions = [],
@@ -657,6 +663,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         retiredLocals = [],
         nextLambdaId = 0,
         nextLabelId = 0,
+        deferredLabelNext = deferredLabelBase,
+        deferredLabelGroups = [],
         nextStringId = 0,
         stringLiterals = [],
         // Starts past `standardBuiltinLayouts`' own reserved ids (see
@@ -3630,6 +3638,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with runtimeNormalizedArgumentLabels = normalizedLabels)
             |> (given (current: CoreLoweringState) -> current with nextLambdaId = nextLambdaId)
             |> (given (current: CoreLoweringState) -> current with nextLabelId = nextLabelId)
+            |> (given (current: CoreLoweringState) -> current with deferredLabelNext = bodyState.deferredLabelNext, deferredLabelGroups = bodyState.deferredLabelGroups)
             |> (given (current: CoreLoweringState) -> current with nextStringId = nextStringId)
             |> (given (current: CoreLoweringState) -> current with stringLiterals = stringLiterals)
             |> (given (current: CoreLoweringState) -> current with typeSupply = typeSupply)
@@ -4916,13 +4925,16 @@ let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expre
 let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoResetArgument)) (reversedStores: List((Int, Int, Int))) (state: CoreLoweringState) =
     match arguments with
         | [] -> (state, reverse(reversedStores))
-        | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoConsumedTailShape, parameterSlot = slot, argumentTemp = temp } :: rest ->
-            match freshTemp(state) with
-                | FreshTemp { state = allocated, temp = duplicate } ->
-                    allocated
-                    |> unlocatedInstruction(RcDup(duplicate)(temp)(true)(true))
-                    |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
-                    |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
+        | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoConsumedTailShape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime } :: rest ->
+            if isRuntime
+            then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
+            else
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = duplicate } ->
+                        allocated
+                        |> unlocatedInstruction(RcDup(duplicate)(temp)(true)(true))
+                        |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+                        |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
         | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoGrownConsShape, parameterSlot = slot, argumentTemp = temp } :: rest -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
         | TcoResetArgument { managedAdt = Some((activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
             if shape == TcoPassThroughShape
@@ -5369,14 +5381,18 @@ let recursive spliceTcoResets (instructions: List(IrInstruction)) (resets: List(
 
 // Stage 0's `ResolveDeferredTcoResets` for one function, once its whole body is lowered: every
 // `TcoResetPending` placeholder becomes its arena block, whose slots and temps are allocated
-// after the body's own and carry no location.
+// after the body's own and carry no location. Stage 0 resolves the blocks once the whole
+// program is lowered, so their labels are numbered after every later function's; the blocks
+// take their labels from a separate high range here, recorded as one group per function, and
+// `numberDeferredLabels` gives them stage 0's ids at the end.
 let resolvePendingTcoResets (state: CoreLoweringState) =
     match state.pendingTcoResets with
         | [] -> state
         | resets ->
             state.reversedInstructions
             |> reverse
-            |> (given (instructions: List(IrInstruction)) -> spliceTcoResets(instructions)(resets)((state with reversedInstructions = [], pendingTcoResets = [])))
+            |> (given (instructions: List(IrInstruction)) -> spliceTcoResets(instructions)(resets)((state with reversedInstructions = [], pendingTcoResets = [], nextLabelId = state.deferredLabelNext)))
+            |> (given (resolved: CoreLoweringState) -> resolved with nextLabelId = state.nextLabelId, deferredLabelNext = resolved.nextLabelId, deferredLabelGroups = (state.deferredLabelNext, resolved.nextLabelId - state.deferredLabelNext) :: resolved.deferredLabelGroups)
 
 let arenaDeepCopySupported (facts: HeapLayoutFacts) =
     match facts with
@@ -6184,26 +6200,6 @@ let recursive emitTcoListExitDropsWith (bodyTemp: Int) (transfer: Maybe((Int, In
                     |> emitTcoListExitDrop(slot)(activeSlot)(elementType)
                     |> emitTcoListExitDropsWith(bodyTemp)(transfer)(rest)
 
-// The exit releases of the runtime-managed list slots, right before the function's own
-// `Return`: a body result of list type may be one of the slots' own values, so each slot is
-// transfer-checked against it; any other result never carries a slot's value out, so every slot
-// releases under its active flag.
-let emitTcoListExitDrops (bodyTemp: Int) (bodyIsList: Bool) (entries: List((Int, Int, SemanticType))) (state: CoreLoweringState) =
-    match entries with
-        | [] -> state
-        | _entries ->
-            if bodyIsList
-            then
-                match freshLocal(state) with
-                    | FreshLocal { state = slotState, local = transferSelectedSlot } ->
-                        match freshTemp(slotState) with
-                            | FreshTemp { state = zeroState, temp = zeroTemp } ->
-                                zeroState
-                                |> emit(LoadConstInt(zeroTemp)(0))
-                                |> emit(StoreLocal(transferSelectedSlot)(zeroTemp))
-                                |> emitTcoListExitDropsWith(bodyTemp)(Some((transferSelectedSlot, zeroTemp)))(entries)
-            else emitTcoListExitDropsWith(bodyTemp)(None)(entries)(state)
-
 // The exit transfer check of one runtime-managed copy-ADT slot, the list check's shape with the
 // cell's own release: the slot's value is compared with the body result and, when they match
 // and no earlier slot already transferred, the reference goes to the caller instead of being
@@ -6252,46 +6248,19 @@ let emitTcoAdtExitDrop (slot: Int) (activeSlot: Int) (semanticType: SemanticType
             |> emit(LoadLocal(sourceTemp)(slot))
             |> emitGuardedAdtRelease(emit)("rc_tco_exit_drop_inactive")(activeSlot)(sourceTemp)(semanticType)
 
-let recursive emitTcoAdtExitDropsWith (bodyTemp: Int) (bodyTypeName: Maybe(Str)) (transfer: Maybe((Int, Int))) (entries: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
+let recursive emitTcoAdtExitDropsWith (bodyTemp: Int) (transfer: Maybe((Int, Int))) (entries: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
     match entries with
         | [] -> state
-        | (slot, activeSlot, semanticType, typeName) :: rest ->
-            match (transfer, bodyTypeName == Some(typeName)) with
-                | (Some((transferSelectedSlot, zeroTemp)), true) ->
+        | (slot, activeSlot, semanticType, _typeName) :: rest ->
+            match transfer with
+                | Some((transferSelectedSlot, zeroTemp)) ->
                     state
                     |> emitTcoAdtExitTransferCheck(bodyTemp)(transferSelectedSlot)(zeroTemp)(slot)(activeSlot)(semanticType)
-                    |> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(transfer)(rest)
-                | _ ->
+                    |> emitTcoAdtExitDropsWith(bodyTemp)(transfer)(rest)
+                | None ->
                     state
                     |> emitTcoAdtExitDrop(slot)(activeSlot)(semanticType)
-                    |> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(transfer)(rest)
-
-// The exit releases of the runtime-managed copy-ADT slots, right before the function's own
-// `Return`: a body result of a slot's own type may be that slot's value, so such a slot is
-// transfer-checked against it; every other slot releases under its active flag.
-let emitTcoAdtExitDrops (bodyTemp: Int) (bodyTypeName: Maybe(Str)) (entries: List((Int, Int, SemanticType, Str))) (state: CoreLoweringState) =
-    match entries with
-        | [] -> state
-        | _entries ->
-            match bodyTypeName with
-                | Some(_name) ->
-                    match freshLocal(state) with
-                        | FreshLocal { state = slotState, local = transferSelectedSlot } ->
-                            match freshTemp(slotState) with
-                                | FreshTemp { state = zeroState, temp = zeroTemp } ->
-                                    zeroState
-                                    |> emit(LoadConstInt(zeroTemp)(0))
-                                    |> emit(StoreLocal(transferSelectedSlot)(zeroTemp))
-                                    |> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(Some((transferSelectedSlot, zeroTemp)))(entries)
-                | None -> emitTcoAdtExitDropsWith(bodyTemp)(bodyTypeName)(None)(entries)(state)
-
-// The name of the body's resolved named type, when it has one.
-let resolvedTypeName (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemNamed(_symbolId, name, _arguments) -> Some(name)
-        | SemString -> Some("String")
-        | SemList(_element) -> Some("List")
-        | _ -> None
+                    |> emitTcoAdtExitDropsWith(bodyTemp)(transfer)(rest)
 
 let recursive anyEntryOnSlot (slot: Int) (entries: List((Int, ArgumentCopyPlan, Maybe(Int)))) =
     match entries with
@@ -6305,16 +6274,6 @@ let recordTcoNormalizedArgumentLabel (label: Str) (entries: List((Int, ArgumentC
     if anyEntryOnSlot(1)(entries)
     then recordRuntimeNormalizedArgument(label)(state)
     else state
-
-let resolvesToStr (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemString -> true
-        | _ -> false
-
-let resolvesToList (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemList(_element) -> true
-        | _ -> false
 
 let recursive candidateStrManaged (slot: Int) (candidates: List(TcoManagedCandidate)) =
     match candidates with
@@ -6547,6 +6506,32 @@ let recursive strExitEntriesOf (managedStrs: List((Int, Int))) =
         | [] -> []
         | (slot, activeSlot) :: rest -> (slot, activeSlot, SemString, "String") :: strExitEntriesOf(rest)
 
+// Stage 0's `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops`: the exit releases of every
+// runtime-managed slot, right before the function's own `Return`. A reference-counted body
+// result may be one of the slots' own values, so every slot is transfer-checked against it
+// under one selection flag; any other result never carries a slot's value out, so every slot
+// releases under its active flag.
+let emitTcoExitDrops (bodyTemp: Int) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
+    match (managedLists, managedAdts, managedStrs) with
+        | ([], [], []) -> state
+        | _entries ->
+            ((given (prepared: (CoreLoweringState, Maybe((Int, Int)))) ->
+                match prepared with
+                    | (preparedState, transfer) ->
+                        preparedState
+                        |> emitTcoAdtExitDropsWith(bodyTemp)(transfer)(strExitEntriesOf(managedStrs))
+                        |> emitTcoListExitDropsWith(bodyTemp)(transfer)(managedLists)
+                        |> emitTcoAdtExitDropsWith(bodyTemp)(transfer)(managedAdts)))(if isRuntimeTemp(bodyTemp)(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = slotState, local = transferSelectedSlot } ->
+                        match freshTemp(slotState) with
+                            | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                (zeroState
+                                |> emit(LoadConstInt(zeroTemp)(0))
+                                |> emit(StoreLocal(transferSelectedSlot)(zeroTemp)), Some((transferSelectedSlot, zeroTemp)))
+            else (state, None))
+
 let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match tcoEntryNormalizationEntries(candidates)(managedLists)(managedAdts)(managedStrs)(state) with
         | [] -> success(bodyTemp)(semanticType)(state)
@@ -6557,11 +6542,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs)
             |> recordTcoNormalizedArgumentLabel(label)(entries)
             |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-            |> emitTcoAdtExitDrops(bodyTemp)(if resolvesToStr(semanticType)(state)
-            then Some("String")
-            else None)(strExitEntriesOf(managedStrs))
-            |> emitTcoListExitDrops(bodyTemp)(resolvesToList(semanticType)(state))(managedLists)
-            |> emitTcoAdtExitDrops(bodyTemp)(resolvedTypeName(semanticType)(state))(managedAdts)
+            |> emitTcoExitDrops(bodyTemp)(managedLists)(managedAdts)(managedStrs)
             |> success(bodyTemp)(semanticType)
 
 // The active flags allocated at the loop entry for list-shaped, copy-ADT and affine `Str`
@@ -7008,13 +6989,107 @@ let recursive anyCallResultResolved (resultTypes: List(SemanticType)) (state: Co
 // finished substitution and variable supply, so every counter, label, and lifted function is
 // numbered as in a single pass over resolved types. A type the body never resolves (a generic
 // function's own parameter) keeps the single pass.
+// Whether a body applies an operator stage 0 maps to a trait requirement
+// (`GetMappedOperatorTraitName`: the arithmetic, bitwise, equality, and ordering operators and
+// the two negations).
+let recursive exprAppliesMappedOperator (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> exprAppliesMappedOperator(inner)
+        | ExprAdd(_left, _right) -> true
+        | ExprSubtract(_left, _right) -> true
+        | ExprMultiply(_left, _right) -> true
+        | ExprDivide(_left, _right) -> true
+        | ExprModulo(_left, _right) -> true
+        | ExprBitwiseAnd(_left, _right) -> true
+        | ExprBitwiseOr(_left, _right) -> true
+        | ExprBitwiseXor(_left, _right) -> true
+        | ExprShiftLeft(_left, _right) -> true
+        | ExprShiftRight(_left, _right) -> true
+        | ExprBitwiseNot(_operand) -> true
+        | ExprLogicalNot(_operand) -> true
+        | ExprGreaterThan(_left, _right) -> true
+        | ExprLessThan(_left, _right) -> true
+        | ExprGreaterOrEqual(_left, _right) -> true
+        | ExprLessOrEqual(_left, _right) -> true
+        | ExprEqual(_left, _right) -> true
+        | ExprNotEqual(_left, _right) -> true
+        | ExprLogicalAnd(left, right) -> eitherAppliesMappedOperator(left)(right)
+        | ExprLogicalOr(left, right) -> eitherAppliesMappedOperator(left)(right)
+        | ExprResultPipe(left, right) -> eitherAppliesMappedOperator(left)(right)
+        | ExprResultMapErrorPipe(left, right) -> eitherAppliesMappedOperator(left)(right)
+        | ExprCons(left, right) -> eitherAppliesMappedOperator(left)(right)
+        | ExprLet(_name, value, body, _params, _annotation, _requirements) -> eitherAppliesMappedOperator(value)(body)
+        | ExprLetResult(_name, value, body) -> eitherAppliesMappedOperator(value)(body)
+        | ExprLetRecursive(_name, value, body, _params, _annotation, _requirements) -> eitherAppliesMappedOperator(value)(body)
+        | ExprIf(condition, thenBranch, elseBranch) -> exprAppliesMappedOperator(condition) || eitherAppliesMappedOperator(thenBranch)(elseBranch)
+        | ExprLambda(_parameter, body, _annotation) -> exprAppliesMappedOperator(body)
+        | ExprCall(function, argument, _isSugar, _layout) -> eitherAppliesMappedOperator(function)(argument)
+        | ExprTuple(elements) -> anyAppliesMappedOperator(elements)
+        | ExprList(elements, _isMultiline) -> anyAppliesMappedOperator(elements)
+        | ExprMatch(value, cases, _position) -> exprAppliesMappedOperator(value) || matchCasesApplyMappedOperator(cases)
+        | ExprAwait(operand) -> exprAppliesMappedOperator(operand)
+        | ExprRecord(_ctorName, fields, _isMultiline) -> fieldsApplyMappedOperator(fields)
+        | ExprRecordUpdate(target, fields) -> exprAppliesMappedOperator(target) || fieldsApplyMappedOperator(fields)
+        | ExprPerform(operand) -> exprAppliesMappedOperator(operand)
+        | ExprHandle(operand, arms) -> exprAppliesMappedOperator(operand) || handleArmsApplyMappedOperator(arms)
+        | _ -> false
+and eitherAppliesMappedOperator (left: Expr) (right: Expr) = exprAppliesMappedOperator(left) || exprAppliesMappedOperator(right)
+and anyAppliesMappedOperator (expressions: List(Expr)) =
+    match expressions with
+        | [] -> false
+        | head :: rest -> exprAppliesMappedOperator(head) || anyAppliesMappedOperator(rest)
+and fieldsApplyMappedOperator (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> false
+        | (_fieldName, expression) :: rest -> exprAppliesMappedOperator(expression) || fieldsApplyMappedOperator(rest)
+and matchCasesApplyMappedOperator (cases: List((Pattern, Expr, Maybe(Expr)))) =
+    match cases with
+        | [] -> false
+        | (_pattern, body, guard) :: rest -> exprAppliesMappedOperator(body) || guardAppliesMappedOperator(guard) || matchCasesApplyMappedOperator(rest)
+and guardAppliesMappedOperator (guard: Maybe(Expr)) =
+    match guard with
+        | Some(expression) -> exprAppliesMappedOperator(expression)
+        | None -> false
+and handleArmsApplyMappedOperator (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
+    match arms with
+        | [] -> false
+        | (_binder, _operation, _patterns, body) :: rest -> exprAppliesMappedOperator(body) || handleArmsApplyMappedOperator(rest)
+
+// A scope binding a body reads through a slot or its environment, with no quantified type of
+// its own: a parameter, a capture, or a `let` of the enclosing body.
+let isMonomorphicScopeBinding (binding: CoreBinding) =
+    match binding with
+        | CoreBinding { location = CoreLocal(_slot), scheme = TypeScheme { quantified = [] } } -> true
+        | CoreBinding { location = CoreEnvironment(_index), scheme = TypeScheme { quantified = [] } } -> true
+        | _ -> false
+
+// Whether every monomorphic scope binding's type is closed once the body is lowered, and at
+// least one of them held a variable when the body was entered.
+let recursive scopeTypesClosedByBody (bindings: List(CoreBinding)) (entered: CoreLoweringState) (finished: CoreLoweringState) (anyResolved: Bool) =
+    match bindings with
+        | [] -> anyResolved
+        | (CoreBinding { scheme = TypeScheme { body = bindingType } } as binding) :: rest ->
+            if isMonomorphicScopeBinding(binding)
+            then
+                if containsUnresolvedLayout(bindingType)(finished)
+                then false
+                else scopeTypesClosedByBody(rest)(entered)(finished)(anyResolved || containsUnresolvedLayout(bindingType)(entered))
+            else scopeTypesClosedByBody(rest)(entered)(finished)(anyResolved)
+
+// Stage 0 lowers a binding that encountered a trait requirement against the type its discovery
+// pass inferred for it (`ElaborateInferredTraitBindings` rewrites the binding with the closed
+// inferred type as its annotation), so such a body sees its scope's resolved types from the
+// start. A body applying a mapped operator whose first lowering closed a scope type it entered
+// with as a variable is lowered again for the same reason.
+let bodyEncounteredRequirementClosedScope (body: Expr) (entered: CoreLoweringState) (finished: CoreLoweringState) = exprAppliesMappedOperator(body) && scopeTypesClosedByBody(entered.bindings)(entered)(finished)(false)
+
 let lowerFunctionBodyResolvingCalls (body: Expr) prepare lower (entered: CoreLoweringState) =
     match entered
     |> prepare
     |> lower(body) with
         | LoweredCoreValue { error = Some(_error) } as failed -> failed
         | LoweredCoreValue { state = firstState } as first ->
-            if anyCallResultResolved(firstState.unresolvedCallResults)(firstState)
+            if anyCallResultResolved(firstState.unresolvedCallResults)(firstState) || bodyEncounteredRequirementClosedScope(body)(entered)(firstState)
             then
                 (entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply)
                 |> prepare
@@ -13897,11 +13972,21 @@ let failedTailSelfCallArguments state error =
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString))(state)
 
 // A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
-let recursive concatChainReadsParameter (expression: Expr) (parameter: Str) =
+// A variable that is the parameter itself or a `let` bound to a plain read of it (the slot was
+// stored once, from a load of the parameter's slot), the alias stage 0's promotion reads through.
+let variableReadsParameterSlot (name: Str) (parameterSlot: Int) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(boundSlot) }) ->
+            boundSlot == parameterSlot || (match storedTempsOfSlot(boundSlot)(state.reversedInstructions)([]) with
+                | storedTemp :: [] -> loadedSlotOfTemp(storedTemp)(state.reversedInstructions) == Some(parameterSlot)
+                | _ -> false)
+        | _ -> false
+
+let recursive concatChainReadsParameter (expression: Expr) (parameterSlot: Int) (state: CoreLoweringState) =
     match expression with
-        | ExprAt(_span, inner) -> concatChainReadsParameter(inner)(parameter)
-        | ExprAdd(left, right) -> concatChainReadsParameter(left)(parameter) || concatChainReadsParameter(right)(parameter)
-        | ExprVar(name) -> name == parameter
+        | ExprAt(_span, inner) -> concatChainReadsParameter(inner)(parameterSlot)(state)
+        | ExprAdd(left, right) -> concatChainReadsParameter(left)(parameterSlot)(state) || concatChainReadsParameter(right)(parameterSlot)(state)
+        | ExprVar(name) -> variableReadsParameterSlot(name)(parameterSlot)(state)
         | _ -> false
 
 let recursive parameterNameAtOrdinal (ordinal: Int) (names: List(Str)) =
@@ -13914,7 +13999,7 @@ let recursive parameterNameAtOrdinal (ordinal: Int) (names: List(Str)) =
 
 let tailSelfCallStringSuccessor (argument: Expr) (slot: Maybe(Int)) (ordinal: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (slot, parameterNameAtOrdinal(ordinal)(loop.parameterNames)) with
-        | (Some(parameterSlot), Some(parameter)) -> shape != TcoPassThroughShape && !containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(parameterSlot)(state) && isFreshStringChild(argument)(state) && concatChainReadsParameter(argument)(parameter)
+        | (Some(parameterSlot), Some(_parameter)) -> shape != TcoPassThroughShape && !containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(parameterSlot)(state) && isFreshStringChild(argument)(state) && concatChainReadsParameter(argument)(parameterSlot)(state)
         | _ -> false
 
 let recursive restArgumentShapes (shapes: List(TcoArgumentShape)) =
@@ -14053,18 +14138,143 @@ let emitBackEdgeDummy (state: CoreLoweringState) =
                     |> emit(LoadConstInt(dummy)(0))
                     |> success(dummy)(resultType)
 
-// Stage 0's `LowerCallTcoSelfCall` after the arguments: the parameters' old values are loaded,
-// the new values stored into the parameter slots, the reset scheduled, the stack pointer
-// restored to the loop body's entry, and the body label re-entered.
-let emitTailSelfCallBackEdge (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
-    match loadOldParameters(frame.parameterSlots)(state)([]) with
-        | (loadedState, oldTemps) ->
-            loadedState
-            |> storeNewParameters(frame.parameterSlots)(temps)
-            |> scheduleTcoReset(frame)(arguments)(temps)(oldTemps)(argumentTypes)
-            |> emit(RestoreStackPointer(frame.stackPointerSlot))
-            |> emit(Jump(frame.bodyLabel))
-            |> emitBackEdgeDummy
+// The root parameter slot of a fact that proved its binding to be the parameter's unchanged
+// successor.
+let transferredRootOfFact (fact: PatternBindingFact) (frame: CoreTcoLoopFrame) =
+    match fact with
+        | PatternBindingFact { ownership = PatternTransferredToSameParameter, rootParameterOrdinal = ordinal } ->
+            if ordinal >= 0
+            then parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
+            else None
+        | _ -> None
+
+// Stage 0 keys the facts by slot; a name bound in several arms transfers only when every fact of
+// that name names the same root with the same ownership.
+let recursive patternFactsAgree (fact: PatternBindingFact) (facts: List(PatternBindingFact)) =
+    match facts with
+        | [] -> true
+        | candidate :: rest -> candidate.ownership == fact.ownership && candidate.rootParameterOrdinal == fact.rootParameterOrdinal && patternFactsAgree(fact)(rest)
+
+// The parameter slot a tail self-call argument's pattern binding was extracted from, when the
+// ownership facts proved the binding to be that parameter's unchanged successor.
+let transferredPatternBindingRoot (argument: Expr) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(_slot) -> None
+                | None ->
+                    match patternOwnerBinding(name)(state) with
+                        | Some(fact) -> transferredRootOfFact(fact)(frame)
+                        | None ->
+                            match patternFactsNamed(name)(loop.patternFacts) with
+                                | fact :: rest ->
+                                    if patternFactsAgree(fact)(rest)
+                                    then transferredRootOfFact(fact)(frame)
+                                    else None
+                                | [] -> None
+        | _ -> None
+
+let recursive unresolvedParameterTypes (slots: List(Int)) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | slot :: rest ->
+            match slotResolvedType(slot)(state.bindings)(state) with
+                | Some(SemVariable(_id) as unresolved) -> unresolved :: unresolvedParameterTypes(rest)(state)
+                | _ -> unresolvedParameterTypes(rest)(state)
+
+// Stage 0's `IsRuntimeManagedSlot` after `LowerCallTcoPromoteResolvedRuntimeParams`: the
+// placement the finalize pass makes for a root, evaluated at the back edge from the parameters'
+// resolved types.
+let rootPlacedAtBackEdge (rootSlot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match lookupListActiveSlot(rootSlot)(frame.listActiveSlots) with
+        | None -> false
+        | Some(_activeSlot) ->
+            state
+            |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
+            |> (given (candidates: List(TcoManagedCandidate)) ->
+                !anyBlockingSibling(candidates)(state) && tcoParameterPlaced(rootSlot)(tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(candidates)(frame.listActiveSlots))(candidates))
+
+// Stage 0's `LowerCallTcoTransferPatternBindings`, first half: a tail self-call argument that
+// reads the unchanged successor of a root placed on the reference-counted heap takes one
+// reference of its own before the old root graph is released. A parameter whose type is still a
+// variable defers the decision to the body's next lowering.
+let recursive transferPatternBindingArguments (arguments: List(Expr)) (temps: List(Int)) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedRoots: List(Int)) =
+    match (arguments, temps) with
+        | (argument :: restArguments, temp :: restTemps) ->
+            match transferredPatternBindingRoot(argument)(frame)(loop)(state) with
+                | None -> transferPatternBindingArguments(restArguments)(restTemps)(frame)(loop)(state)(temp :: reversedTemps)(reversedRoots)
+                | Some(rootSlot) ->
+                    match unresolvedParameterTypes(frame.parameterSlots)(state) with
+                        | _unresolved :: _rest as unresolved -> transferPatternBindingArguments(restArguments)(restTemps)(frame)(loop)((state with unresolvedCallResults = append(unresolved)(state.unresolvedCallResults)))(temp :: reversedTemps)(reversedRoots)
+                        | [] ->
+                            if rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
+                            then
+                                match freshTemp(state) with
+                                    | FreshTemp { state = allocated, temp = duplicate } ->
+                                        allocated
+                                        |> emit(RcDup(duplicate)(temp)(true)(true))
+                                        |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+                                        |> (given (retained: CoreLoweringState) ->
+                                            transferPatternBindingArguments(restArguments)(restTemps)(frame)(loop)(retained)(duplicate :: reversedTemps)(if containsInt(rootSlot)(reversedRoots)
+                                            then reversedRoots
+                                            else rootSlot :: reversedRoots))
+                            else transferPatternBindingArguments(restArguments)(restTemps)(frame)(loop)(state)(temp :: reversedTemps)(reversedRoots)
+        | _ -> (state, reverse(reversedTemps), reverse(reversedRoots))
+
+let recursive rootMovesToNextIteration (rootSlot: Int) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> false
+        | argument :: rest ->
+            (match unspanArgument(argument) with
+                | ExprVar(name) -> parameterSlotOfName(name)(frame)(state) == Some(rootSlot)
+                | _ -> false) || rootMovesToNextIteration(rootSlot)(rest)(frame)(state)
+
+let clearListActiveFlag (rootSlot: Int) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match lookupListActiveSlot(rootSlot)(frame.listActiveSlots) with
+        | None -> state
+        | Some(activeSlot) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = inactive } ->
+                    allocated
+                    |> emit(LoadConstInt(inactive)(0))
+                    |> emit(StoreLocal(activeSlot)(inactive))
+
+// Stage 0's `LowerCallTcoTransferPatternBindings`, second half: a root whose successor took its
+// reference, and which does not itself move to the next iteration, is released unconditionally
+// and its active flag cleared, so the reset's guarded release stands down.
+let recursive releaseTransferredRoots (roots: List(Int)) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match roots with
+        | [] -> state
+        | rootSlot :: rest ->
+            if rootMovesToNextIteration(rootSlot)(arguments)(frame)(state)
+            then releaseTransferredRoots(rest)(arguments)(frame)(state)
+            else
+                match slotResolvedType(rootSlot)(state.bindings)(state) with
+                    | None -> releaseTransferredRoots(rest)(arguments)(frame)(state)
+                    | Some(rootType) ->
+                        match freshTemp(state) with
+                            | FreshTemp { state = allocated, temp = rootTemp } ->
+                                allocated
+                                |> emit(LoadLocal(rootTemp)(rootSlot))
+                                |> emitOwnedValueRelease(emit)(rootTemp)(rootType)
+                                |> clearListActiveFlag(rootSlot)(frame)
+                                |> releaseTransferredRoots(rest)(arguments)(frame)
+
+// Stage 0's `LowerCallTcoSelfCall` after the arguments: the transferred pattern bindings take
+// their references and release their roots, the parameters' old values are loaded, the new
+// values stored into the parameter slots, the reset scheduled, the stack pointer restored to
+// the loop body's entry, and the body label re-entered.
+let emitTailSelfCallBackEdge (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (arguments: List(Expr)) (temps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match transferPatternBindingArguments(arguments)(temps)(frame)(loop)(state)([])([]) with
+        | (transferred, transferredTemps, roots) ->
+            match loadOldParameters(frame.parameterSlots)(releaseTransferredRoots(roots)(arguments)(frame)(transferred))([]) with
+                | (loadedState, oldTemps) ->
+                    loadedState
+                    |> storeNewParameters(frame.parameterSlots)(transferredTemps)
+                    |> scheduleTcoReset(frame)(arguments)(transferredTemps)(oldTemps)(argumentTypes)
+                    |> emit(RestoreStackPointer(frame.stackPointerSlot))
+                    |> emit(Jump(frame.bodyLabel))
+                    |> emitBackEdgeDummy
 
 // A tail self-call inside an emitted loop body is the loop's back edge rather than a call: the
 // loop function's own type gives each argument its expected parameter type.
@@ -14079,7 +14289,7 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
                         | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
                             argumentState
                             |> markCallArgumentsMoved(spine)
-                            |> emitTailSelfCallBackEdge(frame)(spine.arguments)(temps)(argumentTypes)
+                            |> emitTailSelfCallBackEdge(frame)(loop)(spine.arguments)(temps)(argumentTypes)
 
 // Stage 0's `LowerCallTryReuseInlineForm` trigger: a saturated helper call is spliced into its
 // site while a reuse token is live (so the helper's constructor can consume it), or under a
@@ -15153,6 +15363,121 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                                 )
         | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(state)
 
+// The label ids the deferred reset blocks are numbered with as the whole program is lowered:
+// the next id past the program's own and the base each group was given, by its range start.
+type DeferredLabelNumbering =
+    | nextLabelId: Int
+    | bases: List((Int, Int))
+
+let recursive lastTextPiece (pieces: List(Str)) =
+    match pieces with
+        | [] -> ""
+        | piece :: [] -> piece
+        | _piece :: rest -> lastTextPiece(rest)
+
+// The id of a label allocated from the deferred range, read off its numeric suffix.
+let recursive allDigits (text: Str) =
+    match Ashes.Text.unconsText(text) with
+        | None -> true
+        | Some((digit, rest)) -> Ashes.Text.isDigitText(digit) && allDigits(rest)
+
+let deferredLabelId (name: Str) =
+    match "_"
+    |> Ashes.Text.split(name)
+    |> lastTextPiece with
+        | "" -> None
+        | digits ->
+            if allDigits(digits)
+            then
+                let id = parseDecimalDigits(digits)(0)
+                in
+                    if id >= deferredLabelBase
+                    then Some(id)
+                    else None
+            else None
+
+let recursive deferredGroupOf (id: Int) (groups: List((Int, Int))) =
+    match groups with
+        | [] -> None
+        | (start, count) :: rest ->
+            if id >= start && id < start + count
+            then Some((start, count))
+            else deferredGroupOf(id)(rest)
+
+let recursive lookupDeferredGroupBase (start: Int) (bases: List((Int, Int))) =
+    match bases with
+        | [] -> None
+        | (candidate, base) :: rest ->
+            if candidate == start
+            then Some(base)
+            else lookupDeferredGroupBase(start)(rest)
+
+// A deferred label's stage 0 name: its group takes the next ids when first met in stream
+// order, and every label of the group keeps its offset within the range.
+let numberDeferredLabel (name: Str) (groups: List((Int, Int))) (numbering: DeferredLabelNumbering) =
+    match deferredLabelId(name) with
+        | None -> (name, numbering)
+        | Some(id) ->
+            match deferredGroupOf(id)(groups) with
+                | None -> (name, numbering)
+                | Some((start, count)) ->
+                    let prefix =
+                        Ashes.Text.take(name)(Ashes.Text.length(name) - Ashes.Text.length(Ashes.Text.fromInt(id)) - 1)
+                    in
+                        match lookupDeferredGroupBase(start)(numbering.bases) with
+                            | Some(base) -> (prefix + "_" + Ashes.Text.fromInt(base + id - start), numbering)
+                            | None -> (prefix + "_" + Ashes.Text.fromInt(numbering.nextLabelId + id - start), DeferredLabelNumbering(nextLabelId = numbering.nextLabelId + count, bases = (start, numbering.nextLabelId) :: numbering.bases))
+
+let recursive numberSwitchCaseLabels (cases: List(IrSwitchCase)) (groups: List((Int, Int))) (numbering: DeferredLabelNumbering) (reversed: List(IrSwitchCase)) =
+    match cases with
+        | [] -> (reverse(reversed), numbering)
+        | (IrSwitchCase { label = label } as switchCase) :: rest ->
+            match numberDeferredLabel(label)(groups)(numbering) with
+                | (numbered, next) -> numberSwitchCaseLabels(rest)(groups)(next)((switchCase with label = numbered) :: reversed)
+
+let numberInstructionLabels (instruction: IrInstruction) (groups: List((Int, Int))) (numbering: DeferredLabelNumbering) =
+    match instruction.instruction with
+        | Label(name) ->
+            match numberDeferredLabel(name)(groups)(numbering) with
+                | (numbered, next) -> ((instruction with instruction = Label(numbered)), next)
+        | Jump(name) ->
+            match numberDeferredLabel(name)(groups)(numbering) with
+                | (numbered, next) -> ((instruction with instruction = Jump(numbered)), next)
+        | JumpIfFalse(condition, name) ->
+            match numberDeferredLabel(name)(groups)(numbering) with
+                | (numbered, next) -> ((instruction with instruction = JumpIfFalse(condition)(numbered)), next)
+        | SwitchTag(tagTemp, cases, defaultLabel) ->
+            match numberSwitchCaseLabels(cases)(groups)(numbering)([]) with
+                | (numberedCases, afterCases) ->
+                    match numberDeferredLabel(defaultLabel)(groups)(afterCases) with
+                        | (numberedDefault, next) -> ((instruction with instruction = SwitchTag(tagTemp)(numberedCases)(numberedDefault)), next)
+        | _ -> (instruction, numbering)
+
+let recursive numberInstructionsLabels (instructions: List(IrInstruction)) (groups: List((Int, Int))) (numbering: DeferredLabelNumbering) (reversed: List(IrInstruction)) =
+    match instructions with
+        | [] -> (reverse(reversed), numbering)
+        | instruction :: rest ->
+            match numberInstructionLabels(instruction)(groups)(numbering) with
+                | (numbered, next) -> numberInstructionsLabels(rest)(groups)(next)(numbered :: reversed)
+
+let recursive numberFunctionsLabels (functions: List(IrFunction)) (groups: List((Int, Int))) (numbering: DeferredLabelNumbering) (reversed: List(IrFunction)) =
+    match functions with
+        | [] -> (reverse(reversed), numbering)
+        | function_ :: rest ->
+            match numberInstructionsLabels(function_.instructions)(groups)(numbering)([]) with
+                | (numbered, next) -> numberFunctionsLabels(rest)(groups)(next)((function_ with instructions = numbered) :: reversed)
+
+// Stage 0's `ResolveDeferredTcoResets` numbering: the reset blocks' labels take the ids past the
+// program's own, the entry's blocks first and then the lifted functions' in order.
+let numberDeferredLabels (state: CoreLoweringState) (entryInstructions: List(IrInstruction)) (functions: List(IrFunction)) =
+    match state.deferredLabelGroups with
+        | [] -> (entryInstructions, functions)
+        | groups ->
+            match numberInstructionsLabels(entryInstructions)(groups)(DeferredLabelNumbering(nextLabelId = state.nextLabelId, bases = []))([]) with
+                | (numberedEntry, numbering) ->
+                    match numberFunctionsLabels(functions)(groups)(numbering)([]) with
+                        | (numberedFunctions, _final) -> (numberedEntry, numberedFunctions)
+
 let buildProgram lowered =
     match lowered with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
@@ -15160,58 +15485,58 @@ let buildProgram lowered =
             match state with
                 | CoreLoweringState { reversedInstructions = instructions, functions = functions, externalFunctions = externalFunctions, externalOpaqueTypes = externalOpaqueTypes, nextLocal = localCount, nextTemp = tempCount, stringLiterals = stringLiterals, pendingOperatorDefaults = pendingOperatorDefaults, sealedOperatorDefaults = sealedOperatorDefaults } ->
                     match applyDeferredOperators(state)(pendingOperatorDefaults)((entryInstructions(temp)(instructions), tempCount)) with
-                        | (resolvedEntryInstructions, entryTempCount) ->
-                            let resolvedFunctions =
-                                functions
-                                |> applySealedDeferredOperators(state)(sealedOperatorDefaults)
-                                |> insertClosureNormalizers(reverse(state.pendingClosureNormalizers))(operatorDefaultedVariables([]
-                                |> sealedOperatorTypes(sealedOperatorDefaults)
-                                |> append(pendingOperatorTypes(pendingOperatorDefaults)([])))(state))(state)
-                            in
-                                let entry =
-                                    IrFunction(
-                                        label = "_start_main",
-                                        instructions = resolvedEntryInstructions,
-                                        localCount = localCount,
-                                        tempCount = entryTempCount,
-                                        hasEnvAndArgParams = false,
-                                        coroutine = None,
-                                        localNames = [],
-                                        localTypes = [],
-                                        origin = Some(entryOrigin),
-                                        lifetimesPlaced = false
-                                    )
-                                in
-                                    match collectCoreFunctionUses(
-                                        resolvedFunctions
-                                    )(
-                                        collectCoreInstructionUses(resolvedEntryInstructions)(emptyCoreProgramUses)
-                                    ) with
-                                        | CoreProgramUses { printInt = usesPrintInt, printStr = usesPrintStr, printBool = usesPrintBool, concatStr = usesConcatStr } ->
-                                            CoreLoweringResult(
-                                                program = IrProgram(
-                                                    entryFunction = entry,
-                                                    functions = resolvedFunctions,
-                                                    stringLiterals = stringLiterals,
-                                                    externalFunctions = externalFunctions,
-                                                    externalOpaqueTypes = externalOpaqueTypes,
-                                                    usesPrintInt = usesPrintInt,
-                                                    usesPrintStr = usesPrintStr,
-                                                    usesPrintBool = usesPrintBool,
-                                                    usesConcatStr = usesConcatStr,
-                                                    usesClosures = hasFunctions(functions),
-                                                    usesAsync = false,
-                                                    capabilityHandlerGlobals = 0,
-                                                    traitEvidence = emptyTraitEvidenceAnnotations
+                        | (deferredEntryInstructions, entryTempCount) ->
+                            match functions
+                            |> applySealedDeferredOperators(state)(sealedOperatorDefaults)
+                            |> insertClosureNormalizers(reverse(state.pendingClosureNormalizers))(operatorDefaultedVariables([]
+                            |> sealedOperatorTypes(sealedOperatorDefaults)
+                            |> append(pendingOperatorTypes(pendingOperatorDefaults)([])))(state))(state)
+                            |> numberDeferredLabels(state)(deferredEntryInstructions) with
+                                | (resolvedEntryInstructions, resolvedFunctions) ->
+                                    let entry =
+                                        IrFunction(
+                                            label = "_start_main",
+                                            instructions = resolvedEntryInstructions,
+                                            localCount = localCount,
+                                            tempCount = entryTempCount,
+                                            hasEnvAndArgParams = false,
+                                            coroutine = None,
+                                            localNames = [],
+                                            localTypes = [],
+                                            origin = Some(entryOrigin),
+                                            lifetimesPlaced = false
+                                        )
+                                    in
+                                        match collectCoreFunctionUses(
+                                            resolvedFunctions
+                                        )(
+                                            collectCoreInstructionUses(resolvedEntryInstructions)(emptyCoreProgramUses)
+                                        ) with
+                                            | CoreProgramUses { printInt = usesPrintInt, printStr = usesPrintStr, printBool = usesPrintBool, concatStr = usesConcatStr } ->
+                                                CoreLoweringResult(
+                                                    program = IrProgram(
+                                                        entryFunction = entry,
+                                                        functions = resolvedFunctions,
+                                                        stringLiterals = stringLiterals,
+                                                        externalFunctions = externalFunctions,
+                                                        externalOpaqueTypes = externalOpaqueTypes,
+                                                        usesPrintInt = usesPrintInt,
+                                                        usesPrintStr = usesPrintStr,
+                                                        usesPrintBool = usesPrintBool,
+                                                        usesConcatStr = usesConcatStr,
+                                                        usesClosures = hasFunctions(functions),
+                                                        usesAsync = false,
+                                                        capabilityHandlerGlobals = 0,
+                                                        traitEvidence = emptyTraitEvidenceAnnotations
+                                                    )
+                                                    |> placeLifetimes
+                                                    |> Some,
+                                                    semanticType = resolveType(state)(semanticType),
+                                                    error = None,
+                                                    valuePlacements = state.valuePlacements
+                                                    |> dedupeValuePlacements([])
+                                                    |> finalizeValuePlacements(state)
                                                 )
-                                                |> placeLifetimes
-                                                |> Some,
-                                                semanticType = resolveType(state)(semanticType),
-                                                error = None,
-                                                valuePlacements = state.valuePlacements
-                                                |> dedupeValuePlacements([])
-                                                |> finalizeValuePlacements(state)
-                                            )
 
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered
 // top-level functions, the verdict `markCallArgumentsMoved` consults for hand-offs.

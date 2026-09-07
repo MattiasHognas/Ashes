@@ -1,0 +1,15 @@
+// A pattern-bound head read by a builtin beside a mapped operator: the binding that
+// encountered a trait requirement is lowered against its closed inferred type, so the head is
+// tracked, borrowed, and anchored (the same head with no operator in the body is not).
+// expect: 1
+let recursive stamp xs =
+    match xs with
+        | [] -> []
+        | head :: tail -> (Ashes.Text.byteLength(head) + 1) :: stamp(tail)
+
+let count (items: List(Int)) =
+    match items with
+        | [] -> 0
+        | _ :: _ -> 1
+
+Ashes.IO.print(Ashes.Text.fromInt(count(stamp(["a", "b"]))))
