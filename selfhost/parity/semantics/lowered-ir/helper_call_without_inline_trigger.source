@@ -1,0 +1,12 @@
+let double (n: Int) = [n, n]
+
+let count (xs: List(Int)) =
+    (let recursive go (acc: Int) (rest: List(Int)) =
+        match rest with
+            | [] -> acc
+            | _ :: tail -> go(acc + 1)(tail)
+    in go(0)(xs))
+
+let total = count(double(3))
+
+Ashes.IO.print(Ashes.Text.fromInt(total))

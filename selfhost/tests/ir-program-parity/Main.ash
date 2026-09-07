@@ -142,6 +142,11 @@ let checkFixture root name =
 // bit, and the epilogue copying the result into the arena on a generic caller's request) is
 // pinned in CallWindowLoweringTests instead: stage 0 locates the synthesized entry
 // normalization at the binding, which this lowering does not yet reproduce.
+// inlined_helper_chain_under_back_edge, inlined_helper_sibling_by_label,
+// inlined_helper_sibling_spliced, and helper_call_without_inline_trigger pin the inliner's
+// decisions: a helper chain spliced under a back edge, a spliced helper calling a top-level
+// function the loop never captured (rebuilt from its label with a null environment), a helper
+// whose sibling is spliced in turn, and the same helper left as a call outside any trigger.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -180,5 +185,9 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("reuse_list_map"))
         |> (given (_) -> checkFixture(root)("reuse_shared_falls_back"))
         |> (given (_) -> checkFixture(root)("inlined_entry_helper_under_back_edge"))
+        |> (given (_) -> checkFixture(root)("inlined_helper_chain_under_back_edge"))
+        |> (given (_) -> checkFixture(root)("inlined_helper_sibling_by_label"))
+        |> (given (_) -> checkFixture(root)("inlined_helper_sibling_spliced"))
+        |> (given (_) -> checkFixture(root)("helper_call_without_inline_trigger"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

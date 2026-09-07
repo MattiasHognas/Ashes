@@ -410,6 +410,11 @@ type CoreLoweringState =
     // are being spliced, so a helper is never spliced into itself.
     | inlinableHelpers: List(Str)
     | inliningInProgress: List(Str)
+    // Stage 0's `_topLevelFunctionRefs`: each top-level `let` whose lambda captured nothing, by
+    // name with its code label and generalized scheme, so a body spliced into a scope that never
+    // captured it (an inlined helper) can rebuild its closure from the label with a null
+    // environment.
+    | topLevelFunctionRefs: List((Str, Str, TypeScheme))
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
     // The result types of the calls lowered so far in the current function body whose layout was
     // still unresolved at the call (an arena result was requested in place of a placement
@@ -705,6 +710,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         reuseTokens = [],
         inlinableHelpers = [],
         inliningInProgress = [],
+        topLevelFunctionRefs = [],
         valuePlacements = [],
         unresolvedCallResults = [],
         runtimeOwnerAliases = [],
@@ -2284,6 +2290,43 @@ let letBodyRequest (name: Str) (requestBody: Expr) (bodyRequest: ConsumerRequest
         | (Some(RuntimeNewlyProduced), true) -> bodyRequest with transferSlot = Some(slot)
         | _ -> bodyRequest
 
+// The label of the closure defining `temp` when that closure carries no environment.
+let recursive emptyEnvironmentClosureLabel (temp: Int) (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | [] -> None
+        | IrInstruction { instruction = MakeClosure(target, label, _environment, size, _runtimeManaged, _returns, _accepts) } :: rest ->
+            if target == temp
+            then
+                if size == 0
+                then Some(label)
+                else None
+            else emptyEnvironmentClosureLabel(temp)(rest)
+        | IrInstruction { instruction = MakeClosureStack(target, label, _environment, size, _returns, _accepts) } :: rest ->
+            if target == temp
+            then
+                if size == 0
+                then Some(label)
+                else None
+            else emptyEnvironmentClosureLabel(temp)(rest)
+        | _ :: rest -> emptyEnvironmentClosureLabel(temp)(rest)
+
+// The program entry lowers with no active function origin (a lambda's body enters its own).
+let inProgramEntryFrame (state: CoreLoweringState) =
+    match state.activeFunctionOrigin with
+        | None -> true
+        | Some(IrFunctionOrigin { originKind = ProgramEntryOrigin }) -> true
+        | Some(_origin) -> false
+
+// Stage 0's `LowerLetRegisterKnownFunctionIdentity`: a top-level `let` whose value is a closure
+// with an empty environment is callable by its label from any scope.
+let registerTopLevelFunctionRef (name: Str) (valueTemp: Int) (scheme: TypeScheme) (state: CoreLoweringState) =
+    if inProgramEntryFrame(state)
+    then
+        match emptyEnvironmentClosureLabel(valueTemp)(state.reversedInstructions) with
+            | Some(label) -> state with topLevelFunctionRefs = (name, label, scheme) :: state.topLevelFunctionRefs
+            | None -> state
+    else state
+
 let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTemp valueType fresh =
     match fresh with
         | FreshLocal { state = state, local = local } ->
@@ -2294,6 +2337,7 @@ let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTe
                     generalize(pendingOperatorScheme(storedState) :: resolvedBindingSchemes(outerBindings)(storedState))(resolveType(storedState)(valueType))([])
                 in
                     storedState
+                    |> registerTopLevelFunctionRef(name)(valueTemp)(scheme)
                     |> withConsumerRequest(letBodyRequest(name)(requestBody)(bodyRequest)(valueTemp)(local)(storedState))
                     |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
                     |> addOwnedBinding(name)(scheme)(CoreLocal(local))
@@ -3635,7 +3679,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
@@ -7381,6 +7425,17 @@ let argumentRootSlotOf (argument: Expr) (state: CoreLoweringState) =
                 | None -> patternBindingRootSlot(name)(frame)(loop)(state)
         | _ -> None
 
+// The root parameter slot of an argument that is a pattern binding extracted from a loop
+// parameter, stage 0's `TryGetRuntimeManagedPatternBindingArgument`: a read of the parameter
+// itself has no such root.
+let patternBindingArgumentRootSlot (argument: Expr) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop, unspanArgument(argument)) with
+        | (Some(frame), Some(loop), ExprVar(name)) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(_slot) -> None
+                | None -> patternBindingRootSlot(name)(frame)(loop)(state)
+        | _ -> None
+
 // One application's hand-off decisions, stage 0's `LowerAppliedClosureCall` facts.
 type CoreArgumentHandOff =
     | borrowsOnly: Bool
@@ -7399,7 +7454,7 @@ let argumentHandOffOf facts index argument argumentTemp state =
                 borrowsOnly = calleeParameterBorrows(facts)(index),
                 fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
                 runtimeArgument = runtimeArgument || rootSlot != None,
-                mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || rootSlot != None && calleeResultReachesArgument(facts)(index),
+                mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || patternBindingArgumentRootSlot(argument)(state) != None && calleeResultReachesArgument(facts)(index),
                 transfers = transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
                 pendingRootSlot = if runtimeArgument
                 then None
@@ -10649,7 +10704,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
@@ -13029,21 +13084,51 @@ let finishCoreBuiltinReference layout lower state =
 // LowerVarUnbound/_topLevelBindingNames specialization (Lowering.cs:2844). Expression-only entry
 // points (lowerCoreExpression*) never populate topLevelNames, so this never fires for them — there
 // is no "later in the file" to be forward-referencing without a whole program.
-let lowerCoreVariable name lower state =
+let recursive lookupTopLevelFunctionRef (name: Str) (refs: List((Str, Str, TypeScheme))) =
+    match refs with
+        | [] -> None
+        | (candidate, label, scheme) :: rest ->
+            if candidate == name
+            then Some((label, scheme))
+            else lookupTopLevelFunctionRef(name)(rest)
+
+// Stage 0's `LowerVarUnbound` for a registered top-level function: reached only when the scope
+// holds no binding for the name, from a body spliced into a scope that never captured it. The
+// function is already lowered (a genuine backward reference), has no environment, so its closure
+// is rebuilt from the label with a null environment and its scheme instantiated afresh.
+let lowerTopLevelFunctionReference (label: Str) (scheme: TypeScheme) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = environmentState, temp = environmentTemp } ->
+            match freshTemp(environmentState) with
+                | FreshTemp { state = closureState, temp = closureTemp } ->
+                    match instantiate(scheme)(closureState.typeSupply) with
+                        | InstantiationResult { semanticType = semanticType, supply = nextSupply } ->
+                            closureState
+                            |> withTypeSupply(nextSupply)
+                            |> emit(LoadConstInt(environmentTemp)(0))
+                            |> emit(MakeClosure(closureTemp)(label)(environmentTemp)(0)(false)(bodyReturnsRuntimeManaged(label)(closureState))(false))
+                            |> success(closureTemp)(semanticType)
+
+let lowerUnboundVariable name lower state =
     match state with
-        | CoreLoweringState { bindings = bindings, externalLayouts = externalLayouts, topLevelNames = topLevelNames } ->
-            match lookupBinding(name)(bindings) with
-                | Some(binding) -> lowerBoundVariable(binding)(state)
+        | CoreLoweringState { externalLayouts = externalLayouts, topLevelNames = topLevelNames } ->
+            match constructorLayout(name)(state) with
+                | Some(layout) -> finishCoreConstructorReference(layout)(lower)(state)
                 | None ->
-                    match constructorLayout(name)(state) with
-                        | Some(layout) -> finishCoreConstructorReference(layout)(lower)(state)
+                    match tryFindExternalLayout(name)(externalLayouts) with
+                        | Some(extLayout) -> finishCoreExternalReference(extLayout)(lower)(state)
                         | None ->
-                            match tryFindExternalLayout(name)(externalLayouts) with
-                                | Some(extLayout) -> finishCoreExternalReference(extLayout)(lower)(state)
-                                | None ->
-                                    if containsName(name)(topLevelNames)
-                                    then failure(state)(ForwardTopLevelReference(name))
-                                    else failure(state)(UnknownLoweringBinding(name))
+                            if containsName(name)(topLevelNames)
+                            then failure(state)(ForwardTopLevelReference(name))
+                            else failure(state)(UnknownLoweringBinding(name))
+
+let lowerCoreVariable name lower (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(binding) -> lowerBoundVariable(binding)(state)
+        | None ->
+            match lookupTopLevelFunctionRef(name)(state.topLevelFunctionRefs) with
+                | Some((label, scheme)) -> lowerTopLevelFunctionReference(label)(scheme)(state)
+                | None -> lowerUnboundVariable(name)(lower)(state)
 
 let lowerCoreQualifiedVariable moduleName memberName lower state =
     match builtinLayout(moduleName)(memberName)(state) with
@@ -14004,7 +14089,7 @@ and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLo
     match lookupBinding(name)(state.bindings) with
         | Some(_binding) -> true
         | None ->
-            if containsName(name)(constructorLayoutNames(state.constructorLayouts)) || containsName(name)(visited)
+            if containsName(name)(constructorLayoutNames(state.constructorLayouts)) || containsName(name)(visited) || lookupTopLevelFunctionRef(name)(state.topLevelFunctionRefs) != None
             then true
             else
                 if containsName(name)(state.inlinableHelpers)

@@ -1,0 +1,210 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+
+function lambda_0  [SourceFunction from double]
+  locals=4 temps=15
+    LoadConstInt          Target=0 Value=0   (helper_call_without_inline_trigger.ash:1:23)
+    LoadLocal             Target=1 Slot=1   (helper_call_without_inline_trigger.ash:1:27)
+    Alloc                 Target=2 SizeBytes=16 RuntimeManaged=true   (helper_call_without_inline_trigger.ash:1:23)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=1   (helper_call_without_inline_trigger.ash:1:23)
+    StoreMemOffset        BasePtr=2 OffsetBytes=8 Source=0   (helper_call_without_inline_trigger.ash:1:23)
+    LoadLocal             Target=3 Slot=1   (helper_call_without_inline_trigger.ash:1:24)
+    Alloc                 Target=4 SizeBytes=16 RuntimeManaged=true   (helper_call_without_inline_trigger.ash:1:23)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=3   (helper_call_without_inline_trigger.ash:1:23)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=2   (helper_call_without_inline_trigger.ash:1:23)
+    LoadArgumentOwnership Target=5
+    LoadConstInt          Target=6 Value=1
+    ShrInt                Target=7 Left=5 Right=6
+    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0
+    CopyOutList           DestTemp=8 SrcTemp=4 HeadCopy=Inline Purpose=ArenaResultBoundary
+    StoreLocal            Slot=3 Source=4
+  rcdrop_list_2:
+    LoadLocal             Target=9 Slot=3
+    LoadConstInt          Target=10 Value=0
+    CmpIntNe              Target=11 Left=9 Right=10
+    JumpIfFalse           CondTemp=11 Target=rcdrop_list_end_4
+    RcIsUnique            Target=12 SourceTemp=9
+    JumpIfFalse           CondTemp=12 Target=rcdrop_list_shared_3
+    LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=8
+    RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=3 Source=13
+    Jump                  Target=rcdrop_list_2
+  rcdrop_list_shared_3:
+    RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_4
+  rcdrop_list_end_4:
+    StoreLocal            Slot=2 Source=8
+    Jump                  Target=rc_result_done_1
+  rc_result_owned_0:
+    StoreLocal            Slot=2 Source=4
+  rc_result_done_1:
+    LoadLocal             Target=14 Slot=2
+    Return                Source=14
+
+function lambda_3  [ClosureHelper from go]
+  locals=22 temps=21
+    LoadEnv               Target=0 Index=0   (helper_call_without_inline_trigger.ash:4:6)
+    StoreLocal            Slot=2 Source=0   (helper_call_without_inline_trigger.ash:4:6)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (helper_call_without_inline_trigger.ash:4:6)
+    StoreLocal            Slot=5 Source=1   (helper_call_without_inline_trigger.ash:4:6)
+    StoreLocal            Slot=6 Source=1   (helper_call_without_inline_trigger.ash:4:6)
+    StoreLocal            Slot=7 Source=1   (helper_call_without_inline_trigger.ash:4:6)
+  lambda_3_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (helper_call_without_inline_trigger.ash:4:6)
+    LoadLocal             Target=2 Slot=1   (helper_call_without_inline_trigger.ash:5:15)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (helper_call_without_inline_trigger.ash:5:9)
+    CmpIntEq              Target=4 Left=2 Right=3   (helper_call_without_inline_trigger.ash:5:9)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_8   (helper_call_without_inline_trigger.ash:5:9)
+    LoadLocal             Target=5 Slot=2   (helper_call_without_inline_trigger.ash:6:21)
+    StoreLocal            Slot=11 Source=5   (helper_call_without_inline_trigger.ash:5:9)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_5   (helper_call_without_inline_trigger.ash:5:9)
+  match_arm_cleanup_8:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_7   (helper_call_without_inline_trigger.ash:5:9)
+  match_next_7:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (helper_call_without_inline_trigger.ash:5:9)
+    CmpIntNe              Target=7 Left=2 Right=6   (helper_call_without_inline_trigger.ash:5:9)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_9   (helper_call_without_inline_trigger.ash:5:9)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (helper_call_without_inline_trigger.ash:5:9)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (helper_call_without_inline_trigger.ash:5:9)
+    StoreLocal            Slot=18 Source=9   (helper_call_without_inline_trigger.ash:5:9)
+    LoadLocal             Target=10 Slot=2   (helper_call_without_inline_trigger.ash:7:31)
+    LoadConstInt          Target=11 Value=1   (helper_call_without_inline_trigger.ash:7:37)
+    AddInt                Target=12 Left=10 Right=11   (helper_call_without_inline_trigger.ash:7:31)
+    LoadLocal             Target=13 Slot=18   (helper_call_without_inline_trigger.ash:7:40)
+    Borrow                Target=14 SourceTemp=13
+    LoadLocal             Target=15 Slot=2   (helper_call_without_inline_trigger.ash:7:28)
+    LoadLocal             Target=16 Slot=1   (helper_call_without_inline_trigger.ash:7:28)
+    StoreLocal            Slot=2 Source=12   (helper_call_without_inline_trigger.ash:7:28)
+    StoreLocal            Slot=1 Source=14   (helper_call_without_inline_trigger.ash:7:28)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
+    RestoreStackPointer   Slot=10   (helper_call_without_inline_trigger.ash:7:28)
+    Jump                  Target=lambda_3_body   (helper_call_without_inline_trigger.ash:7:28)
+    LoadConstInt          Target=17 Value=0   (helper_call_without_inline_trigger.ash:7:28)
+    StoreLocal            Slot=11 Source=17   (helper_call_without_inline_trigger.ash:5:9)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    Jump                  Target=match_end_5   (helper_call_without_inline_trigger.ash:5:9)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_none_6   (helper_call_without_inline_trigger.ash:5:9)
+  match_none_6:
+    LoadConstInt          Target=19 Value=0   (helper_call_without_inline_trigger.ash:5:9)
+    StoreLocal            Slot=11 Source=19   (helper_call_without_inline_trigger.ash:5:9)
+  match_end_5:
+    LoadLocal             Target=20 Slot=11   (helper_call_without_inline_trigger.ash:5:9)
+    Return                Source=20   (helper_call_without_inline_trigger.ash:4:6)
+
+function lambda_3$env_normalize  [ClosureEnvironmentNormalizer from go]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (helper_call_without_inline_trigger.ash:4:6)
+    LoadLocal             Target=1 Slot=1   (helper_call_without_inline_trigger.ash:4:6)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (helper_call_without_inline_trigger.ash:4:6)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (helper_call_without_inline_trigger.ash:4:6)
+    LoadConstInt          Target=3 Value=0   (helper_call_without_inline_trigger.ash:4:6)
+    Return                Source=3   (helper_call_without_inline_trigger.ash:4:6)
+
+function lambda_2  [SourceFunction from go]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (helper_call_without_inline_trigger.ash:4:6)
+    LoadLocal             Target=1 Slot=1   (helper_call_without_inline_trigger.ash:4:6)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (helper_call_without_inline_trigger.ash:4:6)
+    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=8   (helper_call_without_inline_trigger.ash:4:6)
+    Return                Source=4   (helper_call_without_inline_trigger.ash:4:6)
+
+function lambda_1  [SourceFunction from count]
+  locals=6 temps=7
+    LoadConstInt          Target=0 Value=0   (helper_call_without_inline_trigger.ash:4:6)
+    MakeClosure           Target=1 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=0   (helper_call_without_inline_trigger.ash:4:6)
+    StoreLocal            Slot=2 Source=1   (helper_call_without_inline_trigger.ash:4:6)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=2 Slot=2   (helper_call_without_inline_trigger.ash:8:8)
+    LoadConstInt          Target=3 Value=0   (helper_call_without_inline_trigger.ash:8:11)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (helper_call_without_inline_trigger.ash:8:8)
+    LoadLocal             Target=5 Slot=1   (helper_call_without_inline_trigger.ash:8:14)
+    CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (helper_call_without_inline_trigger.ash:8:8)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Return                Source=6
+
+function _start_main  [ProgramEntry]
+  locals=22 temps=30
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
+    StoreLocal            Slot=5 Source=3
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=4 Slot=5   (helper_call_without_inline_trigger.ash:10:13)
+    Borrow                Target=5 SourceTemp=4
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=6 Slot=2   (helper_call_without_inline_trigger.ash:10:19)
+    Borrow                Target=7 SourceTemp=6
+    LoadConstInt          Target=8 Value=3   (helper_call_without_inline_trigger.ash:10:26)
+    CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (helper_call_without_inline_trigger.ash:10:19)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    LoadMemOffset         Target=10 BasePtr=5 OffsetBytes=16   (helper_call_without_inline_trigger.ash:10:13)
+    LoadConstInt          Target=11 Value=62   (helper_call_without_inline_trigger.ash:10:13)
+    ShrInt                Target=12 Left=10 Right=11   (helper_call_without_inline_trigger.ash:10:13)
+    LoadConstInt          Target=13 Value=1   (helper_call_without_inline_trigger.ash:10:13)
+    AndInt                Target=14 Left=12 Right=13   (helper_call_without_inline_trigger.ash:10:13)
+    StoreLocal            Slot=13 Source=9   (helper_call_without_inline_trigger.ash:10:13)
+    JumpIfFalse           CondTemp=14 Target=rc_call_argument_not_retained_10   (helper_call_without_inline_trigger.ash:10:13)
+    RcDup                 Target=15 SourceTemp=9 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=13 Source=15   (helper_call_without_inline_trigger.ash:10:13)
+  rc_call_argument_not_retained_10:
+    LoadLocal             Target=16 Slot=13   (helper_call_without_inline_trigger.ash:10:13)
+    CallClosure           Target=17 ClosureTemp=5 ArgTemp=16 RuntimeManagedArgumentFlagTemp=14   (helper_call_without_inline_trigger.ash:10:13)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=14
+    StoreLocal            Slot=15 Source=9   (helper_call_without_inline_trigger.ash:10:13)
+  rcdrop_list_11:
+    LoadLocal             Target=18 Slot=15   (helper_call_without_inline_trigger.ash:10:13)
+    LoadConstInt          Target=19 Value=0   (helper_call_without_inline_trigger.ash:10:13)
+    CmpIntNe              Target=20 Left=18 Right=19   (helper_call_without_inline_trigger.ash:10:13)
+    JumpIfFalse           CondTemp=20 Target=rcdrop_list_end_13   (helper_call_without_inline_trigger.ash:10:13)
+    RcIsUnique            Target=21 SourceTemp=18
+    JumpIfFalse           CondTemp=21 Target=rcdrop_list_shared_12   (helper_call_without_inline_trigger.ash:10:13)
+    LoadMemOffset         Target=22 BasePtr=18 OffsetBytes=8   (helper_call_without_inline_trigger.ash:10:13)
+    RcDrop                SourceTemp=18 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=15 Source=22   (helper_call_without_inline_trigger.ash:10:13)
+    Jump                  Target=rcdrop_list_11   (helper_call_without_inline_trigger.ash:10:13)
+  rcdrop_list_shared_12:
+    RcDrop                SourceTemp=18 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_13   (helper_call_without_inline_trigger.ash:10:13)
+  rcdrop_list_end_13:
+    StoreLocal            Slot=16 Source=17
+    LoadLocal             Target=23 Slot=16   (helper_call_without_inline_trigger.ash:12:35)
+    TextFromInt           Target=24 ValueTemp=23   (helper_call_without_inline_trigger.ash:12:16)
+    PrintStr              Source=24   (helper_call_without_inline_trigger.ash:12:1)
+    AllocAdt              Target=25 Tag=0 FieldCount=0   (helper_call_without_inline_trigger.ash:12:1)
+    StoreLocal            Slot=18 Source=25
+    LoadLocal             Target=26 Slot=5
+    CleanupResource       SourceTemp=26 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=19
+    CopyOutArena          DestTemp=27 SrcTemp=25 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=19
+    StoreLocal            Slot=20 Source=27
+    LoadLocal             Target=28 Slot=2
+    CleanupResource       SourceTemp=28 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=21
+    LoadLocal             Target=29 Slot=20
+    Return                Source=29
+

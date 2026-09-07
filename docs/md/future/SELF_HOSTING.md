@@ -1426,12 +1426,30 @@ same public behavior.
   after the call and its block reused by the next allocation of the same size. Both are modeled
   now: the update's target and a field read reach the result through a component, the updated
   values whole (`OwnershipProvenanceTests.cs`).
-- [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
+- [x] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
   specialization (a helper's own body must resolve in the isolated scope too; an already-visited
   helper counts as resolved). Regression: `ReuseInlineResolutionTests`. Not yet applicable to
   selfhost: OPT-42's ordinary match-arm reuse path never inlines a helper call into an arm (no
   `InlineCall`/`_inliningInProgress` family is ported), so there is nothing for this check to gate
   yet — it becomes relevant once helper inlining or fold specialization lands.
+  Done: helper inlining landed with OPT-48, and its `inlinedReferencesResolveHere` walks a
+  candidate's free names transitively (lexical binding, constructor, a helper already accepted
+  on the walk, or an inlinable helper whose own references resolve in turn). Pinning it against
+  stage 0 found three divergences, all closed: a top-level function the caller never captured
+  now resolves by label the way stage 0's `_topLevelFunctionRefs` does (`topLevelFunctionRefs`,
+  recorded at a top-level `let` whose closure has an empty environment and rebuilt with a null
+  environment by `lowerTopLevelFunctionReference`, also accepted by the reference check); the
+  runtime-managed temp facts are now cleared when a lambda's body begins
+  (`prepareLambdaBodyState`), since an outer function's temp numbers leaked into a spliced
+  helper's nested loop and gave its closure a returns bit stage 0 does not set; and the forced
+  retain flag of a pending call argument is reserved for a pattern binding extracted from a loop
+  parameter (`patternBindingArgumentRootSlot`), not a read of the parameter itself, as stage 0's
+  `TryGetRuntimeManagedPatternBindingArgument` has it. The whole-program parity fixtures
+  `inlined_helper_chain_under_back_edge` (a helper chain spliced under a back edge),
+  `inlined_helper_sibling_by_label` (a spliced helper calling an uncaptured top-level function),
+  `inlined_helper_sibling_spliced` (a helper whose sibling is spliced in turn), and
+  `helper_call_without_inline_trigger` (the same helper left as a call outside any trigger) pin
+  the decisions.
 - [x] **OPT-34** Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
   rather than clone the string elements of an escaping arena tuple — threading a large string
   through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
@@ -1858,8 +1876,7 @@ same public behavior.
   helper's result reach is fresh; the helper must not be inlining already, its name must still
   bind a function at the site, and every name its body reads past its parameters must resolve
   there lexically, as a constructor, or as an inlinable helper in turn (a top-level function the
-  caller did not capture keeps the call on the general path, since this lowering resolves such a
-  reference through a closure capture rather than stage 0's by-label reference). The arguments
+  caller did not capture resolves by label since OPT-33, see below). The arguments
   are lowered under a plain request into fresh locals, the parameters bound to those locals, the
   body lowered under the call's own request, and a fresh reference-counted argument the result
   cannot keep is released after the body (`releaseInlinedFreshArguments`). The churn loop now
