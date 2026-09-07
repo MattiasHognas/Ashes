@@ -200,6 +200,7 @@ public static class Runner
         targetId ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
         backendOptions ??= BackendCompileOptions.Default;
         _explain = explain ?? ExplainRequest.None;
+        WinePersistentServer.Ensure(targetId);
 
         var files = DiscoverAshFiles(paths, project)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
