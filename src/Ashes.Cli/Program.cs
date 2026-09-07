@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Ashes.Backend;
 using Ashes.Backend.Backends;
 using Ashes.Cli;
 using Ashes.Cli.Registry;
@@ -182,19 +183,20 @@ static byte[] CompileToImage(
         sourceLayout?.ConstructorModules,
         new LoweringConfiguration(
             EnableReuse: !disableReuse,
-            EnableTraitOperatorSpecialization: !disableTraitOperatorSpecialization));
+            EnableTraitOperatorSpecialization: !disableTraitOperatorSpecialization,
+            CollectHoverTypes: false));
     if (sourceLayout is { } layout)
     {
         lowering.SetSourceContext(layout);
     }
 
-    var ir = lowering.Lower(program);
+    var ir = CompilePhaseTiming.Measure("lower", () => lowering.Lower(program));
     diag.ThrowIfAny();
 
     WriteIrDump(emitIr, IrDumpStage.Lowered, ir);
 
     // Run IR-level optimization passes before backend codegen
-    ir = IrOptimizer.Optimize(ir);
+    ir = CompilePhaseTiming.Measure("optimize", () => IrOptimizer.Optimize(ir));
 
     WriteIrDump(emitIr, IrDumpStage.Final, ir);
 
@@ -205,7 +207,7 @@ static byte[] CompileToImage(
 
     var effectiveOptions = backendOptions ?? BackendCompileOptions.Default;
     var backend = BackendFactory.Create(targetId);
-    return backend.Compile(ir, effectiveOptions);
+    return CompilePhaseTiming.Measure("backend", () => backend.Compile(ir, effectiveOptions));
 }
 
 // Prints one stage of the semantic IR to stderr when it was asked for. Emitting the lowered and the

@@ -306,6 +306,40 @@ All backends implement `IBackend` and delegate to the same
 `LlvmCodegen.Compile()` entry point, which branches internally based on
 the target ID.
 
+### Parallel code generation
+
+A large program is split into several LLVM modules that are optimized and turned into
+object code on separate threads, merged into one relocatable object, and linked as usual. The
+partition count depends only
+on the program's size (one partition per 1024 lifted functions, at most 16), so the image is
+reproducible across machines; `ASHES_LLVM_JOBS` overrides it, `1` keeps a single module, and
+debug builds always use a single module. Each partition is its own LLVM context and module: it
+declares every lifted function but defines only the contiguous, instruction-count-balanced range
+it owns, only partition 0 defines the entry function, and the runtime helper functions are
+defined in every module so they still inline. The globals partition 0 defines (the arena cursors,
+the capability handler slots, the string literals its functions use) are exported from it and
+replaced by external declarations in the other partitions, so every object shares one set of
+runtime state; a literal only a later partition uses stays that partition's own, and the
+libc-named helpers every module defines (`memcpy`, `memset`, `memcmp`, `bcmp`, `strlen`) are weak
+definitions outside partition 0. The vendored bitcode payloads are linked into partition 0
+alone. The partitions' objects are then merged into one ELF relocatable object the way `ld -r`
+does (`ElfRelocatableObjects`): sections of the same name are concatenated at their alignment
+(`.text`, the `.rodata*` constant pools, `.bss`, and the arm64 `.tbss` arena cursors alike),
+every symbol is rebased into the merged section it lands in, section symbols collapse to one per
+merged section with the relocation addends adjusted, an undefined global in one object resolves
+to the definition another provides, and relocations keep their types, so the merge is the same
+for both architectures. The merged object then goes through the target's ordinary single-object
+linker. The Windows targets merge the same way into one COFF relocatable object
+(`CoffRelocatableObjects`) for the single-object PE linker: sections with the same name and
+flags are concatenated at their alignment, a COMDAT several objects carry (the weak helper
+definitions and LLVM's `__xmm@`/`__real@` constant sections) is kept once, a relocation against
+an input section symbol is redirected to a static marker symbol at that section's offset so the
+relocated bytes and the relocation types stay untouched, an external symbol several objects
+define outside a COMDAT keeps the first definition external and demotes the later copies to
+static, and a section past 0xFFFF relocations uses the `IMAGE_SCN_LNK_NRELOC_OVFL` form.
+`ASHES_DUMP_OBJECTS=<dir>` writes the partition objects and the merged object into that
+directory.
+
 ### External dependencies
 
 | Dependency | Source | Purpose |
@@ -1218,6 +1252,16 @@ Default methods are filled while constructing the selected dictionary. Reference
 use the dictionary being constructed, and their dependency order is checked before lowering. Derived
 implementations are expanded into ordinary implementation declarations before registration, so they
 use this exact ABI and resolution path.
+
+Every use of a concrete instance constructs its own dictionary value, but the implementation
+lambdas behind that value are compiled once per program. A fully concrete method implementation is
+lowered the first time its dictionary is built and recorded under the goal, the method, and the
+construction context (the enclosing instances whose self-ties it may capture, the hidden dictionary
+parameters active at the site, and whether the site lies in a coroutine body); a later construction
+in the same context with the same captures emits only the environment and the closure object over
+the recorded function. Nested instances built inside a method body (a field type's own `Eq`, a
+list element's `Show`) are compiled inside that single body, so the emitted code grows with the
+number of instances a program uses rather than with the number of places it uses them.
 
 ### Specialization and observability
 

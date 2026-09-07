@@ -57,6 +57,7 @@ internal static partial class LlvmImageLinker
     private const ushort CoffRelocAmd64Rel32_4 = 0x0008;
     private const ushort CoffRelocAmd64Rel32_5 = 0x0009;
     private const ushort CoffRelocAmd64SecRel = 0x000B;
+    private const uint CoffSectionRelocationOverflow = 0x01000000;
 
     private const int PeDosHeaderSize = 64;
     private const int PeSignatureSize = 4;
@@ -1263,17 +1264,8 @@ internal static partial class LlvmImageLinker
         int textSectionIndex = -1;
         for (int i = 0; i < sectionCount; i++)
         {
-            int offset = 20 + (i * 40);
-            string name = ReadCoffName(bytes.Slice(offset, 8), bytes, symbolTableOffset, symbolCount);
-            sections[i] = new CoffSectionHeader(
-                Name: name,
-                VirtualSize: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 8, 4)),
-                SizeOfRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 16, 4)),
-                PointerToRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 20, 4)),
-                PointerToRelocations: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 24, 4)),
-                NumberOfRelocations: BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 32, 2)));
-
-            if (string.Equals(name, ".text", StringComparison.Ordinal))
+            sections[i] = ReadCoffSectionHeader(bytes, 20 + (i * 40), symbolTableOffset, symbolCount);
+            if (string.Equals(sections[i].Name, ".text", StringComparison.Ordinal))
             {
                 textSectionIndex = i;
             }
@@ -1301,6 +1293,29 @@ internal static partial class LlvmImageLinker
         }
 
         return new ParsedCoffObject(textBytes, entryOffset, textSection, sections, symbolTableOffset, symbolCount, textSectionIndex + 1, debugSections);
+    }
+
+    // Reads one section header. A section past 0xFFFF relocations uses the overflow form
+    // (IMAGE_SCN_LNK_NRELOC_OVFL): the header's count reads 0xFFFF and the true count, including
+    // the leading record that carries it, sits in that record's VirtualAddress field.
+    private static CoffSectionHeader ReadCoffSectionHeader(ReadOnlySpan<byte> bytes, int offset, uint symbolTableOffset, uint symbolCount)
+    {
+        uint pointerToRelocations = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 24, 4));
+        uint numberOfRelocations = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(offset + 32, 2));
+        uint characteristics = BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 36, 4));
+        if ((characteristics & CoffSectionRelocationOverflow) != 0 && numberOfRelocations == 0xFFFF)
+        {
+            numberOfRelocations = checked(BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(checked((int)pointerToRelocations), 4)) - 1);
+            pointerToRelocations += 10;
+        }
+
+        return new CoffSectionHeader(
+            Name: ReadCoffName(bytes.Slice(offset, 8), bytes, symbolTableOffset, symbolCount),
+            VirtualSize: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 8, 4)),
+            SizeOfRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 16, 4)),
+            PointerToRawData: BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(offset + 20, 4)),
+            PointerToRelocations: pointerToRelocations,
+            NumberOfRelocations: numberOfRelocations);
     }
 
     /// <summary>
@@ -1669,7 +1684,7 @@ internal static partial class LlvmImageLinker
         uint SizeOfRawData,
         uint PointerToRawData,
         uint PointerToRelocations,
-        ushort NumberOfRelocations);
+        uint NumberOfRelocations);
 
     private readonly record struct CoffSymbol(
         string Name,

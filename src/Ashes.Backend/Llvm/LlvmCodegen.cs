@@ -244,9 +244,14 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileWindows(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
-        var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
+        int partitions = ResolveParallelObjectPartitions(program, options, Backends.TargetIds.WindowsX64);
+        if (partitions > 1)
+        {
+            return CompileParallelObjects(program, options, Backends.TargetIds.WindowsX64, LlvmCodegenFlavor.WindowsX64, usesTlsRuntime, partitions);
+        }
+
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsX64, options, usesTlsRuntime);
 
         VerifyModule(target);
@@ -270,9 +275,14 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileWindowsArm64(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
-        var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
+        int partitions = ResolveParallelObjectPartitions(program, options, Backends.TargetIds.WindowsArm64);
+        if (partitions > 1)
+        {
+            return CompileParallelObjects(program, options, Backends.TargetIds.WindowsArm64, LlvmCodegenFlavor.WindowsArm64, usesTlsRuntime, partitions);
+        }
+
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.WindowsArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.WindowsArm64, options, usesTlsRuntime);
 
         VerifyModule(target);
@@ -291,13 +301,20 @@ internal static partial class LlvmCodegen
 
     private static byte[] CompileLinux(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
-        var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, usesTlsRuntime);
+        int partitions = ResolveParallelObjectPartitions(program, options, Backends.TargetIds.LinuxX64);
+        if (partitions > 1)
+        {
+            return CompileParallelObjects(program, options, Backends.TargetIds.LinuxX64, LlvmCodegenFlavor.LinuxX64, usesTlsRuntime, partitions);
+        }
 
-        VerifyModule(target);
-        RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
+        CompilePhaseTiming.Measure("backend.emit-module", () =>
+            EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, usesTlsRuntime));
+
+        CompilePhaseTiming.Measure("backend.verify", () => VerifyModule(target));
+        CompilePhaseTiming.Measure("backend.llvm-passes", () =>
+            RunLlvmOptimizationPasses(target, options.OptimizationLevel));
         // Debug builds combine with any -O level. The pre-pass verify above checks the
         // unoptimized module; re-verify after the passes so an inliner-mangled debug location or
         // inlined-at chain is caught here rather than shipped as invalid DWARF. Debug-only, so the
@@ -308,18 +325,27 @@ internal static partial class LlvmCodegen
         }
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
-        LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
-        LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
-        LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
-        byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", null, GetExternalLibraries(program));
+        CompilePhaseTiming.Measure("backend.bitcode-link", () =>
+        {
+            LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
+            LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
+            LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
+        });
+        byte[] objectBytes = CompilePhaseTiming.Measure("backend.object-code", () => EmitObjectCode(target));
+        return CompilePhaseTiming.Measure("backend.link", () =>
+            LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", null, GetExternalLibraries(program)));
     }
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)
     {
-        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
-        var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
+        int partitions = ResolveParallelObjectPartitions(program, options, Backends.TargetIds.LinuxArm64);
+        if (partitions > 1)
+        {
+            return CompileParallelObjects(program, options, Backends.TargetIds.LinuxArm64, LlvmCodegenFlavor.LinuxArm64, usesTlsRuntime, partitions);
+        }
+
+        using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxArm64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxArm64, options, usesTlsRuntime);
 
         VerifyModule(target);
@@ -1118,6 +1144,9 @@ internal static partial class LlvmCodegen
         }
     }
 
+    // An entry function with at least this many IR instructions is emitted without optimization.
+    private const int LargeEntryFunctionInstructions = 16384;
+
     private static void EmitProgramModuleFunctions(
         LlvmTargetContext target, IrProgram program, string entryFunctionName, LlvmCodegenFlavor flavor,
         Backends.BackendCompileOptions options, EmitProgramModuleFlags flags, EmitProgramModuleArena arena,
@@ -1132,6 +1161,19 @@ internal static partial class LlvmCodegen
                 : LlvmApi.FunctionType(voidType, []));
         LlvmApi.SetLinkage(entryFunction, LlvmLinkage.External);
         LlvmApi.AddAttributeAtIndex(entryFunction, LlvmApi.AttributeIndexFunction, nounwindAttr);
+        if (program.EntryFunction.Instructions.Count >= LargeEntryFunctionInstructions)
+        {
+            // The entry of a large stitched program is a once-run straight line of top-level
+            // binding constructions, tens of thousands of instructions long; optimizing it costs
+            // more than every other function together and gains nothing at run time.
+            foreach (string attribute in new[] { "optnone", "noinline" })
+            {
+                LlvmApi.AddAttributeAtIndex(
+                    entryFunction,
+                    LlvmApi.AttributeIndexFunction,
+                    LlvmApi.CreateEnumAttribute(target.Context, LlvmApi.GetEnumAttributeKindForName(attribute), 0));
+            }
+        }
 
         var liftedFunctions = new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal);
         foreach (IrFunction function in program.Functions)
@@ -1153,7 +1195,10 @@ internal static partial class LlvmCodegen
             }
         }
 
-        EmitProgramModuleEmitEntry(target, program, entryFunction, flavor, flags, arena, imports, i32, i32Ptr, stringLiterals, liftedFunctions, dbg);
+        if (target.Partition is null || target.Partition.EmitsEntry)
+        {
+            EmitProgramModuleEmitEntry(target, program, entryFunction, flavor, flags, arena, imports, i32, i32Ptr, stringLiterals, liftedFunctions, dbg);
+        }
         EmitProgramModuleEmitLifted(target, program, flavor, flags, arena, imports, i32, i32Ptr, stringLiterals, liftedFunctions, dbg);
         dbg?.FinalizeDebugInfo();
     }
@@ -1194,6 +1239,11 @@ internal static partial class LlvmCodegen
     {
         foreach (IrFunction function in program.Functions)
         {
+            if (target.Partition is not null && !target.Partition.EmitsBody(function.Label))
+            {
+                continue;
+            }
+
             EmitFunctionBody(
                 target, liftedFunctions[function.Label], function,
                 stringLiterals, liftedFunctions, flavor,

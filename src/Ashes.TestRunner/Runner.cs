@@ -200,6 +200,7 @@ public static class Runner
         targetId ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
         backendOptions ??= BackendCompileOptions.Default;
         _explain = explain ?? ExplainRequest.None;
+        WinePersistentServer.Ensure(targetId);
 
         var files = DiscoverAshFiles(paths, project)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -1066,7 +1067,12 @@ public static class Runner
         var program = new Parser(source, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var lowering = new Lowering(diag, importedStdModules, moduleAliases, constructorModulesByName);
+        var lowering = new Lowering(
+            diag,
+            importedStdModules,
+            moduleAliases,
+            constructorModulesByName,
+            new LoweringConfiguration(CollectHoverTypes: false));
         if (sourceLayout is { } layout)
         {
             lowering.SetSourceContext(layout);

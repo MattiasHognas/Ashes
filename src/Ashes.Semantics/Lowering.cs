@@ -49,15 +49,15 @@ public sealed partial class Lowering
     private int _nextLambdaId;
     private int _nextLabelId;
 
-    private readonly List<IrInst> _inst = new();
+    private List<IrInst> _inst = new();
     private readonly List<IrFunction> _funcs = new();
     private readonly HashSet<IrInst.CallClosure> _borrowedArgumentCalls = new(ReferenceEqualityComparer.Instance);
 
     private bool _hasDeferredTupleMaterializations;
     private readonly List<IrStringLiteral> _strings = new();
     private readonly Dictionary<string, string> _stringIntern = new(StringComparer.Ordinal);
-    private readonly Dictionary<int, string> _localNames = new();
-    private readonly Dictionary<int, TypeRef> _localTypes = new();
+    private Dictionary<int, string> _localNames = new();
+    private Dictionary<int, TypeRef> _localTypes = new();
 
     private bool _usesPrintInt;
     private bool _usesPrintStr;
@@ -150,7 +150,7 @@ public sealed partial class Lowering
     // when the root TCO parameter's physical representation cannot be decided until post-body type
     // resolution. Finalization only selects arena-erased versus runtime-RC markers; it does not
     // rediscover escape behavior from source names or emitted instructions.
-    private readonly List<PatternBindingPlacementSite> _patternBindingPlacementSites = [];
+    private List<PatternBindingPlacementSite> _patternBindingPlacementSites = [];
     private readonly List<PatternBindingOwnershipDecision> _patternBindingOwnershipDecisions = [];
 
     internal IReadOnlyList<PatternBindingOwnershipDecision> PatternBindingOwnershipDecisions =>
@@ -170,13 +170,13 @@ public sealed partial class Lowering
 
     // In-place reuse. Names of TCO accumulator params that have been made uniquely-owned (deep-copied
     // once at loop entry) and are therefore safe to reuse in place.
-    private readonly HashSet<string> _linearReuseNames = new(StringComparer.Ordinal);
+    private HashSet<string> _linearReuseNames = new(StringComparer.Ordinal);
 
     // Available reuse tokens (dead ADT cells converted by DropReuse), innermost last. Each is the
     // token temp, field count, and allocation regime; a same-arity constructor in the arm consumes
     // one through the matching arena/runtime AllocReusing path. See LowerConstructorApplication /
     // LowerMatch.
-    private readonly List<ReuseToken> _reuseTokens = new();
+    private List<ReuseToken> _reuseTokens = new();
     // Source function whose current match arm produced a reuse token. This remains set while the
     // arm body lowers even after its token is consumed, so later constructors in that same body can
     // retain their concrete fresh-allocation fallback. Generated nested functions have a different
@@ -522,7 +522,7 @@ public sealed partial class Lowering
     // Membership alone is not sufficient to reset: the actual back-edge argument expression must also
     // be proven address-stable (IsStableAccumulatorExpr) — a name-marked accumulator threaded back
     // through a relocating (declined) entry copy is above the watermark and a plain reset frees it.
-    private readonly HashSet<string> _resetSafeAccumulators = new(StringComparer.Ordinal);
+    private HashSet<string> _resetSafeAccumulators = new(StringComparer.Ordinal);
 
     // Reuse-specialized call nodes whose result IS the accumulator (their last argument) rewritten in
     // place — the specialization fully reuses and the accumulator is fully persistent. Recorded by the
@@ -629,15 +629,15 @@ public sealed partial class Lowering
     // (LowerLambdaCoreNormalizeAlwaysReturnedParameter), so a read of it counts as a fresh owned
     // child of the aggregate storing it. Null while lowering a function without one.
     private (string Name, int Slot, TypeRef Type)? _normalizedAlwaysReturnedParameter;
-    private readonly Dictionary<int, int> _pendingRuntimeArgumentFlags = [];
+    private Dictionary<int, int> _pendingRuntimeArgumentFlags = [];
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
     // an arbitrary closure value as known.
     private readonly Dictionary<string, string> _functionReturnedClosureLabels = new(StringComparer.Ordinal);
     // Local slots that are exact aliases of a statically known function closure. Slot identity keeps
     // shadowing precise while allowing a direct let alias to retain call-result ownership provenance.
-    private readonly Dictionary<int, string> _knownFunctionLabelsBySlot = new();
-    private readonly Dictionary<int, string> _knownFunctionLabelsByEnvIndex = new();
+    private Dictionary<int, string> _knownFunctionLabelsBySlot = new();
+    private Dictionary<int, string> _knownFunctionLabelsByEnvIndex = new();
     private string _lastLoweredLambdaLabel = "";
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
@@ -667,7 +667,7 @@ public sealed partial class Lowering
     // watermark and used linearly. When such a value is the argument to an inlined helper, the
     // helper's parameter is also linear, so a match-then-rebuild on it (e.g. balance's
     // normalized = makeNode(...)) reuses the same cell rather than allocating a fresh one.
-    private readonly HashSet<int> _reuseResultTemps = new();
+    private HashSet<int> _reuseResultTemps = new();
 
     // Per-arm result-ownership facts for the innermost match being lowered: whether the arm's result
     // is runtime-RC at all, and whether it is a fresh, unowned RC value (no live binding drops it) —
@@ -679,14 +679,14 @@ public sealed partial class Lowering
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
-    private readonly HashSet<string> _linearSpecializationAccumulators = new(StringComparer.Ordinal);
+    private HashSet<string> _linearSpecializationAccumulators = new(StringComparer.Ordinal);
 
     // Per-function map from a let-bound local's slot to its binding value AST. Lets the reset-safety
     // check (IsStableAccumulatorExpr) trace a `let m2 = match … in loop(m2)` accumulator back to its
     // binding: m2 is address-stable when every leaf of that match/if is itself stable. Cleared at each
     // function boundary because local slots are numbered per function.
-    private readonly Dictionary<int, Expr> _letBindingValues = new();
-    private readonly Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance>
+    private Dictionary<int, Expr> _letBindingValues = new();
+    private Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance>
         _localBytesProvenance = new();
 
     // Inlinable-function names currently shadowed by a more-local binding (lambda param / let), so a
@@ -6504,16 +6504,12 @@ public sealed partial class Lowering
         var (free, captures, envPtrTemp, knownCaptureLabels, captureAllocIndex, captureFillRanges) =
             LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure, request);
 
-        string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
-        RecordTcoParamIdentity(lam, paramTy, label);
-        LambdaFunctionPlacementFrame placementFrame =
-            LowerLambdaCoreEnterFunctionPlacement(lam, label, originSeed);
+        string? sharedTraitMethodKey = LowerLambdaCoreClaimSharedTraitMethodKey(selfName, selfAliases);
+        if (LowerLambdaCoreReuseSharedTraitMethod(sharedTraitMethodKey, captures, envPtrTemp, stackAllocateClosure, request) is { } sharedClosureTemp) return (sharedClosureTemp, funTy);
 
-        // Build function body IR in isolation
-        var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
-        int argSlot = LowerLambdaCoreResetFrame();
-        RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
-        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
+        string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
+        var (placementFrame, savedFrame, argSlot) = LowerLambdaCoreEnterFunction(
+            lam, label, paramTy, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, originSeed);
 
         var (isChainLambda, isInnermostTco, reuseEntryCopies, specElidedAccs, reuseInsertIndex) =
             LowerLambdaCoreSetupTco(lam, label, captures);
@@ -6549,7 +6545,77 @@ public sealed partial class Lowering
 
         return LowerLambdaCoreFinalize(
             selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction,
-            label, envPtrTemp, stackAllocateClosure, bodyRuntimeManaged, request, funTy);
+            label, envPtrTemp, stackAllocateClosure, bodyRuntimeManaged, request, funTy, sharedTraitMethodKey);
+    }
+
+    // Records the TCO parameter identity and placement frame of the function about to be built,
+    // saves the enclosing function's lowering state, and opens the new function's scope with its
+    // parameter, captures, and self bindings.
+    private (LambdaFunctionPlacementFrame Placement, LowerLambdaCoreFrame Saved, int ArgSlot) LowerLambdaCoreEnterFunction(
+        Expr.Lambda lam,
+        string label,
+        TypeRef paramTy,
+        HashSet<string> free,
+        IReadOnlyList<string> captures,
+        IReadOnlyDictionary<int, string> knownCaptureLabels,
+        string? selfName,
+        TypeRef? selfType,
+        IReadOnlyList<string>? selfAliases,
+        RecursiveGroupContext? recursiveGroup,
+        IrFunctionOriginSeed? originSeed)
+    {
+        RecordTcoParamIdentity(lam, paramTy, label);
+        LambdaFunctionPlacementFrame placementFrame =
+            LowerLambdaCoreEnterFunctionPlacement(lam, label, originSeed);
+        LowerLambdaCoreFrame savedFrame = LowerLambdaCoreSaveFrame(label, captures);
+        int argSlot = LowerLambdaCoreResetFrame();
+        RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
+        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
+        return (placementFrame, savedFrame, argSlot);
+    }
+
+    // A concrete trait instance method's implementation lambda is compiled once per sharing key;
+    // every later construction of that dictionary in the same context reuses the function and
+    // emits only its environment and closure object, provided the site captures the same names.
+    private int? LowerLambdaCoreReuseSharedTraitMethod(
+        string? sharedTraitMethodKey,
+        IReadOnlyList<string> captures,
+        int envPtrTemp,
+        bool stackAllocateClosure,
+        LoweredValueRequest request)
+    {
+        if (sharedTraitMethodKey is null
+            || !_sharedTraitMethodLambdas.TryGetValue(sharedTraitMethodKey, out SharedTraitMethodLambda? shared)
+            || shared.StackAllocateClosure != stackAllocateClosure
+            || !shared.Captures.SequenceEqual(captures, StringComparer.Ordinal))
+        {
+            return null;
+        }
+
+        return LowerLambdaCoreMakeClosure(
+            shared.Label, envPtrTemp, captures, stackAllocateClosure, shared.BodyRuntimeManaged, request);
+    }
+
+    // Claims the pending shared-lambda key when this lambda is the one bound to the instance's
+    // self-tie, by its own recursive name or by an alias of it (a `let recursive helper = ... in
+    // helper` implementation value binds the tie as an alias of the helper), so nested lambdas
+    // keep their own functions.
+    private string? LowerLambdaCoreClaimSharedTraitMethodKey(string? selfName, IReadOnlyList<string>? selfAliases)
+    {
+        if (_pendingSharedTraitMethodLambda is not { } pending)
+        {
+            return null;
+        }
+
+        bool bindsTie = string.Equals(selfName, pending.SelfName, StringComparison.Ordinal)
+            || (selfAliases is not null && selfAliases.Contains(pending.SelfName, StringComparer.Ordinal));
+        if (!bindsTie)
+        {
+            return null;
+        }
+
+        _pendingSharedTraitMethodLambda = null;
+        return pending.Key;
     }
 
     // True when this function's ENTIRE instruction stream — read directly off _inst, which
@@ -6609,10 +6675,16 @@ public sealed partial class Lowering
         bool stackAllocateClosure,
         bool bodyRuntimeManaged,
         LoweredValueRequest request,
-        TypeRef funTy)
+        TypeRef funTy,
+        string? sharedTraitMethodKey = null)
     {
         captures = LowerLambdaCorePruneDeadCaptures(
             selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction);
+        if (sharedTraitMethodKey is not null)
+        {
+            _sharedTraitMethodLambdas[sharedTraitMethodKey] = new SharedTraitMethodLambda(
+                label, [.. captures], stackAllocateClosure, bodyRuntimeManaged);
+        }
 
         return (
             LowerLambdaCoreMakeClosure(
@@ -8145,9 +8217,13 @@ public sealed partial class Lowering
         Dictionary<int, Expr> LetBindingValues,
         Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance> LocalBytesProvenance);
 
+    // The enclosing function's per-frame collections move into the frame as they are and fresh
+    // empty ones take their place, since the new function starts from empty state anyway;
+    // LowerLambdaCoreRestoreFrame reinstalls the very same objects.
     private LowerLambdaCoreFrame LowerLambdaCoreSaveFrame(string label, IReadOnlyList<string> captures)
     {
-        var savedInst = new List<IrInst>(_inst);
+        var savedInst = _inst;
+        _inst = [];
         var savedTemp = _nextTempSlot;
         var savedLocal = _nextLocalSlot;
         var savedScopes = _scopes.ToArray();
@@ -8174,27 +8250,48 @@ public sealed partial class Lowering
         var savedInCoroutineBody = _inCoroutineBody;
         _inCoroutineBody = false;
 
-        var savedLocalNames = new Dictionary<int, string>(_localNames);
-        var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
-        // In-place reuse state is per-frame: a nested lambda must not see this frame's reuse
-        // tokens (frame-local temps) or linear accumulators, and vice versa.
-        var savedLinearReuseNames = new HashSet<string>(_linearReuseNames, StringComparer.Ordinal);
-        var savedReuseTokens = new List<ReuseToken>(_reuseTokens);
-        var savedSpecAccumulators = new HashSet<string>(_linearSpecializationAccumulators, StringComparer.Ordinal);
-        var savedResetSafe = new HashSet<string>(_resetSafeAccumulators, StringComparer.Ordinal);
-        var savedReuseResultTemps = new HashSet<int>(_reuseResultTemps);
-        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
-            SnapshotTempOwnershipFacts();
-        var savedPendingRuntimeArgumentFlags = new Dictionary<int, int>(_pendingRuntimeArgumentFlags);
-        var savedPatternBindingPlacementSites =
-            new List<PatternBindingPlacementSite>(_patternBindingPlacementSites);
-        var savedKnownFunctionLabelsBySlot = new Dictionary<int, string>(_knownFunctionLabelsBySlot);
-        var savedKnownFunctionLabelsByEnvIndex = new Dictionary<int, string>(_knownFunctionLabelsByEnvIndex);
-        var savedLetBindingValues = new Dictionary<int, Expr>(_letBindingValues);
-        var savedLocalBytesProvenance =
-            new Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance>(
-                _localBytesProvenance);
-        ClearLambdaFrameState();
+        return LowerLambdaCoreTakeFrameCollections(savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody);
+    }
+
+    // Moves the enclosing function's remaining per-frame collections into the frame record and
+    // installs empty ones for the new function. In-place reuse state is per-frame: a nested
+    // lambda must not see this frame's reuse tokens (frame-local temps) or linear accumulators,
+    // and vice versa.
+    private LowerLambdaCoreFrame LowerLambdaCoreTakeFrameCollections(
+        List<IrInst> savedInst,
+        int savedTemp,
+        int savedLocal,
+        ImmutableSortedDictionary<string, Binding>[] savedScopes,
+        bool savedInCoroutineBody)
+    {
+        var savedLocalNames = _localNames;
+        _localNames = [];
+        var savedLocalTypes = _localTypes;
+        _localTypes = [];
+        var savedLinearReuseNames = _linearReuseNames;
+        _linearReuseNames = new HashSet<string>(StringComparer.Ordinal);
+        var savedReuseTokens = _reuseTokens;
+        _reuseTokens = [];
+        var savedSpecAccumulators = _linearSpecializationAccumulators;
+        _linearSpecializationAccumulators = new HashSet<string>(StringComparer.Ordinal);
+        var savedResetSafe = _resetSafeAccumulators;
+        _resetSafeAccumulators = new HashSet<string>(StringComparer.Ordinal);
+        var savedReuseResultTemps = _reuseResultTemps;
+        _reuseResultTemps = [];
+        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts = _tempOwnershipFacts;
+        _tempOwnershipFacts = [];
+        var savedPendingRuntimeArgumentFlags = _pendingRuntimeArgumentFlags;
+        _pendingRuntimeArgumentFlags = [];
+        var savedPatternBindingPlacementSites = _patternBindingPlacementSites;
+        _patternBindingPlacementSites = [];
+        var savedKnownFunctionLabelsBySlot = _knownFunctionLabelsBySlot;
+        _knownFunctionLabelsBySlot = [];
+        var savedKnownFunctionLabelsByEnvIndex = _knownFunctionLabelsByEnvIndex;
+        _knownFunctionLabelsByEnvIndex = [];
+        var savedLetBindingValues = _letBindingValues;
+        _letBindingValues = [];
+        var savedLocalBytesProvenance = _localBytesProvenance;
+        _localBytesProvenance = [];
 
         return new LowerLambdaCoreFrame(
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
@@ -8206,21 +8303,6 @@ public sealed partial class Lowering
             savedLocalBytesProvenance);
     }
 
-    private void ClearLambdaFrameState()
-    {
-        _linearReuseNames.Clear();
-        _reuseTokens.Clear();
-        _linearSpecializationAccumulators.Clear();
-        _resetSafeAccumulators.Clear();
-        _reuseResultTemps.Clear();
-        _tempOwnershipFacts.Clear();
-        _pendingRuntimeArgumentFlags.Clear();
-        _patternBindingPlacementSites.Clear();
-        _knownFunctionLabelsBySlot.Clear();
-        _knownFunctionLabelsByEnvIndex.Clear();
-        _letBindingValues.Clear();
-        _localBytesProvenance.Clear();
-    }
 
     private int LowerLambdaCoreResetFrame()
     {
@@ -9291,14 +9373,11 @@ public sealed partial class Lowering
     // restore state
     private void LowerLambdaCoreRestoreFrame(LowerLambdaCoreFrame frame)
     {
-        _inst.Clear();
-        _inst.AddRange(frame.Inst);
+        _inst = frame.Inst;
         _nextTempSlot = frame.TempSlot;
         _nextLocalSlot = frame.LocalSlot;
-        _localNames.Clear();
-        _localTypes.Clear();
-        foreach (var kv in frame.LocalNames) _localNames[kv.Key] = kv.Value;
-        foreach (var kv in frame.LocalTypes) _localTypes[kv.Key] = kv.Value;
+        _localNames = frame.LocalNames;
+        _localTypes = frame.LocalTypes;
         _scopes.Clear();
         foreach (var s in frame.Scopes.Reverse())
         {
@@ -9308,46 +9387,20 @@ public sealed partial class Lowering
         _lambdaDepth--;
         _inCoroutineBody = frame.InCoroutineBody;
 
-        _linearReuseNames.Clear();
-        foreach (var n in frame.LinearReuseNames) _linearReuseNames.Add(n);
-        _linearSpecializationAccumulators.Clear();
-        foreach (var n in frame.SpecAccumulators) _linearSpecializationAccumulators.Add(n);
-        _resetSafeAccumulators.Clear();
-        foreach (var n in frame.ResetSafe) _resetSafeAccumulators.Add(n);
-        _reuseResultTemps.Clear();
-        foreach (var t in frame.ReuseResultTemps) _reuseResultTemps.Add(t);
-        RestoreTempOwnershipFacts(frame.TempOwnershipFacts);
-        RestoreRuntimeManagedFrameState(frame);
-        _patternBindingPlacementSites.Clear();
-        _patternBindingPlacementSites.AddRange(frame.PatternBindingPlacementSites);
-        RestoreKnownFunctionLabels(frame);
-        _reuseTokens.Clear();
-        _reuseTokens.AddRange(frame.ReuseTokens);
-        _letBindingValues.Clear();
-        foreach (var kv in frame.LetBindingValues) _letBindingValues[kv.Key] = kv.Value;
-        _localBytesProvenance.Clear();
-        foreach (var pair in frame.LocalBytesProvenance)
-        {
-            _localBytesProvenance[pair.Key] = pair.Value;
-        }
+        _linearReuseNames = frame.LinearReuseNames;
+        _linearSpecializationAccumulators = frame.SpecAccumulators;
+        _resetSafeAccumulators = frame.ResetSafe;
+        _reuseResultTemps = frame.ReuseResultTemps;
+        _tempOwnershipFacts = frame.TempOwnershipFacts;
+        _pendingRuntimeArgumentFlags = frame.PendingRuntimeArgumentFlags;
+        _patternBindingPlacementSites = frame.PatternBindingPlacementSites;
+        _knownFunctionLabelsBySlot = frame.KnownFunctionLabelsBySlot;
+        _knownFunctionLabelsByEnvIndex = frame.KnownFunctionLabelsByEnvIndex;
+        _reuseTokens = frame.ReuseTokens;
+        _letBindingValues = frame.LetBindingValues;
+        _localBytesProvenance = frame.LocalBytesProvenance;
     }
 
-    private void RestoreRuntimeManagedFrameState(LowerLambdaCoreFrame frame)
-    {
-        _pendingRuntimeArgumentFlags.Clear();
-        foreach ((int temp, int parameterSlot) in frame.PendingRuntimeArgumentFlags)
-        {
-            _pendingRuntimeArgumentFlags[temp] = parameterSlot;
-        }
-    }
-
-    private void RestoreKnownFunctionLabels(LowerLambdaCoreFrame frame)
-    {
-        _knownFunctionLabelsBySlot.Clear();
-        foreach (var kv in frame.KnownFunctionLabelsBySlot) _knownFunctionLabelsBySlot[kv.Key] = kv.Value;
-        _knownFunctionLabelsByEnvIndex.Clear();
-        foreach (var kv in frame.KnownFunctionLabelsByEnvIndex) _knownFunctionLabelsByEnvIndex[kv.Key] = kv.Value;
-    }
 
     private int LowerLambdaCoreMakeClosure(
         string label,

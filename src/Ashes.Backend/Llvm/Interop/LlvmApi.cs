@@ -40,7 +40,8 @@ public enum LlvmRealPredicate
 public enum LlvmCodeGenOptLevel { None = 0, Less = 1, Default = 2, Aggressive = 3 }
 public enum LlvmRelocMode { Default = 0, Static = 1, PIC = 2, DynamicNoPic = 3 }
 public enum LlvmCodeModel { Default = 0, JITDefault = 1, Tiny = 2, Small = 3, Kernel = 4, Medium = 5, Large = 6 }
-public enum LlvmLinkage { External = 0, Internal = 8 }
+public enum LlvmLinkage { External = 0, WeakOdr = 6, Internal = 8 }
+public enum LlvmThreadLocalMode { NotThreadLocal = 0, GeneralDynamic = 1, LocalDynamic = 2, InitialExec = 3, LocalExec = 4 }
 public enum LlvmCodeGenFileType { Assembly = 0, Object = 1 }
 public enum LlvmVerifierFailureAction { AbortProcess = 0, PrintMessage = 1, ReturnStatus = 2 }
 public enum LlvmTailCallKind { None = 0, Tail = 1, MustTail = 2, NoTail = 3 }
@@ -313,6 +314,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMSetLinkage")]
     public static partial void SetLinkage(LlvmValueHandle global, LlvmLinkage linkage);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMGetLinkage")]
+    public static partial LlvmLinkage GetLinkage(LlvmValueHandle global);
+
     [LibraryImport(Lib, EntryPoint = "LLVMSetInitializer")]
     public static partial void SetInitializer(LlvmValueHandle global, LlvmValueHandle constant);
 
@@ -323,6 +327,12 @@ internal static partial class LlvmApi
     // the local-exec TLS access sequence (mrs tpidr_el0 + TPREL add), which the ELF linker resolves.
     [LibraryImport(Lib, EntryPoint = "LLVMSetThreadLocal")]
     public static partial void SetThreadLocal(LlvmValueHandle global, int isThreadLocal);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMIsThreadLocal")]
+    public static partial int IsThreadLocal(LlvmValueHandle global);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetThreadLocalMode")]
+    public static partial void SetThreadLocalMode(LlvmValueHandle global, LlvmThreadLocalMode mode);
 
     [LibraryImport(Lib, EntryPoint = "LLVMSetUnnamedAddr")]
     public static partial void SetUnnamedAddr(LlvmValueHandle global, int unnamedAddr);
@@ -566,6 +576,63 @@ internal static partial class LlvmApi
     // Returns 0 on success. Consumes (invalidates) the source module.
     [LibraryImport(Lib, EntryPoint = "LLVMLinkModules2")]
     public static partial int LinkModules2(LlvmModuleHandle dest, LlvmModuleHandle src);
+
+    // Module splitting for parallel code generation: the partitions' modules export the functions
+    // they define, and a global partition 0 defines becomes a declaration in the other partitions.
+    [LibraryImport(Lib, EntryPoint = "LLVMGetFirstFunction")]
+    public static partial LlvmValueHandle GetFirstFunction(LlvmModuleHandle module);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetNextFunction")]
+    public static partial LlvmValueHandle GetNextFunction(LlvmValueHandle function);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetFirstGlobal")]
+    public static partial LlvmValueHandle GetFirstGlobal(LlvmModuleHandle module);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetNextGlobal")]
+    public static partial LlvmValueHandle GetNextGlobal(LlvmValueHandle global);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMIsDeclaration")]
+    public static partial int IsDeclaration(LlvmValueHandle global);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGlobalGetValueType")]
+    public static partial LlvmTypeHandle GlobalGetValueType(LlvmValueHandle global);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMReplaceAllUsesWith")]
+    public static partial void ReplaceAllUsesWith(LlvmValueHandle oldValue, LlvmValueHandle newValue);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDeleteGlobal")]
+    public static partial void DeleteGlobal(LlvmValueHandle global);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMIsGlobalConstant")]
+    public static partial int IsGlobalConstant(LlvmValueHandle global);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetAlignment")]
+    public static partial uint GetAlignment(LlvmValueHandle value);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetAlignment")]
+    public static partial void SetAlignment(LlvmValueHandle value, uint bytes);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetValueName2")]
+    private static partial nint GetValueName2Raw(LlvmValueHandle value, out nuint length);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMSetValueName2", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial void SetValueName2Raw(LlvmValueHandle value, string name, nuint length);
+
+    /// <summary>Returns the value's name, or an empty string for an unnamed value.</summary>
+    public static string GetValueName(LlvmValueHandle value)
+    {
+        nint namePtr = GetValueName2Raw(value, out nuint length);
+        return namePtr == 0 || length == 0
+            ? string.Empty
+            : System.Runtime.InteropServices.Marshal.PtrToStringUTF8(namePtr, checked((int)length));
+    }
+
+    /// <summary>Renames the value.</summary>
+    public static void SetValueName(LlvmValueHandle value, string name)
+    {
+        SetValueName2Raw(value, name, (nuint)System.Text.Encoding.UTF8.GetByteCount(name));
+    }
+
 
     /// <summary>
     /// Parses LLVM IR/bitcode <paramref name="bytes"/> into a new module in <paramref name="context"/>.

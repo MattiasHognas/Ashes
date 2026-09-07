@@ -5626,6 +5626,36 @@ public sealed class LinuxBackendCoverageTests
         """;
 
     [Test]
+    public async Task Linux_backend_llvm_should_link_a_program_split_into_several_objects()
+    {
+        // The partitions share the runtime globals (the arena cursors, the string literals), call
+        // each other's functions by name, and one of them holds the entry: every user function,
+        // string literal, and standard-library call below must resolve across the three objects.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string source = """
+            import Ashes.IO
+            import Ashes.Text
+            let parts = Ashes.Text.split("GET / HTTP/1.1")(" ")
+            in match parts with
+                | method :: path :: version :: _rest ->
+                    Ashes.IO.print(method + "|" + path + "|" + version + "|" + Ashes.Text.fromInt(Ashes.Text.byteLength(path)))
+                | _other -> Ashes.IO.print("bad")
+            """;
+        IrProgram program = IrOptimizer.Optimize(LowerProgramWithImports(source));
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(
+            program,
+            compileOptions: BackendCompileOptions.Default with { ObjectPartitions = 3 }).ConfigureAwait(false);
+
+        result.ExitCode.ShouldBe(0);
+        result.Stdout.ShouldBe("GET|/|HTTP/1.1|1\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_string_list_copy_out_should_snapshot_all_heads_before_allocating()
     {
         if (!OperatingSystem.IsLinux())
@@ -6112,7 +6142,7 @@ public sealed class LinuxBackendCoverageTests
         (await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).ShouldContain(expectedOutput);
     }
 
-    private static IrProgram LowerProgramWithImports(string source)
+    internal static IrProgram LowerProgramWithImports(string source)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
@@ -6200,7 +6230,7 @@ public sealed class LinuxBackendCoverageTests
         return await CompileRunWithLinuxLlvmAsync(ir, args, stdin, workingDirectory, expectedExitCode, environmentVariables).ConfigureAwait(false);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(
+    internal static async Task<ExecutionResult> CompileRunWithLinuxLlvmAsync(
         IrProgram ir,
         IReadOnlyList<string>? args = null,
         string? stdin = null,
@@ -9521,7 +9551,7 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
-    private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
+    internal readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
     private readonly record struct LinuxMeasuredExecution(
         string Stdout,
         string Stderr,

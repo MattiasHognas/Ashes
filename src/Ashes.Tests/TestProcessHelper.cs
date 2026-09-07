@@ -78,6 +78,7 @@ internal static class TestProcessHelper
             return new ProcessStartInfo(exePath);
         }
 
+        Ashes.TestRunner.WinePersistentServer.Ensure(Ashes.Backend.Backends.TargetIds.WindowsX64);
         var psi = new ProcessStartInfo(environment.RunnerPath);
         psi.ArgumentList.Add(exePath);
         psi.Environment["WINEDEBUG"] = "-all";
