@@ -1,0 +1,142 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
+  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
+
+function lambda_1  [ClosureHelper from step]
+  locals=20 temps=41
+    LoadEnv               Target=0 Index=0   (tco_tuple_parameter_rebuild.ash:7:1)
+    StoreLocal            Slot=2 Source=0   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadLocal             Target=29 Slot=1   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadArgumentOwnership Target=30   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadConstInt          Target=31 Value=1   (tco_tuple_parameter_rebuild.ash:7:1)
+    AndInt                Target=32 Left=30 Right=31   (tco_tuple_parameter_rebuild.ash:7:1)
+    JumpIfFalse           CondTemp=32 Target=rc_arg_normalize_copy_5   (tco_tuple_parameter_rebuild.ash:7:1)
+    StoreLocal            Slot=18 Source=29   (tco_tuple_parameter_rebuild.ash:7:1)
+    Jump                  Target=rc_arg_normalize_done_6   (tco_tuple_parameter_rebuild.ash:7:1)
+  rc_arg_normalize_copy_5:
+    CopyOutArena          DestTemp=33 SrcTemp=29 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=18 Source=33   (tco_tuple_parameter_rebuild.ash:7:1)
+  rc_arg_normalize_done_6:
+    LoadLocal             Target=34 Slot=18   (tco_tuple_parameter_rebuild.ash:7:1)
+    StoreLocal            Slot=1 Source=34   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadConstInt          Target=35 Value=1   (tco_tuple_parameter_rebuild.ash:7:1)
+    StoreLocal            Slot=6 Source=35   (tco_tuple_parameter_rebuild.ash:7:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_tuple_parameter_rebuild.ash:7:1)
+    StoreLocal            Slot=5 Source=1   (tco_tuple_parameter_rebuild.ash:7:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadLocal             Target=2 Slot=1   (tco_tuple_parameter_rebuild.ash:8:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadMemOffset         Target=3 BasePtr=2 OffsetBytes=0   (tco_tuple_parameter_rebuild.ash:8:5)
+    StoreLocal            Slot=13 Source=3   (tco_tuple_parameter_rebuild.ash:8:5)
+    LoadMemOffset         Target=4 BasePtr=2 OffsetBytes=8   (tco_tuple_parameter_rebuild.ash:8:5)
+    StoreLocal            Slot=14 Source=4   (tco_tuple_parameter_rebuild.ash:8:5)
+    LoadLocal             Target=5 Slot=2   (tco_tuple_parameter_rebuild.ash:10:16)
+    LoadConstInt          Target=6 Value=0   (tco_tuple_parameter_rebuild.ash:10:21)
+    CmpIntEq              Target=7 Left=5 Right=6   (tco_tuple_parameter_rebuild.ash:10:16)
+    JumpIfFalse           CondTemp=7 Target=else_3   (tco_tuple_parameter_rebuild.ash:10:13)
+    LoadLocal             Target=8 Slot=13   (tco_tuple_parameter_rebuild.ash:11:18)
+    LoadLocal             Target=9 Slot=14   (tco_tuple_parameter_rebuild.ash:11:22)
+    Borrow                Target=10 SourceTemp=9
+    AddInt                Target=11 Left=8 Right=10   (tco_tuple_parameter_rebuild.ash:11:18)
+    RcDrop                SourceTemp=4 TypeName=PatternBinding OwnerSlot=14
+    StoreLocal            Slot=15 Source=11   (tco_tuple_parameter_rebuild.ash:10:13)
+    Jump                  Target=endif_4   (tco_tuple_parameter_rebuild.ash:10:13)
+  else_3:
+    LoadLocal             Target=12 Slot=2   (tco_tuple_parameter_rebuild.ash:12:23)
+    LoadConstInt          Target=13 Value=1   (tco_tuple_parameter_rebuild.ash:12:27)
+    SubInt                Target=14 Left=12 Right=13   (tco_tuple_parameter_rebuild.ash:12:23)
+    LoadLocal             Target=15 Slot=14   (tco_tuple_parameter_rebuild.ash:12:31)
+    Borrow                Target=16 SourceTemp=15
+    RcDup                 Target=17 SourceTemp=16
+    LoadLocal             Target=18 Slot=13   (tco_tuple_parameter_rebuild.ash:12:34)
+    LoadLocal             Target=19 Slot=2   (tco_tuple_parameter_rebuild.ash:12:38)
+    AddInt                Target=20 Left=18 Right=19   (tco_tuple_parameter_rebuild.ash:12:34)
+    Alloc                 Target=21 SizeBytes=16   (tco_tuple_parameter_rebuild.ash:12:30)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=17   (tco_tuple_parameter_rebuild.ash:12:30)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=20   (tco_tuple_parameter_rebuild.ash:12:30)
+    LoadLocal             Target=22 Slot=2   (tco_tuple_parameter_rebuild.ash:12:18)
+    LoadLocal             Target=23 Slot=1   (tco_tuple_parameter_rebuild.ash:12:18)
+    StoreLocal            Slot=2 Source=14   (tco_tuple_parameter_rebuild.ash:12:18)
+    StoreLocal            Slot=1 Source=21   (tco_tuple_parameter_rebuild.ash:12:18)
+    CopyOutArena          DestTemp=38 SrcTemp=21 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    LoadLocal             Target=39 Slot=6
+    JumpIfFalse           CondTemp=39 Target=rc_tco_drop_inactive_9
+    RcDrop                SourceTemp=23 TypeName=Tuple RuntimeManaged=true
+  rc_tco_drop_inactive_9:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=19
+    StoreLocal            Slot=1 Source=38
+    LoadConstInt          Target=40 Value=1
+    StoreLocal            Slot=6 Source=40
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=19
+    RestoreStackPointer   Slot=9   (tco_tuple_parameter_rebuild.ash:12:18)
+    Jump                  Target=lambda_1_body   (tco_tuple_parameter_rebuild.ash:12:18)
+    LoadConstInt          Target=24 Value=0   (tco_tuple_parameter_rebuild.ash:12:18)
+    StoreLocal            Slot=15 Source=24   (tco_tuple_parameter_rebuild.ash:10:13)
+  endif_4:
+    LoadLocal             Target=25 Slot=15   (tco_tuple_parameter_rebuild.ash:10:13)
+    StoreLocal            Slot=10 Source=25   (tco_tuple_parameter_rebuild.ash:8:5)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=16
+    Jump                  Target=match_end_0   (tco_tuple_parameter_rebuild.ash:8:5)
+  match_arm_cleanup_2:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=17
+    Jump                  Target=match_none_1   (tco_tuple_parameter_rebuild.ash:8:5)
+  match_none_1:
+    LoadConstInt          Target=27 Value=0   (tco_tuple_parameter_rebuild.ash:8:5)
+    StoreLocal            Slot=10 Source=27   (tco_tuple_parameter_rebuild.ash:8:5)
+  match_end_0:
+    LoadLocal             Target=28 Slot=10   (tco_tuple_parameter_rebuild.ash:8:5)
+    LoadLocal             Target=36 Slot=1   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadLocal             Target=37 Slot=6   (tco_tuple_parameter_rebuild.ash:7:1)
+    JumpIfFalse           CondTemp=37 Target=rc_tco_exit_drop_inactive_7   (tco_tuple_parameter_rebuild.ash:7:1)
+    RcDrop                SourceTemp=36 TypeName=Tuple RuntimeManaged=true
+  rc_tco_exit_drop_inactive_7:
+    Return                Source=28   (tco_tuple_parameter_rebuild.ash:7:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from step]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadLocal             Target=1 Slot=1   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_tuple_parameter_rebuild.ash:7:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadConstInt          Target=3 Value=0   (tco_tuple_parameter_rebuild.ash:7:1)
+    Return                Source=3   (tco_tuple_parameter_rebuild.ash:7:1)
+
+function lambda_0  [SourceFunction from step]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_tuple_parameter_rebuild.ash:7:1)
+    LoadLocal             Target=1 Slot=1   (tco_tuple_parameter_rebuild.ash:7:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_tuple_parameter_rebuild.ash:7:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 AcceptsRuntimeManagedArgument=true   (tco_tuple_parameter_rebuild.ash:7:1)
+    Return                Source=4
+
+function _start_main  [ProgramEntry]
+  locals=4 temps=11
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadLocal             Target=2 Slot=0   (tco_tuple_parameter_rebuild.ash:14:35)
+    LoadConstInt          Target=3 Value=3000000   (tco_tuple_parameter_rebuild.ash:14:40)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (tco_tuple_parameter_rebuild.ash:14:35)
+    LoadConstInt          Target=5 Value=1   (tco_tuple_parameter_rebuild.ash:14:50)
+    LoadConstInt          Target=6 Value=2   (tco_tuple_parameter_rebuild.ash:14:53)
+    Alloc                 Target=7 SizeBytes=16   (tco_tuple_parameter_rebuild.ash:14:49)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=5   (tco_tuple_parameter_rebuild.ash:14:49)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=6   (tco_tuple_parameter_rebuild.ash:14:49)
+    CallClosure           Target=8 ClosureTemp=4 ArgTemp=7   (tco_tuple_parameter_rebuild.ash:14:35)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3
+    TextFromInt           Target=9 ValueTemp=8   (tco_tuple_parameter_rebuild.ash:14:16)
+    PrintStr              Source=9   (tco_tuple_parameter_rebuild.ash:14:1)
+    AllocAdt              Target=10 Tag=0 FieldCount=0   (tco_tuple_parameter_rebuild.ash:14:1)
+    Return                Source=10
+

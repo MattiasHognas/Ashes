@@ -1357,7 +1357,32 @@ same public behavior.
   backend suite. The loop-parameter retain marker and its finalization are ported (#869, #871,
   #872: an identity `RcDup` marker for a loop-parameter read or field read stored into a
   constructor, cons, list-literal or tuple cell, promoted to a real retain once the frame places
-  the parameter). Open: the pattern-owner duplicate of OPT-26. Related interim narrowing: the
+  the parameter). Done (2026-09-07): the pattern-owner duplicate of OPT-26 on a tuple element
+  (`duplicatePatternOwnerChild` per element, before the post-element retains, as stage 0's
+  `LowerTupleLiteral` has it, so a destructured scalar element takes the identity marker too);
+  the loop-parameter retain of a constructor argument now follows every argument
+  (`retainConstructorLoopParameterArguments`, stage 0's
+  `RetainRuntimeManagedTcoConstructorArguments`) ahead of the owned-child retains instead of
+  landing at the read; and a fresh string successor of a `Str` parameter placed by type takes
+  the reference-counted request only when its concatenation reads the parameter itself
+  (`concatChainReadsParameter`), the shape stage 0's promotion reaches from the parameter; a
+  successor reading no parameter (`fromInt(n) + "-x"`) is built in the arena and copied out by
+  the back edge, stage 0's shape since before OPT-46 (checked against a build of the pre-OPT-46
+  commit), where the self-hosted request for a reference-counted successor was the divergence.
+  Two numbering
+  mirrors came with the whole-program fixtures: the tuple release allocates stage 0's
+  `rc_drop_tuple_shared` label even for a tuple of scalars, which needs no unique-cell walk, and
+  the closure environment normalizer emits its leaf `CopyOutArena` without a location, as stage
+  0's deep-copy emitter does. A survey of the
+  fifteen import-free loop fixtures against stage 0's lowered IR
+  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches five
+  exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
+  `str_param_non_affine`, and `tco_tuple_parameter_rebuild`/`tco_str_parameter_fresh_successor`
+  as whole-program parity fixtures); `owned_child_record_accumulator` and
+  `param_string_field_into_successor` differ only by two temps stage 0 allocates before the
+  back-edge copy without emitting an instruction for them; the rest carry the match-bodied list
+  loop divergences of OPT-25's tail (scrutinee owners, the `Borrow` of a pattern binding read by
+  a builtin, the exit-arm arena bracket). Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per

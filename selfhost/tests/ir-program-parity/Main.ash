@@ -147,6 +147,10 @@ let checkFixture root name =
 // decisions: a helper chain spliced under a back edge, a spliced helper calling a top-level
 // function the loop never captured (rebuilt from its label with a null environment), a helper
 // whose sibling is spliced in turn, and the same helper left as a call outside any trigger.
+// tco_tuple_parameter_rebuild adds a scalar tuple loop parameter rebuilt every iteration, with
+// the pattern-owner marker of a destructured element stored into the fresh cell;
+// tco_str_parameter_fresh_successor a `Str` parameter placed by type whose successor is a
+// fresh string built in the arena and copied out by the back edge.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -189,5 +193,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("inlined_helper_sibling_by_label"))
         |> (given (_) -> checkFixture(root)("inlined_helper_sibling_spliced"))
         |> (given (_) -> checkFixture(root)("helper_call_without_inline_trigger"))
+        |> (given (_) -> checkFixture(root)("tco_tuple_parameter_rebuild"))
+        |> (given (_) -> checkFixture(root)("tco_str_parameter_fresh_successor"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
