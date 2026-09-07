@@ -471,6 +471,21 @@ same public behavior.
   appears only in return position (`get : Unit -> a`).
 - [ ] **CAP-8** Validate capability explanations and observable behavior against normal, optimization-disabled,
   and reuse-disabled C# compilation.
+- [ ] **CAP-9** Type a static-provider operation call from the operation's declared signature.
+  `lowerPerform`'s static-provider branch still hands `emitStaticProviderCall` a `Unit` result
+  type, so a provider-backed operation whose result is used as anything but `Unit` fails with a
+  type mismatch; the dynamic perform branch was fixed on 2026-09-07 (`performResultType`
+  instantiates the scheme `registerTopLevelCapabilityDeclaration` records and unifies it with the
+  argument types), and the provider branch should share that helper once CAP-7's whole-program
+  provider wiring exists.
+- [ ] **CAP-10** Give a handler arm closure stage 0's argument normalization and returns-bit
+  epilogue. Stage 0's `LowerHandleLowerArmClosures` emits the arm closure with
+  `AcceptsRuntimeManagedArgument`, normalizes the operation argument at entry
+  (`rc_arg_normalize_*`), and copies the result out on the returns bit (`rc_result_owned_*`);
+  the self-hosted `installOperationArmClosures` lowers the arm body as a plain match under a
+  live-posts guard with neither, so `tests/consumed_argument_through_handler.ash` peaks at
+  60.7 MB through the self-hosted compiler against 28.7 MB through stage 0. OPT-49a's mirror
+  (the perform site adopting the arm's reference-counted result) needs the returns bit first.
 
 #### Traits, implementations, and evidence
 
@@ -2120,11 +2135,56 @@ same public behavior.
   `closure_record_parameter_entry_normalized.ash` and `closure_record_accumulator_loop.ash` pin
   a closure-bearing record through entry normalization and as a loop accumulator. The
   self-hosted backend mirror needs the same closure-word bit and count-aware release.
-- [ ] **OPT-49c** Self-hosted: the whole-program lowering takes capability declarations, `|?>`
-  and `async`/`await` lower as core expressions (`UnknownLoweringBinding("async")` today), and a
-  record may hold a function-typed field (`UnsupportedTypeDeclaration` today); until then the
-  handler, result-pipe, await, and closure-capture shapes cannot be compiled by the self-hosted
-  compiler and OPT-49a and OPT-49b have no mirror.
+- [x] **OPT-49c** Self-hosted: the whole-program lowering takes capability declarations, `|?>`
+  lowers as a core expression, and a record may hold a function-typed field, so the handler,
+  result-pipe, and closure-capture shapes compile through the self-hosted compiler and OPT-49a
+  and OPT-49b can be mirrored. `async`/`await` as core expressions
+  (`UnknownLoweringBinding("async")` today) is milestone 4's CG-12/OPT-43, not this item; the
+  await shape stays stage-0-only until then.
+  Done (2026-09-07), function-typed fields: `typeExprToSemanticType` resolves a pure arrow
+  (`TypeArrow` with no capabilities and no tail) to `SemFunction`, the arity and implicit-type-
+  parameter walks descend into arrows, and the rejection message names the arrow among the
+  supported field types; nothing downstream needed changing — `HeapLayoutClassification.ash`
+  already classified a function child as `UnsupportedChildDrop`/`NoStructuralCopy` (stage 0's
+  rule: the closure child is never dropped or copied structurally), the single-constructor record
+  is tagless, and the closure word is stored and loaded like any field.
+  `tests/consumed_argument_captured_by_lambda.ash` prints `41337792` through the built
+  self-hosted compiler (peak RSS 38.9 MB against stage 0's 41.0 MB). Its lowered IR differs from
+  stage 0's only in the loop back edge, where stage 0 emits a `CleanupResource TypeName=Function`
+  for the pattern-bound `reader` closure that the self-hosted placement does not (a codegen no-op
+  for a closure, see `IrCodegen.ash`), and in the trait-evidence header, so no parity fixture was
+  pinned. `FunctionFieldLoweringTests.ash` covers the record, positional, and type-parameter
+  arrow fields and the capability-row rejection.
+  Done (2026-09-07), `|?>`: `lowerResultPipe` (`CoreLowering.ash`) unifies the left operand with
+  `Result(e, s)`, the mapper with `s -> r`, decides the flat-map case from the resolved `r`, and
+  `CoreResultPipeLowering.ash` emits stage 0's `EmitResultPipeBranches` shape (tag test against
+  `Ok`, `GetAdtField`, `CallClosure`, `Ok` rewrap or plain store, `result_error_N`/`result_end_N`
+  join through one local); neither operand inherits the context's request. `|!>` is not ported.
+  `tests/consumed_argument_through_result_pipe.ash` prints `41337792` through the built
+  self-hosted compiler (peak RSS 5.6 MB against stage 0's 8.2 MB plateau). The pipe's own IR is
+  byte-identical to stage 0's; the surrounding difference is the known OPT-33 divergence
+  (`stamp` reaches `check` by label where stage 0 captures it), so no parity fixture was pinned.
+  `ResultPipeLoweringTests.ash` covers the rewrap, the flat map, and a mapper mismatch.
+  Done (2026-09-07), capability declarations: `registerProgramCapabilities` registers every
+  top-level `capability` ahead of the value chain (declaration order gives the evidence global,
+  operations are numbered within the frame, reserved and duplicate names and duplicate
+  operations are rejected — `ReservedCapabilityName`, `DuplicateCapabilityName`,
+  `DuplicateCapabilityOperationName`), `capabilityHandlerGlobals` is stage 0's `count + 2`, the
+  implicit call form `Cap.op(x)` routes to `lowerPerform` (`isCapabilityOperationCall`), the
+  perform site types its result from the operation's recorded signature (`performResultType`)
+  instead of `Unit`, the unhandled-operation panic message is interned as a real string literal,
+  and the backend defines one `__ashes_capability_handler_<i>` global per slot and lowers
+  `LoadCapabilityHandler`/`StoreCapabilityHandler` over them. Stitching already renamed the
+  declaration and every `Cap.op` reference consistently (`AshesPrivateType_<module>_Cap`).
+  `tests/consumed_argument_through_handler.ash` prints `41337792` through the built self-hosted
+  compiler, at a peak RSS of 60.7 MB against stage 0's 28.7 MB: the handler shape leaks in both
+  compilers until OPT-49a lands, and the self-hosted arm closure leaks more because it carries
+  neither stage 0's argument normalization nor its returns-bit epilogue (CAP-10). The perform
+  site's evidence save/restore order and the post-register labels (`capability_post_skip_N`,
+  `capability_posts_loop_N`/`capability_posts_done_N` against stage 0's `capability_no_post_N`
+  and `posts_fold_N`) also differ, so no parity fixture was pinned.
+  `CapabilityProgramLoweringTests.ash` covers the registration, numbering, global count, and the
+  three rejections.
 - [ ] **OPT-50** Stage 0: a function that may execute under a live handler post ignores an
   unknown callee's returns bit. `apply (f: Str -> Str) (s: Str) = handle f(s) with ...` applied
   to `identity` (whose entry normalizes and returns its parameter) leaks the returned string:
@@ -2222,8 +2282,11 @@ same public behavior.
   reserved for the embedded schemes' quantified ids (a live supply value colliding with a reserved
   id is an infinite `applySubstitution` loop, found via gdb). Top-level `type` declarations lower
   to real constructor layouts: generics, recursive ADTs, `List`/tuple/named-type fields, implicit
-  omitted type parameters per language.md's migration rule, and parameterized-type arity
-  diagnostics. Open: `deriving`, function-typed fields, real zero-cost classification, and
+  omitted type parameters per language.md's migration rule, parameterized-type arity
+  diagnostics, and (2026-09-07) function-typed fields — a pure arrow over the supported field
+  types resolves to `SemFunction`, so `type Box = | reader: Int -> Str` lowers to a closure-word
+  field; an arrow carrying a capability row is still rejected. Open: `deriving`, real zero-cost
+  classification, and
   `RcDrop.typeName` carrying the constructor rather than the declaring type (harmless — codegen
   ignores the field).
 - [~] **CG-6** RC status. Done: a field-carrying `AllocAdt` is conservatively RC-classified
@@ -2506,6 +2569,11 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   reports to stderr between optimization and code generation. Open: structured diagnostics, the
   `test` command, and the `traits`/`authority`/`concurrency` data the self-hosted lowering does not
   record yet, which render as their empty sections.
+- [ ] **CLI-10** `--emit-ir <lowered|final>` on the self-hosted `compile` and `run`. The lowering
+  already produces stage 0's text (`formatIr`), but the CLI rejects the option, so comparing the
+  self-hosted compiler's IR with stage 0's `--emit-ir lowered` for a real program needs a scratch
+  project that reads the file, loads `lib/Ashes`, calls `stitchWithShippedModules` and
+  `lowerCoreProgramWithSourceAndReuse`, and prints `formatIr` (the recipe OPT-49c used).
 
 #### TestRunner and validation infrastructure
 
