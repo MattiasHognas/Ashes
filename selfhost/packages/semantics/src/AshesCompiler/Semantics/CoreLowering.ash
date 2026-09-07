@@ -5712,11 +5712,12 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus
-// (via `parameterTypes`) the enclosing type's own type parameters — not through
-// `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full `TypeEnvironment` this
-// single-file pipeline does not build. An annotation outside this list (a function, a resource, a
-// capability row) answers `None` — the caller's job to treat that as "can't check this one," not as
-// an error, since it is a gap in this resolver, not proof the annotation is invalid.
+// (via `parameterTypes`) the enclosing type's own type parameters, plus the pure function arrow
+// over such types — not through `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a
+// full `TypeEnvironment` this single-file pipeline does not build. An annotation outside this list
+// (a resource, an arrow carrying a capability row) answers `None` — the caller's job to treat that
+// as "can't check this one," not as an error, since it is a gap in this resolver, not proof the
+// annotation is invalid.
 let recursive lookupTypeParameter (name: Str) (parameterTypes: List((Str, SemanticType))) =
     match parameterTypes with
         | [] -> None
@@ -5761,6 +5762,16 @@ let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List(
             match typeExprListToSemanticTypes(elements)(parameterTypes) with
                 | None -> None
                 | Some(elementTypes) -> Some(SemTuple(elementTypes))
+        | TypeArrow(argument, result, [], None) ->
+            match typeExprToSemanticType(argument)(parameterTypes) with
+                | None -> None
+                | Some(argumentType) ->
+                    match typeExprToSemanticType(result)(parameterTypes) with
+                        | None -> None
+                        | Some(resultType) ->
+                            None
+                            |> SemFunction(argumentType)(resultType)
+                            |> Some
         | _other -> None
 and typeExprListToSemanticTypes (typeExprs: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
     match typeExprs with
@@ -15622,6 +15633,7 @@ let recursive typeExprArityErrors (typeExpr: TypeExpr) (layouts: List(CoreConstr
                         else Some((name, arity, actualArity))
                 | None -> typeExprArityErrorsList(arguments)(layouts)
         | TypeTuple(elements) -> typeExprArityErrorsList(elements)(layouts)
+        | TypeArrow(argument, result, _capabilities, _tail) -> typeExprArityErrorsList([argument, result])(layouts)
         | _other -> None
 and typeExprArityErrorsList (typeExprs: List(TypeExpr)) (layouts: List(CoreConstructorLayout)) =
     match typeExprs with
@@ -15643,7 +15655,7 @@ let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int
                     |> UnsupportedTypeDeclaration)
                 | None ->
                     match constructorFieldSemanticTypes(parameters)(parameterTypes)(declaringTypeName(resultType))(resultType) with
-                        | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, or one of the type's own type parameters)"))
+                        | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, one of the type's own type parameters, or a pure function over those)"))
                         | Some(fieldTypes) ->
                             Ok(CoreConstructorLayout(
                                 name = name,
@@ -15767,6 +15779,7 @@ let recursive collectImplicitTypeParameterNames (typeExpr: TypeExpr) selfName la
         | TypeApplied("List", element :: []) -> collectImplicitTypeParameterNames(element)(selfName)(layouts)(externalOpaqueTypes)(acc)
         | TypeApplied(_name, arguments) -> collectImplicitTypeParameterNamesList(arguments)(selfName)(layouts)(externalOpaqueTypes)(acc)
         | TypeTuple(elements) -> collectImplicitTypeParameterNamesList(elements)(selfName)(layouts)(externalOpaqueTypes)(acc)
+        | TypeArrow(argument, result, _capabilities, _tail) -> collectImplicitTypeParameterNamesList([argument, result])(selfName)(layouts)(externalOpaqueTypes)(acc)
         | _other -> acc
 and collectImplicitTypeParameterNamesList (typeExprs: List(TypeExpr)) selfName layouts externalOpaqueTypes acc =
     match typeExprs with
