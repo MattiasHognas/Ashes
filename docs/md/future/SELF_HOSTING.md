@@ -1248,7 +1248,15 @@ same public behavior.
   unique-guarded walk); the synthesized `__deepcopy` copiers now carry the synthesizing site's
   location as the droppers do. `tco_record_parameter_exit_before_list_accumulator`,
   `tco_owned_child_record_accumulator`, and `tco_record_string_field_into_successor` are
-  whole-program parity fixtures.
+  whole-program parity fixtures. A loop parameter read of any type, or a heap-typed field read
+  out of one, stored into a constructor field retains outright when its slot is admitted by
+  then and otherwise through stage 0's pending skeleton (`rc_constructor_field_not_retained`:
+  the value routed through a slot the retain path overwrites, under a flag finalize zeroes for
+  an unadmitted root, `emitPendingConstructorFieldRetain`), replacing the identity marker the
+  finalize pass promoted; and the dropper and copier label cache now survives a lambda body
+  (`restoreOuterFrame`), so a type's structural dropper and deep copier are synthesized once
+  per program as stage 0 does rather than once per loop.
+  `tco_record_field_read_into_successor` is a whole-program parity fixture.
   Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
@@ -1418,20 +1426,23 @@ same public behavior.
   the closure environment normalizer emits its leaf `CopyOutArena` without a location, as stage
   0's deep-copy emitter does. A survey of the
   fifteen import-free loop fixtures against stage 0's lowered IR
-  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches eleven
+  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches twelve
   exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
   `str_param_non_affine`, `list_accumulator`, `str_accumulator`, `find_string_head`,
   `record_list_accumulator`, `owned_child_record_accumulator`,
-  `param_string_field_into_successor`, and the whole-program parity fixtures
-  `tco_tuple_parameter_rebuild`, `tco_str_parameter_fresh_successor`,
-  `tco_consumed_list_parameter_borrowed_head`, `tco_consumed_list_parameter_returned_head`,
+  `param_string_field_into_successor`, `param_field_read_into_successor`, and the
+  whole-program parity fixtures `tco_tuple_parameter_rebuild`,
+  `tco_str_parameter_fresh_successor`, `tco_consumed_list_parameter_borrowed_head`,
+  `tco_consumed_list_parameter_returned_head`,
   `tco_record_parameter_exit_before_list_accumulator`, `tco_owned_child_record_accumulator`,
-  `tco_record_string_field_into_successor`); the record-head loops (`find_record_head` 681,
-  `consumed_record_heads_escape` 1044, `record_param_consed_into_sibling_accumulator` 1066,
-  `param_field_read_into_successor` 302 masked lines) and
-  `tco_arena_variant_accumulator_plateau` (395) carry the remaining record-typed head
-  divergences of OPT-25's aggregate tail (the field-read loop's next gap: three temps and a
-  local stage 0 allocates ahead of a nested record's entry normalization). Related interim
+  `tco_record_string_field_into_successor`, `tco_record_field_read_into_successor`); the
+  record-head loops (`find_record_head` 674, `consumed_record_heads_escape` 1037,
+  `record_param_consed_into_sibling_accumulator` 831 masked lines) and
+  `tco_arena_variant_accumulator_plateau` (366) carry the remaining divergences of OPT-25's
+  aggregate tail: a consumed list of records matched by record patterns is admitted by stage 0
+  to the reference-counted heap with the record-head list deep normalization at entry
+  (`rc_normalize_list` over `CopyOutArena` cells, the type's structural dropper and deep
+  copiers synthesized), which the self-hosted lowering does not yet do. Related interim
   narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
