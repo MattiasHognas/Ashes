@@ -1,0 +1,335 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
+  resolved requirement=Ashes.Trait.Remainder(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:11396)
+  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
+
+function __deepcopy_2  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadEnv               Target=1 Index=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    GetAdtTag             Target=2 Ptr=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_2_default   (tco_variant_parameter_reused_in_place.ash:11:1)
+  __deepcopy_2_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    Return                Source=3   (tco_variant_parameter_reused_in_place.ash:11:1)
+  __deepcopy_2_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=2   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (tco_variant_parameter_reused_in_place.ash:11:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=5   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=16   (tco_variant_parameter_reused_in_place.ash:11:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=16 Source=6   (tco_variant_parameter_reused_in_place.ash:11:1)
+    Return                Source=4   (tco_variant_parameter_reused_in_place.ash:11:1)
+  __deepcopy_2_default:
+    Return                Source=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+
+function lambda_1  [ClosureHelper from step]
+  locals=44 temps=142
+    LoadEnv               Target=0 Index=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    StoreLocal            Slot=2 Source=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    StoreLocal            Slot=5 Source=1   (tco_variant_parameter_reused_in_place.ash:11:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadLocal             Target=2 Slot=2   (tco_variant_parameter_reused_in_place.ash:12:8)
+    LoadConstInt          Target=3 Value=0   (tco_variant_parameter_reused_in_place.ash:12:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_variant_parameter_reused_in_place.ash:12:8)
+    JumpIfFalse           CondTemp=4 Target=else_0   (tco_variant_parameter_reused_in_place.ash:12:5)
+    LoadLocal             Target=5 Slot=1   (tco_variant_parameter_reused_in_place.ash:14:15)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=6 Value=0   (tco_variant_parameter_reused_in_place.ash:14:9)
+    CmpIntNe              Target=7 Left=5 Right=6   (tco_variant_parameter_reused_in_place.ash:14:9)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_5   (tco_variant_parameter_reused_in_place.ash:14:9)
+    GetAdtTag             Target=8 Ptr=5   (tco_variant_parameter_reused_in_place.ash:14:9)
+    LoadConstInt          Target=10 Value=0   (tco_variant_parameter_reused_in_place.ash:14:9)
+    CmpIntEq              Target=9 Left=8 Right=10   (tco_variant_parameter_reused_in_place.ash:14:9)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_5   (tco_variant_parameter_reused_in_place.ash:14:9)
+    DropReuse             Target=11 SourceTemp=5 FieldCount=0
+    LoadConstInt          Target=12 Value=0   (tco_variant_parameter_reused_in_place.ash:15:24)
+    StoreLocal            Slot=10 Source=12   (tco_variant_parameter_reused_in_place.ash:14:9)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    Jump                  Target=match_end_2   (tco_variant_parameter_reused_in_place.ash:14:9)
+  match_arm_cleanup_5:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_4   (tco_variant_parameter_reused_in_place.ash:14:9)
+  match_next_4:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=13 Value=0   (tco_variant_parameter_reused_in_place.ash:14:9)
+    CmpIntNe              Target=14 Left=5 Right=13   (tco_variant_parameter_reused_in_place.ash:14:9)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_6   (tco_variant_parameter_reused_in_place.ash:14:9)
+    GetAdtTag             Target=15 Ptr=5   (tco_variant_parameter_reused_in_place.ash:14:9)
+    LoadConstInt          Target=17 Value=1   (tco_variant_parameter_reused_in_place.ash:14:9)
+    CmpIntEq              Target=16 Left=15 Right=17   (tco_variant_parameter_reused_in_place.ash:14:9)
+    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_6   (tco_variant_parameter_reused_in_place.ash:14:9)
+    GetAdtField           Target=18 Ptr=5 FieldIndex=0   (tco_variant_parameter_reused_in_place.ash:14:9)
+    StoreLocal            Slot=17 Source=18   (tco_variant_parameter_reused_in_place.ash:14:9)
+    GetAdtField           Target=19 Ptr=5 FieldIndex=1   (tco_variant_parameter_reused_in_place.ash:14:9)
+    StoreLocal            Slot=18 Source=19   (tco_variant_parameter_reused_in_place.ash:14:9)
+    DropReuse             Target=20 SourceTemp=5 FieldCount=2
+    LoadLocal             Target=21 Slot=17   (tco_variant_parameter_reused_in_place.ash:16:31)
+    LoadLocal             Target=22 Slot=18   (tco_variant_parameter_reused_in_place.ash:16:35)
+    AddInt                Target=23 Left=21 Right=22   (tco_variant_parameter_reused_in_place.ash:16:31)
+    StoreLocal            Slot=10 Source=23   (tco_variant_parameter_reused_in_place.ash:14:9)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=19
+    Jump                  Target=match_end_2   (tco_variant_parameter_reused_in_place.ash:14:9)
+  match_arm_cleanup_6:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    Jump                  Target=match_none_3   (tco_variant_parameter_reused_in_place.ash:14:9)
+  match_none_3:
+    LoadConstInt          Target=24 Value=0   (tco_variant_parameter_reused_in_place.ash:14:9)
+    StoreLocal            Slot=10 Source=24   (tco_variant_parameter_reused_in_place.ash:14:9)
+  match_end_2:
+    LoadLocal             Target=25 Slot=10   (tco_variant_parameter_reused_in_place.ash:14:9)
+    StoreLocal            Slot=9 Source=25   (tco_variant_parameter_reused_in_place.ash:12:5)
+    Jump                  Target=endif_1   (tco_variant_parameter_reused_in_place.ash:12:5)
+  else_0:
+    LoadLocal             Target=26 Slot=1   (tco_variant_parameter_reused_in_place.ash:18:15)
+    SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
+    LoadConstInt          Target=27 Value=0   (tco_variant_parameter_reused_in_place.ash:18:9)
+    CmpIntNe              Target=28 Left=26 Right=27   (tco_variant_parameter_reused_in_place.ash:18:9)
+    JumpIfFalse           CondTemp=28 Target=match_arm_cleanup_10   (tco_variant_parameter_reused_in_place.ash:18:9)
+    GetAdtTag             Target=29 Ptr=26   (tco_variant_parameter_reused_in_place.ash:18:9)
+    LoadConstInt          Target=31 Value=0   (tco_variant_parameter_reused_in_place.ash:18:9)
+    CmpIntEq              Target=30 Left=29 Right=31   (tco_variant_parameter_reused_in_place.ash:18:9)
+    JumpIfFalse           CondTemp=30 Target=match_arm_cleanup_10   (tco_variant_parameter_reused_in_place.ash:18:9)
+    DropReuse             Target=32 SourceTemp=26 FieldCount=0
+    LoadLocal             Target=33 Slot=2   (tco_variant_parameter_reused_in_place.ash:19:29)
+    LoadConstInt          Target=34 Value=1   (tco_variant_parameter_reused_in_place.ash:19:33)
+    SubInt                Target=35 Left=33 Right=34   (tco_variant_parameter_reused_in_place.ash:19:29)
+    LoadLocal             Target=36 Slot=2   (tco_variant_parameter_reused_in_place.ash:19:43)
+    LoadConstInt          Target=37 Value=1   (tco_variant_parameter_reused_in_place.ash:19:46)
+    LoadConstInt          Target=38 Value=0   (tco_variant_parameter_reused_in_place.ash:19:36)
+    StoreLocal            Slot=24 Source=36   (tco_variant_parameter_reused_in_place.ash:19:36)
+    JumpIfFalse           CondTemp=38 Target=rc_constructor_field_not_retained_11   (tco_variant_parameter_reused_in_place.ash:19:36)
+    RcDup                 Target=39 SourceTemp=36 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=24 Source=39   (tco_variant_parameter_reused_in_place.ash:19:36)
+  rc_constructor_field_not_retained_11:
+    LoadLocal             Target=40 Slot=24   (tco_variant_parameter_reused_in_place.ash:19:36)
+    AllocAdt              Target=41 Tag=1 FieldCount=2   (tco_variant_parameter_reused_in_place.ash:19:36)
+    SetAdtField           Ptr=41 FieldIndex=0 Source=40   (tco_variant_parameter_reused_in_place.ash:19:36)
+    SetAdtField           Ptr=41 FieldIndex=1 Source=37   (tco_variant_parameter_reused_in_place.ash:19:36)
+    LoadLocal             Target=42 Slot=2   (tco_variant_parameter_reused_in_place.ash:19:24)
+    LoadLocal             Target=43 Slot=1   (tco_variant_parameter_reused_in_place.ash:19:24)
+    StoreLocal            Slot=2 Source=35   (tco_variant_parameter_reused_in_place.ash:19:24)
+    StoreLocal            Slot=1 Source=41   (tco_variant_parameter_reused_in_place.ash:19:24)
+    SaveArenaState        CursorLocalSlot=35 EndLocalSlot=36
+    LoadLocal             Target=78 Slot=35
+    LoadLocal             Target=79 Slot=3
+    SubInt                Target=80 Left=78 Right=79
+    LoadLocal             Target=81 Slot=5
+    LoadConstInt          Target=82 Value=1
+    ShlInt                Target=83 Left=81 Right=82
+    LoadConstInt          Target=84 Value=4096
+    AddInt                Target=85 Left=83 Right=84
+    CmpIntGt              Target=86 Left=80 Right=85
+    LoadLocal             Target=87 Slot=4
+    LoadLocal             Target=88 Slot=36
+    CmpIntNe              Target=89 Left=88 Right=87
+    OrInt                 Target=90 Left=86 Right=89
+    JumpIfFalse           CondTemp=90 Target=tco_compact_skip_3
+    Alloc                 Target=91 SizeBytes=8
+    MakeClosure           Target=92 FuncLabel=__deepcopy_2 EnvPtrTemp=91 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=91 OffsetBytes=0 Source=92
+    CallClosure           Target=93 ClosureTemp=92 ArgTemp=41
+    Alloc                 Target=94 SizeBytes=8
+    MakeClosure           Target=95 FuncLabel=__deepcopy_2 EnvPtrTemp=94 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=94 OffsetBytes=0 Source=95
+    CallClosure           Target=96 ClosureTemp=95 ArgTemp=93
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=34
+    Alloc                 Target=97 SizeBytes=8
+    MakeClosure           Target=98 FuncLabel=__deepcopy_2 EnvPtrTemp=97 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=97 OffsetBytes=0 Source=98
+    CallClosure           Target=99 ClosureTemp=98 ArgTemp=96
+    StoreLocal            Slot=1 Source=99
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=34
+    SaveArenaState        CursorLocalSlot=37 EndLocalSlot=38
+    LoadLocal             Target=100 Slot=37
+    LoadLocal             Target=101 Slot=3
+    SubInt                Target=102 Left=100 Right=101
+    LoadLocal             Target=103 Slot=38
+    LoadLocal             Target=104 Slot=4
+    CmpIntEq              Target=105 Left=103 Right=104
+    JumpIfFalse           CondTemp=105 Target=tco_compact_rebase_4
+    StoreLocal            Slot=5 Source=102
+    Jump                  Target=tco_compact_recorded_5
+  tco_compact_rebase_4:
+    LoadMemOffset         Target=106 BasePtr=103 OffsetBytes=0
+    LoadConstInt          Target=107 Value=8
+    AddInt                Target=108 Left=106 Right=107
+    StoreLocal            Slot=3 Source=108
+    StoreLocal            Slot=4 Source=103
+    SubInt                Target=109 Left=100 Right=108
+    StoreLocal            Slot=5 Source=109
+  tco_compact_recorded_5:
+  tco_compact_skip_3:
+    RestoreStackPointer   Slot=8   (tco_variant_parameter_reused_in_place.ash:19:24)
+    Jump                  Target=lambda_1_body   (tco_variant_parameter_reused_in_place.ash:19:24)
+    LoadConstInt          Target=44 Value=0   (tco_variant_parameter_reused_in_place.ash:19:24)
+    StoreLocal            Slot=21 Source=44   (tco_variant_parameter_reused_in_place.ash:18:9)
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=25
+    Jump                  Target=match_end_7   (tco_variant_parameter_reused_in_place.ash:18:9)
+  match_arm_cleanup_10:
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=26
+    Jump                  Target=match_next_9   (tco_variant_parameter_reused_in_place.ash:18:9)
+  match_next_9:
+    SaveArenaState        CursorLocalSlot=27 EndLocalSlot=28
+    LoadConstInt          Target=45 Value=0   (tco_variant_parameter_reused_in_place.ash:18:9)
+    CmpIntNe              Target=46 Left=26 Right=45   (tco_variant_parameter_reused_in_place.ash:18:9)
+    JumpIfFalse           CondTemp=46 Target=match_arm_cleanup_12   (tco_variant_parameter_reused_in_place.ash:18:9)
+    GetAdtTag             Target=47 Ptr=26   (tco_variant_parameter_reused_in_place.ash:18:9)
+    LoadConstInt          Target=49 Value=1   (tco_variant_parameter_reused_in_place.ash:18:9)
+    CmpIntEq              Target=48 Left=47 Right=49   (tco_variant_parameter_reused_in_place.ash:18:9)
+    JumpIfFalse           CondTemp=48 Target=match_arm_cleanup_12   (tco_variant_parameter_reused_in_place.ash:18:9)
+    GetAdtField           Target=50 Ptr=26 FieldIndex=0   (tco_variant_parameter_reused_in_place.ash:18:9)
+    StoreLocal            Slot=29 Source=50   (tco_variant_parameter_reused_in_place.ash:18:9)
+    GetAdtField           Target=51 Ptr=26 FieldIndex=1   (tco_variant_parameter_reused_in_place.ash:18:9)
+    StoreLocal            Slot=30 Source=51   (tco_variant_parameter_reused_in_place.ash:18:9)
+    DropReuse             Target=52 SourceTemp=26 FieldCount=2
+    LoadLocal             Target=53 Slot=2   (tco_variant_parameter_reused_in_place.ash:21:22)
+    LoadConstInt          Target=54 Value=1   (tco_variant_parameter_reused_in_place.ash:21:26)
+    SubInt                Target=55 Left=53 Right=54   (tco_variant_parameter_reused_in_place.ash:21:22)
+    LoadLocal             Target=56 Slot=2   (tco_variant_parameter_reused_in_place.ash:21:32)
+    LoadConstInt          Target=57 Value=1000   (tco_variant_parameter_reused_in_place.ash:21:36)
+    DivInt                Target=58 Left=56 Right=57   (tco_variant_parameter_reused_in_place.ash:21:32)
+    MulInt                Target=59 Left=58 Right=57   (tco_variant_parameter_reused_in_place.ash:21:32)
+    SubInt                Target=60 Left=56 Right=59   (tco_variant_parameter_reused_in_place.ash:21:32)
+    LoadConstInt          Target=61 Value=0   (tco_variant_parameter_reused_in_place.ash:21:44)
+    CmpIntEq              Target=62 Left=60 Right=61   (tco_variant_parameter_reused_in_place.ash:21:32)
+    JumpIfFalse           CondTemp=62 Target=else_13   (tco_variant_parameter_reused_in_place.ash:21:29)
+    AllocAdt              Target=63 Tag=0 FieldCount=0   (tco_variant_parameter_reused_in_place.ash:22:22)
+    StoreLocal            Slot=31 Source=63   (tco_variant_parameter_reused_in_place.ash:21:29)
+    Jump                  Target=endif_14   (tco_variant_parameter_reused_in_place.ash:21:29)
+  else_13:
+    LoadLocal             Target=64 Slot=29   (tco_variant_parameter_reused_in_place.ash:23:29)
+    LoadConstInt          Target=65 Value=1   (tco_variant_parameter_reused_in_place.ash:23:33)
+    AddInt                Target=66 Left=64 Right=65   (tco_variant_parameter_reused_in_place.ash:23:29)
+    LoadLocal             Target=67 Slot=30   (tco_variant_parameter_reused_in_place.ash:23:36)
+    LoadLocal             Target=68 Slot=2   (tco_variant_parameter_reused_in_place.ash:23:40)
+    AddInt                Target=69 Left=67 Right=68   (tco_variant_parameter_reused_in_place.ash:23:36)
+    AllocReusing          Target=70 Tag=1 FieldCount=2 TokenTemp=52   (tco_variant_parameter_reused_in_place.ash:23:22)
+    SetAdtField           Ptr=70 FieldIndex=0 Source=66   (tco_variant_parameter_reused_in_place.ash:23:22)
+    SetAdtField           Ptr=70 FieldIndex=1 Source=69   (tco_variant_parameter_reused_in_place.ash:23:22)
+    StoreLocal            Slot=31 Source=70   (tco_variant_parameter_reused_in_place.ash:21:29)
+  endif_14:
+    LoadLocal             Target=71 Slot=31   (tco_variant_parameter_reused_in_place.ash:21:29)
+    LoadLocal             Target=72 Slot=2   (tco_variant_parameter_reused_in_place.ash:21:17)
+    LoadLocal             Target=73 Slot=1   (tco_variant_parameter_reused_in_place.ash:21:17)
+    StoreLocal            Slot=2 Source=55   (tco_variant_parameter_reused_in_place.ash:21:17)
+    StoreLocal            Slot=1 Source=71   (tco_variant_parameter_reused_in_place.ash:21:17)
+    SaveArenaState        CursorLocalSlot=40 EndLocalSlot=41
+    LoadLocal             Target=110 Slot=40
+    LoadLocal             Target=111 Slot=3
+    SubInt                Target=112 Left=110 Right=111
+    LoadLocal             Target=113 Slot=5
+    LoadConstInt          Target=114 Value=1
+    ShlInt                Target=115 Left=113 Right=114
+    LoadConstInt          Target=116 Value=4096
+    AddInt                Target=117 Left=115 Right=116
+    CmpIntGt              Target=118 Left=112 Right=117
+    LoadLocal             Target=119 Slot=4
+    LoadLocal             Target=120 Slot=41
+    CmpIntNe              Target=121 Left=120 Right=119
+    OrInt                 Target=122 Left=118 Right=121
+    JumpIfFalse           CondTemp=122 Target=tco_compact_skip_6
+    Alloc                 Target=123 SizeBytes=8
+    MakeClosure           Target=124 FuncLabel=__deepcopy_2 EnvPtrTemp=123 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=123 OffsetBytes=0 Source=124
+    CallClosure           Target=125 ClosureTemp=124 ArgTemp=71
+    Alloc                 Target=126 SizeBytes=8
+    MakeClosure           Target=127 FuncLabel=__deepcopy_2 EnvPtrTemp=126 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=126 OffsetBytes=0 Source=127
+    CallClosure           Target=128 ClosureTemp=127 ArgTemp=125
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=39
+    Alloc                 Target=129 SizeBytes=8
+    MakeClosure           Target=130 FuncLabel=__deepcopy_2 EnvPtrTemp=129 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=129 OffsetBytes=0 Source=130
+    CallClosure           Target=131 ClosureTemp=130 ArgTemp=128
+    StoreLocal            Slot=1 Source=131
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=39
+    SaveArenaState        CursorLocalSlot=42 EndLocalSlot=43
+    LoadLocal             Target=132 Slot=42
+    LoadLocal             Target=133 Slot=3
+    SubInt                Target=134 Left=132 Right=133
+    LoadLocal             Target=135 Slot=43
+    LoadLocal             Target=136 Slot=4
+    CmpIntEq              Target=137 Left=135 Right=136
+    JumpIfFalse           CondTemp=137 Target=tco_compact_rebase_7
+    StoreLocal            Slot=5 Source=134
+    Jump                  Target=tco_compact_recorded_8
+  tco_compact_rebase_7:
+    LoadMemOffset         Target=138 BasePtr=135 OffsetBytes=0
+    LoadConstInt          Target=139 Value=8
+    AddInt                Target=140 Left=138 Right=139
+    StoreLocal            Slot=3 Source=140
+    StoreLocal            Slot=4 Source=135
+    SubInt                Target=141 Left=132 Right=140
+    StoreLocal            Slot=5 Source=141
+  tco_compact_recorded_8:
+  tco_compact_skip_6:
+    RestoreStackPointer   Slot=8   (tco_variant_parameter_reused_in_place.ash:21:17)
+    Jump                  Target=lambda_1_body   (tco_variant_parameter_reused_in_place.ash:21:17)
+    LoadConstInt          Target=74 Value=0   (tco_variant_parameter_reused_in_place.ash:21:17)
+    StoreLocal            Slot=21 Source=74   (tco_variant_parameter_reused_in_place.ash:18:9)
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=32
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=32
+    Jump                  Target=match_end_7   (tco_variant_parameter_reused_in_place.ash:18:9)
+  match_arm_cleanup_12:
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=33
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=33
+    Jump                  Target=match_none_8   (tco_variant_parameter_reused_in_place.ash:18:9)
+  match_none_8:
+    LoadConstInt          Target=75 Value=0   (tco_variant_parameter_reused_in_place.ash:18:9)
+    StoreLocal            Slot=21 Source=75   (tco_variant_parameter_reused_in_place.ash:18:9)
+  match_end_7:
+    LoadLocal             Target=76 Slot=21   (tco_variant_parameter_reused_in_place.ash:18:9)
+    StoreLocal            Slot=9 Source=76   (tco_variant_parameter_reused_in_place.ash:12:5)
+  endif_1:
+    LoadLocal             Target=77 Slot=9   (tco_variant_parameter_reused_in_place.ash:12:5)
+    Return                Source=77   (tco_variant_parameter_reused_in_place.ash:11:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from step]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadConstInt          Target=3 Value=0   (tco_variant_parameter_reused_in_place.ash:11:1)
+    Return                Source=3   (tco_variant_parameter_reused_in_place.ash:11:1)
+
+function lambda_0  [SourceFunction from step]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_variant_parameter_reused_in_place.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (tco_variant_parameter_reused_in_place.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_variant_parameter_reused_in_place.ash:11:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_variant_parameter_reused_in_place.ash:11:1)
+    Return                Source=4
+
+function _start_main  [ProgramEntry]
+  locals=4 temps=9
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadLocal             Target=2 Slot=0   (tco_variant_parameter_reused_in_place.ash:25:35)
+    LoadConstInt          Target=3 Value=3000000   (tco_variant_parameter_reused_in_place.ash:25:40)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (tco_variant_parameter_reused_in_place.ash:25:35)
+    AllocAdt              Target=5 Tag=0 FieldCount=0   (tco_variant_parameter_reused_in_place.ash:25:49)
+    CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (tco_variant_parameter_reused_in_place.ash:25:35)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3
+    TextFromInt           Target=7 ValueTemp=6   (tco_variant_parameter_reused_in_place.ash:25:16)
+    PrintStr              Source=7   (tco_variant_parameter_reused_in_place.ash:25:1)
+    AllocAdt              Target=8 Tag=0 FieldCount=0   (tco_variant_parameter_reused_in_place.ash:25:1)
+    Return                Source=8
+

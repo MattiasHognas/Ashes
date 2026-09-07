@@ -171,6 +171,10 @@ let checkFixture root name =
 // successor's field under a transferring request and passes the record parameter through at a
 // mixed-shape back edge, where the pass-through is retained rather than copied and the
 // caller's pattern-owner root is released inline by the deferred reset without a location.
+// tco_variant_parameter_reused_in_place threads a multi-constructor variant through a loop that
+// matches it directly: the parameter is a linear reuse root whose copier is synthesized at the
+// loop entry, each arm hands its dead matched cell out as an arena reuse token, the same-arity
+// rebuild consumes it in place, and the move analysis elides the entry deep copy.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -226,5 +230,6 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("tco_record_head_consed_into_sibling_accumulator"))
         |> (given (_) -> checkFixture(root)("tco_returned_record_head"))
         |> (given (_) -> checkFixture(root)("tco_record_head_stored_into_copy_adt_successor"))
+        |> (given (_) -> checkFixture(root)("tco_variant_parameter_reused_in_place"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

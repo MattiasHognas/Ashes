@@ -25,6 +25,9 @@ export (
     value inferProgramParameterOwnership,
     value lookupProgramParameterOwnership,
     value topLevelFunctions,
+    type MoveCallSite(..),
+    value collectAllCallSites,
+    value moveSafetyProof,
 )
 
 // A function's stored result reach comes from the whole-program fixpoint (`programReachSummaries`);
