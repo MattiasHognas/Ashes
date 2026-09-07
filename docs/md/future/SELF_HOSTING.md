@@ -1860,13 +1860,42 @@ same public behavior.
   lowers instruction for instruction as stage 0 does, and
   `inlined_entry_helper_under_back_edge` pins a user helper spliced under a back edge as a
   whole-program parity fixture.
-- [ ] **OPT-49** Both compilers: honor a poisoned result reach when releasing a consumed fresh
+- [~] **OPT-49** Both compilers: honor a poisoned result reach when releasing a consumed fresh
   reference-counted argument. Only the deep-copied list case consults the callee's poison
   (`ConsumedDeepCopiedListStaysWithCallee` / `consumedDeepCopiedListStaysWithCallee`); the
   remaining poison sources (a lambda, `await`, a handler, a result pipe, an unresolved callee)
   can still release an argument the callee's arena-placed result embeds. Model each shape
   precisely rather than forcing retains (which would leak), mirror the rule in
   `CoreLowering.ash`, and pin each source with a parity fixture and an execution test.
+  Measured (2026-09-07): no shape over-releases. A fresh string consumed by a callee whose
+  result reach is poisoned reaches the caller either copied (the arena-result request, bit 1 of
+  the ownership word, and the conditional copy-out on an unknown returns bit both copy the
+  result before the consumed argument is released) or adopted, so the probes print correctly
+  and the defects are leaks: the unresolved callee (`apply f s = f(s)` applied to `identity`)
+  leaked the returned string in both compilers, fixed by the returns bit of a returned
+  normalized parameter (see the arena-result boundary above); a result pipe (`|?>`) and an
+  awaited task (`await echo(fresh)` inside an async body) both plateau at 8.2 MB; a handler arm
+  (`handle Tag.tag(s) with | Tag.tag(text) -> resume(text)`) leaks the arm's
+  reference-counted copy of `text`, which the perform site takes for an arena value and the
+  handle copies at its scope boundary (about 615 bytes per call in stage 0); a record holding a
+  closure that captures the normalized parameter (`Box(reader = given (u) -> s)`) leaks the
+  owned string, stored in an arena environment the caller's copy-out duplicates (about 800
+  bytes per call in stage 0). `tests/consumed_argument_*` pin the correct output of every shape
+  through stage 0. The remaining work is split below.
+- [ ] **OPT-49a** Stage 0: the perform site adopts a handler arm's reference-counted result.
+  Read the arm closure's returns bit at the call, take the value as newly produced on that
+  branch and copy it out otherwise, so the handle's scope-boundary copy no longer duplicates a
+  value nothing releases; the arm closure built by `LowerHandleLowerArmClosures` must carry the
+  returns bit its lowered body earned.
+- [ ] **OPT-49b** Stage 0: a closure capturing an entry-normalized parameter owns the capture.
+  The environment holding the owned string (or record) is placed on the reference-counted heap
+  with its dropper, and the record storing that closure counts it as a fresh owned child, so the
+  caller's copy-out of the record retains rather than duplicates the value.
+- [ ] **OPT-49c** Self-hosted: the whole-program lowering takes capability declarations, `|?>`
+  and `async`/`await` lower as core expressions (`UnknownLoweringBinding("async")` today), and a
+  record may hold a function-typed field (`UnsupportedTypeDeclaration` today); until then the
+  handler, result-pipe, await, and closure-capture shapes cannot be compiled by the self-hosted
+  compiler and OPT-49a and OPT-49b have no mirror.
 
 #### LLVM code generation and runtime integration
 
