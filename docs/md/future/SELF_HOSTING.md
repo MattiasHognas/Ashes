@@ -1237,6 +1237,18 @@ same public behavior.
   `ConcatStr` through the alias slot (a fixed point over the loads of managed slots and the
   slots stored only from managed temps, promoting the concatenations that flow to a parameter
   store or the body result outside a mixed join).
+  The record loops followed: the exit releases every runtime-managed slot in parameter order
+  (stage 0's `RuntimeManagedSlotsInOrder`, the admission order, which is parameter order for
+  slots admitted together; `emitTcoExitDropsInOrder` replaces the string, list, ADT grouping),
+  a record successor's back-edge copy burns the two temps stage 0's
+  `TcoBackEdgeNormalizeRuntimeManagedArg` and `EmitRuntimeManagedTcoDeepCopy` allocate ahead of
+  the constructor deep copy, and a closure capturing a sole-constructor record gets its
+  environment normalizer and closure dropper (`AdtCaptureCopy`: the cell copied out with its
+  owned children re-established by their own kinds, the dropper releasing it through the
+  unique-guarded walk); the synthesized `__deepcopy` copiers now carry the synthesizing site's
+  location as the droppers do. `tco_record_parameter_exit_before_list_accumulator`,
+  `tco_owned_child_record_accumulator`, and `tco_record_string_field_into_successor` are
+  whole-program parity fixtures.
   Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
@@ -1406,18 +1418,21 @@ same public behavior.
   the closure environment normalizer emits its leaf `CopyOutArena` without a location, as stage
   0's deep-copy emitter does. A survey of the
   fifteen import-free loop fixtures against stage 0's lowered IR
-  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches eight
+  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches eleven
   exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
-  `str_param_non_affine`, `list_accumulator`, `str_accumulator`, `find_string_head`, and
-  `tco_tuple_parameter_rebuild`/`tco_str_parameter_fresh_successor`/
-  `tco_consumed_list_parameter_borrowed_head`/`tco_consumed_list_parameter_returned_head` as
-  whole-program parity fixtures); `owned_child_record_accumulator` and
-  `param_string_field_into_successor` differ only by two temps stage 0 allocates before the
-  back-edge copy without emitting an instruction for them; the record-head loops
-  (`find_record_head` 681, `consumed_record_heads_escape` 1044, `record_list_accumulator` 118,
-  `record_param_consed_into_sibling_accumulator` 1094, `param_field_read_into_successor` 452
-  masked lines) and `tco_arena_variant_accumulator_plateau` (395) carry the record-typed head
-  divergences of OPT-25's aggregate tail. Related interim narrowing: the
+  `str_param_non_affine`, `list_accumulator`, `str_accumulator`, `find_string_head`,
+  `record_list_accumulator`, `owned_child_record_accumulator`,
+  `param_string_field_into_successor`, and the whole-program parity fixtures
+  `tco_tuple_parameter_rebuild`, `tco_str_parameter_fresh_successor`,
+  `tco_consumed_list_parameter_borrowed_head`, `tco_consumed_list_parameter_returned_head`,
+  `tco_record_parameter_exit_before_list_accumulator`, `tco_owned_child_record_accumulator`,
+  `tco_record_string_field_into_successor`); the record-head loops (`find_record_head` 681,
+  `consumed_record_heads_escape` 1044, `record_param_consed_into_sibling_accumulator` 1066,
+  `param_field_read_into_successor` 302 masked lines) and
+  `tco_arena_variant_accumulator_plateau` (395) carry the remaining record-typed head
+  divergences of OPT-25's aggregate tail (the field-read loop's next gap: three temps and a
+  local stage 0 allocates ahead of a nested record's entry normalization). Related interim
+  narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per
@@ -1741,8 +1756,12 @@ same public behavior.
   returns the address of the `__rc_cdrop_N` dropper, synthesized once per owned-capture layout
   and taking a lambda id like any lifted function, which walks each owned capture. A closure
   whose captures include a still-unresolved type keeps the deferred scalar-only decision; one
-  capturing a tuple, a named type, a list over heap elements, or a function gets none, as in
-  stage 0 for the latter. Parity fixture `tco_list_walk` joins the runner. Still open
+  capturing a tuple, a multi-constructor named type, a list over heap elements, or a function
+  gets none, as in stage 0 for the latter. A sole-constructor named capture (2026-09-07)
+  qualifies: a scalar-field cell copies out by its size, a cell with owned children copies out
+  and re-establishes each owned child by its own kind behind the temp stage 0's deep-copy
+  emitter burns (`AdtCaptureCopy`), and the dropper releases it through the unique-guarded
+  walk. Parity fixture `tco_list_walk` joins the runner. Still open
   (cosmetic): the selfhost attaches no source
   location to instructions synthesized outside any located expression (a curried stage's
   closure construction, epilogue blocks), where stage 0 attaches the declaration span. Done

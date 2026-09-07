@@ -160,6 +160,11 @@ let checkFixture root name =
 // operator in a plain recursion: the body is lowered against its closed inferred type, so the
 // head is tracked, borrowed, and anchored (non_tail_self_call_list_result keeps the same head
 // untracked with no operator in the body).
+// tco_record_parameter_exit_before_list_accumulator releases a runtime-managed record loop
+// parameter at the exit ahead of the list accumulator (parameter order) and carries the record
+// into the loop closure through an environment normalizer with a closure dropper;
+// tco_owned_child_record_accumulator and tco_record_string_field_into_successor copy a record
+// successor at the back edge behind the two temps stage 0's emitters burn ahead of the copy.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -207,5 +212,8 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("tco_consumed_list_parameter_borrowed_head"))
         |> (given (_) -> checkFixture(root)("tco_consumed_list_parameter_returned_head"))
         |> (given (_) -> checkFixture(root)("pattern_head_read_under_operator"))
+        |> (given (_) -> checkFixture(root)("tco_record_parameter_exit_before_list_accumulator"))
+        |> (given (_) -> checkFixture(root)("tco_owned_child_record_accumulator"))
+        |> (given (_) -> checkFixture(root)("tco_record_string_field_into_successor"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
