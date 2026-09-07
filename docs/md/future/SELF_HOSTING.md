@@ -262,12 +262,18 @@ same public behavior.
   parity formats remain.
 - [x] **PKG-7** Make every self-hosted package buildable from a restored source-only dependency graph without
   undeclared checkout-relative inputs.
-- [ ] **PKG-8** Run the three script-style project test files (`ProjectDiscoveryTests.ash`,
+- [x] **PKG-8** Run the three script-style project test files (`ProjectDiscoveryTests.ash`,
   `ProjectSourceEnumerationTests.ash`, `ProjectCompilationPlanningTests.ash` under
   `selfhost/tests/semantics/`) from a suite: they are trailing-expression scripts that no runner
   invokes today, so their assertions have not been executed since they were written. Wire them
   into the projects suite (or a runner of their own if they need the repository layout), fix
   whatever has rotted, and keep them in the standing gate.
+  Done: the three files now live in `selfhost/tests/projects/`, export their `run...Tests`
+  entry, and run first in that suite's `Main.ash` ahead of the dependency-graph and lock-file
+  groups, with a pass line of their own. They build their fixtures under the process's
+  temporary directory and remove them afterwards, so they need no repository layout. Nothing
+  had rotted: every assertion passes as written against the current discovery, enumeration,
+  and planning modules.
 
 #### Frontend and source model
 

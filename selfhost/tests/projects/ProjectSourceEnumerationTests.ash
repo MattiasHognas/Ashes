@@ -1,6 +1,10 @@
 import Ashes.Test as test
 import Ashes.IO.Path
 import AshesCompiler.Semantics.ProjectSourceEnumeration
+export (
+    value runProjectSourceEnumerationTests,
+)
+
 let requireUnit name result =
     match result with
         | Ok(Unit) -> Unit

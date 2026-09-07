@@ -5,6 +5,10 @@ import AshesCompiler.Frontend.ModulePlan
 import AshesCompiler.Semantics.ProjectCompilationPlanning
 import AshesCompiler.Semantics.ProjectDiagnostics
 import AshesCompiler.Semantics.ProjectDiscovery
+export (
+    value runProjectCompilationPlanningTests,
+)
+
 let requireUnit name result =
     match result with
         | Ok(Unit) -> Unit

@@ -1,6 +1,10 @@
 import Ashes.Test as test
 import Ashes.IO.Path
 import AshesCompiler.Semantics.ProjectDiscovery
+export (
+    value runProjectDiscoveryTests,
+)
+
 let requireUnit name result =
     match result with
         | Ok(Unit) -> Unit
