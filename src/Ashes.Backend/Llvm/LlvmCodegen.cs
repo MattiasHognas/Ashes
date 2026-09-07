@@ -294,10 +294,12 @@ internal static partial class LlvmCodegen
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         var literals = program.StringLiterals.ToDictionary(static literal => literal.Label, static literal => literal.Value, StringComparer.Ordinal);
         bool usesTlsRuntime = ProgramUsesTlsRuntimeAbi(program);
-        EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, usesTlsRuntime);
+        CompilePhaseTiming.Measure("backend.emit-module", () =>
+            EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, usesTlsRuntime));
 
-        VerifyModule(target);
-        RunLlvmOptimizationPasses(target, options.OptimizationLevel);
+        CompilePhaseTiming.Measure("backend.verify", () => VerifyModule(target));
+        CompilePhaseTiming.Measure("backend.llvm-passes", () =>
+            RunLlvmOptimizationPasses(target, options.OptimizationLevel));
         // Debug builds combine with any -O level. The pre-pass verify above checks the
         // unoptimized module; re-verify after the passes so an inliner-mangled debug location or
         // inlined-at chain is caught here rather than shipped as invalid DWARF. Debug-only, so the
@@ -308,11 +310,15 @@ internal static partial class LlvmCodegen
         }
         // Link openlibm AFTER the program's optimization passes so its already-optimized bitcode is
         // not re-optimized (which would re-form libcall intrinsics such as llvm.exp2).
-        LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
-        LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
-        LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
-        byte[] objectBytes = EmitObjectCode(target);
-        return LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", null, GetExternalLibraries(program));
+        CompilePhaseTiming.Measure("backend.bitcode-link", () =>
+        {
+            LinkOpenlibmBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
+            LinkPcre2BitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
+            LinkMbedTlsBitcodeIfNeeded(target, program, Backends.TargetIds.LinuxX64);
+        });
+        byte[] objectBytes = CompilePhaseTiming.Measure("backend.object-code", () => EmitObjectCode(target));
+        return CompilePhaseTiming.Measure("backend.link", () =>
+            LlvmImageLinker.LinkLinuxExecutable(objectBytes, "entry", null, GetExternalLibraries(program)));
     }
 
     private static byte[] CompileLinuxArm64(IrProgram program, BackendCompileOptions options)

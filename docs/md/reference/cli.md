@@ -232,6 +232,12 @@ ashes compile --project path/to/ashes.json
 ashes compile
 ```
 
+Set the `ASHES_TIMING` environment variable to any value to report how long each compile phase
+took on stderr, one `timing: <phase> <milliseconds> ms` line per phase: `lower` (semantic
+lowering with lifetime placement), `optimize` (the IR optimizer), and `backend` with its
+`backend.emit-module`, `backend.verify`, `backend.llvm-passes`, `backend.bitcode-link`,
+`backend.object-code`, and `backend.link` parts. The generated code is unaffected.
+
 ---
 
 ### `ashes run`
