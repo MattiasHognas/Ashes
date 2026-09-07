@@ -308,7 +308,7 @@ the target ID.
 
 ### Parallel code generation
 
-A large Linux program is split into several LLVM modules that are optimized and turned into
+A large program is split into several LLVM modules that are optimized and turned into
 object code on separate threads, merged into one relocatable object, and linked as usual. The
 partition count depends only
 on the program's size (one partition per 1024 lifted functions, at most 16), so the image is
@@ -329,7 +329,16 @@ every symbol is rebased into the merged section it lands in, section symbols col
 merged section with the relocation addends adjusted, an undefined global in one object resolves
 to the definition another provides, and relocations keep their types, so the merge is the same
 for both architectures. The merged object then goes through the target's ordinary single-object
-linker. Windows targets still compile as a single module until the COFF merge exists.
+linker. The Windows targets merge the same way into one COFF relocatable object
+(`CoffRelocatableObjects`) for the single-object PE linker: sections with the same name and
+flags are concatenated at their alignment, a COMDAT several objects carry (the weak helper
+definitions and LLVM's `__xmm@`/`__real@` constant sections) is kept once, a relocation against
+an input section symbol is redirected to a static marker symbol at that section's offset so the
+relocated bytes and the relocation types stay untouched, an external symbol several objects
+define outside a COMDAT keeps the first definition external and demotes the later copies to
+static, and a section past 0xFFFF relocations uses the `IMAGE_SCN_LNK_NRELOC_OVFL` form.
+`ASHES_DUMP_OBJECTS=<dir>` writes the partition objects and the merged object into that
+directory.
 
 ### External dependencies
 
