@@ -67,6 +67,7 @@ internal static class PerceusLifetimePlacement
         IReadOnlyList<HashSet<int>>? dominators = null;
         var usedTempsByInstruction = new Dictionary<IrInst, int[]>(
             ReferenceEqualityComparer.Instance);
+        HashSet<int> arenaAdtCells = CollectArenaAdtCells(instructions);
 
         foreach (int ownerSlot in ownerSlots)
         {
@@ -82,10 +83,33 @@ internal static class PerceusLifetimePlacement
             PlaceOwner(
                 instructions, ownerSlot, anchor, anchors[0].index,
                 ref tempCount, ref dominators, usedTempsByInstruction,
-                functionLabel, borrowedArgumentCalls);
+                functionLabel, borrowedArgumentCalls, arenaAdtCells);
         }
 
         return new LifetimePlacementResult(instructions, tempCount);
+    }
+
+    // The ADT cells that never release the fields stored into them: an arena- or stack-allocated
+    // cell embeds an owner alias without a reference of its own, exactly like a StoreMemOffset into
+    // a list literal's cons cell, so the owner stays live while the cell does and the store gets no
+    // compensating dup (only a runtime-managed cell owns its field's reference and releases it).
+    private static HashSet<int> CollectArenaAdtCells(List<IrInst> instructions)
+    {
+        var cells = new HashSet<int>();
+        foreach (IrInst instruction in instructions)
+        {
+            switch (instruction)
+            {
+                case IrInst.AllocAdt { RuntimeManaged: false } alloc:
+                    cells.Add(alloc.Target);
+                    break;
+                case IrInst.AllocAdtStack allocStack:
+                    cells.Add(allocStack.Target);
+                    break;
+            }
+        }
+
+        return cells;
     }
 
     private static void PlaceOwner(
@@ -97,7 +121,8 @@ internal static class PerceusLifetimePlacement
         ref IReadOnlyList<HashSet<int>>? dominators,
         Dictionary<IrInst, int[]> usedTempsByInstruction,
         string functionLabel,
-        IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls)
+        IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls,
+        HashSet<int> arenaAdtCells)
     {
         if (!TryRemoveLexicalAnchor(instructions, ownerSlot, anchor, anchorIndex, out OwnerRegion owner))
         {
@@ -120,7 +145,7 @@ internal static class PerceusLifetimePlacement
             return;
         }
 
-        HashSet<int> ownerAliases = CollectOwnerAliases(instructions, blocks, region, ownerSlot);
+        HashSet<int> ownerAliases = CollectOwnerAliases(instructions, blocks, region, ownerSlot, arenaAdtCells);
         foreach (int blockIndex in region)
         {
             Block block = blocks[blockIndex];
@@ -134,10 +159,19 @@ internal static class PerceusLifetimePlacement
             block.HasUse = block.OwnerUses.Count > 0;
         }
 
+        // An arena cell the owner is stored into borrows the owner's reference, unless an alias
+        // carries the cell to a tail-call back edge: the back edge's copy of a by-name arena
+        // successor releases the dying successor's children as owned references, so such a store
+        // retains one for it exactly as a runtime-managed cell's store does.
+        bool arenaCellsReleaseChildren = instructions.Any(instruction =>
+            instruction is IrInst.CopyOutArena { RuntimeManaged: true, Purpose: IrInst.CopyOutPurpose.RcNormalization } copy
+            && ownerAliases.Contains(copy.SrcTemp));
+        HashSet<int> borrowingArenaCells = arenaCellsReleaseChildren ? [] : arenaAdtCells;
+
         ComputeLiveness(blocks, region);
         var retargets = new Dictionary<int, IrInst>();
         Dictionary<int, List<IrInst>> insertions = CollectInsertions(
-            instructions, blocks, region, definitionBlock, owner, ownerSlot, anchor, functionLabel, borrowedArgumentCalls, retargets, ref tempCount);
+            instructions, blocks, region, definitionBlock, owner, ownerSlot, anchor, functionLabel, borrowedArgumentCalls, borrowingArenaCells, retargets, ref tempCount);
 
         foreach ((int index, IrInst replacement) in retargets)
         {
@@ -211,6 +245,7 @@ internal static class PerceusLifetimePlacement
         IrInst.RcDrop anchor,
         string functionLabel,
         IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls,
+        HashSet<int> arenaAdtCells,
         Dictionary<int, IrInst> retargets,
         ref int tempCount)
     {
@@ -249,7 +284,7 @@ internal static class PerceusLifetimePlacement
                 }
             }
 
-            AddCallDups(instructions, block, anchor.RuntimeManaged, anchor.MayBeEmpty, borrowedArgumentCalls, ref tempCount, insertions);
+            AddCallDups(instructions, block, anchor.RuntimeManaged, anchor.MayBeEmpty, borrowedArgumentCalls, arenaAdtCells, ref tempCount, insertions);
         }
 
         return insertions;
@@ -356,6 +391,7 @@ internal static class PerceusLifetimePlacement
         bool runtimeManaged,
         bool mayBeEmpty,
         IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls,
+        HashSet<int> arenaAdtCells,
         ref int tempCount,
         Dictionary<int, List<IrInst>> insertions)
     {
@@ -372,13 +408,19 @@ internal static class PerceusLifetimePlacement
                     continue;
                 }
 
-                // A record-field store creates a new reference the field's cell owns outright,
-                // while the owner's placed drop still releases the binding's own reference after
-                // its last use. Without a compensating dup the two releases outnumber the two
-                // references and the field is freed out from under the record.
+                // A runtime-managed record's field store creates a new reference the cell owns
+                // outright and releases with its structural drop, while the owner's placed drop
+                // still releases the binding's own reference after its last use. Without a
+                // compensating dup the two releases outnumber the two references and the field is
+                // freed out from under the record. An arena cell releases nothing: it borrows the
+                // field and keeps the owner live instead (see CollectArenaAdtCells).
                 if (instructions[i] is IrInst.SetAdtField fieldStore && aliases.Contains(fieldStore.Source))
                 {
-                    AddInsertion(insertions, i, new IrInst.RcDup(tempCount++, fieldStore.Source, runtimeManaged, mayBeEmpty) { Location = fieldStore.Location });
+                    if (!arenaAdtCells.Contains(fieldStore.Ptr))
+                    {
+                        AddInsertion(insertions, i, new IrInst.RcDup(tempCount++, fieldStore.Source, runtimeManaged, mayBeEmpty) { Location = fieldStore.Location });
+                    }
+
                     continue;
                 }
 
@@ -398,7 +440,8 @@ internal static class PerceusLifetimePlacement
         List<IrInst> instructions,
         List<Block> blocks,
         HashSet<int> region,
-        int ownerSlot)
+        int ownerSlot,
+        HashSet<int> arenaAdtCells)
     {
         var aliases = new HashSet<int>();
         foreach (int blockIndex in region)
@@ -412,7 +455,8 @@ internal static class PerceusLifetimePlacement
         // Follow aliases to a fixpoint through Borrow; a local slot that holds an alias (StoreLocal
         // then a LoadLocal the store can reach — the conditional runtime-argument retain routes a
         // borrowed owner through a fresh slot); an arena cell that embeds an alias without a reference of its own
-        // (StoreMemOffset of an alias into a list literal's cons cell, a tuple, or a closure env),
+        // (StoreMemOffset of an alias into a list literal's cons cell, a tuple, or a closure env, or
+        // SetAdtField of an alias into an arena- or stack-allocated constructor cell),
         // a closure made over such an env, and the result of a call that receives an alias as its
         // argument, closure, or environment. A transient closure holds the borrow in its arena/stack
         // env until applied, so the owner must stay live until that application; a callee's result
@@ -432,7 +476,7 @@ internal static class PerceusLifetimePlacement
                 Block block = blocks[blockIndex];
                 for (int i = block.Start; i < block.End; i++)
                 {
-                    changed |= PropagateAlias(instructions[i], i, block, aliases, aliasStores);
+                    changed |= PropagateAlias(instructions[i], i, block, aliases, aliasStores, arenaAdtCells);
                 }
             }
         }
@@ -442,7 +486,13 @@ internal static class PerceusLifetimePlacement
 
     // One propagation step over a single instruction; returns whether it discovered a new alias or
     // alias-holding store.
-    private static bool PropagateAlias(IrInst instruction, int index, Block block, HashSet<int> aliases, HashSet<AliasStore> aliasStores)
+    private static bool PropagateAlias(
+        IrInst instruction,
+        int index,
+        Block block,
+        HashSet<int> aliases,
+        HashSet<AliasStore> aliasStores,
+        HashSet<int> arenaAdtCells)
     {
         switch (instruction)
         {
@@ -454,6 +504,8 @@ internal static class PerceusLifetimePlacement
                 return aliases.Add(load.Target);
             case IrInst.StoreMemOffset cellStore when aliases.Contains(cellStore.Source):
                 return aliases.Add(cellStore.BasePtr);
+            case IrInst.SetAdtField fieldStore when aliases.Contains(fieldStore.Source) && arenaAdtCells.Contains(fieldStore.Ptr):
+                return aliases.Add(fieldStore.Ptr);
             case IrInst.MakeClosure mc when aliases.Contains(mc.EnvPtrTemp):
                 return aliases.Add(mc.Target);
             case IrInst.MakeClosureStack mcs when aliases.Contains(mcs.EnvPtrTemp):

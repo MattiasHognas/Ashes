@@ -3863,6 +3863,36 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_list_argument_kept_by_copied_callee_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildListArgumentKeptByCopiedCalleeResultMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("list argument retained for a callee result the caller copies out", samples);
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_matched_head_stored_into_arena_state_for_normalizing_callee_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildMatchedHeadStoredIntoArenaStateForNormalizingCalleeMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("matched head stored into an arena state cell handed to a normalizing callee", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -8795,6 +8825,88 @@ public sealed class LinuxBackendCoverageTests
                     match advance(remaining)(state) with
                         | Done -> total
                         | Continue(next, r) -> loop(remaining - 1)(next)(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))(0))
+            """;
+
+    // A runtime-managed list passed by name to a callee whose result may keep it (flip returns the
+    // un-flipped suffix of its argument) is retained for that result; the caller copies the list
+    // result out, so nothing of the argument survives in it and the retained reference must be
+    // released after the call, or every flip leaks a whole permutation.
+    private static string BuildListArgumentKeptByCopiedCalleeResultMemoryProgram(int iterations)
+        => $$"""
+            let recursive appendTail acc xs =
+                match acc with
+                    | [] -> xs
+                    | h :: t -> h :: appendTail(t)(xs)
+
+            let recursive flipInto k xs acc =
+                if k == 0
+                then appendTail(acc)(xs)
+                else
+                    match xs with
+                        | [] -> appendTail(acc)(xs)
+                        | h :: t -> flipInto(k - 1)(t)(h :: acc)
+
+            let flip k xs = flipInto(k)(xs)([])
+
+            let recursive countFlips perm flips =
+                match perm with
+                    | [] -> flips
+                    | h :: _ ->
+                        if h == 1
+                        then flips
+                        else countFlips(flip(h)(perm))(flips + 1)
+
+            let recursive run i total =
+                if i <= 0
+                then total
+                else run(i - 1)(total + countFlips([2, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, i % 7 + 12])(0))
+
+            Ashes.IO.print(run({{iterations}})(0))
+            """;
+
+    // A list matched out of the runtime-managed loop state is stored into an arena-allocated state
+    // cell handed to a callee that normalizes its argument on entry. The arena cell releases
+    // nothing, so the store borrows the list and keeps its owner alive across the call instead of
+    // retaining a reference the cell can never give back.
+    private static string BuildMatchedHeadStoredIntoArenaStateForNormalizingCalleeMemoryProgram(int iterations)
+        => $$"""
+            type State =
+                | S(List(Int), List(Int))
+
+            type Step =
+                | Done
+                | Continue(State, Int)
+
+            let recursive setAt i value values =
+                match values with
+                    | [] -> []
+                    | head :: tail ->
+                        if i == 0
+                        then value :: tail
+                        else head :: setAt(i - 1)(value)(tail)
+
+            let recursive reset r count =
+                if r == 1
+                then count
+                else reset(r - 1)(setAt(r - 1)(r)(count))
+
+            let advance r state =
+                match state with
+                    | S(perm, count) -> Continue(S(perm)(count))(r)
+
+            let recursive loop remaining state total =
+                match state with
+                    | S(perm, count) ->
+                        let count1 = reset(3)(count)
+                        in
+                            if remaining <= 0
+                            then total
+                            else
+                                match advance(remaining)(S(perm)(count1)) with
+                                    | Done -> total
+                                    | Continue(next, r) -> loop(remaining - 1)(next)(total + 1)
 
             Ashes.IO.print(loop({{iterations}})(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))(0))
             """;
