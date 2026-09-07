@@ -144,6 +144,60 @@ public sealed class CapabilityRcEligibilityTests
         AllInstructions(ir).OfType<IrInst.ConcatStr>().ShouldAllBe(c => !c.RuntimeManaged);
     }
 
+    private const string HandlerArmReturnsParameterProgram =
+        """
+        capability Tag =
+            | tag : Str -> Str
+
+        let decorate =
+            given (s) ->
+                handle Tag.tag(s) with
+                    | Tag.tag(text) -> resume(text)
+                    | return(r) -> r
+
+        decorate("abc")
+        """;
+
+    [Test]
+    public void Handler_arm_closure_carries_the_returns_bit_its_normalized_parameter_earns()
+    {
+        // The arm `text -> text` normalizes its parameter into an owned reference-counted value and
+        // returns it, so its closure must report a reference-counted result even though it is
+        // created inside a function that may execute under a live handler post.
+        var ir = LowerProgram(HandlerArmReturnsParameterProgram);
+
+        List<IrInst.MakeClosure> normalizingClosures = AllInstructions(ir)
+            .OfType<IrInst.MakeClosure>()
+            .Where(c => c.AcceptsRuntimeManagedArgument)
+            .ToList();
+        normalizingClosures.ShouldNotBeEmpty();
+        normalizingClosures.ShouldAllBe(c => c.ReturnsRuntimeManaged);
+    }
+
+    [Test]
+    public void Perform_site_adopts_the_arm_result_and_the_handle_releases_it_once()
+    {
+        // The perform site reads the arm closure's returns bit, keeps a reference-counted result and
+        // normalizes an arena one, and the return arm applies as a continuation over that owned
+        // value: no scope-boundary copy duplicates it, and the handle releases the original. The
+        // only other copy in the function is its own arena-result boundary, since it now returns
+        // the reference-counted value to its caller.
+        var ir = LowerProgram(HandlerArmReturnsParameterProgram);
+
+        IrFunction performing = ir.Functions.Single(f =>
+            f.Instructions.OfType<IrInst.LoadCapabilityHandler>().Any()
+            && f.Instructions.OfType<IrInst.CallClosure>().Any());
+        List<IrInst.CopyOutArena> copies = performing.Instructions
+            .OfType<IrInst.CopyOutArena>()
+            .Where(c => c.Purpose != IrInst.CopyOutPurpose.ArenaResultBoundary)
+            .ToList();
+        copies.ShouldNotBeEmpty();
+        copies.ShouldAllBe(c => c.RuntimeManaged && c.Purpose == IrInst.CopyOutPurpose.RcNormalization);
+        performing.Instructions.OfType<IrInst.RcDrop>().ShouldContain(d => d.RuntimeManaged);
+        AllInstructions(ir).OfType<IrInst.CopyOutArena>()
+            .ShouldNotContain(c => c.Purpose == IrInst.CopyOutPurpose.ArenaScopeBoundary);
+    }
+
     // --- Helpers ---
 
     private static IrProgram LowerProgram(string source)

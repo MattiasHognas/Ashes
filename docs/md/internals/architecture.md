@@ -1298,6 +1298,21 @@ A tail-resumptive arm compiles to an ordinary closure: every tail-position `resu
 rewritten to `e` at the AST level ("resume with v" is exactly "return v to the perform site"), so
 there is no continuation capture at all.
 
+The perform site owns the arm's result the way any closure call owns an unknown callee's result.
+An arm closure carries the result-ownership bit its compiled body earned (an arm that resumes
+with its own parameter normalizes that parameter into an owned reference-counted value and
+returns it). When the operation's result type has a complete copy-out layout (a string, bytes, a
+shallow-copyable ADT, or a list over such heads), the site reads that bit at the saturating
+call, keeps a reference-counted result as newly produced, and normalizes an arena result into a
+reference-counted copy; a result whose layout is still unresolved, or a site in a function that
+may execute inside a coroutine, asks the arm for the arena form through the ownership word
+instead. A `handle` whose body value is owned this way applies its `return` arm as a
+continuation `given pattern -> body` under the same contract as a post: the value is retained
+only when the closure's entry adopts reference-counted arguments, the result is adopted or
+normalized by the closure's returns bit, and the original is released once the result cannot
+reach it. The posts fold applies each one-shot continuation the same way, so the handle's value
+stays reference-counted through every post and its caller releases it exactly once.
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the

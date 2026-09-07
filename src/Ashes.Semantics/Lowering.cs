@@ -3054,8 +3054,7 @@ public sealed partial class Lowering
                 0,
                 RuntimeManaged: request.EmitsRuntime(
                     LoweredValueRuntimeRepresentation.Closure),
-                ReturnsRuntimeManaged: AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
-                    && _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
+                ReturnsRuntimeManaged: _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
 
@@ -3133,8 +3132,7 @@ public sealed partial class Lowering
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
                 Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
-                    ReturnsRuntimeManaged: AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
-                        && _bodyRuntimeManagedByLabel.GetValueOrDefault(self.FuncLabel)));
+                    ReturnsRuntimeManaged: _bodyRuntimeManagedByLabel.GetValueOrDefault(self.FuncLabel)));
                 RequireTraitConstraints(self.Requirements ?? []);
                 result = (temp, self.Type);
                 break;
@@ -9359,11 +9357,13 @@ public sealed partial class Lowering
         bool bodyRuntimeManaged,
         LoweredValueRequest request)
     {
-        // Produce the closure object and its optional lifecycle metadata.
+        // Produce the closure object and its optional lifecycle metadata. The result-ownership bit
+        // records what the compiled body returns, decided under the body's own placement context;
+        // the creating function's placement context does not change the callee's result, so a
+        // caller reading the bit adopts exactly the reference-counted results the body produces.
         int closureTemp = NewTemp();
         int envSizeBytes = captures.Count * 8;
-        bool returnsRuntimeManaged = AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
-            && bodyRuntimeManaged;
+        bool returnsRuntimeManaged = bodyRuntimeManaged;
         bool acceptsRuntimeManagedArgument = _runtimeNormalizedFunctionArgumentLabels.Contains(label);
         EmitLambdaClosureObject(
             closureTemp, label, envPtrTemp, envSizeBytes, stackAllocateClosure,
@@ -12136,13 +12136,7 @@ public sealed partial class Lowering
     {
         if (rcStatus == AccessorArgumentRcStatus.NotRc)
         {
-            int packedEnvironmentSizeTemp = NewTemp();
-            Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
-            int ownershipShiftTemp = NewTemp();
-            Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
-            int flagTemp = NewTemp();
-            Emit(new IrInst.ShrInt(flagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
-            return flagTemp;
+            return EmitClosureReturnsRuntimeManagedFlag(closureTemp);
         }
 
         int forcedFlagTemp = EmitForcedRetainFlag();
@@ -12191,16 +12185,7 @@ public sealed partial class Lowering
             return -1;
         }
 
-        int packedEnvironmentSizeTemp = NewTemp();
-        Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
-        int ownershipShiftTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 62));
-        int shiftedFlagTemp = NewTemp();
-        Emit(new IrInst.ShrInt(shiftedFlagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
-        int ownershipMaskTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(ownershipMaskTemp, 1));
-        int flagTemp = NewTemp();
-        Emit(new IrInst.AndInt(flagTemp, shiftedFlagTemp, ownershipMaskTemp));
+        int flagTemp = EmitClosureAcceptsRuntimeManagedArgumentFlag(closureTemp);
         if (pendingParameterSlot >= 0)
         {
             // An argument the callee's result may keep must be retained unconditionally once
@@ -12243,6 +12228,37 @@ public sealed partial class Lowering
         int forcedFlagTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(forcedFlagTemp, 1));
         return forcedFlagTemp;
+    }
+
+    // Reads the closure's result-ownership bit (bit 63 of its packed environment word): 1 when the
+    // closure's compiled body returns a reference-counted value, 0 when it returns an arena value.
+    private int EmitClosureReturnsRuntimeManagedFlag(int closureTemp)
+    {
+        int packedEnvironmentSizeTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+        int ownershipShiftTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 63));
+        int flagTemp = NewTemp();
+        Emit(new IrInst.ShrInt(flagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
+        return flagTemp;
+    }
+
+    // Reads the closure's argument-adoption bit (bit 62 of its packed environment word): 1 when the
+    // closure's entry adopts a reference-counted argument handed to it with bit 0 of the ownership
+    // word set, 0 when it copies every argument.
+    private int EmitClosureAcceptsRuntimeManagedArgumentFlag(int closureTemp)
+    {
+        int packedEnvironmentSizeTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(packedEnvironmentSizeTemp, closureTemp, 16));
+        int ownershipShiftTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipShiftTemp, 62));
+        int shiftedFlagTemp = NewTemp();
+        Emit(new IrInst.ShrInt(shiftedFlagTemp, packedEnvironmentSizeTemp, ownershipShiftTemp));
+        int ownershipMaskTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(ownershipMaskTemp, 1));
+        int flagTemp = NewTemp();
+        Emit(new IrInst.AndInt(flagTemp, shiftedFlagTemp, ownershipMaskTemp));
+        return flagTemp;
     }
 
     private int EmitRuntimeManagedArgumentRetain(int argumentTemp, TypeRef argumentType)
@@ -12685,12 +12701,30 @@ public sealed partial class Lowering
         Emit(new IrInst.JumpIfFalse(runtimeManagedResultFlagTemp, copyLabel));
         Emit(new IrInst.Jump(reclaimLabel));
         Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = EmitRuntimeManagedResultCopyOut(currentTemp, callCopyOutKind, listHeadCopy, callCopySize);
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(reclaimLabel));
+        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    // Normalizes an arena-placed call result into an independently owned reference-counted graph,
+    // copying list heads according to the resolved head kind.
+    private int EmitRuntimeManagedResultCopyOut(
+        int sourceTemp,
+        CopyOutKind copyOutKind,
+        IrInst.ListHeadCopyKind listHeadCopy,
+        int copySize)
+    {
         int copiedTemp = NewTemp();
-        if (callCopyOutKind == CopyOutKind.List)
+        if (copyOutKind == CopyOutKind.List)
         {
             Emit(new IrInst.CopyOutList(
                 copiedTemp,
-                currentTemp,
+                sourceTemp,
                 listHeadCopy,
                 RuntimeManaged: true,
                 IrInst.CopyOutPurpose.RcNormalization));
@@ -12699,18 +12733,13 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.CopyOutArena(
                 copiedTemp,
-                currentTemp,
-                callCopySize,
+                sourceTemp,
+                copySize,
                 RuntimeManaged: true,
                 IrInst.CopyOutPurpose.RcNormalization));
         }
-        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
-        Emit(new IrInst.Label(reclaimLabel));
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
 
-        int resultTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        return resultTemp;
+        return copiedTemp;
     }
 
     // A call result list whose element GetCallCopyOutKind cannot express through the fixed
