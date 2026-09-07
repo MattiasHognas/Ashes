@@ -10000,6 +10000,11 @@ public sealed partial class Lowering
         var savedTail = tco.InTailPosition;
         tco.InTailPosition = false;
 
+        // Release state belongs only to this path (children moved into a successor constructor during
+        // argument evaluation, arguments marked moved, owners released before the jump): siblings
+        // lowered afterwards share the OwnershipInfo objects, so it is restored after the jump.
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> releaseSnapshot =
+            SnapshotOwnershipReleaseKinds();
         (int[] newArgTemps, TypeRef[] newArgTypes) =
             LowerCallTcoEvalBackEdgeArgs(tco, rootExpression, collectedArgs);
         LowerCallTcoPromoteResolvedRuntimeParams(tco, newArgTypes);
@@ -10012,9 +10017,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(tco.ParamSlots[i], newArgTemps[i]));
         }
 
-        (List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> releaseSnapshot,
-            List<OwnershipInfo> iterationOwnedDrops) =
-            LowerCallTcoPrepareOwnedDrops(tco, collectedArgs);
+        List<OwnershipInfo> iterationOwnedDrops = LowerCallTcoPrepareOwnedDrops(tco, collectedArgs);
 
         // Arena reset: restore heap state to loop-iteration watermark before
         // jumping back.
@@ -10245,19 +10248,10 @@ public sealed partial class Lowering
         }
     }
 
-    private (
-        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> Snapshot,
-        List<OwnershipInfo> Drops) LowerCallTcoPrepareOwnedDrops(
-        TcoContext tco,
-        List<Expr> collectedArgs)
+    private List<OwnershipInfo> LowerCallTcoPrepareOwnedDrops(TcoContext tco, List<Expr> collectedArgs)
     {
-        // Back-edge release state belongs only to this control-flow path. Match/if siblings are
-        // lowered afterwards using the same OwnershipInfo objects, so restore it after the jump.
-        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> snapshot =
-            SnapshotOwnershipReleaseKinds();
         LowerCallTcoMarkMovedArgs(collectedArgs);
-        List<OwnershipInfo> drops = CollectTcoBackEdgeOwnedDrops(tco);
-        return (snapshot, drops);
+        return CollectTcoBackEdgeOwnedDrops(tco);
     }
 
     private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> SnapshotOwnershipReleaseKinds()
@@ -11258,7 +11252,7 @@ public sealed partial class Lowering
 
         PreconstrainCallResultType(currentType, collectedArgs.Count, request.ExpectedType);
 
-        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments = [];
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments = [];
         if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType,
                 consumedRuntimeArguments, out int runtimeManagedResultFlagTemp) is { } earlyResult)
         {
@@ -11289,7 +11283,7 @@ public sealed partial class Lowering
         int callWmEndSlot,
         int currentTemp,
         TypeRef currentType,
-        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments,
         int runtimeManagedResultFlagTemp)
     {
         UnifyExpectedType(currentType, request);
@@ -11310,6 +11304,15 @@ public sealed partial class Lowering
             && !CanArenaReset(callResultType)
             && callResultCopyKind == CopyOutKind.List
             && callResultHeadCopy != IrInst.ListHeadCopyKind.Inline;
+        // A scalar result, or the copy branch of a list or shallow copy-out (the whole spine with
+        // its heads, or every byte of a value whose fields are all scalars, rebuilt here), holds no
+        // reference to any argument: a reference handed to the callee for its result to keep is
+        // orphaned there unless the callee adopted it.
+        bool resultCopySeversArgumentReferences = CanArenaReset(callResultType)
+            || (!runtimeManagedResult
+                && !stableReuseResult
+                && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List);
+        int resultCopyFlagTemp = CanArenaReset(callResultType) ? -1 : runtimeManagedResultFlagTemp;
         currentTemp = LowerCallRestoreArena(
             callWmCursorSlot,
             callWmEndSlot,
@@ -11332,7 +11335,9 @@ public sealed partial class Lowering
             resultDeepCopied,
             GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false },
             resultCopyCopiesElements ? runtimeManagedResultFlagTemp : -1,
-            resultCopyCopiesElements && runtimeManagedResultFlagTemp < 0);
+            resultCopyCopiesElements && runtimeManagedResultFlagTemp < 0,
+            resultCopySeversArgumentReferences,
+            resultCopyFlagTemp);
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -11738,7 +11743,7 @@ public sealed partial class Lowering
     // early error, or null when the whole chain applied cleanly.
     private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs,
         ref int currentTemp, ref TypeRef currentType,
-        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments,
         out int runtimeManagedResultFlagTemp)
     {
         runtimeManagedResultFlagTemp = -1;
@@ -11783,7 +11788,7 @@ public sealed partial class Lowering
         int i,
         TypeRef.TFun funType,
         ref int currentTemp,
-        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments,
         ref int runtimeManagedResultFlagTemp)
     {
         // A callee whose own type scheme leaves this parameter position quantified is compiled
@@ -12016,7 +12021,7 @@ public sealed partial class Lowering
         int closureTemp,
         int argumentTemp,
         TypeRef argumentType,
-        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments,
         ref int runtimeManagedResultFlagTemp)
     {
         CheckClosureCapturesLiveAtApplication(rootExpr, closureTemp);
@@ -12047,14 +12052,15 @@ public sealed partial class Lowering
             // spine) without the parameter itself ever escaping; restrict the override to named
             // variables, where a second, still-alive reference is the actual concern.
             calleeResultMayReachThisParameter && !freshRuntimeArgument,
+            out bool retainedForCalleeResult,
             ref argumentTemp);
         if (!borrowsOnly)
         {
             MarkResourceArgMoved(argument);
-            if (freshRuntimeArgument && !transfersFreshRuntimeArgument)
-            {
-                consumedRuntimeArguments.Add((originalArgumentTemp, Prune(argumentType), calleeResultMayReachThisParameter));
-            }
+            RegisterConsumedRuntimeArgument(
+                rootExpr, argumentIndex, originalArgumentTemp, argumentTemp, argumentType,
+                freshRuntimeArgument, transfersFreshRuntimeArgument, calleeResultMayReachThisParameter,
+                retainedForCalleeResult, runtimeManagedArgumentFlagTemp, consumedRuntimeArguments);
         }
 
         (AccessorArgumentRcStatus rcStatus, int pendingSlot) =
@@ -12072,6 +12078,46 @@ public sealed partial class Lowering
         return rcStatus == AccessorArgumentRcStatus.NotRc
             ? target
             : RetainAccessorCallResult(target, rcStatus, pendingSlot);
+    }
+
+    // Records what the caller must settle about this argument after the call. A fresh argument the
+    // callee borrows is released once the result is normalized. A reference that now travels with
+    // the callee's result — the retained named argument, or a fresh argument transferred to a
+    // callee not proven to adopt it — is recorded with the callee's adoption flag; whether the
+    // result actually kept it is settled after the call, once the result's own normalization has
+    // run (see LowerCallDropConsumedRuntimeArguments).
+    private void RegisterConsumedRuntimeArgument(
+        Expr rootExpr,
+        int argumentIndex,
+        int originalArgumentTemp,
+        int argumentTemp,
+        TypeRef argumentType,
+        bool freshRuntimeArgument,
+        bool transfersFreshRuntimeArgument,
+        bool calleeResultMayReachThisParameter,
+        bool retainedForCalleeResult,
+        int runtimeManagedArgumentFlagTemp,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments)
+    {
+        if (freshRuntimeArgument && !transfersFreshRuntimeArgument)
+        {
+            consumedRuntimeArguments.Add(
+                new ConsumedRuntimeArgument(originalArgumentTemp, Prune(argumentType), calleeResultMayReachThisParameter));
+            return;
+        }
+
+        if (retainedForCalleeResult
+            || (transfersFreshRuntimeArgument
+                && runtimeManagedArgumentFlagTemp >= 0
+                && !IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex)))
+        {
+            consumedRuntimeArguments.Add(
+                new ConsumedRuntimeArgument(
+                    argumentTemp,
+                    Prune(argumentType),
+                    PreserveEscapedChildren: true,
+                    AdoptionFlagTemp: runtimeManagedArgumentFlagTemp));
+        }
     }
 
     // This callee's own ReturnsRuntimeManaged bit (read below from its closure value in
@@ -12177,8 +12223,10 @@ public sealed partial class Lowering
         bool borrowsOnly,
         bool transfersFreshRuntimeArgument,
         bool calleeResultMayReachThisParameter,
+        out bool retainedForCalleeResult,
         ref int argumentTemp)
     {
+        retainedForCalleeResult = false;
         if (borrowsOnly
             || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out int pendingParameterSlot))
         {
@@ -12215,8 +12263,12 @@ public sealed partial class Lowering
             // may keep this argument alive past the call. This is skipped for a still-pending TCO
             // parameter (pendingParameterSlot >= 0): its runtime-managed classification isn't settled
             // yet, and forcing a retain here would dup a value that finalization may yet decide
-            // carries no RC header at all.
-            argumentTemp = calleeResultMayReachThisParameter && pendingParameterSlot < 0
+            // carries no RC header at all. A callee that does not adopt the forced retain (its bit
+            // reads false at runtime) leaves the extra reference with its result; the caller
+            // releases it after the call wherever the result's normalization copied the result
+            // outright and so kept nothing of the argument.
+            retainedForCalleeResult = calleeResultMayReachThisParameter && pendingParameterSlot < 0;
+            argumentTemp = retainedForCalleeResult
                 ? EmitRuntimeManagedArgumentRetain(argumentTemp, argumentType)
                 : EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
         }
@@ -12427,21 +12479,38 @@ public sealed partial class Lowering
             && !calleeCompiledResultVerifiedRuntimeManaged
             && _genericDeepCopiedListTemps.Contains(temp);
 
+    // A runtime-managed reference the caller hands to a call and settles after it. A plain
+    // consumed argument (AdoptionFlagTemp < 0) is a fresh value released once the result is
+    // normalized. A reference handed over for the callee's result to keep — a transferred fresh
+    // argument, or the retain of a named argument the callee's result may alias — carries the
+    // callee's argument-adoption flag: an adopting callee consumes the reference itself, and
+    // otherwise it is released only where the result's normalization copied the result outright.
+    private readonly record struct ConsumedRuntimeArgument(
+        int Temp,
+        TypeRef Type,
+        bool PreserveEscapedChildren,
+        int AdoptionFlagTemp = -1);
+
     // `elementCopyingFlagTemp` is the call's result-ownership flag when the result's conditional
     // list copy-out copies the heads on its arena branch (-1 otherwise): on that branch the
     // consumed argument's parts are released with it, since the copied result shares nothing;
     // only the owned branch, whose reference-counted result may still hold those parts, keeps
     // the child-preserving release. `resultCopiedWithElements` says the same of an unconditional
-    // list copy-out, after which the parts are released outright.
+    // list copy-out, after which the parts are released outright. `resultCopySeversArgumentReferences`
+    // says the result holds no argument reference at all once copied — on the copy branch of the
+    // conditional copy-out `resultCopyFlagTemp` selects (-1 for an unconditional copy or a scalar
+    // result) — which is where a reference handed over for the result to keep is released.
     private void LowerCallDropConsumedRuntimeArguments(
         TypeRef resultType,
-        IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        IReadOnlyList<ConsumedRuntimeArgument> consumedRuntimeArguments,
         bool calleeCompiledResultVerifiedRuntimeManaged,
         bool resultNormalized,
         bool resultDeepCopied,
         bool calleeResultPoisoned,
         int elementCopyingFlagTemp = -1,
-        bool resultCopiedWithElements = false)
+        bool resultCopiedWithElements = false,
+        bool resultCopySeversArgumentReferences = false,
+        int resultCopyFlagTemp = -1)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -12449,48 +12518,103 @@ public sealed partial class Lowering
         }
 
         HashSet<int> dropped = [];
-        foreach ((int temp, TypeRef type, bool preserveEscapedChildren) in consumedRuntimeArguments)
+        foreach (ConsumedRuntimeArgument argument in consumedRuntimeArguments)
         {
-            TypeRef valueType = Prune(type);
-            if (CanArenaReset(valueType)
-                || !dropped.Add(temp)
-                || ConsumedDeepCopiedListStaysWithCallee(
+            int temp = argument.Temp;
+            TypeRef valueType = Prune(argument.Type);
+            if (CanArenaReset(valueType) || !dropped.Add(temp))
+            {
+                continue;
+            }
+
+            if (argument.AdoptionFlagTemp >= 0)
+            {
+                if (resultCopySeversArgumentReferences)
+                {
+                    EmitHandedOverArgumentRelease(temp, valueType, argument.AdoptionFlagTemp, resultCopyFlagTemp);
+                }
+
+                continue;
+            }
+
+            if (!ConsumedDeepCopiedListStaysWithCallee(
                     temp,
                     calleeCompiledResultVerifiedRuntimeManaged,
                     resultNormalized,
                     calleeResultPoisoned))
             {
-                continue;
+                LowerCallDropConsumedRuntimeArgument(
+                    temp,
+                    valueType,
+                    argument.PreserveEscapedChildren,
+                    calleeCompiledResultVerifiedRuntimeManaged,
+                    resultDeepCopied,
+                    elementCopyingFlagTemp,
+                    resultCopiedWithElements);
             }
+        }
+    }
 
-            if (valueType is TypeRef.TFun)
+    private void LowerCallDropConsumedRuntimeArgument(
+        int temp,
+        TypeRef valueType,
+        bool preserveEscapedChildren,
+        bool calleeCompiledResultVerifiedRuntimeManaged,
+        bool resultDeepCopied,
+        int elementCopyingFlagTemp,
+        bool resultCopiedWithElements)
+    {
+        if (valueType is TypeRef.TFun)
+        {
+            Emit(new IrInst.CleanupResource(temp, "Function"));
+            Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
+        }
+        else if (preserveEscapedChildren && !calleeCompiledResultVerifiedRuntimeManaged && !resultDeepCopied && !resultCopiedWithElements)
+        {
+            // The callee's result is arena-placed (or unresolved): it may carry raw,
+            // unretained references to this argument's parts, so give up only the references
+            // the caller still owns. A verified runtime-managed result copied or retained
+            // whatever it kept, and a deep-copied result copied every element and its parts
+            // out of the window, so the plain deep release below is both safe and required —
+            // skipping head drops there leaks one reference per kept part (caught by the
+            // consumed-tuple-head RSS plateau test and the generic append churn fixture).
+            if (elementCopyingFlagTemp >= 0)
             {
-                Emit(new IrInst.CleanupResource(temp, "Function"));
-                Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
-            }
-            else if (preserveEscapedChildren && !calleeCompiledResultVerifiedRuntimeManaged && !resultDeepCopied && !resultCopiedWithElements)
-            {
-                // The callee's result is arena-placed (or unresolved): it may carry raw,
-                // unretained references to this argument's parts, so give up only the references
-                // the caller still owns. A verified runtime-managed result copied or retained
-                // whatever it kept, and a deep-copied result copied every element and its parts
-                // out of the window, so the plain deep release below is both safe and required —
-                // skipping head drops there leaks one reference per kept part (caught by the
-                // consumed-tuple-head RSS plateau test and the generic append churn fixture).
-                if (elementCopyingFlagTemp >= 0)
-                {
-                    EmitConsumedArgumentDropByResultBranch(temp, valueType, elementCopyingFlagTemp);
-                }
-                else
-                {
-                    EmitRuntimeManagedChildPreservingDrop(temp, valueType);
-                }
+                EmitConsumedArgumentDropByResultBranch(temp, valueType, elementCopyingFlagTemp);
             }
             else
             {
-                EmitRuntimeManagedChildDrop(temp, valueType);
+                EmitRuntimeManagedChildPreservingDrop(temp, valueType);
             }
         }
+        else
+        {
+            EmitRuntimeManagedChildDrop(temp, valueType);
+        }
+    }
+
+    // Releases a reference handed to the callee for its result to keep, now that the caller has
+    // copied the result outright and the copy holds none of it. An adopting callee (the adoption
+    // flag reads true) consumed the reference itself, and on the owned branch of a conditional
+    // copy-out (the result flag reads true) the callee's own reference-counted result may still
+    // hold it, so both keep the reference where it is.
+    private void EmitHandedOverArgumentRelease(int temp, TypeRef valueType, int adoptionFlagTemp, int resultCopyFlagTemp)
+    {
+        string notAdoptedLabel = NewLabel("rc_handed_over_not_adopted");
+        string doneLabel = NewLabel("rc_handed_over_done");
+        Emit(new IrInst.JumpIfFalse(adoptionFlagTemp, notAdoptedLabel));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(notAdoptedLabel));
+        if (resultCopyFlagTemp >= 0)
+        {
+            string copiedLabel = NewLabel("rc_handed_over_copied");
+            Emit(new IrInst.JumpIfFalse(resultCopyFlagTemp, copiedLabel));
+            Emit(new IrInst.Jump(doneLabel));
+            Emit(new IrInst.Label(copiedLabel));
+        }
+
+        EmitRuntimeManagedChildDrop(temp, valueType);
+        Emit(new IrInst.Label(doneLabel));
     }
 
     // The consumed argument's release chosen by the call's result branch: the owned branch (the
