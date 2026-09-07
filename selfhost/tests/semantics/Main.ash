@@ -41,6 +41,7 @@ import CoreLoweringTests
 import CoreProgramLoweringTests
 import FunctionFieldLoweringTests
 import ResultPipeLoweringTests
+import CapabilityProgramLoweringTests
 import CoreBuiltinLoweringTests
 import CoreExternalLoweringTests
 import CoreCapabilityLoweringTests
@@ -106,6 +107,7 @@ let run unit =
     |> (given (_) -> CoreProgramLoweringTests.runCoreProgramLoweringTests(Unit))
     |> (given (_) -> FunctionFieldLoweringTests.runFunctionFieldLoweringTests(Unit))
     |> (given (_) -> ResultPipeLoweringTests.runResultPipeLoweringTests(Unit))
+    |> (given (_) -> CapabilityProgramLoweringTests.runCapabilityProgramLoweringTests(Unit))
     |> (given (_) -> CoreBuiltinLoweringTests.runCoreBuiltinLoweringTests(Unit))
     |> (given (_) -> CoreExternalLoweringTests.runCoreExternalLoweringTests(Unit))
     |> (given (_) -> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests(Unit))

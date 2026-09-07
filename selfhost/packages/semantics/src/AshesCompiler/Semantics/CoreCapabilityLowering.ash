@@ -212,7 +212,7 @@ let recursive emitCurriedClosureCalls (currentTemp: Int) (startTemp: Int) (argTe
                         append(instructions)([callInst])
                     )
 
-let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int) (opIndex: Int) (globalCount: Int) (startTemp: Int) (startLocal: Int) (argTemps: List(Int)) (resultType: SemanticType) =
+let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int) (opIndex: Int) (globalCount: Int) (startTemp: Int) (startLocal: Int) (argTemps: List(Int)) (resultType: SemanticType) (panicLabel: Str) =
     (let frameTemp = startTemp
     in
         let zeroTemp = startTemp + 1
@@ -251,7 +251,7 @@ let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int
                                                                         in
                                                                             let resultTemp = afterCallTemp
                                                                             in
-                                                                                let panicMessage = "Unhandled capability operation '" + capabilityName + "." + opName + "'."
+                                                                                let panicMessage = panicLabel
                                                                                 in
                                                                                     let finalInstructions =
                                                                                         append(

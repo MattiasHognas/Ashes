@@ -16,6 +16,8 @@ import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.LetBindingSyntax
 import AshesCompiler.Frontend.Syntax.TopLevelItem
 import AshesCompiler.Frontend.Syntax.ProgramSyntax
+import AshesCompiler.Frontend.Syntax.CapabilityDecl
+import AshesCompiler.Frontend.Syntax.CapabilityOperation
 import AshesCompiler.Frontend.Syntax.TypeDecl
 import AshesCompiler.Frontend.Syntax.TypeConstructor
 import AshesCompiler.Frontend.Syntax.TypeParameter
@@ -141,6 +143,9 @@ type CoreLoweringError =
     | UnsupportedTypeDeclaration(Str)
     | CoreMatchCoverageError(Str)
     | ReservedTypeName(Str)
+    | ReservedCapabilityName(Str)
+    | DuplicateCapabilityName(Str)
+    | DuplicateCapabilityOperationName(Str, Str)
     | PerformTargetNotCapabilityOperation(Str)
     | ResourceUseAfterClose(Str)
     | ResourceUseAfterMove(Str)
@@ -339,6 +344,7 @@ type CoreLoweringState =
     | capabilityLayouts: List(CoreCapabilityLayout)
     | staticProviders: List(CoreStaticProviderLayout)
     | capabilityGlobalCount: Int
+    | capabilityOperationSchemes: List((Str, Str, TypeScheme))
     | nextTemp: Int
     | nextLocal: Int
     | nextLambdaId: Int
@@ -680,6 +686,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         capabilityLayouts = capabilityLayouts,
         staticProviders = staticProviders,
         capabilityGlobalCount = capabilityGlobalCount,
+        capabilityOperationSchemes = [],
         nextTemp = 0,
         nextLocal = 0,
         retiredLocals = [],
@@ -13871,6 +13878,36 @@ let collectCapabilityPost globalCount capabilityIndex state =
                                                                                     |> emit(Label(skipLabel))
                                                                                     |> success(-1)(SemNever)
 
+let recursive curriedCallType (argumentTypes: List(SemanticType)) (resultType: SemanticType) =
+    match argumentTypes with
+        | [] -> resultType
+        | argumentType :: rest ->
+            SemFunction(argumentType)(curriedCallType(rest)(resultType))(None)
+
+let recursive findCapabilityOperationScheme (capName: Str) (opName: Str) (schemes: List((Str, Str, TypeScheme))) =
+    match schemes with
+        | [] -> None
+        | (candidateCap, candidateOp, scheme) :: rest ->
+            if candidateCap == capName && candidateOp == opName
+            then Some(scheme)
+            else findCapabilityOperationScheme(capName)(opName)(rest)
+
+// A perform site's result type: the operation's declared signature instantiated and unified with
+// the lowered arguments' types, or a fresh variable for an operation without a recorded scheme.
+let performResultType (capName: Str) (opName: Str) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match freshType(state) with
+        | FreshType { state = resultState, semanticType = resultType } ->
+            match findCapabilityOperationScheme(capName)(opName)(state.capabilityOperationSchemes) with
+                | None -> (resultState, resultType, None)
+                | Some(scheme) ->
+                    match instantiate(scheme)(resultState.typeSupply) with
+                        | InstantiationResult { semanticType = operationType, supply = nextSupply } ->
+                            match resultState
+                            |> withTypeSupply(nextSupply)
+                            |> bindType(operationType)(curriedCallType(argumentTypes)(resultType)) with
+                                | (failedState, Some(error)) -> (failedState, resultType, Some(error))
+                                | (boundState, None) -> (boundState, resolveType(boundState)(resultType), None)
+
 let lowerPerform operation lower state =
     match collectCallSpine(operation) with
         | CoreCallSpine { root = ExprQualifiedVar(capName, opName), arguments = arguments } ->
@@ -13937,26 +13974,29 @@ let lowerPerform operation lower state =
                                             | Some(opIndex) ->
                                                 match lowerCoreValues(arguments)(lower)(state) with
                                                     | LoweredCoreValues { state = argFailedState, error = Some(error) } -> failure(argFailedState)(error)
-                                                    | LoweredCoreValues { state = valuesState, temps = argTemps, error = None } ->
-                                                        match valuesState with
-                                                            | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
-                                                                let resType = SemNamed(0)("Unit")([])
-                                                                in
-                                                                    match emitDynamicPerform(capName)(opName)(layout.index)(opIndex)(globalCount)(startTemp)(startLocal)(argTemps)(resType) with
-                                                                        | CoreCapabilityPerformEmission { instructions = performInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resultSemType, error = None } ->
-                                                                            let emittedState =
-                                                                                valuesState
-                                                                                |> emitInstructions(performInstrs)
-                                                                                |> withNextTemp(endTemp)
-                                                                                |> withNextLocal(endLocal)
-                                                                            in
-                                                                                match collectCapabilityPost(globalCount)(layout.index)(emittedState) with
-                                                                                    | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
-                                                                                    | LoweredCoreValue { state = postCollectedState, error = None } -> success(resTemp)(resultSemType)(postCollectedState)
-                                                                        | _ ->
-                                                                            opName
-                                                                            |> CoreUnhandledCapabilityOperation(capName)
-                                                                            |> failure(valuesState)
+                                                    | LoweredCoreValues { state = valuesState, temps = argTemps, semanticTypes = argTypes, error = None } ->
+                                                        match performResultType(capName)(opName)(argTypes)(valuesState) with
+                                                            | (failedTypeState, _resType, Some(error)) -> failure(failedTypeState)(error)
+                                                            | (typedState, resType, None) ->
+                                                                match internString("Unhandled capability operation '" + capName + "." + opName + "'.")(typedState) with
+                                                                    | StringInterning { state = internedState, label = panicLabel } ->
+                                                                        match internedState with
+                                                                            | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
+                                                                                match emitDynamicPerform(capName)(opName)(layout.index)(opIndex)(globalCount)(startTemp)(startLocal)(argTemps)(resType)(panicLabel) with
+                                                                                    | CoreCapabilityPerformEmission { instructions = performInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resultSemType, error = None } ->
+                                                                                        let emittedState =
+                                                                                            internedState
+                                                                                            |> emitInstructions(performInstrs)
+                                                                                            |> withNextTemp(endTemp)
+                                                                                            |> withNextLocal(endLocal)
+                                                                                        in
+                                                                                            match collectCapabilityPost(globalCount)(layout.index)(emittedState) with
+                                                                                                | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
+                                                                                                | LoweredCoreValue { state = postCollectedState, error = None } -> success(resTemp)(resultSemType)(postCollectedState)
+                                                                                    | _ ->
+                                                                                        opName
+                                                                                        |> CoreUnhandledCapabilityOperation(capName)
+                                                                                        |> failure(internedState)
                                             | None ->
                                                 opName
                                                 |> CoreUnhandledCapabilityOperation(capName)
@@ -15098,6 +15138,19 @@ let lowerGeneralCall expression function argument lower state =
                     |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
                     |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
 
+// A call whose root qualifies an operation with a registered capability or a static provider is
+// the implicit form of `perform`, and lowers as the operation call.
+let isCapabilityOperationCall expression (state: CoreLoweringState) =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar(capName, _opName), arguments = _argument :: _rest } ->
+            match findCapabilityLayout(capName)(state.capabilityLayouts) with
+                | Some(_layout) -> true
+                | None ->
+                    match findStaticProvider(capName)([])(state.staticProviders) with
+                        | Some(_provider) -> true
+                        | None -> false
+        | _other -> false
+
 let lowerCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
@@ -15114,7 +15167,15 @@ let lowerCallExpression expression function argument lower state =
                     |> clearConsumerRequest
                     |> tryLowerExternalCall(expression)(lower) with
                         | Some(lowered) -> lowered
-                        | None -> lowerGeneralCall(expression)(function)(argument)(lower)(state)
+                        | None ->
+                            if isCapabilityOperationCall(expression)(state)
+                            then
+                                state
+                                |> clearConsumerRequest
+                                |> lowerPerform(expression)(lower)
+                                |> unifyOptionalExpectedResult(expectedTypeOf(state))
+                                |> locateLoweredMismatch(argumentSiteOf(state))
+                            else lowerGeneralCall(expression)(function)(argument)(lower)(state)
 
 let lowerCoreDispatch expression lowerCore state =
     match expression with
@@ -15919,6 +15980,94 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                                     | Ok(newLayouts) ->
                                                         Ok((state with constructorLayouts = append(existingLayouts)(decideTaglessLayouts(state)(existingLayouts)(newLayouts)), typeSupply = nextSupply))
 
+// The runtime capabilities the compiler provides itself; a user `capability` may not redeclare one.
+let isReservedCapabilityName name =
+    match name with
+        | "ConsoleIO" -> true
+        | "FileRead" -> true
+        | "FileWrite" -> true
+        | "ProcessSpawn" -> true
+        | "ProcessExit" -> true
+        | "TimeRead" -> true
+        | "EnvironmentRead" -> true
+        | "Entropy" -> true
+        | "UnsafeFfi" -> true
+        | "NetListen" -> true
+        | "NetConnect" -> true
+        | "Stop" -> true
+        | _ -> false
+
+let recursive capabilityOperationLayouts (capabilityName: Str) (operations: List(CapabilityOperation)) (index: Int) (reversed: List(CoreCapabilityOperationLayout)) =
+    match operations with
+        | [] ->
+            reversed
+            |> reverse
+            |> Ok
+        | CapabilityOperation { name = name } :: rest ->
+            match findCapabilityOperationIndex(name)(reversed) with
+                | Some(_existing) ->
+                    name
+                    |> DuplicateCapabilityOperationName(capabilityName)
+                    |> Error
+                | None -> capabilityOperationLayouts(capabilityName)(rest)(index + 1)(CoreCapabilityOperationLayout(name = name, index = index) :: reversed)
+
+// An operation's declared signature as a scheme quantified over the capability's own type
+// parameters; an unsigned operation, or one whose signature this resolver cannot express, gets no
+// scheme and is typed by a fresh variable at each perform site.
+let recursive capabilityOperationSchemes (capabilityName: Str) (operations: List(CapabilityOperation)) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) =
+    match operations with
+        | [] -> []
+        | CapabilityOperation { name = name, signature = signature } :: rest ->
+            match signature with
+                | None -> capabilityOperationSchemes(capabilityName)(rest)(quantified)(parameterTypes)
+                | Some(typeExpr) ->
+                    match typeExprToSemanticType(typeExpr)(parameterTypes) with
+                        | None -> capabilityOperationSchemes(capabilityName)(rest)(quantified)(parameterTypes)
+                        | Some(operationType) -> (capabilityName, name, TypeScheme(quantified = quantified, body = operationType, constraints = [])) :: capabilityOperationSchemes(capabilityName)(rest)(quantified)(parameterTypes)
+
+// Registers one `CoreCapabilityLayout` per top-level `capability` declaration, numbered in
+// declaration order: the number is the capability's handler-evidence global, and the operations
+// are numbered in declaration order within the handler frame. The operations' signatures are
+// recorded for the perform sites.
+let registerTopLevelCapabilityDeclaration (declaration: CapabilityDecl) (state: CoreLoweringState) =
+    match declaration with
+        | CapabilityDecl { name = name, typeParameters = typeParameters, operations = operations } ->
+            if isReservedCapabilityName(name)
+            then Error(ReservedCapabilityName(name))
+            else
+                match findCapabilityLayout(name)(state.capabilityLayouts) with
+                    | Some(_existing) -> Error(DuplicateCapabilityName(name))
+                    | None ->
+                        match capabilityOperationLayouts(name)(operations)(0)([]) with
+                            | Error(error) -> Error(error)
+                            | Ok(operationLayouts) ->
+                                match assignTypeParameterIds(typeParameters)(state.typeSupply) with
+                                    | (namedIds, nextSupply) ->
+                                        let schemes =
+                                            namedIds
+                                            |> typeParameterResolutionTable
+                                            |> capabilityOperationSchemes(name)(operations)(typeParameterQuantified(namedIds))
+                                        in Ok((state with capabilityLayouts = append(state.capabilityLayouts)([CoreCapabilityLayout(name = name, index = state.capabilityGlobalCount, operations = operationLayouts)]), capabilityGlobalCount = state.capabilityGlobalCount + 1, capabilityOperationSchemes = append(state.capabilityOperationSchemes)(schemes), typeSupply = nextSupply))
+
+// Every capability declaration is registered before any value is lowered: a perform site sizes
+// its handler frame and addresses the post registers by the program's total capability count.
+let recursive registerProgramCapabilities (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match items with
+        | [] -> Ok(state)
+        | TopLevelAt(_span, inner) :: rest -> registerProgramCapabilities(inner :: rest)(state)
+        | TopLevelCapability(declaration) :: rest ->
+            match registerTopLevelCapabilityDeclaration(declaration)(state) with
+                | Error(error) -> Error(error)
+                | Ok(nextState) -> registerProgramCapabilities(rest)(nextState)
+        | _other :: rest -> registerProgramCapabilities(rest)(state)
+
+// Stage 0's `CapabilityHandlerGlobals`: one evidence global per capability plus the post register
+// and the live-post counter, or none at all for a program without capabilities.
+let capabilityHandlerGlobalCount (state: CoreLoweringState) =
+    if state.capabilityGlobalCount == 0
+    then 0
+    else state.capabilityGlobalCount + 2
+
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
 // `let recursive ... and ...` group has no expression-level representation (the language only
@@ -15926,7 +16075,9 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
 // members must go through lowerPreparedRecursiveGroupWith's own member/continuation split, with
 // "the rest of the program" supplied as the continuation lower rather than as a literal Expr — the
 // continuation lower ignores the placeholder body it's handed and lowers the remaining items
-// instead. Type, external, capability, provider, trait, and implementation declarations are
+// instead. Capability declarations are registered ahead of the value chain by
+// `registerProgramCapabilities`; type declarations register their layouts in place; external,
+// provider, trait, and implementation declarations are
 // registered ahead of lowering by inference and are not part of the value chain, so they are
 // skipped here rather than lowered. `environment` is `Some` only from lowerCoreProgramWithEnvironment
 // — it enables trait-constrained-value rewriting for plain (non-recursive) top-level lets only;
@@ -15994,6 +16145,11 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                                     outerBindings
                                 )
         | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(state)
+
+let lowerProgramWithCapabilities items trailingBody environment state =
+    match registerProgramCapabilities(items)(state) with
+        | Error(error) -> failure(state)(error)
+        | Ok(registered) -> lowerCoreProgramItems(items)(trailingBody)([])(environment)(registered)
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.
@@ -16158,7 +16314,7 @@ let buildProgram lowered =
                                                         usesConcatStr = usesConcatStr,
                                                         usesClosures = hasFunctions(functions),
                                                         usesAsync = false,
-                                                        capabilityHandlerGlobals = 0,
+                                                        capabilityHandlerGlobals = capabilityHandlerGlobalCount(state),
                                                         traitEvidence = emptyTraitEvidenceAnnotations
                                                     )
                                                     |> placeLifetimes
@@ -16191,7 +16347,7 @@ let lowerCoreProgram (program: ProgramSyntax) =
                 |> initialState
                 |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
                 |> withProgramParameterOwnership(program)
-                |> lowerCoreProgramItems(items)(trailingBody)([])(None)
+                |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
 
 // As lowerCoreProgramWithSource, but with caller-supplied `CoreConstructorLayout`/`CoreBuiltinLayout`
@@ -16218,7 +16374,7 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items))
                 |> withProgramParameterOwnership(program)
-                |> lowerCoreProgramItems(items)(trailingBody)([])(None)
+                |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
 
 // As lowerCoreProgramWithSource, with stage 0's `LoweringConfiguration.EnableReuse` switch: with
@@ -16238,7 +16394,7 @@ let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (sou
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items), reuseEnabled = reuseEnabled)
                 |> withProgramParameterOwnership(program)
-                |> lowerCoreProgramItems(items)(trailingBody)([])(None)
+                |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
 
 // As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
@@ -16264,7 +16420,7 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
                 |> initialState
                 |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
                 |> withProgramParameterOwnership(program)
-                |> lowerCoreProgramItems(items)(trailingBody)([])(Some(environment))
+                |> lowerProgramWithCapabilities(items)(trailingBody)(Some(environment))
                 |> buildProgram
 
 let lowerCoreExpression expression =

@@ -178,6 +178,7 @@ type CodegenContext =
     | liftedFunctions: List((Str, LLVMValueRef))
     | closureFunctionType: LLVMTypeRef
     | envpGlobal: LLVMValueRef
+    | capabilityHandlerGlobals: List((Int, LLVMValueRef))
     | consoleGlobals: ConsoleGlobals
     | arenaRuntime: ArenaRuntime
     | copyRuntime: Maybe(CopyRuntime)
@@ -195,6 +196,7 @@ type ModuleCodegen =
     | moduleLiftedFunctions: List((Str, LLVMValueRef))
     | moduleClosureFunctionType: LLVMTypeRef
     | moduleEnvpGlobal: LLVMValueRef
+    | moduleCapabilityHandlerGlobals: List((Int, LLVMValueRef))
     | moduleConsoleGlobals: ConsoleGlobals
     | moduleArenaRuntime: ArenaRuntime
     | moduleCopyRuntime: Maybe(CopyRuntime)
@@ -215,6 +217,24 @@ let closureFunctionTypeOf i64 = functionType(i64)([i64, i64, i64])(3u32)(false)
 // GOT-relative load (`R_X86_64_REX_GOTPCRELX`) that no GOT exists to satisfy here, whereas an
 // internal symbol's address is a plain `.text`-relative reference and its `call` sites need no
 // relocation at all.
+// Dynamically-scoped handler-evidence slots: one zero-initialized `internal` module global per
+// declared capability (plus the post register and live-post counter lowering appends), holding
+// the innermost installed handler frame pointer, `0` for none. Indexed by the capability index
+// `LoadCapabilityHandler`/`StoreCapabilityHandler` name.
+let recursive defineCapabilityHandlerGlobals module_ i64 index count =
+    if index >= count
+    then []
+    else
+        let global = addGlobal(module_)(i64)("__ashes_capability_handler_" + Ashes.Text.fromInt(index))
+        in
+            let _ =
+                false
+                |> constInt(i64)(0u64)
+                |> setInitializer(global)
+            in
+                let _ = setLinkage(global)(linkageInternal)
+                in (index, global) :: defineCapabilityHandlerGlobals(module_)(i64)(index + 1)(count)
+
 let recursive declareLiftedFunctions module_ closureFnType functions =
     match functions with
         | [] -> []
@@ -728,6 +748,14 @@ let codegenInstructionKind cx builder kind state =
                                             in (tempEnv, terminated)
                                         | LoadLocal(target, slot) ->
                                             ((target, buildLoad(builder)(i64)(lookupIndexed(slot)(localSlots))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | LoadCapabilityHandler(target, capabilityIndex) ->
+                                            ((target, buildLoad(builder)(i64)(lookupIndexed(capabilityIndex)(cx.capabilityHandlerGlobals))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | StoreCapabilityHandler(capabilityIndex, source) ->
+                                            let _ =
+                                                cx.capabilityHandlerGlobals
+                                                |> lookupIndexed(capabilityIndex)
+                                                |> buildStore(builder)(lookupIndexed(source)(tempEnv))
+                                            in (tempEnv, terminated)
                                         | Label(name) ->
                                             let labelBlock = lookupIndexed(name)(labelBlocks)
                                             in
@@ -1598,6 +1626,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         liftedFunctions = liftedFunctions,
                                                         closureFunctionType = closureFnType,
                                                         envpGlobal = mc.moduleEnvpGlobal,
+                                                        capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
                                                         consoleGlobals = mc.moduleConsoleGlobals,
                                                         arenaRuntime = arena,
                                                         copyRuntime = mc.moduleCopyRuntime,
@@ -1705,7 +1734,7 @@ let recursive functionsUseBigInt functions =
 // `.text` offset `0`; its body is emitted LAST, after every lifted function, purely so the
 // lifted-function lookups it needs (`MakeClosure`/`CallKnown` naming a label) resolve the same
 // way a lifted body's own do.
-let codegenFunctions name context entryFunction functions stringLiterals =
+let codegenFunctions name context entryFunction functions stringLiterals capabilityHandlerGlobalCount =
     (let module_ = createModule(name)(context)
     in
         let types = coreLlvmTypes(context)
@@ -1744,6 +1773,7 @@ let codegenFunctions name context entryFunction functions stringLiterals =
                                                         moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
                                                         moduleClosureFunctionType = closureFnType,
                                                         moduleEnvpGlobal = envpGlobal,
+                                                        moduleCapabilityHandlerGlobals = defineCapabilityHandlerGlobals(module_)(types.i64)(0)(capabilityHandlerGlobalCount),
                                                         moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
                                                         moduleArenaRuntime = arena,
                                                         moduleCopyRuntime = if usesCopy
@@ -1767,9 +1797,9 @@ let codegenFunctions name context entryFunction functions stringLiterals =
                                                         in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
-let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)
+let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)
 
 // A whole lowered program: its entry function plus every lifted helper it contains.
 let codegenProgram name context program =
     match program with
-        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals } -> codegenFunctions(name)(context)(entryFunction)(functions)(stringLiterals)
+        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } -> codegenFunctions(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)
