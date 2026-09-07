@@ -547,6 +547,26 @@ same public behavior.
   until it lands, the selfhost rejects `==` on a list of a `deriving {Eq}` record
   (`tests/reuse_specialization_declines_unreachable_helper.ash`, `CoreOperatorTypeMismatch` on
   `List(Live)`), the one shared fixture that needs a derived implementation at run time.
+- [ ] **TRT-16** Stage 0: share one concrete dictionary per trait and type instead of rebuilding
+  it at every use. Every `==`, `show`, `compare`, or `hash` on a derived type rewrites the whole
+  nested dictionary value at the call site, closures for each method of each nested type
+  included, so the emitted program grows linearly with the number of uses of a large derived type
+  rather than with the number of types: a three-level derived type costs about 660 functions,
+  19,000 IR lines, and 1 MB of binary per use (`tmp` probe with one and four `==`/`show`
+  sites: 665 and 2,654 functions, 1.0 MB and 4.1 MB at -O0), and the self-hosted semantics test
+  program (`selfhost/tests/semantics`) is 79,348 functions and 4.06 million IR lines, of which
+  78,713 functions and 3.65 million lines are byte-identical copies of another function after
+  masking numbers; 1.2 million lines carry `Ashes.Trait` source locations and another 1.4
+  million the derived instances of `Types.ash` and `Token.ash`. Its stage-0 compile went from
+  36 s at `--debug` and about 100 s at the default level on 2026-08-26 (12 to 17 MB and 1.4 to
+  2.5 MB binaries) to 4.5 min and 10.6 min on 2026-09-07 (212 MB and 53 MB), with a 14 GB peak
+  resident set, all of it in LLVM's code generation of the duplicated instances; the source grew
+  1.8x in the same period. Hoist each concrete dictionary (its method closures and nested
+  supertrait dictionaries) into one program-level construction per trait and type, reference it
+  from every use, and port the shared form to the self-hosted trait lowering (TRT-13 to TRT-15)
+  rather than the per-use form. Track the stage-0 compile time and peak resident set of the
+  self-hosted packages in the phase benchmark (BOOT-8) so the next drift is caught at a
+  milestone close.
 
 #### Modules, projects, externals, and whole-program semantics
 
@@ -2146,8 +2166,8 @@ same public behavior.
   parameter walks descend into arrows, and the rejection message names the arrow among the
   supported field types; nothing downstream needed changing — `HeapLayoutClassification.ash`
   already classified a function child as `UnsupportedChildDrop`/`NoStructuralCopy` (stage 0's
-  rule: the closure child is never dropped or copied structurally), the single-constructor record
-  is tagless, and the closure word is stored and loaded like any field.
+  rule before OPT-49b: the closure child is never dropped or copied structurally, see OPT-52), the
+  single-constructor record is tagless, and the closure word is stored and loaded like any field.
   `tests/consumed_argument_captured_by_lambda.ash` prints `41337792` through the built
   self-hosted compiler (peak RSS 38.9 MB against stage 0's 41.0 MB). Its lowered IR differs from
   stage 0's only in the loop back edge, where stage 0 emits a `CleanupResource TypeName=Function`
@@ -2202,6 +2222,18 @@ same public behavior.
   2026-09-07). Either the constructor should adopt the normalized parameter as a fresh owned
   child on the reference-counted heap, or the site should request the arena form and the arm
   release the copy.
+- [ ] **OPT-52** Self-hosted mirror of OPT-49a and OPT-49b. Now that the three shapes compile
+  through the self-hosted compiler (OPT-49c), port the perform site adopting a handler arm's
+  reference-counted result by its returns bit (with CAP-10's arm-closure normalization and
+  returns-bit epilogue), and the closure child rule: `HeapLayoutClassification.ash` still
+  classifies a function child as `UnsupportedChildDrop`/`NoStructuralCopy`, stage 0's rule before
+  OPT-49b, so a record holding a closure over an entry-normalized parameter stays in the arena
+  and `tests/consumed_argument_captured_by_lambda.ash` leaks through the self-hosted compiler
+  (38.9 MB at 40000 iterations against stage 0's 8.2 MB plateau). The backend needs the
+  count-aware `RcDrop Function`, the runtime-managed bit 61 in the packed closure word, the
+  `CleanupResource` no-op on a reference-counted closure, and the dropper-free arena
+  `CopyOutClosure` of a reference-counted closure. Pin both fixtures as plateau programs through
+  the self-hosted compiler once they match.
 
 #### LLVM code generation and runtime integration
 
@@ -2640,7 +2672,9 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
 - [ ] **BOOT-8** Grow the standing phase benchmark (`selfhost/bench/`, see its README) with the port: add the
   `lower` row when the self-hosted core lowering accepts a whole program and make `optimize`
   two-sided, add the stage-2 column once stage 1 emits executables, and refresh the results table at
-  every milestone that changes a phase. The benchmark is also where stage-0 memory-model bugs surface
+  every milestone that changes a phase, and record the stage-0 compile time and peak resident set
+  of the self-hosted packages beside it (TRT-16 found a tenfold drift nobody measured). The
+  benchmark is also where stage-0 memory-model bugs surface
   first (four were found through it in one week), so a crashing corpus file is a bug to record, not a
   file to exclude silently.
 - [ ] **BOOT-9** Demonstrate acceptable compile time, peak memory, produced-code behavior, diagnostics, and tool
