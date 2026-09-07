@@ -12,7 +12,7 @@ namespace Ashes.TestRunner;
 /// </summary>
 public static class WinePersistentServer
 {
-    private const int IdleTimeoutSeconds = 30;
+    private const int IdleTimeoutSeconds = 15;
     private static readonly Lock SyncRoot = new();
     private static bool _started;
 
@@ -40,8 +40,8 @@ public static class WinePersistentServer
         }
     }
 
-    // The wineserver executable on the search path, or null when Wine is not installed.
-    private static string? ResolveWineServerPath()
+    // The named Wine executable on the search path, or null when Wine is not installed.
+    private static string? ResolveWinePath(string executable)
     {
         string? searchPath = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrEmpty(searchPath))
@@ -51,7 +51,7 @@ public static class WinePersistentServer
 
         foreach (string directory in searchPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            string candidate = Path.Combine(directory, "wineserver");
+            string candidate = Path.Combine(directory, executable);
             if (File.Exists(candidate))
             {
                 return Path.GetFullPath(candidate);
@@ -61,32 +61,45 @@ public static class WinePersistentServer
         return null;
     }
 
+    // Starts the server, then boots the prefix through a trivial Wine command run with this
+    // process's own standard handles. Wine's service processes are forked by the first client
+    // and inherit its handles for the server's lifetime; booted here they hold nothing a test
+    // waits on, whereas booted by a test program they would keep that program's output pipe open
+    // and block the runner's read of it until the server exits.
     private static void Start()
     {
-        string? serverPath = ResolveWineServerPath();
-        if (serverPath is null)
+        string? serverPath = ResolveWinePath("wineserver");
+        string? winePath = ResolveWinePath("wine");
+        if (serverPath is null || winePath is null)
         {
             return;
         }
 
         try
         {
-            var psi = new ProcessStartInfo(serverPath)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psi.ArgumentList.Add($"-p{IdleTimeoutSeconds}");
-            psi.Environment["WINEDEBUG"] = "-all";
-            using Process? server = Process.Start(psi);
-            // The server daemonizes and returns at once; a server already running for the prefix
-            // makes it exit with a message, which leaves that server in charge.
-            server?.WaitForExit(5000);
+            RunWineCommand(serverPath, [$"-p{IdleTimeoutSeconds}"]);
+            RunWineCommand(winePath, ["cmd", "/c", "exit"]);
         }
         catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
-            // No wineserver on the path: every program boots its own, as before.
+            // No usable Wine: every program boots its own server, as before.
         }
+    }
+
+    // Runs a Wine executable to completion without redirecting its output, so nothing it forks
+    // inherits a pipe. A server that is already running exits at once with a message, which
+    // leaves that server in charge.
+    private static void RunWineCommand(string path, string[] arguments)
+    {
+        var psi = new ProcessStartInfo(path) { UseShellExecute = false };
+        foreach (string argument in arguments)
+        {
+            psi.ArgumentList.Add(argument);
+        }
+
+        psi.Environment["WINEDEBUG"] = "-all";
+        psi.Environment["WINEDLLOVERRIDES"] = "mscoree,mshtml=d";
+        using Process? process = Process.Start(psi);
+        process?.WaitForExit(30000);
     }
 }

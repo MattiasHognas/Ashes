@@ -402,6 +402,6 @@ dotnet run --project src/Ashes.Tests -- --no-progress \
 Run the full compiler suite at phase boundaries. RSS tests are Linux-native;
 cross-target correctness still runs through qemu/Wine or structural target
 checks as described in the development guide. A `win-x64` test run on Linux starts one Wine
-server with a 30-second idle timeout before the first program (`wineserver -p30`), so the
+server with a 15-second idle timeout before the first program (`wineserver -p15`), so the
 programs share it instead of each booting and tearing down a server of their own; the server
 exits by itself after the run.
