@@ -1706,8 +1706,20 @@ same public behavior.
   against stage 0's 400000. The self-hosted `fmt` therefore still faults on the three sources
   whose token lists pass that bound (`TypeInference.ash`, `ProgramInference.ash`,
   `OwnershipInference.ash`); optimization-level selection is milestone 5's first item.
-- [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
-  and OS-backed allocations under the current no-GC contract.
+- [~] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
+  and OS-backed allocations under the current no-GC contract. Done, each under the item that
+  owns its mechanism: the scoped region (the arena, with its brackets, fixed-watermark
+  compaction, and back-edge resets; OPT-25), the reference-counted heap (the `{count, size}`
+  cells, retains, drops, droppers, and copiers; CG-6 and OPT-25's aggregate placements),
+  special resources (compiler-provided handles with deterministic cleanup; SEM-14), globals
+  (the `.bss` segment with the entry-captured environment pointer, and string literals under
+  the immortal sentinel; CG-7 and CG-6), and the OS-backed file view (`File.mmap`'s zero-copy
+  `Bytes`; LNK-4). Open: stack placement — the backend emits the stack forms (`AllocAdtStack`,
+  `MakeClosureStack`), but the lowering never chooses them, since stage 0's proof that a value
+  never escapes its frame is not ported; the persistent regions — the backend emits the
+  to-space and blob forms from hand-built IR only (see CG-4), and the lowering produces none
+  until OPT-42 reaches the reuse specialization; and the task and capability regions, which
+  belong to milestone 4 (CG-12, OPT-43) and are not started.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
   them. Done (2026-09-06): a generic callee's deep-copied list result shares nothing with the
   call's consumed arguments, so stage 0 releases them with their elements after the copy instead
