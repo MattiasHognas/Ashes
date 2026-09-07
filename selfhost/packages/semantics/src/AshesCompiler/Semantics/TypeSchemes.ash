@@ -124,16 +124,19 @@ let recursive quantifyVariables variables =
         | [] -> []
         | variableId :: tail -> (variableId, "t" + Ashes.Text.fromInt(variableId)) :: quantifyVariables(tail)
 
+// The environment's free variables are only needed to hold back candidates, so a type with no
+// candidate variables never scans the environment.
 let generalize environment semanticType constraints =
-    (let environmentVariables = freeEnvironmentVariables(environment)
+    (let candidateVariables = mergeVariables(freeTypeVariables(semanticType))(freeConstraintsVariables(constraints))
     in
-        let candidateVariables = mergeVariables(freeTypeVariables(semanticType))(freeConstraintsVariables(constraints))
+        let generalizedVariables =
+            match candidateVariables with
+                | [] -> []
+                | _ -> removeEnvironmentVariables(freeEnvironmentVariables(environment))(candidateVariables)
         in
-            let generalizedVariables = removeEnvironmentVariables(environmentVariables)(candidateVariables)
-            in
-                TypeScheme(quantified = quantifyVariables(
-                    generalizedVariables
-                ), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
+            TypeScheme(quantified = quantifyVariables(
+                generalizedVariables
+            ), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
 
 // Build the whole quantified-variable renaming from one supply before applying it to the body and
 // constraints, so separate instantiations cannot accidentally share inference variables.

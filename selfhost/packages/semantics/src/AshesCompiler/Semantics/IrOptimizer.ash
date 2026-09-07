@@ -1268,30 +1268,42 @@ let recursive returnedClosureLabel instructions singleDefs knownLabels current s
         | _ :: tail -> returnedClosureLabel(tail)(singleDefs)(knownLabels)(current)(sawReturn)
 
 // The one heap closure label every Return of the function provably yields, if any.
-let tryDetermineKnownReturnedClosureLabel (fn: IrFunction) knownLabels =
-    (let defCounts = countDefinitions(fn.instructions)([])
-    in
-        let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
-        in returnedClosureLabel(fn.instructions)(singleDefs)(knownLabels)(None)(false))
+// Every single-defined temp of the function mapped to its defining instruction, computed once
+// per function so the fixpoint rounds below and the per-function rewrites share it.
+let functionSingleDefinitions (fn: IrFunction) = collectSingleDefiningInstructions(fn.instructions)(countDefinitions(fn.instructions)([]))([])
 
-let recursive addKnownReturnedClosureLabels functions knownLabels changed =
+let recursive containsCallClosure instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CallClosure(_, _, _, _) } :: _ -> true
+        | _ :: tail -> containsCallClosure(tail)
+
+let recursive withSingleDefinitions functions acc =
     match functions with
+        | [] -> reverse(acc)
+        | fn :: rest -> withSingleDefinitions(rest)((fn, functionSingleDefinitions(fn)) :: acc)
+
+let recursive addKnownReturnedClosureLabels functionFacts knownLabels changed =
+    match functionFacts with
         | [] -> (knownLabels, changed)
-        | fn :: rest ->
+        | (fn, singleDefs) :: rest ->
             match lookupAssociation(functionLabel(fn))(knownLabels) with
                 | Some(_) -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
                 | None ->
-                    match tryDetermineKnownReturnedClosureLabel(fn)(knownLabels) with
+                    match returnedClosureLabel(fn.instructions)(singleDefs)(knownLabels)(None)(false) with
                         | Some(label) -> addKnownReturnedClosureLabels(rest)(setAssociation(functionLabel(fn))(label)(knownLabels))(true)
                         | None -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
 
+let recursive runKnownReturnedClosureLabels functionFacts knownLabels =
+    match addKnownReturnedClosureLabels(functionFacts)(knownLabels)(false) with
+        | (nextLabels, true) -> runKnownReturnedClosureLabels(functionFacts)(nextLabels)
+        | (nextLabels, false) -> nextLabels
+
 // Whole-program least fixpoint: each pass admits the functions whose returns resolve against the
 // labels known so far, so a chain of curried helpers converges over several passes while a
-// genuine cycle never does.
-let recursive computeKnownReturnedClosureLabels (functions: List(IrFunction)) knownLabels =
-    match addKnownReturnedClosureLabels(functions)(knownLabels)(false) with
-        | (nextLabels, true) -> computeKnownReturnedClosureLabels(functions)(nextLabels)
-        | (nextLabels, false) -> nextLabels
+// genuine cycle never does. Each function's single-definition facts are computed once, ahead of
+// every round.
+let computeKnownReturnedClosureLabels (functions: List(IrFunction)) knownLabels = runKnownReturnedClosureLabels(withSingleDefinitions(functions)([]))(knownLabels)
 
 // A CallClosure whose closure temp is the result of a CallKnown to a function with a known
 // returned label becomes a plain read of the closure object's environment word (offset 8, the
@@ -1318,13 +1330,12 @@ let recursive devirtualizeReturnedClosureCallsOnce insts singleDefs knownLabels 
 // fully in one optimization: each rewrite turns a CallClosure into a CallKnown that the next
 // CallClosure in the chain can resolve through.
 let recursive devirtualizeReturnedClosureCallsInFunction knownLabels (fn: IrFunction) =
-    (let defCounts = countDefinitions(fn.instructions)([])
-    in
-        let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
-        in
-            match devirtualizeReturnedClosureCallsOnce(fn.instructions)(singleDefs)(knownLabels)(fn.tempCount)([])(false) with
-                | (_, _, false) -> fn
-                | (rewritten, nextTemp, true) -> devirtualizeReturnedClosureCallsInFunction(knownLabels)((fn with instructions = rewritten, tempCount = nextTemp)))
+    if containsCallClosure(fn.instructions)
+    then
+        match devirtualizeReturnedClosureCallsOnce(fn.instructions)(functionSingleDefinitions(fn))(knownLabels)(fn.tempCount)([])(false) with
+            | (_, _, false) -> fn
+            | (rewritten, nextTemp, true) -> devirtualizeReturnedClosureCallsInFunction(knownLabels)((fn with instructions = rewritten, tempCount = nextTemp))
+    else fn
 
 let computeNonAllocatingFunctions (functions: List(IrFunction)) =
     (let initialCandidates =
@@ -2089,20 +2100,18 @@ let recursive devirtualizeCapturedClosureCallsPass (fnLabel: Str) singleDefs kno
         | head :: tail -> devirtualizeCapturedClosureCallsPass(fnLabel)(singleDefs)(knownCaptured)(tail)(nextTemp)(head :: acc)
 
 let devirtualizeCapturedClosureCallsInFunction knownCaptured (fn: IrFunction) =
-    if fn.hasEnvAndArgParams
+    if fn.hasEnvAndArgParams && containsCallClosure(fn.instructions)
     then
         match fn.coroutine with
             | Some(_) -> fn
             | None ->
-                let defCounts = countDefinitions(fn.instructions)([])
+                let singleDefs = functionSingleDefinitions(fn)
                 in
-                    let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
-                    in
-                        match devirtualizeCapturedClosureCallsPass(fn.label)(singleDefs)(knownCaptured)(fn.instructions)(fn.tempCount)([]) with
-                            | (rewritten, nextTemp) ->
-                                if nextTemp == fn.tempCount
-                                then fn
-                                else fn with instructions = rewritten, tempCount = nextTemp
+                    match devirtualizeCapturedClosureCallsPass(fn.label)(singleDefs)(knownCaptured)(fn.instructions)(fn.tempCount)([]) with
+                        | (rewritten, nextTemp) ->
+                            if nextTemp == fn.tempCount
+                            then fn
+                            else fn with instructions = rewritten, tempCount = nextTemp
     else fn
 
 let devirtualizeCapturedClosureCalls (entry: IrFunction) (functions: List(IrFunction)) =
