@@ -2538,6 +2538,16 @@ same public behavior.
   `ElfRelocatableObjects.cs` (and its `.Merge` and `.Writer` partials); the COFF counterpart
   (`CoffRelocatableObjects.cs`) is not implemented yet, so the Windows targets compile as one
   module.
+- [ ] **LNK-15** Stage 0, win-x64: two corpus programs fail to compile for the Windows target on
+  main (found 2026-09-07 running the whole corpus through Wine; both reproduce with the compiler
+  before the compile-speed changes). `capability_row_trait_generic_helper_keeps_open_tail.ash`:
+  `LLVM COFF text relocation targeted unsupported symbol '__imp_abs.1' in section 0` (LLVM
+  emits a call to the C `abs` libcall through an import thunk the PE linker does not provide;
+  either lower the integer absolute value without the libcall or add `abs` to the import
+  surface). `external_only_letin_trailing_expr.ash`: `Windows external symbol 'strlen' requires
+  an explicit DLL name` (the test declares a libc external the Windows backend cannot map; the
+  test needs a Windows DLL mapping or a `skip-on-target`). Both are unrelated to the
+  multi-object link.
 - [ ] **LNK-1** Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in
