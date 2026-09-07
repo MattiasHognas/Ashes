@@ -66,7 +66,24 @@ public sealed partial class Lowering
     private readonly List<ActiveTraitImplementationMethod> _activeTraitImplementationMethods = [];
     private readonly Dictionary<string, TypeRef> _generatedTraitRecursiveTypes =
         new(StringComparer.Ordinal);
-    private int _activeTraitImplementationOrdinal;
+    private readonly Dictionary<string, int> _activeTraitImplementationOrdinals =
+        new(StringComparer.Ordinal);
+
+    // A concrete instance method's implementation lambda, lowered once per construction context and
+    // shared by every later construction of the same dictionary: the later site rebuilds only the
+    // environment and the closure object over the function this record names.
+    private sealed record SharedTraitMethodLambda(
+        string Label,
+        IReadOnlyList<string> Captures,
+        bool StackAllocateClosure,
+        bool BodyRuntimeManaged);
+
+    private readonly Dictionary<string, SharedTraitMethodLambda> _sharedTraitMethodLambdas =
+        new(StringComparer.Ordinal);
+
+    // The key and self-tie name of the implementation lambda about to be lowered, read and cleared
+    // by the first LowerLambdaCore whose recursive name is that self-tie.
+    private (string Key, string SelfName)? _pendingSharedTraitMethodLambda;
 
     private sealed record InferredTraitBindingElaboration(
         TypeExpr TypeAnnotation,
@@ -2365,17 +2382,8 @@ public sealed partial class Lowering
         Dictionary<string, TypeRef>? savedTypeParameterScope = _typeExprParamScope;
         _typeExprParamScope = ResolveSelectedMethodTypeParameterScope(
             plan, method, traitSubstitution);
-        (int methodTemp, TypeRef methodType) methodValue;
-        try
-        {
-            methodValue = LowerExpr(loweredImplementation).AsPair();
-        }
-        finally
-        {
-            _activeTraitImplementationMethods.RemoveAt(_activeTraitImplementationMethods.Count - 1);
-            _generatedTraitRecursiveTypes.Remove(selfName);
-            _typeExprParamScope = savedTypeParameterScope;
-        }
+        (int methodTemp, TypeRef methodType) methodValue =
+            LowerSelectedTraitMethodImplementation(plan, method, loweredImplementation, selfName, savedTypeParameterScope);
         IReadOnlyList<TraitConstraint> methodRequirements = PopTraitConstraintScope();
         _annotationParamTypes = savedTypes;
         _annotationParamCursor = savedCursor;
@@ -2389,6 +2397,62 @@ public sealed partial class Lowering
             _ = ResolveTraitEvidence(requirement, span, [], 0);
         }
         return (methodValue.methodTemp, Prune(expectedType));
+    }
+
+    // Lowers the rewritten implementation under the active self-tie, offering its lambda for
+    // sharing when the plan is concrete, and restores the active-implementation state afterwards.
+    private (int Temp, TypeRef Type) LowerSelectedTraitMethodImplementation(
+        TraitEvidencePlan.Instance plan,
+        TraitMethodSymbol method,
+        Expr loweredImplementation,
+        string selfName,
+        Dictionary<string, TypeRef>? savedTypeParameterScope)
+    {
+        _pendingSharedTraitMethodLambda = SharedTraitMethodLambdaKey(plan, method) is { } sharedKey
+            ? (sharedKey, selfName)
+            : null;
+        try
+        {
+            return LowerExpr(loweredImplementation).AsPair();
+        }
+        finally
+        {
+            _pendingSharedTraitMethodLambda = null;
+            _activeTraitImplementationMethods.RemoveAt(_activeTraitImplementationMethods.Count - 1);
+            _generatedTraitRecursiveTypes.Remove(selfName);
+            _typeExprParamScope = savedTypeParameterScope;
+        }
+    }
+
+    // The sharing key of a concrete instance method's implementation lambda: the goal, the method,
+    // and the construction context the lambda's captures depend on — the enclosing instances
+    // whose self-ties a nested construction may reach back to, the hidden dictionary parameters
+    // every lambda captures while they are active, and the coroutine placement of the body. A
+    // plan that still needs a hidden parameter is never shared: its body reads that site's own
+    // evidence.
+    private string? SharedTraitMethodLambdaKey(TraitEvidencePlan.Instance plan, TraitMethodSymbol method)
+    {
+        if (_collectInferredTraitElaboration || !IsFullyConcreteEvidence(plan))
+        {
+            return null;
+        }
+
+        var key = new System.Text.StringBuilder();
+        key.Append(TraitConstraint.StableKey(plan.Goal)).Append('|').Append(method.Name).Append('|');
+        foreach (ActiveTraitImplementationMethod active in _activeTraitImplementationMethods)
+        {
+            key.Append(active.BindingName).Append(',');
+        }
+        key.Append('|');
+        foreach (string parameter in _activeTraitDictionaryParameters
+                     .OrderBy(item => item.Key, StringComparer.Ordinal)
+                     .SelectMany(item => item.Value)
+                     .Select(active => active.ParameterName))
+        {
+            key.Append(parameter).Append(',');
+        }
+        key.Append('|').Append(_inCoroutineBody ? 'c' : 'p');
+        return key.ToString();
     }
 
     private Dictionary<string, TypeRef> ResolveSelectedImplementationSubstitution(
@@ -2432,16 +2496,24 @@ public sealed partial class Lowering
         string method,
         TypeRef expectedType)
     {
-        // Unique per constructed instance, not just per trait+method: building this instance's
-        // own method can nest inside building another instance of the SAME trait+method (for
-        // example Show(List(a))'s recursive `Show.show(tail)` and a self-referential ADT's own
-        // Show, whose List(Self) field needs Show(List(Self)) again). A name shared across
-        // nesting levels lets the inner LetRecursive shadow the outer one, so a reference
-        // correctly identified (via FindActiveTraitImplementationMethod's type-aware match) as
-        // belonging to the OUTER instance resolves, lexically, to the INNER instance's own
-        // self-closure instead — silently calling the wrong instance's dictionary on a value of
-        // the wrong shape (or, once made unreachable that way, "Undefined variable").
-        string selfName = $"__trait_impl_{constraint.Trait.Name}_{method}_{_activeTraitImplementationOrdinal++}";
+        // Unique per constructed goal, not just per trait+method: building this instance's own
+        // method can nest inside building another instance of the SAME trait+method (for example
+        // Show(List(a))'s recursive `Show.show(tail)` and a self-referential ADT's own Show, whose
+        // List(Self) field needs Show(List(Self)) again). A name shared across nesting levels lets
+        // the inner LetRecursive shadow the outer one, so a reference correctly identified (via
+        // FindActiveTraitImplementationMethod's type-aware match) as belonging to the OUTER
+        // instance resolves, lexically, to the INNER instance's own self-closure instead —
+        // silently calling the wrong instance's dictionary on a value of the wrong shape (or, once
+        // made unreachable that way, "Undefined variable"). The ordinal is assigned once per goal
+        // and method, so every construction of the same dictionary binds the same tie name and a
+        // shared implementation lambda captures it under one name at every site.
+        string ordinalKey = TraitConstraint.StableKey(constraint) + "|" + method;
+        if (!_activeTraitImplementationOrdinals.TryGetValue(ordinalKey, out int ordinal))
+        {
+            ordinal = _activeTraitImplementationOrdinals.Count;
+            _activeTraitImplementationOrdinals[ordinalKey] = ordinal;
+        }
+        string selfName = $"__trait_impl_{constraint.Trait.Name}_{method}_{ordinal}";
         _activeTraitImplementationMethods.Add(new ActiveTraitImplementationMethod(constraint, method, selfName));
         _generatedTraitRecursiveTypes[selfName] = expectedType;
         return selfName;

@@ -6504,16 +6504,12 @@ public sealed partial class Lowering
         var (free, captures, envPtrTemp, knownCaptureLabels, captureAllocIndex, captureFillRanges) =
             LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure, request);
 
-        string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
-        RecordTcoParamIdentity(lam, paramTy, label);
-        LambdaFunctionPlacementFrame placementFrame =
-            LowerLambdaCoreEnterFunctionPlacement(lam, label, originSeed);
+        string? sharedTraitMethodKey = LowerLambdaCoreClaimSharedTraitMethodKey(selfName, selfAliases);
+        if (LowerLambdaCoreReuseSharedTraitMethod(sharedTraitMethodKey, captures, envPtrTemp, stackAllocateClosure, request) is { } sharedClosureTemp) return (sharedClosureTemp, funTy);
 
-        // Build function body IR in isolation
-        var savedFrame = LowerLambdaCoreSaveFrame(label, captures);
-        int argSlot = LowerLambdaCoreResetFrame();
-        RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
-        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
+        string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
+        var (placementFrame, savedFrame, argSlot) = LowerLambdaCoreEnterFunction(
+            lam, label, paramTy, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, originSeed);
 
         var (isChainLambda, isInnermostTco, reuseEntryCopies, specElidedAccs, reuseInsertIndex) =
             LowerLambdaCoreSetupTco(lam, label, captures);
@@ -6549,7 +6545,77 @@ public sealed partial class Lowering
 
         return LowerLambdaCoreFinalize(
             selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction,
-            label, envPtrTemp, stackAllocateClosure, bodyRuntimeManaged, request, funTy);
+            label, envPtrTemp, stackAllocateClosure, bodyRuntimeManaged, request, funTy, sharedTraitMethodKey);
+    }
+
+    // Records the TCO parameter identity and placement frame of the function about to be built,
+    // saves the enclosing function's lowering state, and opens the new function's scope with its
+    // parameter, captures, and self bindings.
+    private (LambdaFunctionPlacementFrame Placement, LowerLambdaCoreFrame Saved, int ArgSlot) LowerLambdaCoreEnterFunction(
+        Expr.Lambda lam,
+        string label,
+        TypeRef paramTy,
+        HashSet<string> free,
+        IReadOnlyList<string> captures,
+        IReadOnlyDictionary<int, string> knownCaptureLabels,
+        string? selfName,
+        TypeRef? selfType,
+        IReadOnlyList<string>? selfAliases,
+        RecursiveGroupContext? recursiveGroup,
+        IrFunctionOriginSeed? originSeed)
+    {
+        RecordTcoParamIdentity(lam, paramTy, label);
+        LambdaFunctionPlacementFrame placementFrame =
+            LowerLambdaCoreEnterFunctionPlacement(lam, label, originSeed);
+        LowerLambdaCoreFrame savedFrame = LowerLambdaCoreSaveFrame(label, captures);
+        int argSlot = LowerLambdaCoreResetFrame();
+        RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
+        LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
+        return (placementFrame, savedFrame, argSlot);
+    }
+
+    // A concrete trait instance method's implementation lambda is compiled once per sharing key;
+    // every later construction of that dictionary in the same context reuses the function and
+    // emits only its environment and closure object, provided the site captures the same names.
+    private int? LowerLambdaCoreReuseSharedTraitMethod(
+        string? sharedTraitMethodKey,
+        IReadOnlyList<string> captures,
+        int envPtrTemp,
+        bool stackAllocateClosure,
+        LoweredValueRequest request)
+    {
+        if (sharedTraitMethodKey is null
+            || !_sharedTraitMethodLambdas.TryGetValue(sharedTraitMethodKey, out SharedTraitMethodLambda? shared)
+            || shared.StackAllocateClosure != stackAllocateClosure
+            || !shared.Captures.SequenceEqual(captures, StringComparer.Ordinal))
+        {
+            return null;
+        }
+
+        return LowerLambdaCoreMakeClosure(
+            shared.Label, envPtrTemp, captures, stackAllocateClosure, shared.BodyRuntimeManaged, request);
+    }
+
+    // Claims the pending shared-lambda key when this lambda is the one bound to the instance's
+    // self-tie, by its own recursive name or by an alias of it (a `let recursive helper = ... in
+    // helper` implementation value binds the tie as an alias of the helper), so nested lambdas
+    // keep their own functions.
+    private string? LowerLambdaCoreClaimSharedTraitMethodKey(string? selfName, IReadOnlyList<string>? selfAliases)
+    {
+        if (_pendingSharedTraitMethodLambda is not { } pending)
+        {
+            return null;
+        }
+
+        bool bindsTie = string.Equals(selfName, pending.SelfName, StringComparison.Ordinal)
+            || (selfAliases is not null && selfAliases.Contains(pending.SelfName, StringComparer.Ordinal));
+        if (!bindsTie)
+        {
+            return null;
+        }
+
+        _pendingSharedTraitMethodLambda = null;
+        return pending.Key;
     }
 
     // True when this function's ENTIRE instruction stream — read directly off _inst, which
@@ -6609,10 +6675,16 @@ public sealed partial class Lowering
         bool stackAllocateClosure,
         bool bodyRuntimeManaged,
         LoweredValueRequest request,
-        TypeRef funTy)
+        TypeRef funTy,
+        string? sharedTraitMethodKey = null)
     {
         captures = LowerLambdaCorePruneDeadCaptures(
             selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction);
+        if (sharedTraitMethodKey is not null)
+        {
+            _sharedTraitMethodLambdas[sharedTraitMethodKey] = new SharedTraitMethodLambda(
+                label, [.. captures], stackAllocateClosure, bodyRuntimeManaged);
+        }
 
         return (
             LowerLambdaCoreMakeClosure(

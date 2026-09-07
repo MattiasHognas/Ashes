@@ -881,6 +881,65 @@ public sealed class TraitEvidenceLoweringTests
         requirements.ShouldContain(requirement => requirement.EndsWith("Eq(Str)", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void ConcreteDictionaryImplementationLambdasAreCompiledOncePerProgram()
+    {
+        // Every use of a concrete instance rebuilds the dictionary value, but the implementation
+        // lambdas behind it (the nested Leaf instance's included) are compiled once and shared, so
+        // the program grows only by each use site's own functions.
+        const string declarations = """
+            trait Eq(a) = | equal : a -> a -> Bool
+            implement Eq(Int) =
+                | equal = given (left) -> given (right) -> left == right
+            type Leaf = | Leaf(Int)
+            type Node = | Node(Leaf, Leaf)
+            implement Eq(Leaf) =
+                | equal =
+                    given (left) ->
+                        given (right) ->
+                            match (left, right) with
+                                | (Leaf(a), Leaf(b)) -> a == b
+            implement Eq(Node) =
+                | equal =
+                    given (left) ->
+                        given (right) ->
+                            match (left, right) with
+                                | (Node(a, b), Node(c, d)) -> Eq.equal(a)(c) && Eq.equal(b)(d)
+
+            """;
+        static string Program(int uses)
+        {
+            string checks = string.Concat(Enumerable.Range(1, uses).Select(index =>
+                $"let check{index} (x: Node) (y: Node) = Eq.equal(x)(y)\n"));
+            string calls = string.Join(
+                " && ",
+                Enumerable.Range(1, uses).Select(index =>
+                    $"check{index}(Node(Leaf(1), Leaf(2)))(Node(Leaf(1), Leaf(2)))"));
+            return declarations + checks + calls;
+        }
+
+        IrProgram one = Lower(Program(1), out Diagnostics oneDiagnostics);
+        IrProgram two = Lower(Program(2), out Diagnostics twoDiagnostics);
+        IrProgram three = Lower(Program(3), out Diagnostics threeDiagnostics);
+
+        oneDiagnostics.StructuredErrors.ShouldBeEmpty();
+        twoDiagnostics.StructuredErrors.ShouldBeEmpty();
+        threeDiagnostics.StructuredErrors.ShouldBeEmpty();
+        int perUse = two.Functions.Count - one.Functions.Count;
+        perUse.ShouldBeLessThanOrEqualTo(2);
+        (three.Functions.Count - two.Functions.Count).ShouldBe(perUse);
+        static int ClosureLabels(IrProgram program) => program.Functions
+            .Append(program.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .OfType<IrInst.MakeClosure>()
+            .Select(closure => closure.FuncLabel)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+        int perUseLabels = ClosureLabels(two) - ClosureLabels(one);
+        perUseLabels.ShouldBeLessThanOrEqualTo(perUse);
+        (ClosureLabels(three) - ClosureLabels(two)).ShouldBe(perUseLabels);
+    }
+
     private static IrProgram Lower(
         string source,
         out Diagnostics diagnostics,

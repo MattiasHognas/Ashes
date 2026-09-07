@@ -1219,6 +1219,16 @@ use the dictionary being constructed, and their dependency order is checked befo
 implementations are expanded into ordinary implementation declarations before registration, so they
 use this exact ABI and resolution path.
 
+Every use of a concrete instance constructs its own dictionary value, but the implementation
+lambdas behind that value are compiled once per program. A fully concrete method implementation is
+lowered the first time its dictionary is built and recorded under the goal, the method, and the
+construction context (the enclosing instances whose self-ties it may capture, the hidden dictionary
+parameters active at the site, and whether the site lies in a coroutine body); a later construction
+in the same context with the same captures emits only the environment and the closure object over
+the recorded function. Nested instances built inside a method body (a field type's own `Eq`, a
+list element's `Show`) are compiled inside that single body, so the emitted code grows with the
+number of instances a program uses rather than with the number of places it uses them.
+
 ### Specialization and observability
 
 Primitive trait-backed operators retain their dedicated semantic IR instructions after resolution,
