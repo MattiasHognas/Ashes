@@ -2146,8 +2146,8 @@ same public behavior.
   parameter walks descend into arrows, and the rejection message names the arrow among the
   supported field types; nothing downstream needed changing — `HeapLayoutClassification.ash`
   already classified a function child as `UnsupportedChildDrop`/`NoStructuralCopy` (stage 0's
-  rule: the closure child is never dropped or copied structurally), the single-constructor record
-  is tagless, and the closure word is stored and loaded like any field.
+  rule before OPT-49b: the closure child is never dropped or copied structurally, see OPT-52), the
+  single-constructor record is tagless, and the closure word is stored and loaded like any field.
   `tests/consumed_argument_captured_by_lambda.ash` prints `41337792` through the built
   self-hosted compiler (peak RSS 38.9 MB against stage 0's 41.0 MB). Its lowered IR differs from
   stage 0's only in the loop back edge, where stage 0 emits a `CleanupResource TypeName=Function`
@@ -2202,6 +2202,18 @@ same public behavior.
   2026-09-07). Either the constructor should adopt the normalized parameter as a fresh owned
   child on the reference-counted heap, or the site should request the arena form and the arm
   release the copy.
+- [ ] **OPT-52** Self-hosted mirror of OPT-49a and OPT-49b. Now that the three shapes compile
+  through the self-hosted compiler (OPT-49c), port the perform site adopting a handler arm's
+  reference-counted result by its returns bit (with CAP-10's arm-closure normalization and
+  returns-bit epilogue), and the closure child rule: `HeapLayoutClassification.ash` still
+  classifies a function child as `UnsupportedChildDrop`/`NoStructuralCopy`, stage 0's rule before
+  OPT-49b, so a record holding a closure over an entry-normalized parameter stays in the arena
+  and `tests/consumed_argument_captured_by_lambda.ash` leaks through the self-hosted compiler
+  (38.9 MB at 40000 iterations against stage 0's 8.2 MB plateau). The backend needs the
+  count-aware `RcDrop Function`, the runtime-managed bit 61 in the packed closure word, the
+  `CleanupResource` no-op on a reference-counted closure, and the dropper-free arena
+  `CopyOutClosure` of a reference-counted closure. Pin both fixtures as plateau programs through
+  the self-hosted compiler once they match.
 
 #### LLVM code generation and runtime integration
 
