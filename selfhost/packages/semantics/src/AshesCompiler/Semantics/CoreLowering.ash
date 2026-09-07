@@ -3861,10 +3861,12 @@ let recursive normalizerCopies (layout: List((Int, Str, CaptureCopy, SemanticTyp
                     match normalizerCopies(rest)(temp + 1)(location) with
                         | (instructions, nextTemp) ->
                             (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: instructions, nextTemp)
+                // Stage 0 copies a leaf capture through its deep-copy emitter, whose `CopyOutArena`
+                // carries no location; the list copy-out is emitted in place and keeps it.
                 | LeafCaptureCopy(sizeBytes) ->
                     match normalizerCopies(rest)(temp + 2)(location) with
                         | (instructions, nextTemp) ->
-                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(CopyOutArena(temp + 1)(temp)(sizeBytes)(true)(RcNormalization)(None)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(None)(CopyOutArena(temp + 1)(temp)(sizeBytes)(true)(RcNormalization)(None)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
                 | ListCaptureCopy(headCopy) ->
                     match normalizerCopies(rest)(temp + 2)(location) with
                         | (instructions, nextTemp) ->
@@ -4689,7 +4691,12 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
                             emitter(RcDrop(valueTemp)(name)(-1)(true)(false)(None))(state)
                         | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
         | SemTuple(_elements) ->
-            emitter(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))(state)
+            // Stage 0's `EmitRuntimeManagedTupleDrop` allocates its shared label before it knows
+            // whether any element needs the unique-cell walk; a tuple of scalars burns the label
+            // and drops as one allocation, so the label is allocated here too to keep the numbering.
+            match freshLabel("rc_drop_tuple_shared")(state) with
+                | FreshLabel { state = labelled, label = _sharedLabel } ->
+                    emitter(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))(labelled)
         | _ -> state
 
 // The release of a runtime-managed ADT slot's old value under its active flag.
@@ -11101,7 +11108,8 @@ let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: B
         | element :: rest ->
             match state
             |> withConsumerRequest(tupleElementRequest(request)(runtimeTuple)(transfers)(element)(state))
-            |> lower(element) with
+            |> lower(element)
+            |> duplicatePatternOwnerChild(element) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
                 | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
                     lowerTupleElementsInto(
@@ -11570,15 +11578,31 @@ let transferSlotRequested (transferSlot: Maybe(Int)) =
 // pattern-owner duplicate of an argument that reads one, before the transfer retain; an
 // argument neither retained reads takes the loop-parameter marker.
 let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
-    match (request, lowered) with
-        | (ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition }, LoweredCoreValue { temp = originalTemp }) ->
+    match request with
+        | ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition } ->
             lowered
             |> (given (value: LoweredCoreValue) ->
                 if runtimeManaged || tailPosition || transferSlotRequested(transferSlot)
                 then duplicatePatternOwnerChild(argument)(value)
                 else value)
             |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
-            |> retainLoopParameterChild(argument)(originalTemp)
+
+// Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: after every argument is lowered, a
+// loop-parameter read (or a heap-typed field read out of one) stored into the cell takes the
+// retain marker, ahead of the owned-child retains of a runtime cell.
+let recursive retainLoopParameterArguments (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+    match (arguments, temps, semanticTypes) with
+        | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
+            match retainLoopParameterChild(argument)(temp)(LoweredCoreValue(state = state, temp = temp, semanticType = semanticType, error = None)) with
+                | LoweredCoreValue { state = marked, temp = markedTemp } -> retainLoopParameterArguments(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
+        | _ -> (state, reverse(reversed))
+
+let retainConstructorLoopParameterArguments arguments lowered =
+    match lowered with
+        | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
+            match retainLoopParameterArguments(arguments)(temps)(semanticTypes)(state)([]) with
+                | (marked, markedTemps) -> lowered with state = marked, temps = markedTemps
+        | _ -> lowered
 
 let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
     match (arguments, fieldTypes) with
@@ -11666,6 +11690,7 @@ let finishConstructorArguments arguments (request: ConsumerRequest) lower shape 
                                             | (failedState, Some(error)) -> failure(failedState)(error)
                                             | (typedState, None) ->
                                                 (lowered with state = typedState)
+                                                |> retainConstructorLoopParameterArguments(arguments)
                                                 |> retainRuntimeCellChildren(runtimeManaged)(arguments)
                                                 |> finishConstructorAllocation(layout)(resultType)(runtimeManaged)
 
@@ -13864,16 +13889,33 @@ let failedTailSelfCallArguments state error =
 // the children transfer, and — for a parameter every self-call grows by one cons cell (stage 0's
 // `AffineConsList` request, `OwnedRuntime(List)`) — a runtime list, so the cell is allocated on
 // the reference-counted heap owning its head when the head is runtime-manageable.
-// A fresh string producer rebuilding a `Str` parameter the frame places by type (not through the
-// affine in-place append) is asked for a reference-counted string, stage 0's runtime string
-// request for a runtime-managed parameter's successor: the back edge then stores it as the
-// parameter's own value instead of copying it out of the arena.
+// A `Str` parameter placed by type takes a reference-counted successor only when the successor's
+// concatenation reads the parameter itself (`text + suffix`): stage 0 promotes a concatenation
+// its runtime-managed parameter reaches, so the back edge stores it as the parameter's own value;
+// a fresh string that reads no parameter (`fromInt(n) + "-x"`) is built in the arena and copied
+// out by the back edge.
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString))(state)
 
+// A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
+let recursive concatChainReadsParameter (expression: Expr) (parameter: Str) =
+    match expression with
+        | ExprAt(_span, inner) -> concatChainReadsParameter(inner)(parameter)
+        | ExprAdd(left, right) -> concatChainReadsParameter(left)(parameter) || concatChainReadsParameter(right)(parameter)
+        | ExprVar(name) -> name == parameter
+        | _ -> false
+
+let recursive parameterNameAtOrdinal (ordinal: Int) (names: List(Str)) =
+    match names with
+        | [] -> None
+        | name :: rest ->
+            if ordinal == 0
+            then Some(name)
+            else parameterNameAtOrdinal(ordinal - 1)(rest)
+
 let tailSelfCallStringSuccessor (argument: Expr) (slot: Maybe(Int)) (ordinal: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
-    match slot with
-        | Some(parameterSlot) -> shape != TcoPassThroughShape && !containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(parameterSlot)(state) && isFreshStringChild(argument)(state)
-        | None -> false
+    match (slot, parameterNameAtOrdinal(ordinal)(loop.parameterNames)) with
+        | (Some(parameterSlot), Some(parameter)) -> shape != TcoPassThroughShape && !containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(parameterSlot)(state) && isFreshStringChild(argument)(state) && concatChainReadsParameter(argument)(parameter)
+        | _ -> false
 
 let recursive restArgumentShapes (shapes: List(TcoArgumentShape)) =
     match shapes with
