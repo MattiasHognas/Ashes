@@ -1264,7 +1264,21 @@ same public behavior.
   `LowerCallTcoBackEdgeDummy` marks it, ownership-neutral (recorded in `backEdgeDummyTemps`
   rather than marked, so the function's own result never counts it), so the reachable arms
   alone decide the join's representation and the back-edge arm closes its arena bracket;
-  `tco_consumed_record_list_tuple_result` pins both.
+  `tco_consumed_record_list_tuple_result` pins both. A list of records grown by cons at every
+  tail self-call now admits from its static shape and element layout the way stage 0's
+  `EvaluateTcoRcEligibility` does: a pattern binding rooted at a loop parameter the frame
+  admits by now counts as reference-counted at the cons (`loopParameterIsRuntimeManaged`
+  through `patternBindingRootSlot`, the list case joined to `loopSlotIsRuntimeManaged`), so
+  the cell is allocated reference-counted from the first pass and the accumulator's admission
+  follows instead of waiting on it; the head of such a cell takes an independent copy when it
+  is not reference-counted already (stage 0's `NormalizeRuntimeManagedListElement`: a string or
+  list by its copy-out, a record by the constructor deep copy behind two burned temps, the
+  field loads and stores located and the copy-outs not) and a pattern owner is no longer
+  transfer-retained (its identity marker is its retain, as stage 0's
+  `DuplicateRuntimeManagedOwnedValueForTransfer` skips pattern owners); an arm returning the
+  direct read of an admitted loop parameter resets its bracket as stage 0 does for a
+  runtime-managed owner's read. `tco_record_head_consed_into_sibling_accumulator` is a
+  whole-program parity fixture.
   Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
@@ -1434,28 +1448,22 @@ same public behavior.
   the closure environment normalizer emits its leaf `CopyOutArena` without a location, as stage
   0's deep-copy emitter does. A survey of the
   fifteen import-free loop fixtures against stage 0's lowered IR
-  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches twelve
+  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches thirteen
   exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
   `str_param_non_affine`, `list_accumulator`, `str_accumulator`, `find_string_head`,
   `record_list_accumulator`, `owned_child_record_accumulator`,
-  `param_string_field_into_successor`, `param_field_read_into_successor`, and the
-  whole-program parity fixtures `tco_tuple_parameter_rebuild`,
-  `tco_str_parameter_fresh_successor`, `tco_consumed_list_parameter_borrowed_head`,
-  `tco_consumed_list_parameter_returned_head`,
+  `param_string_field_into_successor`, `param_field_read_into_successor`,
+  `record_param_consed_into_sibling_accumulator`, and the whole-program parity fixtures
+  `tco_tuple_parameter_rebuild`, `tco_str_parameter_fresh_successor`,
+  `tco_consumed_list_parameter_borrowed_head`, `tco_consumed_list_parameter_returned_head`,
   `tco_record_parameter_exit_before_list_accumulator`, `tco_owned_child_record_accumulator`,
   `tco_record_string_field_into_successor`, `tco_record_field_read_into_successor`,
-  `tco_consumed_record_list_tuple_result`); the record-head loops (`find_record_head` 674,
-  `consumed_record_heads_escape` 1037, `record_param_consed_into_sibling_accumulator` 513
-  masked lines) and `tco_arena_variant_accumulator_plateau` (366) carry the remaining
-  divergences of OPT-25's aggregate tail: a list of records grown by cons at every tail
-  self-call (`reversed(rest)(item :: acc)`) is admitted by stage 0 from its static shape and
-  element layout (`EvaluateTcoRcEligibility`: `AffineConsList` with a runtime-manageable
-  element), so its cells are reference-counted from the first cons and both it and the consumed
-  list it is built from take the record-head list deep normalization at entry
-  (`rc_normalize_list` over `CopyOutArena` cells, the type's structural dropper and deep
-  copiers synthesized); the self-hosted admission of a grown cons list waits on every back
-  edge having allocated a reference-counted cell, which the heads' own placement decides only
-  at finalize, so neither parameter is placed. Related interim narrowing: the
+  `tco_consumed_record_list_tuple_result`, `tco_record_head_consed_into_sibling_accumulator`);
+  `find_record_head` (293 masked lines: one extra `Borrow` beside the numbering),
+  `consumed_record_heads_escape` (604: the pattern head stored into a copy-ADT successor's
+  field, where stage 0 retains it and the self-hosted back edge copies it, and the reads'
+  borrow and release order around it), and `tco_arena_variant_accumulator_plateau` (366) carry
+  the remaining divergences of OPT-25's aggregate tail. Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per

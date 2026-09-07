@@ -7543,19 +7543,15 @@ let recursive parameterSlotAtOrdinal (ordinal: Int) (slots: List(Int)) =
 // manages): a cell built around it may then live on the reference-counted heap. The finalize
 // pass places the parameter or demotes the whole frame; a demoted frame never reclaims the arena
 // at its back edge, so a cell placed early holds no dangling reference.
+// Whether a loop parameter slot is admitted to the reference-counted heap at this point of the
+// body (stage 0's `IsRuntimeManagedTcoParamSlot`): a copy-ADT slot by its resolved type and
+// shape, a list slot by its shape and element type, a `Str` slot by the affine analysis.
 let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
         | Some(ordinal) ->
-            tcoAdtSlotAdmitted(slot)(shapeAtOrdinal(ordinal)(loop.argumentShapes))(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
+            in tcoAdtSlotAdmitted(slot)(shape)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
         | None -> false
-
-let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
-    match (state.tcoLoopFrame, state.tcoLoop) with
-        | (Some(frame), Some(loop)) ->
-            match parameterSlotOfName(name)(frame)(state) with
-                | Some(slot) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
-                | None -> false
-        | _ -> false
 
 // The loop parameter an aggregate child reads: the parameter itself, or a record field read out
 // of it (`s.label`, a qualified name whose module part is the parameter's binding).
@@ -7579,6 +7575,20 @@ let patternBindingRootSlot (name: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoL
                     then parameterSlotAtOrdinal(ordinal)(frame.parameterSlots)
                     else None
                 | [] -> None
+
+// A read of a loop parameter the frame places on the reference-counted heap by now, or of a
+// pattern binding extracted from such a parameter (stage 0 tracks the binding as a
+// runtime-managed owner under its admitted root), holds a reference-counted value.
+let loopParameterIsRuntimeManaged (name: Str) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop) with
+        | (Some(frame), Some(loop)) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+                | None ->
+                    match patternBindingRootSlot(name)(frame)(loop)(state) with
+                        | Some(rootSlot) -> loopSlotIsRuntimeManaged(rootSlot)(frame)(loop)(state)
+                        | None -> false
+        | _ -> false
 
 // Stage 0's `TryGetRuntimeManagedCallArgument` inside a TCO frame: an argument that reads a loop
 // parameter, or a pattern binding extracted from one, holds a reference-counted value once the
@@ -9546,6 +9556,14 @@ let closeRetainedResultBracket cursorSlot endSlot (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } -> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
 
+// An arm result that is the direct read of a loop parameter the frame places on the
+// reference-counted heap by now: stage 0 tracks such a parameter as a runtime-managed owner, so
+// its read is a reference-counted result and the arm's bracket resets.
+let armResultReadsRuntimeManagedSlot (resultTemp: Int) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop, loadedSlotOfTemp(resultTemp)(state.reversedInstructions)) with
+        | (Some(frame), Some(loop), Some(slot)) -> containsInt(slot)(frame.parameterSlots) && loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+        | _ -> false
+
 let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot resultTemp resultType (state: CoreLoweringState) =
     match (containsInt(resultTemp)(state.patternOwnerResultTemps), state.capabilityGlobalCount > 0 && armResultSurvivesReset(resultTemp)(resultType)(state), hadAliveOwner) with
         | (_retained, true, _owned) -> (closeGuardedArmBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
@@ -9555,7 +9573,12 @@ let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot res
                 | (closed, Some(copyTemp)) ->
                     (emit(StoreLocal(resultSlot)(copyTemp))(closed), copyTemp)
                 | (closed, None) -> (closed, resultTemp)
-        | (false, false, false) -> (closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
+        | (false, false, false) ->
+            if armResultReadsRuntimeManagedSlot(resultTemp)(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = preRestoreSlot } -> (emitRestoreAndReclaim(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(preRestoreSlot)(allocated), resultTemp)
+            else (closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
 
 // Closes an arm's scope and returns the closed state with the temp the match slot finally holds:
 // the copy when the close copied the result past the reset, the arm's own result otherwise.
@@ -11233,15 +11256,17 @@ let recursive allRuntimeManageableTupleElements (elements: List(Expr)) (temps: L
         | _ -> false
 
 // Stage 0's `RetainRuntimeManagedAggregateChild` on an already lowered child: the read of a
-// binding that still owns its reference is retained, any other child is stored as lowered.
+// binding that still owns its reference is retained, any other child is stored as lowered. A
+// pattern owner is not (stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` skips it): its
+// identity marker, promoted once its root parameter is placed, is its retain.
 let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match unspanArgument(child) with
         | ExprVar(name) ->
-            match liveRuntimeOwnerSlot(name)(state) with
-                | Some(_slot) ->
+            match (liveRuntimeOwnerSlot(name)(state), patternOwnerBinding(name)(state)) with
+                | (Some(_slot), None) ->
                     match emitTransferRetain(temp)(semanticType)(state) with
                         | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
-                | None -> (state, temp)
+                | _ -> (state, temp)
         | _ -> (state, temp)
 
 // Stage 0's `RetainRuntimeManagedTupleChildren`: a tuple element read from a live owner or a
@@ -11444,6 +11469,77 @@ let listTransfers (request: ConsumerRequest) (state: CoreLoweringState) =
     match request with
         | ConsumerRequest { transfersRuntimeManagedChildren = transfersRequested } -> transfersRequested || inLoopTailPosition(request)(state)
 
+// The owned children of a copied cell re-established under the current span: the field loads
+// and stores carry it, the child copy-outs none, as stage 0's deep-copy emitter leaves them.
+let recursive emitLocatedChildCopies (sourceTemp: Int) (copyTemp: Int) (tagless: Bool) (children: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | (index, childType) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = childTemp } ->
+                    match allocated
+                    |> emit(GetAdtField(childTemp)(sourceTemp)(index)(tagless))
+                    |> unlocatedDeepCopy(childTemp)(childCopyPlanOf(childType)(state)) with
+                        | (copied, copiedChild) ->
+                            copied
+                            |> emit(SetAdtField(copyTemp)(index)(copiedChild)(tagless))
+                            |> emitLocatedChildCopies(sourceTemp)(copyTemp)(tagless)(rest)
+
+// Stage 0's `NormalizeRuntimeManagedListElement`: the head of a reference-counted cons cell
+// whose tail is a loop's list parameter takes an independent reference-counted copy when it
+// is not one already (a borrowed pattern owner of the consumed sibling list, whose old root the
+// back edge walks), a string or a list over copyable heads by its copy-out, a record by the
+// constructor deep copy behind the two temps stage 0's emitters burn ahead of it.
+// The read of a loop parameter the frame places on the reference-counted heap by now, or of a
+// field of one, is reference-counted as stage 0 represents it (the parameter is a runtime-managed
+// owner there), so it is retained rather than copied.
+let headReadsAdmittedLoopParameter (head: Expr) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop, loopParameterReadSlot(head)(state)) with
+        | (Some(frame), Some(loop), Some(slot)) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+        | _ -> false
+
+let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !isRuntimeTemp(temp)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
+            then
+                match resolveType(state)(semanticType) with
+                    | SemString ->
+                        match freshTemp(state) with
+                            | FreshTemp { state = allocated, temp = copyTemp } ->
+                                allocated
+                                |> emit(CopyOutArena(copyTemp)(temp)(-1)(true)(RcNormalization)(None))
+                                |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                                |> success(copyTemp)(semanticType)
+                    | SemList(element) ->
+                        match listHeadCopyKindOf(element)(state) with
+                            | Some(headCopy) ->
+                                match freshTemp(state) with
+                                    | FreshTemp { state = allocated, temp = copyTemp } ->
+                                        allocated
+                                        |> emit(CopyOutList(copyTemp)(temp)(headCopy)(true)(RcNormalization))
+                                        |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                                        |> success(copyTemp)(semanticType)
+                            | None -> lowered
+                    | resolved ->
+                        if tcoListElementSupported(resolved)(state)
+                        then
+                            match tcoAdtCopyPlanOf(resolved)(state) with
+                                | ConstructorArgumentCopy((_tag, sizeBytes, tagless, _childPlans)) ->
+                                    match freshTempRun(3)(state) with
+                                        | FreshTemp { state = allocated, temp = firstTemp } ->
+                                            let copyTemp = firstTemp + 2
+                                            in
+                                                allocated
+                                                |> unlocatedInstruction(CopyOutArena(copyTemp)(temp)(sizeBytes)(true)(RcNormalization)(None))
+                                                |> emitLocatedChildCopies(temp)(copyTemp)(tagless)(ownedChildrenOfNamed(resolved)(state))
+                                                |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                                                |> success(copyTemp)(semanticType)
+                                | _ -> lowered
+                        else lowered
+            else lowered
+        | _ -> lowered
+
 let lowerCons head tail lower state =
     match consumerRequestOf(state) with
         | request ->
@@ -11451,6 +11547,7 @@ let lowerCons head tail lower state =
             |> markResourceArgumentsMoved([head, tail])
             |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
             |> lower(head)
+            |> normalizeRuntimeManagedConsHead(request)(head)(tail)
             |> retainListElement(request)(listTransfers(request)(state))(head)
             |> finishConsTail(request)(listTransfers(request)(state))(lower)(head)(tail)
 
@@ -11758,12 +11855,7 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
 // shape, a list slot by its shape and element type, a `Str` slot by the affine analysis.
 let tcoSlotAdmittedNow (slot: Int) (state: CoreLoweringState) =
     match (state.tcoLoopFrame, state.tcoLoop) with
-        | (Some(frame), Some(loop)) ->
-            match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
-                | None -> false
-                | Some(ordinal) ->
-                    let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
-                    in tcoAdtSlotAdmitted(slot)(shape)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+        | (Some(frame), Some(loop)) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
         | _ -> false
 
 // Stage 0's `TryResolveTcoParameterRead` for a constructor argument: a loop parameter read of
