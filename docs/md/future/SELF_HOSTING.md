@@ -2233,6 +2233,19 @@ same public behavior.
   2026-09-07). Either the constructor should adopt the normalized parameter as a fresh owned
   child on the reference-counted heap, or the site should request the arena form and the arm
   release the copy.
+- [ ] **OPT-54** Stage 0 first, then stage 1: take the top-level bindings out of the entry
+  function. Every top-level `let` of a stitched program is desugared into one nested chain
+  lowered into the single entry function (`DesugarTopLevel`), which is 72,000 IR instructions
+  for the self-hosted semantics test program, and every pass that works per owner or per lambda
+  against its enclosing function's length pays that length again and again there: lifetime
+  placement's per-owner block rebuild and region scans, the IR optimizer's whole-function passes,
+  the reach analysis, and the frame bookkeeping of the thousands of lambdas it creates. With the
+  backend parallel (CG-17) the compile of that program is about 75 s, of which lowering is 44 s
+  and the IR optimizer 12 s, both single-threaded and mostly spent on that one function. Give
+  each top-level binding a global slot (an IR-level global like the capability handler slots)
+  or chunk the entry into per-module initializers called in order, keeping the arena bracket
+  semantics of top-level `let`s and the `optnone` treatment of a large entry, measure with
+  `ASHES_TIMING`, and mirror the shape in the self-hosted lowering.
 - [ ] **OPT-53** Self-hosted mirror of the stage-0 lowering speed-ups of TRT-16's change.
   `PerceusLifetimePlacement.ash` scans every alias store for every load
   (`loadSeesAliasStore` over `aliasStores`, with `containsStore` and a per-instruction
