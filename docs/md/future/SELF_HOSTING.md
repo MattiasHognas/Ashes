@@ -1424,7 +1424,10 @@ same public behavior.
   `tests/trait_concrete_requirement_inside_polymorphic_function.ash`.
 - [~] **OPT-29** Keep every operator operand out of tail position: in a genuine TCO loop, a self-call that is
   an operand of an operator in another branch is an ordinary call, never a back-edge jump.
-  Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`. Done: the consumer request
+  Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash` (its `Ashes.Trait.Show.show`
+  call keeps it from compiling through the self-hosted compiler until milestone 3's trait
+  lowering; with `aggregate_result_retains_runtime_managed_children.ash` it is one of the loop
+  sweep's two known compile failures, both against a baseline of 56 passing fixtures). Done: the consumer request
   carries stage 0's `InTailPosition` (`tailPosition`), true at a loop body's root — a recursive
   binding whose innermost lambda body `hasTailSelfCalls` gets a `CoreTcoLoop`
   (`recursiveTcoLoop`), the curried lambdas between the binding and that body stay in the loop and
@@ -1455,7 +1458,9 @@ same public behavior.
 - [~] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:
-  `tests/aggregate_result_retains_runtime_managed_children.ash`. Done: a tuple retains each
+  `tests/aggregate_result_retains_runtime_managed_children.ash` (compiles through the self-hosted
+  compiler only once milestone 3's trait lowering resolves its `Ashes.Trait.Show.show` call; the
+  loop sweep's second known compile failure). Done: a tuple retains each
   element read from a live owner after the tuple temp is allocated and before the cell is
   (`retainAggregateChildTemps`) when it is runtime-managed or escaping (the transfer flag, the
   loop body's tail position, or a runtime tuple request); a list literal's and a cons cell's head
@@ -1914,9 +1919,11 @@ same public behavior.
   (`reuseTransferredNames`, stage 0's alias to the dead scrutinee owner) and guarded on the
   token's runtime nullness. The TCO-loop-native ARENA direct-reuse mechanism
   (`LowerLambdaCoreScanDirectReuse` and `CollectCtorMatchedScrutinees`'s constructor-pattern-only
-  scan) and the full fold/list reuse SPECIALIZATION (`f$reuse` functions, to-space allocation,
-  `RcIsUnique`-gated runtime uniqueness checks, structural droppers) are not ported — both are
-  substantially larger than this slice and remain open.
+  scan) is ported under OPT-25's aggregate tail (2026-09-07: linear reuse roots, arena tokens,
+  the no-structural-reuse revert, and the move-safe entry-copy elision; see OPT-25's note and
+  `tco_variant_parameter_reused_in_place`). The full fold/list reuse SPECIALIZATION (`f$reuse`
+  functions, to-space allocation, `RcIsUnique`-gated runtime uniqueness checks, structural
+  droppers) is not ported — substantially larger than either slice and still open.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
