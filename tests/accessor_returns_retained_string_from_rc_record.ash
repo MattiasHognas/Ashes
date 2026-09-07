@@ -22,10 +22,14 @@ let recursive headOf xs =
 let recursive callMany i result p =
     if i == 0
     then result
-    else callMany(i - 1)(getName(p))(p)
+    else
+        callMany(i - 1)(getName(p))(p)
 
 let people = build(3)([])
 
-let last = callMany(200000)("")(headOf(people))
+let last =
+    people
+    |> headOf
+    |> callMany(200000)("")
 
 Ashes.IO.print(last)

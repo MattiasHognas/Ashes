@@ -24,7 +24,8 @@ let recursive countFlips perm flips =
         | h :: _ ->
             if h == 1
             then flips
-            else countFlips(flip(h)(perm))(flips + 1)
+            else
+                countFlips(flip(h)(perm))(flips + 1)
 
 let build i =
     match i % 3 with
@@ -35,6 +36,10 @@ let build i =
 let recursive run i total =
     if i == 0
     then total
-    else run(i - 1)(total + countFlips(build(i))(0))
+    else
+        run(i - 1)(total + countFlips(build(i))(0))
 
-Ashes.IO.print(Ashes.Text.fromInt(run(200000)(0)))
+0
+|> run(200000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

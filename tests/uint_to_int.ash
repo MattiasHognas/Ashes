@@ -10,13 +10,17 @@ import Ashes.Number.UInt
 let recursive sumBytes bytes i stop acc =
     if i >= stop
     then acc
-    else sumBytes(bytes)(i + 1)(stop)(acc + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i)))
+    else
+        sumBytes(bytes)(i + 1)(stop)(acc + Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i)))
 
 let recursive parseTenths bytes i stop sign acc =
     if i >= stop
     then sign * acc
     else
-        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+        let b =
+            i
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
         in
             if b == 45
             then parseTenths(bytes)(i + 1)(stop)(-1)(acc)
@@ -25,15 +29,23 @@ let recursive parseTenths bytes i stop sign acc =
                 then parseTenths(bytes)(i + 1)(stop)(sign)(acc)
                 else parseTenths(bytes)(i + 1)(stop)(sign)(acc * 10 + b - 48)
 
-let one = Ashes.Number.UInt.toInt(Ashes.Byte.get(Ashes.Byte.fromText("A"))(0))
+let one =
+    0
+    |> Ashes.Byte.get(Ashes.Byte.fromText("A"))
+    |> Ashes.Number.UInt.toInt
 
 let ab = Ashes.Byte.fromText("AB")
 
-let summed = sumBytes(ab)(0)(Ashes.Byte.length(ab))(0)
+let summed =
+    sumBytes(ab)(0)(Ashes.Byte.length(ab))(0)
 
 let temp = Ashes.Byte.fromText("-12.3")
 
-let parsed = parseTenths(temp)(0)(Ashes.Byte.length(temp))(1)(0)
+let parsed =
+    parseTenths(temp)(0)(Ashes.Byte.length(temp))(1)(0)
 
-let wide = Ashes.Number.UInt.toInt(Ashes.Byte.getU16Le(ab)(0))
+let wide =
+    0
+    |> Ashes.Byte.getU16Le(ab)
+    |> Ashes.Number.UInt.toInt
 in Ashes.IO.print(Ashes.Text.fromInt(one) + "|" + Ashes.Text.fromInt(summed) + "|" + Ashes.Text.fromInt(parsed) + "|" + Ashes.Text.fromInt(wide))

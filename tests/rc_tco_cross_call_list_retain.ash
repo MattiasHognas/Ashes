@@ -10,5 +10,13 @@ let recursive prepend n acc =
 let recursive repeat n acc =
     if n == 0
     then acc
-    else repeat(n - 1)(prepend(60)(acc))
-in io.print(text.fromInt(list.length(repeat(100)([]))))
+    else
+        acc
+        |> prepend(60)
+        |> repeat(n - 1)
+in
+    []
+    |> repeat(100)
+    |> list.length
+    |> text.fromInt
+    |> io.print

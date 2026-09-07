@@ -11,7 +11,10 @@ let recursive go i n st =
     match st with
         | (seed, out) ->
             if i == n
-            then "len=" + text.fromInt(text.byteLength(out)) + " seed=" + text.fromInt(seed) + " str=" + out
+            then
+                "len=" + text.fromInt(text.byteLength(out)) + " seed=" + text.fromInt(seed) + " str=" + out
             else go(i + 1)(n)((seed * 3877 + 29573 - (seed * 3877 + 29573) / 139968 * 139968, out + "a"))
 
-io.print(go(0)(30)((42, "")))
+(42, "")
+|> go(0)(30)
+|> io.print

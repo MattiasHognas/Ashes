@@ -73,9 +73,10 @@ let listUnifies unit = expectUnified("List(Str)")(SemList(SemVariable(0)))(SemLi
 let functionUnifies unit =
     Some(SemRow([SemCapability("State")([SemInt])])(None))
     |> SemFunction(SemInt)(SemList(SemInt))
-    |> expectUnified("Int -> List(Int) needs {State(Int)}")(SemFunction(SemVariable(0))(SemList(SemVariable(0)))(None
+    |> expectUnified("Int -> List(Int) needs {State(Int)}")(None
     |> SemRow([SemCapability("State")([SemVariable(0)])])
-    |> Some))
+    |> Some
+    |> SemFunction(SemVariable(0))(SemList(SemVariable(0))))
 
 let namedTypeUnifies unit =
     [SemInt, SemVariable(1)]

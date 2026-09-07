@@ -19,9 +19,15 @@ let holder label delayMs =
     in
         let items = [build(1), build(2)]
         in
-            let boxed = Boxed(build(3))
+            let boxed =
+                3
+                |> build
+                |> Boxed
             in
-                let raw = Ashes.Byte.fromText(build(4))
+                let raw =
+                    4
+                    |> build
+                    |> Ashes.Byte.fromText
                 in
                     let render =
                         given (suffix) -> text + suffix
@@ -36,7 +42,9 @@ let holder label delayMs =
                             | Error(_e) -> "err")
 
 let raced =
-    match Ashes.Task.run(Ashes.Task.race([holder("fast")(0), holder("slow")(60)])) with
+    match [holder("fast")(0), holder("slow")(60)]
+    |> Ashes.Task.race
+    |> Ashes.Task.run with
         | Ok(v) -> v
         | Error(_e) -> "err"
 

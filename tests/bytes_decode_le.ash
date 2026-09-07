@@ -1,6 +1,7 @@
 // expect: 258|16909060|0x102030405060708
 // Build a 14-byte buffer: [2,1, 4,3,2,1, 8,7,6,5,4,3,2,1] then decode LE values
-let buf = Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.singleton(2u8))(1u8))(4u8))(3u8))(2u8))(1u8))(8u8))(7u8))(6u8))(5u8))(4u8))(3u8))(2u8))(1u8)
+let buf =
+    Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.appendByte(Ashes.Byte.singleton(2u8))(1u8))(4u8))(3u8))(2u8))(1u8))(8u8))(7u8))(6u8))(5u8))(4u8))(3u8))(2u8))(1u8)
 in
     let v16 = Ashes.Byte.getU16Le(buf)(0)
     in

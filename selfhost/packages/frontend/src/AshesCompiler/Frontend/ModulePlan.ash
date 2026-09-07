@@ -88,9 +88,10 @@ let recursive validateUnits (units: List(ModulePlanUnit)) (seen: List(Str)) =
         | ModulePlanUnit { name = unitName, interface = ModuleImportInterface { name = interfaceName } } :: rest ->
             if containsName(unitName)(seen)
             then
-                Some(unitName
+                unitName
                 |> deepCopy
-                |> DuplicatePlanModule)
+                |> DuplicatePlanModule
+                |> Some
             else
                 if interfaceName != unitName
                 then
@@ -271,15 +272,17 @@ and visitModule name units interfaces state =
     else
         if containsName(name)(state.visitingNames)
         then
-            Error(state.visitingNames
+            state.visitingNames
             |> cycleChain(name)
-            |> ModuleImportCycle)
+            |> ModuleImportCycle
+            |> Error
         else
             match findUnit(name)(units) with
                 | None ->
-                    Error(name
+                    name
                     |> deepCopy
-                    |> UnknownPlanEntry)
+                    |> UnknownPlanEntry
+                    |> Error
                 | Some(unit) -> visitFound(unit)(units)(interfaces)(state)
 and visitDependencies names units interfaces state =
     match names with
@@ -308,9 +311,10 @@ let buildModulePlan (entry: Str) (units: List(ModulePlanUnit)) =
         | None ->
             match findUnit(entry)(units) with
                 | None ->
-                    Error(entry
+                    entry
                     |> deepCopy
-                    |> UnknownPlanEntry)
+                    |> UnknownPlanEntry
+                    |> Error
                 | Some(_unit) ->
                     units
                     |> interfacesFromUnits

@@ -22,7 +22,24 @@ let recursive g q r t k n l count acc =
     then acc
     else
         if big.compare(big.sub(big.add(big.mul(four)(q))(r))(t))(big.mul(n)(t)) < 0
-        then g(big.mul(ten)(q))(big.mul(ten)(big.sub(r)(big.mul(n)(t))))(t)(k)(big.sub(big.div(big.mul(ten)(big.add(big.mul(three)(q))(r)))(t))(big.mul(ten)(n)))(l)(count - 1)(acc + Ashes.Text.fromBigInt(n))
-        else g(big.mul(q)(k))(big.mul(big.add(big.mul(two)(q))(r))(l))(big.mul(t)(l))(big.add(k)(one))(big.div(big.add(big.mul(q)(big.add(big.mul(seven)(k))(two)))(big.mul(r)(l)))(big.mul(t)(l)))(big.add(l)(two))(count)(acc)
+        then
+            g(big.mul(ten)(q))(t
+            |> big.mul(n)
+            |> big.sub(r)
+            |> big.mul(ten))(t)(k)(n
+            |> big.mul(ten)
+            |> big.sub(big.div(r
+            |> big.add(big.mul(three)(q))
+            |> big.mul(ten))(t)))(l)(count - 1)(acc + Ashes.Text.fromBigInt(n))
+        else
+            g(big.mul(q)(k))(big.mul(big.add(big.mul(two)(q))(r))(l))(big.mul(t)(l))(big.add(k)(one))(l
+            |> big.mul(t)
+            |> big.div(l
+            |> big.mul(r)
+            |> big.add(two
+            |> big.add(big.mul(seven)(k))
+            |> big.mul(q))))(big.add(l)(two))(count)(acc)
 
-io.print(g(one)(zero)(one)(one)(three)(three)(30)(""))
+""
+|> g(one)(zero)(one)(one)(three)(three)(30)
+|> io.print

@@ -13,7 +13,9 @@ let makeInst kind = IrInstruction(instruction = kind, location = None)
 let expectSingleStateTransform unit =
     (let body =
         [
-            makeInst(LoadConstInt(1)(42)),
+            42
+            |> LoadConstInt(1)
+            |> makeInst,
             makeInst(Return(1))
         ]
     in
@@ -27,12 +29,24 @@ let expectSingleStateTransform unit =
 let expectMultiStateTransform unit =
     (let body =
         [
-            makeInst(LoadConstInt(1)(10)),
-            makeInst(LoadConstInt(2)(20)),
-            makeInst(AwaitTask(3)(1)),
-            makeInst(AddInt(4)(2)(3)),
-            makeInst(AwaitTask(5)(4)),
-            makeInst(AddInt(6)(2)(5)),
+            10
+            |> LoadConstInt(1)
+            |> makeInst,
+            20
+            |> LoadConstInt(2)
+            |> makeInst,
+            1
+            |> AwaitTask(3)
+            |> makeInst,
+            3
+            |> AddInt(4)(2)
+            |> makeInst,
+            4
+            |> AwaitTask(5)
+            |> makeInst,
+            5
+            |> AddInt(6)(2)
+            |> makeInst,
             makeInst(Return(6))
         ]
     in
@@ -50,13 +64,25 @@ let expectMultiStateTransform unit =
 let expectBackEdgeLoopLiveLocals unit =
     (let body =
         [
-            makeInst(LoadConstInt(1)(0)),
-            makeInst(StoreLocal(2)(1)),
+            0
+            |> LoadConstInt(1)
+            |> makeInst,
+            1
+            |> StoreLocal(2)
+            |> makeInst,
             makeInst(Label("loop_start")),
-            makeInst(LoadLocal(3)(2)),
-            makeInst(AwaitTask(4)(3)),
-            makeInst(AddInt(5)(4)(1)),
-            makeInst(StoreLocal(2)(5)),
+            2
+            |> LoadLocal(3)
+            |> makeInst,
+            3
+            |> AwaitTask(4)
+            |> makeInst,
+            1
+            |> AddInt(5)(4)
+            |> makeInst,
+            5
+            |> StoreLocal(2)
+            |> makeInst,
             makeInst(Jump("loop_start")),
             makeInst(Return(5))
         ]
@@ -75,10 +101,18 @@ let expectBackEdgeLoopLiveLocals unit =
 let expectCoroutineFrameRepresentation unit =
     (let body =
         [
-            makeInst(LoadConstInt(1)(10)),
-            makeInst(LoadConstInt(2)(20)),
-            makeInst(AwaitTask(3)(1)),
-            makeInst(AddInt(4)(2)(3)),
+            10
+            |> LoadConstInt(1)
+            |> makeInst,
+            20
+            |> LoadConstInt(2)
+            |> makeInst,
+            1
+            |> AwaitTask(3)
+            |> makeInst,
+            3
+            |> AddInt(4)(2)
+            |> makeInst,
             makeInst(Return(4))
         ]
     in

@@ -11,7 +11,10 @@ let recursive appendPair key value entries =
 let recursive addCases cases entries =
     match cases with
         | [] -> entries
-        | Case { label = l } :: rest -> addCases(rest)(appendPair(l)(1)(entries))
+        | Case { label = l } :: rest ->
+            entries
+            |> appendPair(l)(1)
+            |> addCases(rest)
 
 let recursive render entries =
     match entries with
@@ -20,4 +23,7 @@ let recursive render entries =
 
 let cases = [Case(tag = 0, label = "zero"), Case(tag = 1, label = "one"), Case(tag = 2, label = "other")]
 
-Ashes.IO.print(render(addCases(cases)([])))
+[]
+|> addCases(cases)
+|> render
+|> Ashes.IO.print

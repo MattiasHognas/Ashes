@@ -12,4 +12,6 @@ let recursive run fac pow i n =
     then text.fromBigInt(fac) + " " + text.fromBigInt(pow)
     else run(fac * big.fromInt(i))(pow * 2N)(i + 1)(n)
 
-io.print(run(1N)(1N)(1)(30))
+30
+|> run(1N)(1N)(1)
+|> io.print

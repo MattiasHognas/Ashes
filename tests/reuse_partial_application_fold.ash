@@ -12,7 +12,10 @@ type L =
 let recursive build n acc =
     if n <= 0
     then acc
-    else build(n - 1)(Cons(n)(acc))
+    else
+        acc
+        |> Cons(n)
+        |> build(n - 1)
 
 let recursive sumL xs =
     match xs with
@@ -22,4 +25,8 @@ let recursive sumL xs =
 let g = build(5)
 
 let lst = g(Nil)
-in Ashes.IO.print(Ashes.Text.fromInt(sumL(lst)))
+in
+    lst
+    |> sumL
+    |> Ashes.Text.fromInt
+    |> Ashes.IO.print

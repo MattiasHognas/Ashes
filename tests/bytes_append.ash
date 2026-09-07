@@ -12,4 +12,5 @@ in
                     let cd = Ashes.Byte.append(c)(d)
                     in
                         let abcd = Ashes.Byte.append(ab)(cd)
-                        in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.length(abcd)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(1)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(2)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(3)))
+                        in
+                            Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.length(abcd)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(1)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(2)) + "|" + Ashes.Text.fromInt(Ashes.Byte.get(abcd)(3)))

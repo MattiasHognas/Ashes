@@ -25,6 +25,8 @@ let taskB =
                 let _ = Ashes.IO.write("B2")
                 in 1)
 in
-    match Ashes.Task.run(Ashes.Task.all([taskA, taskB])) with
+    match [taskA, taskB]
+    |> Ashes.Task.all
+    |> Ashes.Task.run with
         | Ok(_) -> Ashes.IO.write("done")
         | Error(_) -> Ashes.IO.write("err")

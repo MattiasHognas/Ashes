@@ -6,7 +6,7 @@
 // tls-expect: ping
 // tls-send: pong
 // expect: ok
-Ashes.IO.print(match Ashes.Task.run(async(match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
+Ashes.IO.print(match (match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
     | Error(err) -> err
     | Ok(sock) ->
         match await Ashes.Net.Tls.send(sock)("ping") with
@@ -22,6 +22,8 @@ Ashes.IO.print(match Ashes.Task.run(async(match await Ashes.Net.Tls.connect("loc
                                 if text == "pong"
                                 then "ok"
                                 else "fail"
-                            else "fail")) with
+                            else "fail")
+|> async
+|> Ashes.Task.run with
     | Ok(text) -> text
     | Error(err) -> err)

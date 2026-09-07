@@ -2,7 +2,10 @@
 import Ashes.Byte
 import Ashes.Text
 import Ashes.IO
-let h s = Ashes.Byte.hash(Ashes.Byte.fromText(s))
+let h s =
+    s
+    |> Ashes.Byte.fromText
+    |> Ashes.Byte.hash
 
 let a = h("a")
 in

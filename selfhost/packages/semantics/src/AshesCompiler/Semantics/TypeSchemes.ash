@@ -40,7 +40,10 @@ let addVariable variableId variables =
 let recursive mergeVariables left right =
     match left with
         | [] -> right
-        | head :: tail -> mergeVariables(tail)(addVariable(head)(right))
+        | head :: tail ->
+            right
+            |> addVariable(head)
+            |> mergeVariables(tail)
 
 let recursive freeTypes semanticTypes =
     match semanticTypes with
@@ -64,7 +67,10 @@ and freeTypeVariables semanticType =
                         match capabilityRow with
                             | None -> []
                             | Some(row) -> freeTypeVariables(row)
-                    in mergeVariables(argumentVariables)(mergeVariables(resultVariables)(rowVariables))
+                    in
+                        rowVariables
+                        |> mergeVariables(resultVariables)
+                        |> mergeVariables(argumentVariables)
         | SemCapability(_name, arguments) -> freeTypes(arguments)
         | SemRow(capabilities, tail) ->
             let capabilityVariables = freeTypes(capabilities)
@@ -85,7 +91,10 @@ let freeConstraintVariables constraint =
 let recursive freeConstraintsVariables constraints =
     match constraints with
         | [] -> []
-        | head :: tail -> mergeVariables(freeConstraintVariables(head))(freeConstraintsVariables(tail))
+        | head :: tail ->
+            tail
+            |> freeConstraintsVariables
+            |> mergeVariables(freeConstraintVariables(head))
 
 let recursive removeQuantified quantified variables =
     match quantified with
@@ -98,18 +107,27 @@ let recursive removeQuantified quantified variables =
                         if sameVariableId(head)(variableId)
                         then remove(rest)
                         else head :: remove(rest)
-            in removeQuantified(tail)(remove(variables))
+            in
+                variables
+                |> remove
+                |> removeQuantified(tail)
 
 let freeSchemeVariables scheme =
     match scheme with
         | TypeScheme { quantified = quantified, body = body, constraints = constraints } ->
-            let allVariables = mergeVariables(freeTypeVariables(body))(freeConstraintsVariables(constraints))
+            let allVariables =
+                constraints
+                |> freeConstraintsVariables
+                |> mergeVariables(freeTypeVariables(body))
             in removeQuantified(quantified)(allVariables)
 
 let recursive freeEnvironmentVariables environment =
     match environment with
         | [] -> []
-        | scheme :: tail -> mergeVariables(freeSchemeVariables(scheme))(freeEnvironmentVariables(tail))
+        | scheme :: tail ->
+            tail
+            |> freeEnvironmentVariables
+            |> mergeVariables(freeSchemeVariables(scheme))
 
 let recursive removeEnvironmentVariables environmentVariables variables =
     match variables with
@@ -127,12 +145,16 @@ let recursive quantifyVariables variables =
 // The environment's free variables are only needed to hold back candidates, so a type with no
 // candidate variables never scans the environment.
 let generalize environment semanticType constraints =
-    (let candidateVariables = mergeVariables(freeTypeVariables(semanticType))(freeConstraintsVariables(constraints))
+    (let candidateVariables =
+        constraints
+        |> freeConstraintsVariables
+        |> mergeVariables(freeTypeVariables(semanticType))
     in
         let generalizedVariables =
             match candidateVariables with
                 | [] -> []
-                | _ -> removeEnvironmentVariables(freeEnvironmentVariables(environment))(candidateVariables)
+                | _ ->
+                    removeEnvironmentVariables(freeEnvironmentVariables(environment))(candidateVariables)
         in
             TypeScheme(quantified = quantifyVariables(
                 generalizedVariables

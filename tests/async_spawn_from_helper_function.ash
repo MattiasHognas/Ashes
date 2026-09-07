@@ -12,25 +12,32 @@ let leaf k =
         | Ok(_u) -> k + 1
         | Error(_e) -> -1)
 
-let spawnThrough k = Ashes.Task.spawn(leaf(k))
+let spawnThrough k =
+    k
+    |> leaf
+    |> Ashes.Task.spawn
 
 let spawned =
-    match Ashes.Task.run(async(let _handle = spawnThrough(7)
+    match (let _handle = spawnThrough(7)
     in
         match await Ashes.Task.sleep(5) with
             | Ok(_u) -> "ok"
-            | Error(_e) -> "err")) with
+            | Error(_e) -> "err")
+    |> async
+    |> Ashes.Task.run with
         | Ok(v) -> v
         | Error(_e) -> "err"
 
 let stopped =
-    match Ashes.Task.run(async(let _first = spawnThrough(1)
+    match (let _first = spawnThrough(1)
     in
         let _second = spawnThrough(2)
         in
             match await Ashes.Task.sleep(5) with
                 | Ok(_u) -> "ok"
-                | Error(_e) -> "err")) with
+                | Error(_e) -> "err")
+    |> async
+    |> Ashes.Task.run with
         | Ok(v) -> v
         | Error(_e) -> "err"
 

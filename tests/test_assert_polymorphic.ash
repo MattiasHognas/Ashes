@@ -17,10 +17,19 @@ let b = assertEqual(true)(1 == 1)
 
 let bf = assertEqual(false)(1 == 2)
 
-let u1 = assertEqual("eq")(sameShape(7)(7))
+let u1 =
+    7
+    |> sameShape(7)
+    |> assertEqual("eq")
 
-let u2 = assertEqual("ne")(sameShape("a")("b"))
+let u2 =
+    "b"
+    |> sameShape("a")
+    |> assertEqual("ne")
 
-let u3 = assertEqual("eq")(sameShape(true)(true))
+let u3 =
+    true
+    |> sameShape(true)
+    |> assertEqual("eq")
 
 Ashes.IO.print("ok")

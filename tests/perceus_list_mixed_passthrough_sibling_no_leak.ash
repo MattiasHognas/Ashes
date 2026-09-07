@@ -32,6 +32,10 @@ let recursive sumLengths values acc =
 let recursive repeat n acc =
     if n == 0
     then acc
-    else repeat(n - 1)(acc + sumLengths(build(n % 2 == 0))(0))
+    else
+        repeat(n - 1)(acc + sumLengths(build(n % 2 == 0))(0))
 
-io.print(text.fromInt(repeat(2000000)(0)))
+0
+|> repeat(2000000)
+|> text.fromInt
+|> io.print

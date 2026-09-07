@@ -16,15 +16,25 @@ type Tagged =
 
 let tag s =
     match s with
-        | Circle(r) -> Tagged("Circle")(area(Circle(r)))
-        | Square(w) -> Tagged("Square")(area(Square(w)))
+        | Circle(r) ->
+            Circle(r)
+            |> area
+            |> Tagged("Circle")
+        | Square(w) ->
+            Square(w)
+            |> area
+            |> Tagged("Square")
 
 let describe t =
     match t with
         | Tagged(name, value) -> name + ":" + Ashes.Text.fromInt(value)
 
-let areas = "area=" + Ashes.Text.fromInt(area(Circle(2))) + "," + Ashes.Text.fromInt(area(Square(3)))
+let areas =
+    "area=" + Ashes.Text.fromInt(area(Circle(2))) + "," + Ashes.Text.fromInt(area(Square(3)))
 
-let len = "len=" + Ashes.Text.fromInt(Ashes.Text.length(Ashes.Text.trim("  abc  ")))
+let len =
+    "len=" + Ashes.Text.fromInt("  abc  "
+    |> Ashes.Text.trim
+    |> Ashes.Text.length)
 
 Ashes.IO.print(areas + "|" + len + "|" + "tagged=" + describe(tag(Square(3))))

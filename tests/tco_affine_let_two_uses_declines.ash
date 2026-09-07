@@ -28,4 +28,6 @@ let recursive lenUse i acc =
                 then -1
                 else lenUse(i - 1)(acc2)
 
-io.print(text.fromInt(text.byteLength(exitUse(2000)(""))) + " " + text.fromInt(lenUse(1500)("")))
+io.print(text.fromInt(""
+|> exitUse(2000)
+|> text.byteLength) + " " + text.fromInt(lenUse(1500)("")))

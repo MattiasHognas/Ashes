@@ -16,5 +16,10 @@ let describe b =
         | Boxed(_xs, label) -> label
 
 let r =
-    apply(Callback(given (n) -> n * 3)(14))
-in Ashes.IO.print(r + Ashes.Text.byteLength(describe(Boxed(1 :: 2 :: [])("hi"))))
+    14
+    |> Callback(given (n) -> n * 3)
+    |> apply
+in
+    Ashes.IO.print(r + Ashes.Text.byteLength("hi"
+    |> Boxed(1 :: 2 :: [])
+    |> describe))

@@ -30,11 +30,15 @@ let spanOf node =
 
 let runtimeCount = 2 + Ashes.Collection.List.length(Ashes.IO.args)
 
-let built = build(Span(start = 10, end = 32))(true)("go")(Leaf(7))(names(runtimeCount))(3)
+let built =
+    build(Span(start = 10, end = 32))(true)("go")(Leaf(7))(names(runtimeCount))(3)
 
 let outer = spanOf(built)
 
-let again = spanOf(Wrapped(Span(start = 1, end = 32))(Leaf(0)))
+let again =
+    Leaf(0)
+    |> Wrapped(Span(start = 1, end = 32))
+    |> spanOf
 
 match built with
     | Wrapped(_, Branch(_, _, params, _)) -> Ashes.IO.print(Ashes.Collection.List.length(params) * 10 + outer.end - again.end + 2)

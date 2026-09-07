@@ -30,4 +30,8 @@ let recursive chain i acc =
 
 let f n = text.fromInt(n % 10)
 
-io.print(small(5)("") + " " + text.fromInt(text.byteLength(big(3000000)(""))) + " " + text.fromInt(text.byteLength(viaCall(f)(300000)(""))) + " " + chain(3)(""))
+io.print(small(5)("") + " " + text.fromInt(""
+|> big(3000000)
+|> text.byteLength) + " " + text.fromInt(""
+|> viaCall(f)(300000)
+|> text.byteLength) + " " + chain(3)(""))

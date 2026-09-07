@@ -9,4 +9,9 @@ import Ashes.Byte
 import Ashes.Number.UInt
 match Ashes.IO.File.readAllBytes("rab.txt") with
     | Error(_e) -> Ashes.IO.print("err")
-    | Ok(b) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.length(b)) + "|" + Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Byte.get(b)(0))) + "|" + Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Byte.get(b)(12))))
+    | Ok(b) ->
+        Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.length(b)) + "|" + Ashes.Text.fromInt(0
+        |> Ashes.Byte.get(b)
+        |> Ashes.Number.UInt.toInt) + "|" + Ashes.Text.fromInt(12
+        |> Ashes.Byte.get(b)
+        |> Ashes.Number.UInt.toInt))

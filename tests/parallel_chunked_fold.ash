@@ -16,7 +16,10 @@ let recursive countInto bytes i hi map =
     if i >= hi
     then map
     else
-        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+        let b =
+            i
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
         in
             let key =
                 if b == 59

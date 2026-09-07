@@ -17,7 +17,10 @@ type HashMapTree(V) =
 
 let empty = HEmpty
 
-let hashKey key = Ashes.Byte.hash(Ashes.Byte.fromText(key))
+let hashKey key =
+    key
+    |> Ashes.Byte.fromText
+    |> Ashes.Byte.hash
 
 let strCompare a b =
     (let ab = Ashes.Byte.fromText(a)
@@ -68,16 +71,21 @@ let hMax a b =
     then a
     else b
 
-let hMake left hash key value right = HNode(hMax(hHeight(left))(hHeight(right)) + 1)(left)(hash)(key)(value)(right)
+let hMake left hash key value right =
+    HNode(hMax(hHeight(left))(hHeight(right)) + 1)(left)(hash)(key)(value)(right)
 
 let hRotateLeft tree =
     match tree with
-        | HNode(_h, left, hash, key, value, HNode(_rh, rl, rhash, rkey, rvalue, rr)) -> hMake(hMake(left)(hash)(key)(value)(rl))(rhash)(rkey)(rvalue)(rr)
+        | HNode(_h, left, hash, key, value, HNode(_rh, rl, rhash, rkey, rvalue, rr)) ->
+            hMake(hMake(left)(hash)(key)(value)(rl))(rhash)(rkey)(rvalue)(rr)
         | _ -> tree
 
 let hRotateRight tree =
     match tree with
-        | HNode(_h, HNode(_lh, ll, lhash, lkey, lvalue, lr), hash, key, value, right) -> hMake(ll)(lhash)(lkey)(lvalue)(hMake(lr)(hash)(key)(value)(right))
+        | HNode(_h, HNode(_lh, ll, lhash, lkey, lvalue, lr), hash, key, value, right) ->
+            right
+            |> hMake(lr)(hash)(key)(value)
+            |> hMake(ll)(lhash)(lkey)(lvalue)
         | _ -> tree
 
 let hBalance tree =
@@ -93,7 +101,10 @@ let hBalance tree =
                         | HNode(_lh, ll, _lhash, _lkey, _lvalue, lr) ->
                             if hHeight(ll) >= hHeight(lr)
                             then hRotateRight(normalized)
-                            else hRotateRight(hMake(hRotateLeft(left))(hash)(key)(value)(right))
+                            else
+                                right
+                                |> hMake(hRotateLeft(left))(hash)(key)(value)
+                                |> hRotateRight
                 else
                     if hHeight(right) >= hHeight(left) + 2
                     then
@@ -102,7 +113,11 @@ let hBalance tree =
                             | HNode(_rh, rl, _rhash, _rkey, _rvalue, rr) ->
                                 if hHeight(rr) >= hHeight(rl)
                                 then hRotateLeft(normalized)
-                                else hRotateLeft(hMake(left)(hash)(key)(value)(hRotateRight(right)))
+                                else
+                                    right
+                                    |> hRotateRight
+                                    |> hMake(left)(hash)(key)(value)
+                                    |> hRotateLeft
                     else normalized
 
 let get searchKey map =
@@ -140,8 +155,15 @@ let set newKey newValue map =
                         then hMake(left)(nodeHash)(nodeKey)(newValue)(right)
                         else
                             if ordering <= -1
-                            then hBalance(hMake(go(left))(nodeHash)(nodeKey)(nodeValue)(right))
-                            else hBalance(hMake(left)(nodeHash)(nodeKey)(nodeValue)(go(right)))
+                            then
+                                right
+                                |> hMake(go(left))(nodeHash)(nodeKey)(nodeValue)
+                                |> hBalance
+                            else
+                                right
+                                |> go
+                                |> hMake(left)(nodeHash)(nodeKey)(nodeValue)
+                                |> hBalance
         in go(map))
 
 let insert = set

@@ -12,4 +12,7 @@ let recursive step (n: Int) (items: List(Str)) (total: Int) =
             else step(n - 1)([Ashes.Text.fromInt(n), head])(total + Ashes.Text.byteLength(head))
         | [] -> total
 
-Ashes.IO.print(Ashes.Text.fromInt(step(300000)(["seed"])(0)))
+0
+|> step(300000)(["seed"])
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

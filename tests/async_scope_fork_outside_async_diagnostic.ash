@@ -1,2 +1,4 @@
 // expect-compile-error: must be used inside an async task
-Ashes.Task.fork(async 1)
+1
+|> async
+|> Ashes.Task.fork

@@ -21,30 +21,42 @@ let environmentIsMissing =
             | Error(_) -> false
 
 let _ =
-    Ashes.IO.write(if resultHasText(Ashes.IO.Environment.currentDirectory(Unit))
+    Ashes.IO.write(if Unit
+    |> Ashes.IO.Environment.currentDirectory
+    |> resultHasText
     then "true"
     else "false")
 in
     let _ =
-        Ashes.IO.write(if resultHasText(Ashes.IO.Environment.executableDirectory(Unit))
+        Ashes.IO.write(if Unit
+        |> Ashes.IO.Environment.executableDirectory
+        |> resultHasText
         then "true"
         else "false")
     in
         let _ =
-            Ashes.IO.write(if resultHasText(Ashes.IO.Environment.temporaryDirectory(Unit))
+            Ashes.IO.write(if Unit
+            |> Ashes.IO.Environment.temporaryDirectory
+            |> resultHasText
             then "true"
             else "false")
         in
             let _ =
-                Ashes.IO.write(if resultHasText(Ashes.IO.Environment.cacheDirectory(Unit))
+                Ashes.IO.write(if Unit
+                |> Ashes.IO.Environment.cacheDirectory
+                |> resultHasText
                 then "true"
                 else "false")
             in
                 let _ =
-                    Ashes.IO.write(if environmentHasText(Ashes.IO.Environment.get("PATH"))
+                    Ashes.IO.write(if "PATH"
+                    |> Ashes.IO.Environment.get
+                    |> environmentHasText
                     then "true"
                     else "false")
                 in
-                    Ashes.IO.print(if environmentIsMissing(Ashes.IO.Environment.get("ASHES_TEST_VARIABLE_THAT_MUST_NOT_EXIST_7A8EC7E8"))
+                    Ashes.IO.print(if "ASHES_TEST_VARIABLE_THAT_MUST_NOT_EXIST_7A8EC7E8"
+                    |> Ashes.IO.Environment.get
+                    |> environmentIsMissing
                     then "true"
                     else "false")

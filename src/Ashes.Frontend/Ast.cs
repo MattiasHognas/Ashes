@@ -11,6 +11,9 @@ public enum CallArgumentListLayout
 
     /// <summary>The argument continues the same multiline parenthesized group.</summary>
     MultilineContinuation,
+
+    /// <summary>The call was written as a pipeline stage: the argument, then <c>|&gt;</c>, then the function.</summary>
+    Pipe,
 }
 
 /// <summary>

@@ -8,4 +8,6 @@ and isOdd n =
         | 0 -> false
         | _ -> isEven(n - 1)
 
-Ashes.IO.print(isEven(1000000))
+1000000
+|> isEven
+|> Ashes.IO.print

@@ -5,7 +5,10 @@ type Trie(K, V) =
 
 let empty = TrieEmpty
 
-let hashText text = Ashes.Byte.hash(Ashes.Byte.fromText(text))
+let hashText text =
+    text
+    |> Ashes.Byte.fromText
+    |> Ashes.Byte.hash
 
 let recursive firstDiffShift a b shift =
     if a >> shift & 15 == b >> shift & 15
@@ -103,11 +106,18 @@ let upsertHashed hash key missValue onHit =
                 if h2 == hash
                 then
                     if Ashes.Byte.compare(Ashes.Byte.fromText(k2))(Ashes.Byte.fromText(key)) == 0
-                    then TrieLeaf(h2)(k2)(onHit(v2))(next)
-                    else TrieLeaf(h2)(k2)(v2)(go(next))
+                    then
+                        TrieLeaf(h2)(k2)(onHit(v2))(next)
+                    else
+                        next
+                        |> go
+                        |> TrieLeaf(h2)(k2)(v2)
                 else
                     let ds = firstDiffShift(hash)(h2)(0)
-                    in splitPair(ds)(hash >> ds & 15)(TrieLeaf(hash)(key)(missValue)(TrieEmpty))(h2 >> ds & 15)(TrieLeaf(h2)(k2)(v2)(next))
+                    in
+                        next
+                        |> TrieLeaf(h2)(k2)(v2)
+                        |> splitPair(ds)(hash >> ds & 15)(TrieLeaf(hash)(key)(missValue)(TrieEmpty))(h2 >> ds & 15)
             | TrieNode16(s, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15) ->
                 let nib = hash >> s & 15
                 in
@@ -118,44 +128,62 @@ let upsertHashed hash key missValue onHit =
                             if nib < 2
                             then
                                 if nib == 0
-                                then TrieNode16(s)(go(c0))(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
-                                else TrieNode16(s)(c0)(go(c1))(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                then
+                                    TrieNode16(s)(go(c0))(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                else
+                                    TrieNode16(s)(c0)(go(c1))(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
                             else
                                 if nib == 2
-                                then TrieNode16(s)(c0)(c1)(go(c2))(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
-                                else TrieNode16(s)(c0)(c1)(c2)(go(c3))(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                then
+                                    TrieNode16(s)(c0)(c1)(go(c2))(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                else
+                                    TrieNode16(s)(c0)(c1)(c2)(go(c3))(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
                         else
                             if nib < 6
                             then
                                 if nib == 4
-                                then TrieNode16(s)(c0)(c1)(c2)(c3)(go(c4))(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
-                                else TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(go(c5))(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                then
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(go(c4))(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                else
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(go(c5))(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
                             else
                                 if nib == 6
-                                then TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(go(c6))(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
-                                else TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(go(c7))(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                then
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(go(c6))(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                else
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(go(c7))(c8)(c9)(c10)(c11)(c12)(c13)(c14)(c15)
                     else
                         if nib < 12
                         then
                             if nib < 10
                             then
                                 if nib == 8
-                                then TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(go(c8))(c9)(c10)(c11)(c12)(c13)(c14)(c15)
-                                else TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(go(c9))(c10)(c11)(c12)(c13)(c14)(c15)
+                                then
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(go(c8))(c9)(c10)(c11)(c12)(c13)(c14)(c15)
+                                else
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(go(c9))(c10)(c11)(c12)(c13)(c14)(c15)
                             else
                                 if nib == 10
-                                then TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(go(c10))(c11)(c12)(c13)(c14)(c15)
-                                else TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(go(c11))(c12)(c13)(c14)(c15)
+                                then
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(go(c10))(c11)(c12)(c13)(c14)(c15)
+                                else
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(go(c11))(c12)(c13)(c14)(c15)
                         else
                             if nib < 14
                             then
                                 if nib == 12
-                                then TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(go(c12))(c13)(c14)(c15)
-                                else TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(go(c13))(c14)(c15)
+                                then
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(go(c12))(c13)(c14)(c15)
+                                else
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(go(c13))(c14)(c15)
                             else
                                 if nib == 14
-                                then TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(go(c14))(c15)
-                                else TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)(go(c15))
+                                then
+                                    TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(go(c14))(c15)
+                                else
+                                    c15
+                                    |> go
+                                    |> TrieNode16(s)(c0)(c1)(c2)(c3)(c4)(c5)(c6)(c7)(c8)(c9)(c10)(c11)(c12)(c13)(c14)
     in go)
 
 let getHashed hash key =
@@ -223,7 +251,8 @@ let foldLeft folder state =
     (let recursive go acc t =
         match t with
             | TrieEmpty -> acc
-            | TrieLeaf(_hash, key, value, next) -> go(folder(acc)(key)(value))(next)
+            | TrieLeaf(_hash, key, value, next) ->
+                go(folder(acc)(key)(value))(next)
             | TrieNode16(_shift, c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15) ->
                 let a0 = go(acc)(c0)
                 in

@@ -8,8 +8,10 @@ let spawned =
 
 let _s = Ashes.Task.spawn(spawned)
 in
-    match Ashes.Task.run(async(match await Ashes.Task.sleep(400) with
+    match (match await Ashes.Task.sleep(400) with
         | Ok(_y) -> Ashes.IO.writeLine("main")
-        | Error(_e2) -> Ashes.IO.writeLine("main-err"))) with
+        | Error(_e2) -> Ashes.IO.writeLine("main-err"))
+    |> async
+    |> Ashes.Task.run with
         | Ok(_u) -> Ashes.IO.write("")
         | Error(e) -> Ashes.IO.print(e)

@@ -11,7 +11,14 @@ let emitTo (body: Body) (inst: Inst) = body with items = [inst]
 
 let mk (label: Str) = Inst(text = "" + label, n = 1)
 
-let build (seed: Str) = emitTo(emitTo(emitTo(Body(items = [], count = 0))(mk(seed)))(mk("Second")))(mk("Third"))
+let build (seed: Str) =
+    "Third"
+    |> mk
+    |> emitTo("Second"
+    |> mk
+    |> emitTo(seed
+    |> mk
+    |> emitTo(Body(items = [], count = 0))))
 
 let recursive texts (items: List(Inst)) =
     match items with
@@ -22,4 +29,7 @@ let describe (body: Body) =
     match body with
         | Body { items = items } -> texts(items) + " " + texts(items)
 
-Ashes.IO.print(describe(build("Found")))
+"Found"
+|> build
+|> describe
+|> Ashes.IO.print

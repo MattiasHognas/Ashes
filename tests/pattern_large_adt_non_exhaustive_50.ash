@@ -56,4 +56,7 @@ let instToInt =
         match i with
             | Inst00 -> 0
             | Inst04 -> 4
-in Ashes.IO.print(instToInt(Inst00))
+in
+    Inst00
+    |> instToInt
+    |> Ashes.IO.print

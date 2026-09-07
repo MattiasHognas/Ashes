@@ -29,8 +29,12 @@ let recursive uset m k v =
             then Br(l)(k)(v)(r)
             else
                 if k <= key
-                then Br(uset(l)(k)(v))(key)(ov)(r)
-                else Br(l)(key)(ov)(uset(r)(k)(v))
+                then
+                    Br(uset(l)(k)(v))(key)(ov)(r)
+                else
+                    v
+                    |> uset(r)(k)
+                    |> Br(l)(key)(ov)
 
 let recursive usum m =
     match m with
@@ -49,6 +53,13 @@ let addRow m i =
 let recursive loop i m =
     if i <= 0
     then m
-    else loop(i - 1)(addRow(m)(i))
+    else
+        i
+        |> addRow(m)
+        |> loop(i - 1)
 
-Ashes.IO.print(Ashes.Text.fromInt(usum(loop(10000)(Lf))))
+Lf
+|> loop(10000)
+|> usum
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

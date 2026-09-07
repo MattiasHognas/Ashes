@@ -22,4 +22,8 @@ let recursive loop n acc =
                             | Error(_) -> 0
                             | Ok(_c) -> 1
         in loop(n - 1)(acc + reader(0))
-in Ashes.IO.print(Ashes.Text.fromInt(loop(50)(0)))
+in
+    0
+    |> loop(50)
+    |> Ashes.Text.fromInt
+    |> Ashes.IO.print

@@ -559,9 +559,10 @@ let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List
         ) with
             | Error(error) -> Error(error)
             | Ok(ReachableModuleSet { diagnosticSources = _diagnostic :: _rest as diagnosticSources }) ->
-                Error(diagnosticSources
+                diagnosticSources
                 |> orderProjectDiagnostics
-                |> ProjectCompilationParseError)
+                |> ProjectCompilationParseError
+                |> Error
             | Ok(ReachableModuleSet { names = names, units = units, diagnosticSources = [] }) ->
                 match lastModuleName(names) with
                     | None ->

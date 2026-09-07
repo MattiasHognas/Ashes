@@ -41,16 +41,21 @@ let max left right =
     then left
     else right
 
-let makeNode left key value right = Node(max(height(left))(height(right)) + 1)(left)(key)(value)(right)
+let makeNode left key value right =
+    Node(max(height(left))(height(right)) + 1)(left)(key)(value)(right)
 
 let rotateLeft map =
     match map with
-        | Node(_height, left, key, value, Node(_rightHeight, rightLeft, rightKey, rightValue, rightRight)) -> makeNode(makeNode(left)(key)(value)(rightLeft))(rightKey)(rightValue)(rightRight)
+        | Node(_height, left, key, value, Node(_rightHeight, rightLeft, rightKey, rightValue, rightRight)) ->
+            makeNode(makeNode(left)(key)(value)(rightLeft))(rightKey)(rightValue)(rightRight)
         | _ -> map
 
 let rotateRight map =
     match map with
-        | Node(_height, Node(_leftHeight, leftLeft, leftKey, leftValue, leftRight), key, value, right) -> makeNode(leftLeft)(leftKey)(leftValue)(makeNode(leftRight)(key)(value)(right))
+        | Node(_height, Node(_leftHeight, leftLeft, leftKey, leftValue, leftRight), key, value, right) ->
+            right
+            |> makeNode(leftRight)(key)(value)
+            |> makeNode(leftLeft)(leftKey)(leftValue)
         | _ -> map
 
 let balance map =
@@ -66,7 +71,10 @@ let balance map =
                         | Node(_leftHeight, leftLeft, _leftKey, _leftValue, leftRight) ->
                             if height(leftLeft) >= height(leftRight)
                             then rotateRight(normalized)
-                            else rotateRight(makeNode(rotateLeft(left))(key)(value)(right))
+                            else
+                                right
+                                |> makeNode(rotateLeft(left))(key)(value)
+                                |> rotateRight
                 else
                     if height(right) >= height(left) + 2
                     then
@@ -75,7 +83,11 @@ let balance map =
                             | Node(_rightHeight, rightLeft, _rightKey, _rightValue, rightRight) ->
                                 if height(rightRight) >= height(rightLeft)
                                 then rotateLeft(normalized)
-                                else rotateLeft(makeNode(left)(key)(value)(rotateRight(right)))
+                                else
+                                    right
+                                    |> rotateRight
+                                    |> makeNode(left)(key)(value)
+                                    |> rotateLeft
                     else normalized
 
 let getWith compare searchKey =
@@ -98,7 +110,10 @@ let getStr searchKey =
         match map with
             | Empty -> None
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(searchKey))(Ashes.Byte.fromText(key))
+                let ordering =
+                    key
+                    |> Ashes.Byte.fromText
+                    |> Ashes.Byte.compare(Ashes.Byte.fromText(searchKey))
                 in
                     if ordering == 0
                     then Some(value)
@@ -142,8 +157,15 @@ let setWith compare newKey newValue =
                     then makeNode(left)(key)(newValue)(right)
                     else
                         if ordering <= -1
-                        then balance(makeNode(go(left))(key)(value)(right))
-                        else balance(makeNode(left)(key)(value)(go(right)))
+                        then
+                            right
+                            |> makeNode(go(left))(key)(value)
+                            |> balance
+                        else
+                            right
+                            |> go
+                            |> makeNode(left)(key)(value)
+                            |> balance
     in go)
 
 let setStr newKey newValue =
@@ -151,14 +173,24 @@ let setStr newKey newValue =
         match map with
             | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
+                let ordering =
+                    key
+                    |> Ashes.Byte.fromText
+                    |> Ashes.Byte.compare(Ashes.Byte.fromText(newKey))
                 in
                     if ordering == 0
                     then makeNode(left)(key)(newValue)(right)
                     else
                         if ordering <= -1
-                        then balance(makeNode(go(left))(key)(value)(right))
-                        else balance(makeNode(left)(key)(value)(go(right)))
+                        then
+                            right
+                            |> makeNode(go(left))(key)(value)
+                            |> balance
+                        else
+                            right
+                            |> go
+                            |> makeNode(left)(key)(value)
+                            |> balance
     in go)
 
 let upsertStr newKey missValue onHit =
@@ -166,14 +198,25 @@ let upsertStr newKey missValue onHit =
         match map with
             | Empty -> makeNode(Empty)(newKey)(missValue)(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
+                let ordering =
+                    key
+                    |> Ashes.Byte.fromText
+                    |> Ashes.Byte.compare(Ashes.Byte.fromText(newKey))
                 in
                     if ordering == 0
-                    then makeNode(left)(key)(onHit(value))(right)
+                    then
+                        makeNode(left)(key)(onHit(value))(right)
                     else
                         if ordering <= -1
-                        then balance(makeNode(go(left))(key)(value)(right))
-                        else balance(makeNode(left)(key)(value)(go(right)))
+                        then
+                            right
+                            |> makeNode(go(left))(key)(value)
+                            |> balance
+                        else
+                            right
+                            |> go
+                            |> makeNode(left)(key)(value)
+                            |> balance
     in go)
 
 let set newKey newValue =
@@ -185,8 +228,15 @@ let set newKey newValue =
                 then makeNode(left)(key)(newValue)(right)
                 else
                     if newKey < key
-                    then balance(makeNode(go(left))(key)(value)(right))
-                    else balance(makeNode(left)(key)(value)(go(right)))
+                    then
+                        right
+                        |> makeNode(go(left))(key)(value)
+                        |> balance
+                    else
+                        right
+                        |> go
+                        |> makeNode(left)(key)(value)
+                        |> balance
     in go)
 
 let insert = set
@@ -217,7 +267,10 @@ let fromListWith compare =
     (let recursive go entries map =
         match entries with
             | [] -> map
-            | (key, value) :: tail -> go(tail)(setWith(compare)(key)(value)(map))
+            | (key, value) :: tail ->
+                map
+                |> setWith(compare)(key)(value)
+                |> go(tail)
     in
         given (entries) -> go(entries)(empty))
 
@@ -225,5 +278,8 @@ let fromList entries =
     (let recursive go entries map =
         match entries with
             | [] -> map
-            | (key, value) :: tail -> go(tail)(set(key)(value)(map))
+            | (key, value) :: tail ->
+                map
+                |> set(key)(value)
+                |> go(tail)
     in go(entries)(empty))

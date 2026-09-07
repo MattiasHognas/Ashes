@@ -45,7 +45,10 @@ let recursive findModule name (interfaces: List(ModuleImportInterface)) =
         | [] -> None
         | interface :: rest ->
             if interface.name == name
-            then Some(deepCopy(interface))
+            then
+                interface
+                |> deepCopy
+                |> Some
             else findModule(name)(rest)
 
 let recursive hasValueExport name exports =
@@ -76,9 +79,13 @@ let recursive parentAndLeafSegments prefix segments =
         | [] -> None
         | _only :: [] -> None
         | parent :: leaf :: [] -> Some((appendModuleSegment(prefix)(parent), deepCopy(leaf)))
-        | segment :: rest -> parentAndLeafSegments(appendModuleSegment(prefix)(segment))(rest)
+        | segment :: rest ->
+            parentAndLeafSegments(appendModuleSegment(prefix)(segment))(rest)
 
-let parentAndLeaf modulePath = parentAndLeafSegments("")(Ashes.Text.split(modulePath)("."))
+let parentAndLeaf modulePath =
+    "."
+    |> Ashes.Text.split(modulePath)
+    |> parentAndLeafSegments("")
 
 let selectorLocalName selectorName alias =
     match alias with
@@ -97,11 +104,19 @@ let resolveValueSelector (entry: ImportHeaderEntry) exportName (interface: Modul
                 deepCopy(entry.written)
             )
         )
-    else Error(UnknownImportExport(entry.sourceLine)(deepCopy(entry.modulePath))(deepCopy(exportName)))
+    else
+        exportName
+        |> deepCopy
+        |> UnknownImportExport(entry.sourceLine)(deepCopy(entry.modulePath))
+        |> Error
 
 let resolveSelector (entry: ImportHeaderEntry) exportName interfaces =
     match findModule(entry.modulePath)(interfaces) with
-        | None -> Error(UnknownImportModule(entry.sourceLine)(deepCopy(entry.modulePath)))
+        | None ->
+            entry.modulePath
+            |> deepCopy
+            |> UnknownImportModule(entry.sourceLine)
+            |> Error
         | Some(interface) -> resolveValueSelector(entry)(exportName)(interface)
 
 let resolveTypeSelector (entry: ImportHeaderEntry) parent leaf (interface: ModuleImportInterface) =
@@ -116,14 +131,26 @@ let resolveTypeSelector (entry: ImportHeaderEntry) parent leaf (interface: Modul
                 deepCopy(entry.written)
             )
         )
-    else Error(UnknownImportExport(entry.sourceLine)(deepCopy(parent))(deepCopy(leaf)))
+    else
+        leaf
+        |> deepCopy
+        |> UnknownImportExport(entry.sourceLine)(deepCopy(parent))
+        |> Error
 
 let resolveUppercaseFallback (entry: ImportHeaderEntry) interfaces =
     match parentAndLeaf(entry.modulePath) with
-        | None -> Error(UnknownImportModule(entry.sourceLine)(deepCopy(entry.modulePath)))
+        | None ->
+            entry.modulePath
+            |> deepCopy
+            |> UnknownImportModule(entry.sourceLine)
+            |> Error
         | Some((parent, leaf)) ->
             match findModule(parent)(interfaces) with
-                | None -> Error(UnknownImportModule(entry.sourceLine)(deepCopy(entry.modulePath)))
+                | None ->
+                    entry.modulePath
+                    |> deepCopy
+                    |> UnknownImportModule(entry.sourceLine)
+                    |> Error
                 | Some(interface) -> resolveTypeSelector(entry)(parent)(leaf)(interface)
 
 let resolveWholeOrType (entry: ImportHeaderEntry) interfaces =
@@ -191,7 +218,10 @@ let resolvedSourceLine resolved =
 
 let recursive resolveImportsFrom remaining interfaces reversed =
     match remaining with
-        | [] -> Ok(reverseList(reversed))
+        | [] ->
+            reversed
+            |> reverseList
+            |> Ok
         | entry :: rest ->
             match resolveImport(entry)(interfaces) with
                 | Error(error) -> Error(error)
@@ -201,7 +231,9 @@ let recursive resolveImportsFrom remaining interfaces reversed =
                         Error(
                             ConflictingResolvedImport(
                                 resolvedSourceLine(resolved),
-                                deepCopy(resolvedLocalName(resolved))
+                                resolved
+                                |> resolvedLocalName
+                                |> deepCopy
                             )
                         )
                     else resolveImportsFrom(rest)(interfaces)(resolved :: reversed)

@@ -23,8 +23,10 @@ let halves =
 let before = halves(0)
 
 let slept =
-    match Ashes.Task.run(async(let ok = await Ashes.Task.sleep(1)
-    in "slept")) with
+    match (let ok = await Ashes.Task.sleep(1)
+    in "slept")
+    |> async
+    |> Ashes.Task.run with
         | Ok(text) -> text
         | Error(err) -> err
 

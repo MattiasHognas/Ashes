@@ -215,7 +215,10 @@ let recursive collectByOwnership (target: ParameterOwnership) (pairs: List((Str,
             match entry with
                 | (name, own) ->
                     if own == target
-                    then collectByOwnership(target)(rest)(append(acc)([name]))
+                    then
+                        [name]
+                        |> append(acc)
+                        |> collectByOwnership(target)(rest)
                     else collectByOwnership(target)(rest)(acc)
 
 let getBorrowedParameters (pairs: List((Str, ParameterOwnership))) = collectByOwnership(Borrowed)(pairs)([])

@@ -14,10 +14,14 @@ in
     let recursive fill current limit map =
         if current > limit
         then map
-        else fill(current + 1)(limit)(Ashes.Collection.Map.setWith(compare)(current)(current * 10)(map))
+        else
+            map
+            |> Ashes.Collection.Map.setWith(compare)(current)(current * 10)
+            |> fill(current + 1)(limit)
     in
         let result = fill(0)(2)(Ashes.Collection.Map.empty)
         in
             match Ashes.Collection.Map.getWith(compare)(2)(result) with
                 | None -> Ashes.IO.print("missing")
-                | Some(value) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(result)) + " " + Ashes.Text.fromInt(value))
+                | Some(value) ->
+                    Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(result)) + " " + Ashes.Text.fromInt(value))

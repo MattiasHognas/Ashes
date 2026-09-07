@@ -40,7 +40,10 @@ let recursive show xs =
 let recursive bump r n count =
     if r == n
     then show(count)
-    else bump(r + 1)(n)(setAt(r)(getAt(r)(count) + 10)(count))
+    else
+        count
+        |> setAt(r)(getAt(r)(count) + 10)
+        |> bump(r + 1)(n)
 
 let recursive scan r n perm count =
     if r == n
@@ -50,7 +53,10 @@ let recursive scan r n perm count =
         in
             if cr > 0
             then Hit(r)
-            else scan(r + 1)(n)(r :: perm)(setAt(r)(cr)(count))
+            else
+                count
+                |> setAt(r)(cr)
+                |> scan(r + 1)(n)(r :: perm)
 
 let recursive twin r n acc =
     if r == n

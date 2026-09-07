@@ -56,7 +56,10 @@ let recursive runtimeManagedStringArm (isFreshStringProducer: Expr -> Bool) (isF
             match runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(letBody) with
                 | Some(true) -> Some(true)
                 | _ -> None
-        | ExprIf(_condition, thenBranch, elseBranch) -> combineStringArms(runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(thenBranch))(runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(elseBranch))
+        | ExprIf(_condition, thenBranch, elseBranch) ->
+            elseBranch
+            |> runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)
+            |> combineStringArms(runtimeManagedStringArm(isFreshStringProducer)(isFunnel)(isStaticConstructor)(thenBranch))
         | other ->
             if isFreshStringProducer(other)
             then Some(true)

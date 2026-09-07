@@ -26,7 +26,10 @@ let lowerOne (state: State) =
 let recursive lowerMany n (state: State) =
     if n == 0
     then state
-    else lowerMany(n - 1)(lowerOne(state))
+    else
+        state
+        |> lowerOne
+        |> lowerMany(n - 1)
 
 let recursive count xs =
     match xs with
@@ -72,4 +75,5 @@ let afterSuffix =
 let noise = churn(3000)([])
 
 match lowered with
-    | State { functions = functions } -> Ashes.IO.print(firstLabel(suffix) + " " + Ashes.Text.fromInt(count(suffix)) + " " + firstLabel(afterSuffix) + " " + Ashes.Text.fromInt(count(afterSuffix)) + " " + Ashes.Text.fromInt(count(noise)) + " " + Ashes.Text.fromInt(count(functions)))
+    | State { functions = functions } ->
+        Ashes.IO.print(firstLabel(suffix) + " " + Ashes.Text.fromInt(count(suffix)) + " " + firstLabel(afterSuffix) + " " + Ashes.Text.fromInt(count(afterSuffix)) + " " + Ashes.Text.fromInt(count(noise)) + " " + Ashes.Text.fromInt(count(functions)))

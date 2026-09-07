@@ -14,7 +14,12 @@ let total =
             in
                 let direct = scale(1)
                 in
-                    let mapped = sumAll(map(scale)([1, 2, 3]))
+                    let mapped =
+                        [1, 2, 3]
+                        |> map(scale)
+                        |> sumAll
                     in direct + mapped
 
-Ashes.IO.print(total(2)(3))
+3
+|> total(2)
+|> Ashes.IO.print

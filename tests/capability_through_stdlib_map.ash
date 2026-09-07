@@ -9,4 +9,6 @@ let tagged =
         | Tag.tag(n) -> resume(n)
         | return(r) -> r
 
-Ashes.IO.print(Ashes.Collection.List.length(tagged))
+tagged
+|> Ashes.Collection.List.length
+|> Ashes.IO.print

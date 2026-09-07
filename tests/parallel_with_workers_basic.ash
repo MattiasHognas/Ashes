@@ -8,4 +8,6 @@ let plus =
 let sq =
     given (x) -> x * x
 
-Ashes.IO.print(Ashes.Task.Parallel.withWorkers(2)(given (_u) -> Ashes.Task.Parallel.reduce(plus)(0)(sq)([1, 2, 3, 4, 5])))
+(given (_u) -> Ashes.Task.Parallel.reduce(plus)(0)(sq)([1, 2, 3, 4, 5]))
+|> Ashes.Task.Parallel.withWorkers(2)
+|> Ashes.IO.print

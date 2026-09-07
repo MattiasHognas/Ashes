@@ -17,6 +17,7 @@ let complement value =
 let recursive reverseComplement input output =
     match text.uncons(input) with
         | None -> output
-        | Some((head, tail)) -> reverseComplement(tail)(rune.toText(complement(head)) + output)
+        | Some((head, tail)) ->
+            reverseComplement(tail)(rune.toText(complement(head)) + output)
 
 Ashes.IO.print(copyRunes("ACGT")("") + "|" + reverseComplement("ACGTN")(""))

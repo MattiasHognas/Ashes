@@ -8,4 +8,7 @@ let recursive lastOr xs default =
                     | [] -> x
                     | _ -> loop(rest)
     in loop(xs)
-in Ashes.IO.print(lastOr(["a", "b", "c"])(""))
+in
+    ""
+    |> lastOr(["a", "b", "c"])
+    |> Ashes.IO.print

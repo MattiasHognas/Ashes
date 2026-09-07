@@ -336,29 +336,26 @@ let recursive formatterBinary : Int -> Int -> Str -> Expr -> Expr -> Bool -> Str
                                     preferPipelines
                                 )
                             )
-// A call/`|?>`/`|!>` chain at a top-level expression position (`parent == 0`) renders as a
-// multiline `|>` pipeline instead of nested calls when the file prefers that layout — mirroring
-// how the whole document already only reaches parent == 0 at exactly the syntactic positions
-// (let-bound values/bodies, if/match/lambda/handle bodies, case and arm bodies, the trailing
+// A pipeline of two or more stages at a whole-expression position (`parent == 0`) renders one
+// stage per line. The stages are the calls the source wrote with `|>` and the `|?>`/`|!>`
+// operators; when the options prefer pipelines, a nested inline call chain counts as well. The
+// document only reaches parent == 0 at the syntactic positions (let-bound values/bodies,
+// if/match/lambda/handle bodies, case and arm bodies, call arguments, list elements, the trailing
 // program expression) where stage 0's own WriteExprInline/WritePipeOperatorInline attempt the
-// same rewrite. Anywhere else (a call argument, a binary operand, ...) parent is never 0, so this
-// is never attempted mid-expression, exactly matching stage 0's own gating.
+// same layout, so this is never attempted as an operand of another operator.
 and formatterTryPipelineRendering : Expr -> Int -> Int -> Bool -> Maybe(Str) =
     given (expression) ->
         given (parent) ->
             given (indent) ->
                 given (preferPipelines) ->
-                    if preferPipelines
-                    then
-                        if parent == 0
-                        then formatterTryWritePipeline(expression)(indent)(preferPipelines)
-                        else None
+                    if parent == 0
+                    then formatterTryWritePipeline(expression)(indent)(preferPipelines)
                     else None
 and formatterTryWritePipeline : Expr -> Int -> Bool -> Maybe(Str) =
     given (expression) ->
         given (indent) ->
             given (preferPipelines) ->
-                match formatterTryCollectPipeline(expression) with
+                match formatterTryCollectPipeline(expression)(preferPipelines) with
                     | None -> None
                     | Some((value, stages)) ->
                         Some(
@@ -386,45 +383,59 @@ and formatterPipelineStagesText : List((Str, Expr)) -> Int -> Bool -> Str =
 // non-pipeline-eligible function anywhere along the chain (a let/if/match/handle) rejects the
 // whole expression rather than converting only part of it, and at least two stages are required
 // (a single call is not worth rewriting).
-and formatterTryCollectPipeline : Expr -> Maybe((Expr, List((Str, Expr)))) =
+and formatterTryCollectPipeline : Expr -> Bool -> Maybe((Expr, List((Str, Expr)))) =
     given (expression) ->
-        match formatterCollectPipelineStages(expression)([]) with
-            | None -> None
-            | Some((value, stages)) ->
-                match stages with
-                    | [] -> None
-                    | _ :: [] -> None
-                    | _ -> Some((value, stages))
+        given (preferPipelines) ->
+            match formatterCollectPipelineStages(expression)(preferPipelines)([]) with
+                | None -> None
+                | Some((value, stages)) ->
+                    match stages with
+                        | [] -> None
+                        | _ :: [] -> None
+                        | _ -> Some((value, stages))
 // stagesSoFar is built by consing each newly discovered outer stage onto its front while walking
 // from the outermost call inward, so by the time collection reaches the innermost value the list
 // already reads innermost-stage-first — the exact order the pipeline renders in. No reversal step
 // is needed (or correct): reversing here would put the outermost stage first instead of last.
-and formatterCollectPipelineStages : Expr -> List((Str, Expr)) -> Maybe((Expr, List((Str, Expr)))) =
+and formatterCollectPipelineStages : Expr -> Bool -> List((Str, Expr)) -> Maybe((Expr, List((Str, Expr)))) =
     given (current) ->
-        given (stagesSoFar) ->
-            match formatterUnspanExpr(current) with
-                | ExprCall(function, argument, _whitespace, _layout) ->
-                    if formatterHasPipelineStages(stagesSoFar)
-                    then
-                        if formatterIsCapitalizedVarFunction(function)
+        given (preferPipelines) ->
+            given (stagesSoFar) ->
+                match formatterUnspanExpr(current) with
+                    | ExprCall(function, argument, _whitespace, layout) ->
+                        if layout == callArgumentsPipe
+                        then
+                            if formatterCanBePipelineFunction(function)
+                            then formatterCollectPipelineStages(argument)(preferPipelines)(("|>", function) :: stagesSoFar)
+                            else Some((current, stagesSoFar))
+                        else
+                            if preferPipelines && layout == callArgumentsInline
+                            then formatterCollectInlineCallStage(current)(function)(argument)(preferPipelines)(stagesSoFar)
+                            else Some((current, stagesSoFar))
+                    | ExprResultPipe(left, right) ->
+                        if formatterCanBePipelineFunction(right)
+                        then formatterCollectPipelineStages(left)(preferPipelines)(("|?>", right) :: stagesSoFar)
+                        else Some((current, stagesSoFar))
+                    | ExprResultMapErrorPipe(left, right) ->
+                        if formatterCanBePipelineFunction(right)
+                        then formatterCollectPipelineStages(left)(preferPipelines)(("|!>", right) :: stagesSoFar)
+                        else Some((current, stagesSoFar))
+                    | _ -> Some((current, stagesSoFar))
+// An inline call written as a call is a stage only when the options prefer pipelines: a
+// constructor call reached after a stage heads the chain as its value, and a let, if, match, or
+// handle stage rejects the whole chain.
+and formatterCollectInlineCallStage : Expr -> Expr -> Expr -> Bool -> List((Str, Expr)) -> Maybe((Expr, List((Str, Expr)))) =
+    given (current) ->
+        given (function) ->
+            given (argument) ->
+                given (preferPipelines) ->
+                    given (stagesSoFar) ->
+                        if formatterHasPipelineStages(stagesSoFar) && formatterIsCapitalizedVarFunction(function)
                         then Some((current, stagesSoFar))
                         else
                             if formatterCanBePipelineFunction(function)
-                            then formatterCollectPipelineStages(argument)(("|>", function) :: stagesSoFar)
+                            then formatterCollectPipelineStages(argument)(preferPipelines)(("|>", function) :: stagesSoFar)
                             else None
-                    else
-                        if formatterCanBePipelineFunction(function)
-                        then formatterCollectPipelineStages(argument)(("|>", function) :: stagesSoFar)
-                        else None
-                | ExprResultPipe(left, right) ->
-                    if formatterCanBePipelineFunction(right)
-                    then formatterCollectPipelineStages(left)(("|?>", right) :: stagesSoFar)
-                    else None
-                | ExprResultMapErrorPipe(left, right) ->
-                    if formatterCanBePipelineFunction(right)
-                    then formatterCollectPipelineStages(left)(("|!>", right) :: stagesSoFar)
-                    else None
-                | _ -> Some((current, stagesSoFar))
 and formatterHasPipelineStages : List((Str, Expr)) -> Bool =
     given (stages) ->
         match stages with
@@ -507,11 +518,14 @@ and formatterExpr : Expr -> Int -> Int -> Bool -> Str =
                                 | ExprBitwiseNot(operand) -> formatterWrap(parent)(14)("~" + formatterExpr(operand)(14)(indent)(preferPipelines))
                                 | ExprLogicalNot(operand) -> formatterWrap(parent)(14)("!" + formatterExpr(operand)(14)(indent)(preferPipelines))
                                 | ExprCall(function, argument, whitespace, layout) ->
-                                    let rendered =
-                                        if whitespace
-                                        then formatterExpr(function)(15)(indent)(preferPipelines) + " " + formatterExpr(argument)(16)(indent)(preferPipelines)
-                                        else formatterParenthesizedCall(expression)(function)(argument)(layout)(indent)(preferPipelines)
-                                    in formatterWrap(parent)(15)(rendered)
+                                    if layout == callArgumentsPipe
+                                    then formatterBinary(parent)(3)("|>")(argument)(function)(preferPipelines)
+                                    else
+                                        let rendered =
+                                            if whitespace
+                                            then formatterExpr(function)(15)(indent)(preferPipelines) + " " + formatterExpr(argument)(16)(indent)(preferPipelines)
+                                            else formatterParenthesizedCall(expression)(function)(argument)(layout)(indent)(preferPipelines)
+                                        in formatterWrap(parent)(15)(rendered)
                                 | ExprTuple(elements) ->
                                     "(" + formatterJoin(", ")(given (item) -> formatterOperandInline(item)(preferPipelines))(elements) + ")"
                                 | ExprList(elements, isMultiline) ->
@@ -856,26 +870,23 @@ and formatterExpressionIsMultiline : Expr -> Bool =
             | ExprIf(_, _, _) -> true
             | ExprMatch(_, _, _) -> true
             | ExprHandle(_, _) -> true
-            | ExprCall(_, _, _, layout) -> layout != callArgumentsInline
+            | ExprCall(_, _, _, layout) -> layout == callArgumentsMultilineStart || layout == callArgumentsMultilineContinuation
             | ExprList(_, isMultiline) -> isMultiline
             | ExprRecord(_, _, isMultiline) -> isMultiline
             | _ -> false
-// Like formatterExpressionIsMultiline, but also true when preferPipelines would rewrite this
-// expression into a multiline `|>` pipeline -- a fact formatterExpressionIsMultiline's own
-// static AST-shape check cannot see, since pipeline eligibility depends on preferPipelines and a
-// walk of the call chain, not a fixed flag on the expression node.
+// Like formatterExpressionIsMultiline, but also true when the expression renders as a multiline
+// pipeline -- a fact formatterExpressionIsMultiline's own static AST-shape check cannot see,
+// since that depends on a walk of the chain (and, for a nested call chain, on preferPipelines),
+// not a fixed flag on the expression node.
 and formatterExpressionIsMultilineOrPipeline : Expr -> Bool -> Bool =
     given (expression) ->
         given (preferPipelines) ->
             if formatterExpressionIsMultiline(expression)
             then true
             else
-                if preferPipelines
-                then
-                    match formatterTryCollectPipeline(expression) with
-                        | Some(_) -> true
-                        | None -> false
-                else false
+                match formatterTryCollectPipeline(expression)(preferPipelines) with
+                    | Some(_) -> true
+                    | None -> false
 // The single-line-or-multiline rendering shared by an `if` branch, a `let` value, a match-case
 // body, and a handler-arm body: a single-line value follows its introducer (`then`, `=`, `->`) on
 // the same line with a leading space; a multiline value starts on its own line, one indent level
@@ -1282,16 +1293,20 @@ let formatProgram program = formatterProgramWith(program)(false)
 // baseline to the requested options in one post-processing pass, mirroring how stage 0's
 // `FinishOutput` trims trailing whitespace and applies the configured newline as a final step
 // rather than threading them through every writer.
+// preferPipelines is stage 0's `FormattingOptions.PreferPipelines`: when true, a chain of two or
+// more nested calls is written as a `|>` pipeline; off, a call written as a call stays a call and
+// only a pipeline written as one is laid out as a pipeline.
 type FormattingOptions =
     | indentSize: Int
     | useTabs: Bool
     | newLine: Str
+    | preferPipelines: Bool
 
-let formattingOptionsDefault = FormattingOptions(indentSize = 4, useTabs = false, newLine = "\n")
+let formattingOptionsDefault = FormattingOptions(indentSize = 4, useTabs = false, newLine = "\n", preferPipelines = false)
 
 let formattingOptionsNormalize options =
     match options with
-        | FormattingOptions { indentSize = indentSize, useTabs = useTabs, newLine = newLine } ->
+        | FormattingOptions { indentSize = indentSize, useTabs = useTabs, newLine = newLine, preferPipelines = preferPipelines } ->
             let normalizedIndentSize =
                 if indentSize > 0
                 then indentSize
@@ -1304,7 +1319,13 @@ let formattingOptionsNormalize options =
                         if newLine == "\r\n"
                         then "\r\n"
                         else "\n"
-                in FormattingOptions(indentSize = normalizedIndentSize, useTabs = useTabs, newLine = normalizedNewLine)
+                in
+                    FormattingOptions(
+                        indentSize = normalizedIndentSize,
+                        useTabs = useTabs,
+                        newLine = normalizedNewLine,
+                        preferPipelines = preferPipelines
+                    )
 
 let recursive formatterRepeatUnit unit count =
     if count <= 0
@@ -1358,9 +1379,9 @@ let formatterApplyOptions options text =
         |> listMap(formatterRescaleLine(normalized))
         |> Ashes.Text.join(normalized.newLine))
 
-let formatProgramWithOptions program preferPipelines options =
-    preferPipelines
+let formatProgramWithOptions program (options: FormattingOptions) =
+    options.preferPipelines
     |> formatterProgramWith(program)
     |> formatterApplyOptions(options)
 
-let formatExpressionWithOptions expression preferPipelines options = formatterApplyOptions(options)(formatterExpr(expression)(0)(0)(preferPipelines) + "\n")
+let formatExpressionWithOptions expression (options: FormattingOptions) = formatterApplyOptions(options)(formatterExpr(expression)(0)(0)(options.preferPipelines) + "\n")

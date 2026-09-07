@@ -8,4 +8,6 @@ let recursive loop n text transform =
     else
         loop(n - 1)(text + "x")(given (value) -> value + Ashes.Text.fromInt(n))
 
-Ashes.IO.print(loop(4)("")(given (value) -> value))
+(given (value) -> value)
+|> loop(4)("")
+|> Ashes.IO.print

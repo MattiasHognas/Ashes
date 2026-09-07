@@ -3,4 +3,7 @@
 external strlen(Str) -> Int
 
 let length = strlen("Ashes")
-in Ashes.IO.print(Ashes.Text.fromInt(length))
+in
+    length
+    |> Ashes.Text.fromInt
+    |> Ashes.IO.print

@@ -16,4 +16,8 @@ let describe (name: Str) =
             then "same"
             else "mismatch for " + name + "\nexpected:\n" + expected + "actual:\n" + actual)
 
-Ashes.IO.print(Ashes.Text.fromInt(Ashes.Text.length(describe("x"))))
+"x"
+|> describe
+|> Ashes.Text.length
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

@@ -16,4 +16,8 @@ let recursive buildL table i acc =
             | h :: _ -> buildL(table)(i - 1)(acc + h)
             | [] -> acc
 
-io.print(text.fromInt(text.byteLength(buildL(["ab"])(3050)(""))))
+""
+|> buildL(["ab"])(3050)
+|> text.byteLength
+|> text.fromInt
+|> io.print

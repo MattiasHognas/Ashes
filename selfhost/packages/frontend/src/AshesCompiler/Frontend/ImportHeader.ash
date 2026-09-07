@@ -300,9 +300,10 @@ let selectorEntry written sourceLine modulePath exportName alias =
     |> Some, alias = copyOptionalText(alias), sourceLine = sourceLine, written = deepCopy(written))
 
 let addSelectorImport written sourceLine modulePath exportName alias imports localName =
-    match validateImportAlias(sourceLine)(localName
+    match localName
     |> deepCopy
-    |> Some) with
+    |> Some
+    |> validateImportAlias(sourceLine) with
         | Error(error) -> Error(error)
         | Ok(_) ->
             if hasSelectorConflict(localName)(modulePath)(exportName)(imports)
@@ -332,9 +333,10 @@ let addModuleImport written sourceLine modulePath alias imports =
                 ), selector = None, alias = None, sourceLine = sourceLine, written = deepCopy(written))
             )
         | Some(name) ->
-            match validateImportAlias(sourceLine)(name
+            match name
             |> deepCopy
-            |> Some) with
+            |> Some
+            |> validateImportAlias(sourceLine) with
                 | Error(error) -> Error(error)
                 | Ok(_) ->
                     match findModuleAlias(name)(imports) with

@@ -75,14 +75,24 @@ let recursive importedModuleNames (entries: List(ImportHeaderEntry)) =
 // three steps `ProjectCompilationPlanning` performs per project module.
 let loadModuleText name path source =
     match parseImportHeader(source) with
-        | Error(error) -> Error(ShippedImportHeaderError(path)(error))
+        | Error(error) ->
+            error
+            |> ShippedImportHeaderError(path)
+            |> Error
         | Ok(ParsedImportHeader { imports = imports, sourceWithoutImports = body }) ->
             match parseProgram(body) with
                 | ProgramParseResult { program = program, diagnostics = [] } ->
                     match buildModuleInterface(name)([])(program) with
-                        | Error(error) -> Error(ShippedInterfaceError(path)(error))
+                        | Error(error) ->
+                            error
+                            |> ShippedInterfaceError(path)
+                            |> Error
                         | Ok(interface) -> Ok(LoadedShippedModule(name = name, sourcePath = path, imports = imports, program = program, interface = interface))
-                | ProgramParseResult { diagnostics = diagnostics } -> Error(ShippedParseError(path)(Ashes.Trait.Show.show(diagnostics)))
+                | ProgramParseResult { diagnostics = diagnostics } ->
+                    diagnostics
+                    |> Ashes.Trait.Show.show
+                    |> ShippedParseError(path)
+                    |> Error
 
 // Loads every module `pending` names that is not loaded yet, then whatever those modules import,
 // until nothing new is reachable. An import outside the reserved namespace has no shipped source
@@ -95,7 +105,10 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                 | Some(_) -> loadReachable(importer)(rest)(loaded)(shipped)
                 | None ->
                     if Ashes.Text.startsWith(name)("Ashes.") == false
-                    then Error(UnsupportedNonShippedImport(importer)(name))
+                    then
+                        name
+                        |> UnsupportedNonShippedImport(importer)
+                        |> Error
                     else
                         match findShipped(name)(shipped) with
                             | None ->
@@ -104,7 +117,10 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                                     let program = ProgramSyntax(items = [], body = None)
                                     in
                                         match buildModuleInterface(name)([])(program) with
-                                            | Error(error) -> Error(ShippedInterfaceError("<builtin>")(error))
+                                            | Error(error) ->
+                                                error
+                                                |> ShippedInterfaceError("<builtin>")
+                                                |> Error
                                             | Ok(interface) ->
                                                 loadReachable(name)(rest)(
                                                     LoadedShippedModule(
@@ -115,11 +131,15 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                                                         interface = interface
                                                     ) :: loaded
                                                 )(shipped)
-                                else Error(ShippedModuleMissing(importer)(name))
+                                else
+                                    name
+                                    |> ShippedModuleMissing(importer)
+                                    |> Error
                             | Some(ShippedModuleText { sourcePath = path, source = source }) ->
                                 match loadModuleText(name)(path)(source) with
                                     | Error(error) -> Error(error)
-                                    | Ok(module) -> loadReachable(name)(Ashes.Collection.List.append(importedModuleNames(module.imports))(rest))(module :: loaded)(shipped)
+                                    | Ok(module) ->
+                                        loadReachable(name)(Ashes.Collection.List.append(importedModuleNames(module.imports))(rest))(module :: loaded)(shipped)
 
 let recursive planUnits (entryName: Str) (loaded: List(LoadedShippedModule)) =
     match loaded with
@@ -142,7 +162,10 @@ let recursive stitchUnits (entryName: Str) (loaded: List(LoadedShippedModule)) (
         | [] -> Ok([])
         | PlannedModule { name = name, source = source, imports = imports, interface = interface } :: rest ->
             match findLoaded(name)(loaded) with
-                | None -> Error(ShippedModuleMissing(entryName)(name))
+                | None ->
+                    name
+                    |> ShippedModuleMissing(entryName)
+                    |> Error
                 | Some(module) ->
                     match stitchUnits(entryName)(loaded)(rest) with
                         | Error(error) -> Error(error)
@@ -168,7 +191,9 @@ let stitchWithShippedModules (entryName: Str) (entryPath: Str) (entrySource: Str
             match loadReachable(entryName)(importedModuleNames(entry.imports))([entry])(shipped) with
                 | Error(error) -> Error(error)
                 | Ok(loaded) ->
-                    match buildModulePlan(entryName)(planUnits(entryName)(loaded)) with
+                    match loaded
+                    |> planUnits(entryName)
+                    |> buildModulePlan(entryName) with
                         | Error(error) -> Error(ShippedPlanError(error))
                         | Ok(planned) ->
                             match stitchUnits(entryName)(loaded)(planned) with

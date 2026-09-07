@@ -21,4 +21,7 @@ let recursive labelBytes (items: List(State)) (total: Int) =
 
 let items = collect(200000)(State(label = "seed", count = 0))([])
 
-Ashes.IO.print(Ashes.Text.fromInt(labelBytes(items)(0)))
+0
+|> labelBytes(items)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

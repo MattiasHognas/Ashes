@@ -10,4 +10,7 @@ let unwrap length =
     match length with
         | Length(value) -> value
 
-Ashes.IO.print(unwrap(nativeLength("Ashes")))
+"Ashes"
+|> nativeLength
+|> unwrap
+|> Ashes.IO.print

@@ -17,4 +17,6 @@ let recursive drive =
                                 | _ -> f(i + 1)
                         in drive(i - 1)(acc + Ashes.Text.byteLength(v))
 
-Ashes.IO.print(drive 1000 0)
+0
+|> drive 1000
+|> Ashes.IO.print

@@ -91,7 +91,10 @@ let recursive collectCaps (semType: SemanticType) (depth: Int) (acc: List(Str)) 
                     let recursive goArgs remaining currentAcc =
                         match remaining with
                             | [] -> currentAcc
-                            | head :: tail -> goArgs(tail)(collectCaps(head)(depth + 1)(currentAcc))
+                            | head :: tail ->
+                                currentAcc
+                                |> collectCaps(head)(depth + 1)
+                                |> goArgs(tail)
                     in goArgs(args)(accWithName)
             | SemFunction(arg, ret, row) ->
                 let accArg = collectCaps(arg)(depth + 1)(acc)
@@ -105,7 +108,10 @@ let recursive collectCaps (semType: SemanticType) (depth: Int) (acc: List(Str)) 
                 let recursive goCaps remaining currentAcc =
                     match remaining with
                         | [] -> currentAcc
-                        | head :: rest -> goCaps(rest)(collectCaps(head)(depth + 1)(currentAcc))
+                        | head :: rest ->
+                            currentAcc
+                            |> collectCaps(head)(depth + 1)
+                            |> goCaps(rest)
                 in
                     let accCaps = goCaps(caps)(acc)
                     in
@@ -117,18 +123,27 @@ let recursive collectCaps (semType: SemanticType) (depth: Int) (acc: List(Str)) 
                 let recursive goElems remaining currentAcc =
                     match remaining with
                         | [] -> currentAcc
-                        | head :: tail -> goElems(tail)(collectCaps(head)(depth + 1)(currentAcc))
+                        | head :: tail ->
+                            currentAcc
+                            |> collectCaps(head)(depth + 1)
+                            |> goElems(tail)
                 in goElems(elements)(acc)
             | SemNamed(_id, _name, args) ->
                 let recursive goArgs remaining currentAcc =
                     match remaining with
                         | [] -> currentAcc
-                        | head :: tail -> goArgs(tail)(collectCaps(head)(depth + 1)(currentAcc))
+                        | head :: tail ->
+                            currentAcc
+                            |> collectCaps(head)(depth + 1)
+                            |> goArgs(tail)
                 in goArgs(args)(acc)
             | SemPointer(pointee) -> collectCaps(pointee)(depth + 1)(acc)
             | _ -> acc
 
-let collectTypeCapabilities (semType: SemanticType) = sort(collectCaps(semType)(0)([]))
+let collectTypeCapabilities (semType: SemanticType) =
+    []
+    |> collectCaps(semType)(0)
+    |> sort
 
 let recursive dedupeSorted (items: List(Str)) =
     match items with
@@ -146,7 +161,11 @@ let recursive mergeAuthority (name: Str) (capabilities: List(Str)) (records: Lis
         | [] -> [PublicAuthorityRecord(bindingName = name, capabilities = capabilities)]
         | PublicAuthorityRecord { bindingName = existing, capabilities = existingCaps } :: rest ->
             if existing == name
-            then PublicAuthorityRecord(bindingName = name, capabilities = dedupeSorted(sort(append(existingCaps)(capabilities)))) :: rest
+            then
+                PublicAuthorityRecord(bindingName = name, capabilities = capabilities
+                |> append(existingCaps)
+                |> sort
+                |> dedupeSorted) :: rest
             else
                 if Ashes.Text.compare(name)(existing) < 0
                 then PublicAuthorityRecord(bindingName = name, capabilities = capabilities) :: records
@@ -163,7 +182,10 @@ let recursive capturePublicAuthorityAux (topLevelBindingNames: List(Str)) (hover
             match head with
                 | HoverTypeInfo { name = Some(name), inferredType = semType, isDefinition = true } ->
                     if containsText(name)(topLevelBindingNames)
-                    then capturePublicAuthorityAux(topLevelBindingNames)(tail)(mergeAuthority(name)(collectTypeCapabilities(semType))(acc))
+                    then
+                        acc
+                        |> mergeAuthority(name)(collectTypeCapabilities(semType))
+                        |> capturePublicAuthorityAux(topLevelBindingNames)(tail)
                     else capturePublicAuthorityAux(topLevelBindingNames)(tail)(acc)
                 | _ -> capturePublicAuthorityAux(topLevelBindingNames)(tail)(acc)
 

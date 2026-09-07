@@ -15,4 +15,6 @@ let recursive go i n s pow acc =
     then s + " " + text.fromBigInt(pow) + " " + text.fromInt(acc)
     else go(i + 1)(n)(s + "a")(pow * 2N)(acc + i)
 
-io.print(go(0)(40)("")(1N)(0))
+0
+|> go(0)(40)("")(1N)
+|> io.print

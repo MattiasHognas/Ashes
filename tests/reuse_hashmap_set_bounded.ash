@@ -14,7 +14,10 @@ import Ashes.IO
 let recursive build i n m =
     if i >= n
     then m
-    else build(i + 1)(n)(Ashes.Collection.HashMap.set("k" + Ashes.Text.fromInt(i))(i * 3)(m))
+    else
+        m
+        |> Ashes.Collection.HashMap.set("k" + Ashes.Text.fromInt(i))(i * 3)
+        |> build(i + 1)(n)
 
 let recursive bump i n m =
     if i >= n
@@ -41,4 +44,5 @@ let n = 200000
 let built = build(0)(n)(Ashes.Collection.HashMap.empty)
 
 let bumped = bump(0)(n)(built)
-in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.HashMap.size(bumped)) + "|" + Ashes.Text.fromInt(checksum(0)(n)(bumped)(0)))
+in
+    Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.HashMap.size(bumped)) + "|" + Ashes.Text.fromInt(checksum(0)(n)(bumped)(0)))

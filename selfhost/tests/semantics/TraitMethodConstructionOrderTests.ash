@@ -17,12 +17,13 @@ let dependencyTrait unit =
     TraitDecl(name = "Dependency", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [unaryBoolMethod(
         "zBase",
         None
-    ), unaryBoolMethod("aDerived")(None
+    ), None
     |> ExprLambda(
         "value",
         ExprCall(ExprQualifiedVar("Dependency")("zBase"))(ExprVar("value"))(false)(callArgumentsInline)
     )
-    |> Some)])
+    |> Some
+    |> unaryBoolMethod("aDerived")])
 
 let dependencyIntImplementation unit =
     TraitImplementationDecl(traitName = "Dependency", typeArguments = [TypeNamed(

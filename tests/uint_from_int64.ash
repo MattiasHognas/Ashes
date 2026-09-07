@@ -7,7 +7,10 @@
 import Ashes.IO
 import Ashes.Text
 import Ashes.Number.UInt
-let roundTrip x = Ashes.Number.UInt.toInt(Ashes.Number.UInt.fromInt64(x))
+let roundTrip x =
+    x
+    |> Ashes.Number.UInt.fromInt64
+    |> Ashes.Number.UInt.toInt
 
 let negativeOne = roundTrip(-1)
 

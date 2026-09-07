@@ -17,4 +17,6 @@ let minOf : a -> List(a) -> a needs {Ord(a)} =
                     then next
                     else best)(first)(items)
 
-Ashes.IO.print(minOf(100)([5, 3, 9, 1, 7]))
+[5, 3, 9, 1, 7]
+|> minOf(100)
+|> Ashes.IO.print

@@ -4,4 +4,6 @@ let recursive f (xs: List(Int)) (n: Int) =
         | [] -> n
         | _ :: rest -> f(rest)(rest)
 
-Ashes.IO.print(f([1])(0))
+0
+|> f([1])
+|> Ashes.IO.print

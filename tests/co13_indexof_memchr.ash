@@ -10,4 +10,5 @@ match Ashes.IO.File.readText("idxdata.txt") with
     | Error(_) -> Ashes.IO.print("err")
     | Ok(t) ->
         let b = Ashes.Byte.fromText(t)
-        in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(104)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(108)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(120)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(122)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(104)(1)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(59)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(59)(6)))
+        in
+            Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(104)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(108)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(120)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(122)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(104)(1)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(59)(0)) + "|" + Ashes.Text.fromInt(Ashes.Byte.indexOf(b)(59)(6)))

@@ -11,11 +11,17 @@ let recursive bumpAll values =
 let recursive repeat turns values =
     if turns == 0
     then values
-    else repeat(turns - 1)(bumpAll(values))
+    else
+        values
+        |> bumpAll
+        |> repeat(turns - 1)
 
 let recursive sum values total =
     match values with
         | [] -> total
         | value :: rest -> sum(rest)(total + value)
 
-io.print(text.fromInt(sum(repeat(100000)([1, 2, 3]))(0)))
+0
+|> sum(repeat(100000)([1, 2, 3]))
+|> text.fromInt
+|> io.print

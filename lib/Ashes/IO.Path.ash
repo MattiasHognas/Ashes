@@ -86,25 +86,45 @@ let rootAndParts style path =
         match style with
             | Unix ->
                 let absolute = Ashes.Text.startsWith(slashed)("/")
-                in ("", absolute, nonEmpty(Ashes.Text.split(slashed)("/")))
+                in
+                    ("", absolute, "/"
+                    |> Ashes.Text.split(slashed)
+                    |> nonEmpty)
             | Windows ->
                 if Ashes.Text.startsWith(slashed)("//")
                 then
-                    match nonEmpty(Ashes.Text.split(Ashes.Text.drop(slashed)(2))("/")) with
+                    match "/"
+                    |> Ashes.Text.split(Ashes.Text.drop(slashed)(2))
+                    |> nonEmpty with
                         | server :: share :: rest -> ("//" + server + "/" + share, true, rest)
-                        | _ -> ("", true, nonEmpty(Ashes.Text.split(Ashes.Text.drop(slashed)(2))("/")))
+                        | _ ->
+                            ("", true, "/"
+                            |> Ashes.Text.split(Ashes.Text.drop(slashed)(2))
+                            |> nonEmpty)
                 else
                     if hasDrive(slashed)
                     then
-                        let drive = Ashes.Internal.deepCopy(Ashes.Text.take(slashed)(2))
+                        let drive =
+                            2
+                            |> Ashes.Text.take(slashed)
+                            |> Ashes.Internal.deepCopy
                         in
-                            let remainder = Ashes.Internal.deepCopy(Ashes.Text.drop(slashed)(2))
+                            let remainder =
+                                2
+                                |> Ashes.Text.drop(slashed)
+                                |> Ashes.Internal.deepCopy
                             in
                                 let absolute = Ashes.Text.startsWith(remainder)("/")
-                                in (drive, absolute, nonEmpty(Ashes.Text.split(Ashes.Internal.deepCopy(remainder))("/")))
+                                in
+                                    (drive, absolute, "/"
+                                    |> Ashes.Text.split(Ashes.Internal.deepCopy(remainder))
+                                    |> nonEmpty)
                     else
                         let absolute = Ashes.Text.startsWith(slashed)("/")
-                        in ("", absolute, nonEmpty(Ashes.Text.split(slashed)("/"))))
+                        in
+                            ("", absolute, "/"
+                            |> Ashes.Text.split(slashed)
+                            |> nonEmpty))
 
 let render style prefix absolute parts =
     (let slash = separator(style)
@@ -123,7 +143,10 @@ let render style prefix absolute parts =
                         then "."
                         else body
                 | Windows ->
-                    let renderedPrefix = Ashes.Text.join(slash)(Ashes.Text.split(prefix)("/"))
+                    let renderedPrefix =
+                        "/"
+                        |> Ashes.Text.split(prefix)
+                        |> Ashes.Text.join(slash)
                     in
                         if prefix == ""
                         then
@@ -146,7 +169,10 @@ let render style prefix absolute parts =
 
 let normalize style path =
     match rootAndParts(style)(path) with
-        | (prefix, absolute, parts) -> render(style)(prefix)(absolute)(normalizeParts(absolute)(parts)([]))
+        | (prefix, absolute, parts) ->
+            []
+            |> normalizeParts(absolute)(parts)
+            |> render(style)(prefix)(absolute)
 
 let isRooted style path =
     match rootAndParts(style)(path) with
@@ -172,8 +198,14 @@ let recursive removeLastReversed reversed =
         | _last :: rest -> reverseList(rest)
 
 let parent style path =
-    match rootAndParts(style)(normalize(style)(path)) with
-        | (prefix, absolute, parts) -> render(style)(prefix)(absolute)(removeLastReversed(reverseList(parts)))
+    match path
+    |> normalize(style)
+    |> rootAndParts(style) with
+        | (prefix, absolute, parts) ->
+            parts
+            |> reverseList
+            |> removeLastReversed
+            |> render(style)(prefix)(absolute)
 
 let recursive lastPart parts current =
     match parts with
@@ -181,7 +213,9 @@ let recursive lastPart parts current =
         | head :: tail -> lastPart(tail)(head)
 
 let basename style path =
-    match rootAndParts(style)(normalize(style)(path)) with
+    match path
+    |> normalize(style)
+    |> rootAndParts(style) with
         | (_prefix, _absolute, parts) -> lastPart(parts)("")
 
 let extension style path =
@@ -230,7 +264,8 @@ let recursive relativeParts style left right =
                 | rightHead :: rightTail ->
                     if samePart(style)(leftHead)(rightHead)
                     then relativeParts(style)(leftTail)(rightTail)
-                    else appendList(parentsFor(left))(right)
+                    else
+                        appendList(parentsFor(left))(right)
 
 let relativeTo style base target =
     (let normalizedBase = normalize(style)(base)
@@ -242,5 +277,8 @@ let relativeTo style base target =
                     match rootAndParts(style)(normalizedTarget) with
                         | (targetPrefix, targetAbsolute, targetParts) ->
                             if sameRoot(style)(basePrefix)(baseAbsolute)(targetPrefix)(targetAbsolute)
-                            then render(style)("")(false)(relativeParts(style)(baseParts)(targetParts))
+                            then
+                                targetParts
+                                |> relativeParts(style)(baseParts)
+                                |> render(style)("")(false)
                             else normalizedTarget)

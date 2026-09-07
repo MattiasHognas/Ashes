@@ -16,4 +16,9 @@ match Ashes.IO.File.mmap("mm.txt") with
             if Ashes.Text.substring(Ashes.Byte.subText(b)(0)(5))(0)(5) == "hello"
             then "zero-copy"
             else "bad"
-        in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.length(b)) + "|" + Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Byte.get(b)(0))) + "|" + Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Byte.get(b)(12))) + "|" + ok)
+        in
+            Ashes.IO.print(Ashes.Text.fromInt(Ashes.Byte.length(b)) + "|" + Ashes.Text.fromInt(0
+            |> Ashes.Byte.get(b)
+            |> Ashes.Number.UInt.toInt) + "|" + Ashes.Text.fromInt(12
+            |> Ashes.Byte.get(b)
+            |> Ashes.Number.UInt.toInt) + "|" + ok)

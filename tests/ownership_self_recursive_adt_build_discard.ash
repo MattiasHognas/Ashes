@@ -19,7 +19,10 @@ type Tree =
 let recursive make depth =
     if depth == 0
     then Leaf
-    else Node(make(depth - 1))(make(depth - 1))
+    else
+        depth - 1
+        |> make
+        |> Node(make(depth - 1))
 
 let recursive check tree =
     match tree with
@@ -29,6 +32,10 @@ let recursive check tree =
 let recursive loop n acc =
     if n == 0
     then acc
-    else loop(n - 1)(check(make(12)) + acc)
+    else
+        loop(n - 1)(check(make(12)) + acc)
 
-Ashes.IO.print(Ashes.Text.fromInt(loop(32)(0)))
+0
+|> loop(32)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

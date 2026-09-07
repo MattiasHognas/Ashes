@@ -22,7 +22,8 @@ let recursive advance bodies dt n =
                 | b :: rest ->
                     match b with
                         | Body(p, v) -> Body(pos = p + v * dt, vel = v) :: step(rest)
-        in advance(step(bodies))(dt)(n - 1)
+        in
+            advance(step(bodies))(dt)(n - 1)
 
 let recursive sumPos bs acc =
     match bs with
@@ -33,4 +34,6 @@ let recursive sumPos bs acc =
 
 let start = [Body(pos = 0.0, vel = 1.0), Body(pos = 10.0, vel = 2.0)]
 
-io.print(text.formatFloat(sumPos(advance(start)(1.0)(1000))(0.0))(1))
+1
+|> text.formatFloat(sumPos(advance(start)(1.0)(1000))(0.0))
+|> io.print

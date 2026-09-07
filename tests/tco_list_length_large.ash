@@ -8,4 +8,7 @@ in
         if n <= 0
         then acc
         else build(n - 1)(1 :: acc)
-    in Ashes.IO.print(len(build(100000)([]))(0))
+    in
+        0
+        |> len(build(100000)([]))
+        |> Ashes.IO.print

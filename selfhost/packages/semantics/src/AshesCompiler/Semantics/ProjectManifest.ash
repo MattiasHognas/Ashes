@@ -72,7 +72,10 @@ let recursive findField (key: Str) (json: ManifestJson) =
 
 let optionalStringField (key: Str) (json: ManifestJson) =
     match findField(key)(json) with
-        | Some(JsonStr(value)) -> Some(deepCopy(value))
+        | Some(JsonStr(value)) ->
+            value
+            |> deepCopy
+            |> Some
         | _ -> None
 
 let optionalBoolField (key: Str) (json: ManifestJson) =
@@ -128,7 +131,10 @@ let isAshExtension suffix =
 let hasAshExtension value =
     if Ashes.Text.length(value) < 4
     then false
-    else isAshExtension(Ashes.Text.drop(value)(Ashes.Text.length(value) - 4))
+    else
+        Ashes.Text.length(value) - 4
+        |> Ashes.Text.drop(value)
+        |> isAshExtension
 
 let requiredEntry (json: ManifestJson) =
     match optionalStringField("entry")(json) with
@@ -142,7 +148,9 @@ let dependencyFromValue (name: Str) (value: ManifestJson) =
     match value with
         | JsonStr(constraint) ->
             Some(
-                ProjectDependency(name = deepCopy(name), source = RegistryDependency(deepCopy(constraint)))
+                ProjectDependency(name = deepCopy(name), source = constraint
+                |> deepCopy
+                |> RegistryDependency)
             )
         | JsonObject(_key, _field, _rest) ->
             match optionalStringField("path")(value) with
@@ -201,13 +209,19 @@ let finishManifest (json: ManifestJson) (entry: Str) (dependencies: List(Project
         ), version = optionalStringField(
             "version",
             deepCopy(json)
-        ), sourceRoots = sourceRootsField(deepCopy(json)), includeRoots = stringArrayField(
+        ), sourceRoots = json
+        |> deepCopy
+        |> sourceRootsField, includeRoots = stringArrayField(
             "include",
             deepCopy(json)
-        ), outDir = outDirField(deepCopy(json)), target = optionalStringField(
+        ), outDir = json
+        |> deepCopy
+        |> outDirField, target = optionalStringField(
             "target",
             deepCopy(json)
-        ), defaults = defaultsField(deepCopy(json)), dependencies = dependencies, devDependencies = dependenciesField(
+        ), defaults = json
+        |> deepCopy
+        |> defaultsField, dependencies = dependencies, devDependencies = dependenciesField(
             "devDependencies",
             deepCopy(json)
         ), overrides = overridesField(json))
@@ -217,11 +231,15 @@ let buildManifest (json: ManifestJson) (entry: Str) =
     finishManifest(
         json,
         entry,
-        dependenciesField("dependencies")(deepCopy(json))
+        json
+        |> deepCopy
+        |> dependenciesField("dependencies")
     )
 
 let parseManifestObject (json: ManifestJson) =
-    match requiredEntry(deepCopy(json)) with
+    match json
+    |> deepCopy
+    |> requiredEntry with
         | Error(error) -> Error(error)
         | Ok(entry) -> buildManifest(json)(entry)
 

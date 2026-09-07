@@ -32,17 +32,26 @@ let getv m k =
 let recursive setFold i lim m =
     if i > lim
     then m
-    else setFold(i + 1)(lim)(Ashes.Collection.Map.setWith(cmp)(i)(i * 3)(m))
+    else
+        m
+        |> Ashes.Collection.Map.setWith(cmp)(i)(i * 3)
+        |> setFold(i + 1)(lim)
 
 let recursive outer b nb m =
     if b >= nb
     then m
-    else outer(b + 1)(nb)(setFold(0)(99)(m))
+    else
+        m
+        |> setFold(0)(99)
+        |> outer(b + 1)(nb)
 
 let recursive bumpKey5 b nb m =
     if b >= nb
     then m
-    else bumpKey5(b + 1)(nb)(Ashes.Collection.Map.setWith(cmp)(5)(900 + b)(m))
+    else
+        m
+        |> Ashes.Collection.Map.setWith(cmp)(5)(900 + b)
+        |> bumpKey5(b + 1)(nb)
 
 let nestedResult = outer(0)(5)(Ashes.Collection.Map.empty)
 
@@ -51,4 +60,5 @@ let base = setFold(0)(20)(Ashes.Collection.Map.empty)
 let keep = base
 
 let updated = bumpKey5(0)(3)(base)
-in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(nestedResult)) + " " + Ashes.Text.fromInt(getv(keep)(5)) + " " + Ashes.Text.fromInt(getv(updated)(5)))
+in
+    Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(nestedResult)) + " " + Ashes.Text.fromInt(getv(keep)(5)) + " " + Ashes.Text.fromInt(getv(updated)(5)))

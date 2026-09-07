@@ -1,7 +1,12 @@
 // expect: ok
 import Ashes.Collection.HashMap
 import Ashes.IO
-let m = Ashes.Collection.HashMap.set("zebra")(26)(Ashes.Collection.HashMap.set("apple")(1)(Ashes.Collection.HashMap.set("mango")(13)(Ashes.Collection.HashMap.set("apple")(99)(Ashes.Collection.HashMap.empty))))
+let m =
+    Ashes.Collection.HashMap.empty
+    |> Ashes.Collection.HashMap.set("apple")(99)
+    |> Ashes.Collection.HashMap.set("mango")(13)
+    |> Ashes.Collection.HashMap.set("apple")(1)
+    |> Ashes.Collection.HashMap.set("zebra")(26)
 
 let appleVal =
     match Ashes.Collection.HashMap.get("apple")(m) with

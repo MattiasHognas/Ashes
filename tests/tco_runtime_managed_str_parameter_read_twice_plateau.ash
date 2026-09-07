@@ -30,7 +30,11 @@ let recursive widen (n: Int) (text: Str) =
 let recursive rotate (n: Int) (text: Str) =
     if n == 0
     then text
-    else rotate(n - 1)(Ashes.Text.substring(text + text)(1)(Ashes.Text.byteLength(text)))
+    else
+        text
+        |> Ashes.Text.byteLength
+        |> Ashes.Text.substring(text + text)(1)
+        |> rotate(n - 1)
 
 let recursive slice (n: Int) (text: Str) =
     if n == 0
@@ -38,8 +42,19 @@ let recursive slice (n: Int) (text: Str) =
     else
         slice(n - 1)(if n % 1000 == 0
         then "ab"
-        else Ashes.Byte.subText(Ashes.Byte.fromText(text + text))(0)(4096))
+        else
+            Ashes.Byte.subText(Ashes.Byte.fromText(text + text))(0)(4096))
 
 Ashes.IO.print(
-    Ashes.Text.fromInt(Ashes.Text.byteLength(bump(200000)("ab"))) + "|" + Ashes.Text.fromInt(Ashes.Text.byteLength(double(200000)(11)("ab"))) + "|" + Ashes.Text.fromInt(Ashes.Text.byteLength(rotate(200000)(widen(11)("ab")))) + "|" + Ashes.Text.fromInt(Ashes.Text.byteLength(slice(200000)(widen(11)("ab"))))
+    Ashes.Text.fromInt("ab"
+    |> bump(200000)
+    |> Ashes.Text.byteLength) + "|" + Ashes.Text.fromInt("ab"
+    |> double(200000)(11)
+    |> Ashes.Text.byteLength) + "|" + Ashes.Text.fromInt("ab"
+    |> widen(11)
+    |> rotate(200000)
+    |> Ashes.Text.byteLength) + "|" + Ashes.Text.fromInt("ab"
+    |> widen(11)
+    |> slice(200000)
+    |> Ashes.Text.byteLength)
 )

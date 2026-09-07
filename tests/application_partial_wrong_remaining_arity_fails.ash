@@ -4,4 +4,7 @@ let add : Int -> Int -> Int =
         given (y) -> x + y
 in
     let add1 = add(1)
-    in Ashes.IO.print(add1(1)(2))
+    in
+        2
+        |> add1(1)
+        |> Ashes.IO.print

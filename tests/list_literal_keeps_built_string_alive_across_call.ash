@@ -32,8 +32,12 @@ let line = build(5000)("")
 
 let embedded = sumLengths([line, "def"])(0)
 
-let interleaved = sumLengths(interleave("\n")([])([line, "def", "ghi"]))(0)
+let interleaved =
+    sumLengths(interleave("\n")([])([line, "def", "ghi"]))(0)
 
-let joined = text.byteLength(text.join("\n")([line, line, line]))
+let joined =
+    [line, line, line]
+    |> text.join("\n")
+    |> text.byteLength
 
 Ashes.IO.print(text.fromInt(embedded) + " " + text.fromInt(interleaved) + " " + text.fromInt(joined))

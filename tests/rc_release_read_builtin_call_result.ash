@@ -13,6 +13,9 @@ let recursive drive =
                         given (n) -> Ashes.Text.fromInt(n) + "!"
                     in
                         let s = f(i)
-                        in drive(i - 1)(acc + Ashes.Text.byteLength(s) + Ashes.Text.byteLength(s) + Ashes.Text.byteLength(f(i)))
+                        in
+                            drive(i - 1)(acc + Ashes.Text.byteLength(s) + Ashes.Text.byteLength(s) + Ashes.Text.byteLength(f(i)))
 
-Ashes.IO.print(drive 1000 0)
+0
+|> drive 1000
+|> Ashes.IO.print

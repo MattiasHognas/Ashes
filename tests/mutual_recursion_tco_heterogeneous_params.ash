@@ -12,4 +12,6 @@ and pong =
             then "done"
             else ping(n - 1)("x")
 
-Ashes.IO.print(ping(10000000)("start"))
+"start"
+|> ping(10000000)
+|> Ashes.IO.print

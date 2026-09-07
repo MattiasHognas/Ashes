@@ -691,7 +691,10 @@ let recursive operationCapabilityFromType capabilityName semanticType =
                                     | [] -> None
                                     | SemCapability(name, arguments) :: rest ->
                                         if name == capabilityName
-                                        then Some(SemCapability(name)(arguments))
+                                        then
+                                            arguments
+                                            |> SemCapability(name)
+                                            |> Some
                                         else findCapability(rest)
                                     | _ :: rest -> findCapability(rest)
                             in findCapability(capabilities)
@@ -719,8 +722,13 @@ let recursive buildUnsignedOperationType parameters capabilityType supply revers
                             | [] -> body
                             | argument :: tail ->
                                 match tail with
-                                    | [] -> SemFunction(argument)(body)(Some(SemRow([capabilityType])(None)))
-                                    | _ -> SemFunction(argument)(wrap(tail)(body))(None)
+                                    | [] ->
+                                        None
+                                        |> SemRow([capabilityType])
+                                        |> Some
+                                        |> SemFunction(argument)(body)
+                                    | _ ->
+                                        SemFunction(argument)(wrap(tail)(body))(None)
                     in
                         HandlerOperationTypePreparation(semanticType = wrap(
                             reverse(reversed),
@@ -802,7 +810,10 @@ let directSupertraitConstraints constraint environment =
                 | None -> []
                 | Some(TraitInferenceDefinition { name = _name, parameterCount = _parameterCount, parameters = parameters, methods = _methods, supertraits = supertraits }) ->
                     let substitution = traitParameterSubstitution(parameters)(typeArguments)([])
-                    in canonicalizeTraitConstraints(applyInferenceConstraints(substitution)(supertraits))
+                    in
+                        supertraits
+                        |> applyInferenceConstraints(substitution)
+                        |> canonicalizeTraitConstraints
 
 let recursive traitConstraintImpliesFrom pending targetKey environment visited =
     match pending with
@@ -817,7 +828,9 @@ let recursive traitConstraintImpliesFrom pending targetKey environment visited =
                     then true
                     else
                         traitConstraintImpliesFrom(
-                            appendConstraints(tail)(directSupertraitConstraints(head)(environment)),
+                            environment
+                            |> directSupertraitConstraints(head)
+                            |> appendConstraints(tail),
                             targetKey,
                             environment,
                             key :: visited
@@ -852,7 +865,10 @@ let recursive removeImpliedTraitConstraints remaining allConstraints environment
 
 let simplifyTraitConstraints environment constraints =
     (let canonical = canonicalizeTraitConstraints(constraints)
-    in canonicalizeTraitConstraints(removeImpliedTraitConstraints(canonical)(canonical)(environment)))
+    in
+        environment
+        |> removeImpliedTraitConstraints(canonical)(canonical)
+        |> canonicalizeTraitConstraints)
 
 let recursive bindingRequirementCount values =
     match values with
@@ -999,7 +1015,8 @@ let mergePatternUnification currentSubstitution result supply fallbackType envir
     match result with
         | UnificationResult { substitution = unificationSubstitution, error = None } ->
             let combined = appendSubstitution(unificationSubstitution)(currentSubstitution)
-            in patternSuccess(applySubstitution(combined)(fallbackType))(environment)(combined)(supply)(names)
+            in
+                patternSuccess(applySubstitution(combined)(fallbackType))(environment)(combined)(supply)(names)
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } ->
             patternFailure(
                 fallbackType,
@@ -1190,7 +1207,10 @@ and coverageJoinPatterns patterns (acc: Str) =
         | [] -> acc
         | pattern :: rest ->
             if acc == ""
-            then coverageJoinPatterns(rest)(coverageFormatPattern(pattern))
+            then
+                pattern
+                |> coverageFormatPattern
+                |> coverageJoinPatterns(rest)
             else coverageJoinPatterns(rest)(acc + ", " + coverageFormatPattern(pattern))
 
 let recursive coverageAnyEmptyList patterns =
@@ -1235,7 +1255,10 @@ let recursive coverageFirstTupleArity patterns =
         | [] -> None
         | pattern :: rest ->
             match coverageUnwrap(pattern) with
-                | PatternTuple(elements) -> Some(coverageLength(elements)(0))
+                | PatternTuple(elements) ->
+                    0
+                    |> coverageLength(elements)
+                    |> Some
                 | _ -> coverageFirstTupleArity(rest)
 
 let recursive coverageColumn (rows: List(List(Pattern))) (index: Int) acc =
@@ -1272,8 +1295,14 @@ let coverageMissingConstructorPattern (constructorName: Str) (arity: Int) (field
     then PatternVar(constructorName)
     else
         match missingField with
-            | Some(field) -> PatternConstructor(constructorName)(coverageReplaceAt(coverageWildcards(arity)([]))(fieldIndex)(field)([]))
-            | None -> PatternConstructor(constructorName)(coverageWildcards(arity)([]))
+            | Some(field) ->
+                []
+                |> coverageReplaceAt(coverageWildcards(arity)([]))(fieldIndex)(field)
+                |> PatternConstructor(constructorName)
+            | None ->
+                []
+                |> coverageWildcards(arity)
+                |> PatternConstructor(constructorName)
 
 let recursive coverageAnyBoolPattern patterns =
     match patterns with
@@ -1363,30 +1392,50 @@ and coverageMissingList environment valueType patterns =
                 else coverageMissingConsPart(environment)(valueType)(conses))
 and coverageMissingConsPart environment valueType conses =
     match conses with
-        | [] -> Some(PatternCons(PatternWildcard)(PatternWildcard))
+        | [] ->
+            PatternWildcard
+            |> PatternCons(PatternWildcard)
+            |> Some
         | _ ->
             let elementType =
                 match valueType with
                     | Some(SemList(element)) -> Some(element)
                     | _ -> None
             in
-                match coverageMissing(environment)(elementType)(coverageConsHeads(conses)([])) with
-                    | Some(missingHead) -> Some(PatternCons(missingHead)(PatternWildcard))
+                match []
+                |> coverageConsHeads(conses)
+                |> coverageMissing(environment)(elementType) with
+                    | Some(missingHead) ->
+                        PatternWildcard
+                        |> PatternCons(missingHead)
+                        |> Some
                     | None ->
-                        match coverageMissing(environment)(valueType)(coverageConsTails(conses)([])) with
-                            | Some(missingTail) -> Some(PatternCons(PatternWildcard)(missingTail))
+                        match []
+                        |> coverageConsTails(conses)
+                        |> coverageMissing(environment)(valueType) with
+                            | Some(missingTail) ->
+                                missingTail
+                                |> PatternCons(PatternWildcard)
+                                |> Some
                             | None -> None
 and coverageMissingTuple environment valueType patterns =
     (let arity =
         match valueType with
-            | Some(SemTuple(elements)) -> Some(coverageLength(elements)(0))
+            | Some(SemTuple(elements)) ->
+                0
+                |> coverageLength(elements)
+                |> Some
             | _ -> coverageFirstTupleArity(patterns)
     in
         match arity with
             | None -> None
             | Some(count) ->
                 match coverageTuplePatterns(patterns)(count)([]) with
-                    | [] -> Some(PatternTuple(coverageWildcards(count)([])))
+                    | [] ->
+                        []
+                        |> coverageWildcards(count)
+                        |> PatternTuple
+                        |> Some
                     | rows -> coverageMissingTupleColumn(environment)(valueType)(rows)(count)(0))
 and coverageMissingTupleColumn environment valueType rows (count: Int) (index: Int) =
     if index >= count
@@ -1397,8 +1446,14 @@ and coverageMissingTupleColumn environment valueType rows (count: Int) (index: I
                 | Some(SemTuple(elements)) -> coverageNth(elements)(index)
                 | _ -> None
         in
-            match coverageMissing(environment)(elementType)(coverageColumn(rows)(index)([])) with
-                | Some(missing) -> Some(PatternTuple(coverageReplaceAt(coverageWildcards(count)([]))(index)(missing)([])))
+            match []
+            |> coverageColumn(rows)(index)
+            |> coverageMissing(environment)(elementType) with
+                | Some(missing) ->
+                    []
+                    |> coverageReplaceAt(coverageWildcards(count)([]))(index)(missing)
+                    |> PatternTuple
+                    |> Some
                 | None -> coverageMissingTupleColumn(environment)(valueType)(rows)(count)(index + 1)
 and coverageMissingAdt environment valueType patterns =
     (let adtName =
@@ -1408,13 +1463,19 @@ and coverageMissingAdt environment valueType patterns =
     in
         match adtName with
             | None -> None
-            | Some(name) -> coverageMissingConstructor(environment)(patterns)(coverageAdtConstructors(environmentConstructors(environment))(name)([])))
+            | Some(name) ->
+                []
+                |> coverageAdtConstructors(environmentConstructors(environment))(name)
+                |> coverageMissingConstructor(environment)(patterns))
 and coverageMissingConstructor environment patterns (constructors: List((Str, Int))) =
     match constructors with
         | [] -> None
         | (constructorName, arity) :: rest ->
             match coveragePatternsForConstructor(patterns)(constructorName)(environment)([]) with
-                | [] -> Some(coverageMissingConstructorPattern(constructorName)(arity)(-1)(None))
+                | [] ->
+                    None
+                    |> coverageMissingConstructorPattern(constructorName)(arity)(-1)
+                    |> Some
                 | constructorPatterns ->
                     if arity == 0
                     then coverageMissingConstructor(environment)(patterns)(rest)
@@ -1426,8 +1487,13 @@ and coverageMissingConstructorField environment rows (constructorName: Str) (ari
     if index >= arity
     then None
     else
-        match coverageMissing(environment)(None)(coverageColumn(rows)(index)([])) with
-            | Some(missing) -> Some(coverageMissingConstructorPattern(constructorName)(arity)(index)(Some(missing)))
+        match []
+        |> coverageColumn(rows)(index)
+        |> coverageMissing(environment)(None) with
+            | Some(missing) ->
+                Some(missing)
+                |> coverageMissingConstructorPattern(constructorName)(arity)(index)
+                |> Some
             | None -> coverageMissingConstructorField(environment)(rows)(constructorName)(arity)(index + 1)
 and coverageMissingBool environment valueType patterns =
     (let isBoolType =
@@ -1466,7 +1532,10 @@ let recursive coveragePlaceRecordFields (fields: List((Str, Pattern))) (fieldNam
         | [] -> positional
         | (fieldName, fieldPattern) :: rest ->
             match coverageFieldIndex(fieldName)(fieldNames)(0) with
-                | Some(index) -> coveragePlaceRecordFields(rest)(fieldNames)(coverageReplaceAt(positional)(index)(fieldPattern)([]))
+                | Some(index) ->
+                    []
+                    |> coverageReplaceAt(positional)(index)(fieldPattern)
+                    |> coveragePlaceRecordFields(rest)(fieldNames)
                 | None -> coveragePlaceRecordFields(rest)(fieldNames)(positional)
 
 let recursive coverageExpandPattern pattern environment =
@@ -1474,31 +1543,47 @@ let recursive coverageExpandPattern pattern environment =
         | PatternAt(_span, inner) -> coverageExpandPattern(inner)(environment)
         | PatternOr(alternatives) -> coverageExpandAlternatives(alternatives)(environment)([])
         | PatternAs(inner, _name) -> coverageExpandPattern(inner)(environment)
-        | PatternCons(head, tail) -> coverageConsCombinations(coverageCombineChildren([head, tail])(environment))([])
-        | PatternTuple(elements) -> coverageTupleCombinations(coverageCombineChildren(elements)(environment))([])
-        | PatternConstructor(name, patterns) -> coverageConstructorCombinations(name)(coverageCombineChildren(patterns)(environment))([])
+        | PatternCons(head, tail) ->
+            coverageConsCombinations(coverageCombineChildren([head, tail])(environment))([])
+        | PatternTuple(elements) ->
+            coverageTupleCombinations(coverageCombineChildren(elements)(environment))([])
+        | PatternConstructor(name, patterns) ->
+            coverageConstructorCombinations(name)(coverageCombineChildren(patterns)(environment))([])
         | PatternRecord(name, fields) ->
             match resolveConstructorBinding(name)(environment) with
                 | Some(ConstructorInferenceDefinition { fieldNames = fieldNames }) ->
                     match fieldNames with
                         | [] -> [pattern]
                         | _ ->
-                            let positional = coveragePlaceRecordFields(fields)(fieldNames)(coverageWildcards(coverageLength(fieldNames)(0))([]))
-                            in coverageConstructorCombinations(name)(coverageCombineChildren(positional)(environment))([])
+                            let positional =
+                                []
+                                |> coverageWildcards(coverageLength(fieldNames)(0))
+                                |> coveragePlaceRecordFields(fields)(fieldNames)
+                            in
+                                coverageConstructorCombinations(name)(coverageCombineChildren(positional)(environment))([])
                 | None -> [pattern]
         | other -> [other]
 and coverageExpandAlternatives alternatives environment acc =
     match alternatives with
         | [] -> acc
-        | alternative :: rest -> coverageExpandAlternatives(rest)(environment)(append(acc)(coverageExpandPattern(alternative)(environment)))
+        | alternative :: rest ->
+            environment
+            |> coverageExpandPattern(alternative)
+            |> append(acc)
+            |> coverageExpandAlternatives(rest)(environment)
 and coverageCombineChildren children environment =
     match children with
         | [] -> [[]]
-        | child :: rest -> coverageProduct(coverageExpandPattern(child)(environment))(coverageCombineChildren(rest)(environment))([])
+        | child :: rest ->
+            coverageProduct(coverageExpandPattern(child)(environment))(coverageCombineChildren(rest)(environment))([])
 and coverageProduct heads (tails: List(List(Pattern))) acc =
     match heads with
         | [] -> acc
-        | head :: rest -> coverageProduct(rest)(tails)(append(acc)(coveragePrefixAll(head)(tails)([])))
+        | head :: rest ->
+            []
+            |> coveragePrefixAll(head)(tails)
+            |> append(acc)
+            |> coverageProduct(rest)(tails)
 and coveragePrefixAll head (tails: List(List(Pattern))) acc =
     match tails with
         | [] -> reverse(acc)
@@ -1520,7 +1605,10 @@ and coverageConstructorCombinations (name: Str) (combinations: List(List(Pattern
 let recursive coverageExpandCases cases environment acc =
     match cases with
         | [] -> reverse(acc)
-        | (pattern, body, guard) :: rest -> coverageExpandCases(rest)(environment)(coverageExpandedArms(coverageExpandPattern(pattern)(environment))(body)(guard)(acc))
+        | (pattern, body, guard) :: rest ->
+            acc
+            |> coverageExpandedArms(coverageExpandPattern(pattern)(environment))(body)(guard)
+            |> coverageExpandCases(rest)(environment)
 and coverageExpandedArms patterns body guard acc =
     match patterns with
         | [] -> acc
@@ -1705,7 +1793,11 @@ let coverageAdtNameExhaustiveness environment (valueType: SemanticType) (adtName
         | constructors ->
             match coverageMissingNames(constructors)(coverageSeenConstructors(unguarded)(environment)([]))([]) with
                 | [] -> coverageMissingCaseError(environment)(valueType)(unguarded)
-                | missing -> Some(NonExhaustiveMatch(coverageMissingConstructorsMessage(adtName)(missing)))
+                | missing ->
+                    missing
+                    |> coverageMissingConstructorsMessage(adtName)
+                    |> NonExhaustiveMatch
+                    |> Some
 
 // A scrutinee whose type is still an unresolved inference variable (a lambda parameter matched
 // before any call pins it) can still name its ADT through the arms: the first pattern that
@@ -1855,7 +1947,8 @@ let mergeUnification currentSubstitution result supply fallbackType =
     match result with
         | UnificationResult { substitution = unificationSubstitution, error = None } ->
             let combined = appendSubstitution(unificationSubstitution)(currentSubstitution)
-            in inferenceSuccess(applySubstitution(combined)(fallbackType))(combined)(supply)
+            in
+                inferenceSuccess(applySubstitution(combined)(fallbackType))(combined)(supply)
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } ->
             inferenceFailure(
                 fallbackType,
@@ -1968,7 +2061,9 @@ let subsumeCapabilityRow capabilityRow environment ambientRow substitution suppl
                                 | (tailType, nextSupply) ->
                                     mergeUnification(
                                         substitution,
-                                        unify(resolvedAmbient)(SemRow(capabilities)(Some(tailType))),
+                                        Some(tailType)
+                                        |> SemRow(capabilities)
+                                        |> unify(resolvedAmbient),
                                         nextSupply,
                                         resultType
                                     )
@@ -2048,7 +2143,10 @@ let recursive firstAmbiguousTraitRequirement constraints bindingType environment
             in
                 let bodyVariables = freeTypeVariables(bindingType)
                 in
-                    let environmentVariables = freeEnvironmentVariables(inferenceEnvironmentSchemes(environment))
+                    let environmentVariables =
+                        environment
+                        |> inferenceEnvironmentSchemes
+                        |> freeEnvironmentVariables
                     in
                         if firstAmbiguousRequirementVariable(variables)(bodyVariables)(environmentVariables)
                         then Some(traitName)
@@ -2185,7 +2283,10 @@ let recursive inferExpressions expressions environment substitution supply ambie
                 | failure -> failure
 and inferListElements expressions elementType environment substitution supply ambientRow =
     match expressions with
-        | [] -> inferenceSuccess(SemList(applySubstitution(substitution)(elementType)))(substitution)(supply)
+        | [] ->
+            inferenceSuccess(elementType
+            |> applySubstitution(substitution)
+            |> SemList)(substitution)(supply)
         | head :: tail ->
             match inferWith(head)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = inferredType, substitution = nextSubstitution, supply = nextSupply, constraints = inferredConstraints, error = None } ->
@@ -2273,7 +2374,8 @@ and inferConstructorPatternArguments constructorName patterns parameterTypes res
             )
 and inferRecordPatternFields constructorName fields fieldNames fieldTypes resultType environment substitution supply names seenFields =
     match fields with
-        | [] -> patternSuccess(applySubstitution(substitution)(resultType))(environment)(substitution)(supply)(names)
+        | [] ->
+            patternSuccess(applySubstitution(substitution)(resultType))(environment)(substitution)(supply)(names)
         | (fieldName, fieldPattern) :: tail ->
             if patternNameExists(fieldName)(seenFields)
             then
@@ -2552,7 +2654,8 @@ and inferAwait task environment substitution supply ambientRow =
                 | (errorType, errorSupply) ->
                     match freshTypeVariable(errorSupply) with
                         | (successType, successSupply) ->
-                            let expectedTask = SemNamed(resolveTaskSymbolId(environment))("Task")([errorType, successType])
+                            let expectedTask =
+                                SemNamed(resolveTaskSymbolId(environment))("Task")([errorType, successType])
                             in
                                 match mergeUnification(
                                     taskSubstitution,
@@ -2564,7 +2667,9 @@ and inferAwait task environment substitution supply ambientRow =
                                         addConstraints(
                                             taskConstraints,
                                             inferenceSuccess(
-                                                applySubstitution(unifiedSubstitution)(SemNamed(resolveResultSymbolId(environment))("Result")([errorType, successType])),
+                                                [errorType, successType]
+                                                |> SemNamed(resolveResultSymbolId(environment))("Result")
+                                                |> applySubstitution(unifiedSubstitution),
                                                 unifiedSubstitution,
                                                 unifiedSupply
                                             )
@@ -2574,7 +2679,9 @@ and inferAwait task environment substitution supply ambientRow =
                                             SemNever,
                                             failedSubstitution,
                                             failedSupply,
-                                            ExpectedTaskType(applySubstitution(taskSubstitution)(taskType))
+                                            taskType
+                                            |> applySubstitution(taskSubstitution)
+                                            |> ExpectedTaskType
                                         )
         | failure -> failure
 and inferLetResult name value body environment substitution supply ambientRow =
@@ -2971,7 +3078,8 @@ and inferPattern pattern environment substitution supply names =
                     )
         | PatternVar(name) ->
             if isNullaryConstructorName(name)(environment)
-            then inferPattern(PatternConstructor(name)([]))(environment)(substitution)(supply)(names)
+            then
+                inferPattern(PatternConstructor(name)([]))(environment)(substitution)(supply)(names)
             else
                 if patternNameExists(name)(names)
                 then patternFailure(SemNever)(environment)(substitution)(supply)(names)(DuplicatePatternBinding(name))
@@ -3002,7 +3110,10 @@ and inferPattern pattern environment substitution supply names =
                 | PatternInferenceResult { semanticType = headType, environment = headEnvironment, substitution = headSubstitution, supply = headSupply, names = headNames, error = None } ->
                     match inferPattern(tail)(headEnvironment)(headSubstitution)(headSupply)(headNames) with
                         | PatternInferenceResult { semanticType = tailType, environment = tailEnvironment, substitution = tailSubstitution, supply = tailSupply, names = tailNames, error = None } ->
-                            let listType = SemList(applySubstitution(tailSubstitution)(headType))
+                            let listType =
+                                headType
+                                |> applySubstitution(tailSubstitution)
+                                |> SemList
                             in
                                 mergePatternUnification(
                                     tailSubstitution,
@@ -3018,7 +3129,9 @@ and inferPattern pattern environment substitution supply names =
             match inferPatternList(elements)(environment)(substitution)(supply)(names)([]) with
                 | PatternInferenceResult { semanticType = SemTuple(reversedTypes), environment = tupleEnvironment, substitution = tupleSubstitution, supply = tupleSupply, names = tupleNames, error = None } ->
                     patternSuccess(
-                        SemTuple(reverse(reversedTypes)),
+                        reversedTypes
+                        |> reverse
+                        |> SemTuple,
                         tupleEnvironment,
                         tupleSubstitution,
                         tupleSupply,
@@ -3220,7 +3333,9 @@ and inferMatchBody body tail scrutineeType resultType environment patternEnviron
         | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
             match mergeUnification(
                 bodySubstitution,
-                unify(applySubstitution(bodySubstitution)(resultType))(applySubstitution(bodySubstitution)(bodyType)),
+                bodyType
+                |> applySubstitution(bodySubstitution)
+                |> unify(applySubstitution(bodySubstitution)(resultType)),
                 bodySupply,
                 resultType
             ) with
@@ -3290,7 +3405,9 @@ and inferHandlerReturn returnArm bodyType handlerResult environment substitution
                 accumulatedConstraints,
                 mergeUnification(
                     substitution,
-                    unify(applySubstitution(substitution)(handlerResult))(applySubstitution(substitution)(bodyType)),
+                    bodyType
+                    |> applySubstitution(substitution)
+                    |> unify(applySubstitution(substitution)(handlerResult)),
                     supply,
                     handlerResult
                 )
@@ -3749,7 +3866,8 @@ and inferWith expression environment substitution supply ambientRow =
         | ExprIf(condition, thenBranch, elseBranch) ->
             match inferWith(condition)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = conditionType, substitution = conditionSubstitution, supply = conditionSupply, constraints = conditionConstraints, error = None } ->
-                    let conditionUnification = unify(applySubstitution(conditionSubstitution)(conditionType))(SemBool)
+                    let conditionUnification =
+                        unify(applySubstitution(conditionSubstitution)(conditionType))(SemBool)
                     in
                         match mergeUnification(
                             conditionSubstitution,
@@ -3801,7 +3919,9 @@ and inferWith expression environment substitution supply ambientRow =
                 | TypeInferenceResult { semanticType = SemTuple(reversedTypes), substitution = tupleSubstitution, supply = tupleSupply, constraints = tupleConstraints, error = None } ->
                     addConstraints(
                         tupleConstraints,
-                        inferenceSuccess(SemTuple(reverse(reversedTypes)))(tupleSubstitution)(tupleSupply)
+                        inferenceSuccess(reversedTypes
+                        |> reverse
+                        |> SemTuple)(tupleSubstitution)(tupleSupply)
                     )
                 | failure -> failure
         | ExprList(elements, _isMultiline) ->
@@ -3823,7 +3943,9 @@ and inferWith expression environment substitution supply ambientRow =
                             let unification =
                                 unify(
                                     applySubstitution(tailSubstitution)(tailType),
-                                    SemList(applySubstitution(tailSubstitution)(headType))
+                                    headType
+                                    |> applySubstitution(tailSubstitution)
+                                    |> SemList
                                 )
                             in
                                 addConstraints(
@@ -4150,13 +4272,15 @@ and inferWith expression environment substitution supply ambientRow =
         | ExprLogicalAnd(left, right) ->
             match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
-                    let leftUnification = unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
+                    let leftUnification =
+                        unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
                     in
                         match mergeUnification(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
                             | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
                                 match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
                                     | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
-                                        let rightUnification = unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
+                                        let rightUnification =
+                                            unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
                                         in
                                             addConstraints(
                                                 appendConstraints(leftConstraints)(rightConstraints),
@@ -4168,13 +4292,15 @@ and inferWith expression environment substitution supply ambientRow =
         | ExprLogicalOr(left, right) ->
             match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
-                    let leftUnification = unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
+                    let leftUnification =
+                        unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
                     in
                         match mergeUnification(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
                             | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
                                 match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
                                     | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
-                                        let rightUnification = unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
+                                        let rightUnification =
+                                            unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
                                         in
                                             addConstraints(
                                                 appendConstraints(leftConstraints)(rightConstraints),

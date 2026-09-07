@@ -19,17 +19,23 @@ let recursive drain i =
     if i <= 0
     then i
     else
-        match Ashes.Task.run(runOnce(7)) with
+        match 7
+        |> runOnce
+        |> Ashes.Task.run with
             | Ok(_t) -> drain(i - 1)
             | Error(_e) -> -1
 
 let first =
-    match Ashes.Task.run(runOnce(7)) with
+    match 7
+    |> runOnce
+    |> Ashes.Task.run with
         | Ok(t) -> t
         | Error(_e) -> "err"
 
 let second =
-    match Ashes.Task.run(runOnce(7)) with
+    match 7
+    |> runOnce
+    |> Ashes.Task.run with
         | Ok(t) -> t
         | Error(_e) -> "err"
 

@@ -27,8 +27,10 @@ let recursive build i n m =
             in
                 let m2 =
                     match tag with
-                        | Even -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(k))(i)(m)
-                        | Odd(kk) -> Ashes.Collection.Map.setStr(Ashes.Text.fromInt(kk))(i + 7)(m)
+                        | Even ->
+                            Ashes.Collection.Map.setStr(Ashes.Text.fromInt(k))(i)(m)
+                        | Odd(kk) ->
+                            Ashes.Collection.Map.setStr(Ashes.Text.fromInt(kk))(i + 7)(m)
                 in build(i + 1)(n)(m2)
 
 let recursive checksum i n m acc =
@@ -44,4 +46,5 @@ let recursive checksum i n m acc =
 let n = 300000
 
 let built = build(0)(n)(Ashes.Collection.Map.empty)
-in Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(built)) + "|" + Ashes.Text.fromInt(checksum(0)(30000)(built)(0)))
+in
+    Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(built)) + "|" + Ashes.Text.fromInt(checksum(0)(30000)(built)(0)))

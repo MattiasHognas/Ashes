@@ -23,5 +23,9 @@ let recursive depth tree =
                     else rightDepth)
         | _ -> 999
 
-let sample = Node(Node(Leaf)(1)(Leaf))(2)(Leaf)
-in Ashes.IO.print(depth(sample))
+let sample =
+    Node(Node(Leaf)(1)(Leaf))(2)(Leaf)
+in
+    sample
+    |> depth
+    |> Ashes.IO.print

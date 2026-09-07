@@ -17,7 +17,12 @@ let recursive sumTree t =
 let recursive build n =
     if n <= 0
     then Leaf
-    else Node(build(n - 1))(n)(Leaf)
+    else
+        Node(build(n - 1))(n)(Leaf)
 
 let t = build(5)
-in Ashes.IO.print(Ashes.Text.fromInt(sumTree(t)))
+in
+    t
+    |> sumTree
+    |> Ashes.Text.fromInt
+    |> Ashes.IO.print

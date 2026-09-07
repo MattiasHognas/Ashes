@@ -36,7 +36,10 @@ let getv m k =
 let recursive innerFold i lim m =
     if i > lim
     then m
-    else innerFold(i + 1)(lim)(Ashes.Collection.Map.setWith(cmp)(i)(i * 7)(m))
+    else
+        m
+        |> Ashes.Collection.Map.setWith(cmp)(i)(i * 7)
+        |> innerFold(i + 1)(lim)
 
 let recursive rounds r acc m =
     if r <= 0
@@ -51,4 +54,6 @@ let base = innerFold(0)(999)(Ashes.Collection.Map.empty)
 
 let result = rounds(12)(0)(base)
 
-Ashes.IO.print(Ashes.Text.fromInt(result))
+result
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

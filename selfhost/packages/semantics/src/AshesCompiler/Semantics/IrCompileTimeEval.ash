@@ -527,7 +527,9 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     Some(
                         InterpreterState(
                             stepsLeft = state.stepsLeft,
-                            temps = setAssociation(target)(CtFloat(Ashes.Number.Math.toFloat(v)))(state.temps),
+                            temps = setAssociation(target)(v
+                            |> Ashes.Number.Math.toFloat
+                            |> CtFloat)(state.temps),
                             locals = state.locals
                         )
                     )
@@ -538,7 +540,9 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     Some(
                         InterpreterState(
                             stepsLeft = state.stepsLeft,
-                            temps = setAssociation(target)(CtInt(Ashes.Number.Math.truncToInt(v)))(state.temps),
+                            temps = setAssociation(target)(v
+                            |> Ashes.Number.Math.truncToInt
+                            |> CtInt)(state.temps),
                             locals = state.locals
                         )
                     )
@@ -756,7 +760,9 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
             Some(
                 InterpreterState(
                     stepsLeft = state.stepsLeft,
-                    temps = setAssociation(target)(CtAdt(tag)(makeInitialAdtFields(size)))(state.temps),
+                    temps = setAssociation(target)(size
+                    |> makeInitialAdtFields
+                    |> CtAdt(tag))(state.temps),
                     locals = state.locals
                 )
             )
@@ -764,7 +770,9 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
             Some(
                 InterpreterState(
                     stepsLeft = state.stepsLeft,
-                    temps = setAssociation(target)(CtAdt(tag)(makeInitialAdtFields(size)))(state.temps),
+                    temps = setAssociation(target)(size
+                    |> makeInitialAdtFields
+                    |> CtAdt(tag))(state.temps),
                     locals = state.locals
                 )
             )
@@ -1042,7 +1050,8 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                     | MakeClosure(dest, fnLabel, envTemp, envSize, _, _, _) ->
                         let nextTemps =
                             if envSize == 0
-                            then setAssociation(dest)(CtClosure(fnLabel)(CtUnit))(state.temps)
+                            then
+                                setAssociation(dest)(CtClosure(fnLabel)(CtUnit))(state.temps)
                             else removeAssociation(dest)(state.temps)
                         in
                             scanInstructions(tail)(
@@ -1056,7 +1065,8 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                     | MakeClosureStack(dest, fnLabel, envTemp, envSize, _, _) ->
                         let nextTemps =
                             if envSize == 0
-                            then setAssociation(dest)(CtClosure(fnLabel)(CtUnit))(state.temps)
+                            then
+                                setAssociation(dest)(CtClosure(fnLabel)(CtUnit))(state.temps)
                             else removeAssociation(dest)(state.temps)
                         in
                             scanInstructions(tail)(
@@ -1304,7 +1314,8 @@ let evaluateCompileTimeConstants (program: IrProgram) =
         else
             let newEntry = rewriteFunctionCalls(program)(evaluable)(program.entryFunction)
             in
-                let newFuncs = map(rewriteFunctionCalls(program)(evaluable))(program.functions)
+                let newFuncs =
+                    map(rewriteFunctionCalls(program)(evaluable))(program.functions)
                 in
                     IrProgram(
                         entryFunction = newEntry,

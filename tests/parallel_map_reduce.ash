@@ -43,10 +43,13 @@ let sumDoublePar =
         given (b) -> a + b)(0)(given (x) -> x * 2)(nums)
 
 let strsPar =
-    Ashes.Task.Parallel.map(given (x) -> Ashes.Text.fromInt(x))(range(0)(10))
+    10
+    |> range(0)
+    |> Ashes.Task.Parallel.map(given (x) -> Ashes.Text.fromInt(x))
 
 let recursive joinStr xs =
     match xs with
         | [] -> ""
         | h :: t -> h + "," + joinStr(t)
-in Ashes.IO.print(Ashes.Text.fromInt(eq(mapPar)(mapSeq)) + "|" + Ashes.Text.fromInt(sumPar) + "|" + Ashes.Text.fromInt(sumDoublePar) + "|" + joinStr(strsPar))
+in
+    Ashes.IO.print(Ashes.Text.fromInt(eq(mapPar)(mapSeq)) + "|" + Ashes.Text.fromInt(sumPar) + "|" + Ashes.Text.fromInt(sumDoublePar) + "|" + joinStr(strsPar))

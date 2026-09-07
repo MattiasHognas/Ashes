@@ -37,7 +37,10 @@ let listTask n =
             | Error(_e) -> -1)
 
 let adtTask n =
-    async(let made = Boxed(build(n))
+    async(let made =
+        n
+        |> build
+        |> Boxed
     in
         match await Ashes.Task.sleep(0) with
             | Ok(_u) -> showBox(made)
@@ -53,7 +56,10 @@ let tupleTask n =
             | Error(_e) -> "err")
 
 let bytesTask n =
-    async(let made = Ashes.Byte.fromText(build(n))
+    async(let made =
+        n
+        |> build
+        |> Ashes.Byte.fromText
     in
         match await Ashes.Task.sleep(0) with
             | Ok(_u) -> Ashes.Byte.length(made)
@@ -66,7 +72,10 @@ let closureTask n =
             given (suffix) -> made + suffix
         in
             match await Ashes.Task.sleep(0) with
-                | Ok(_u) -> Ashes.Text.byteLength(render("!!"))
+                | Ok(_u) ->
+                    "!!"
+                    |> render
+                    |> Ashes.Text.byteLength
                 | Error(_e) -> -1)
 
 let render task fallback =

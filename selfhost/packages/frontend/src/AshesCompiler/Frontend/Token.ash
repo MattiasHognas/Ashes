@@ -126,7 +126,10 @@ let spanLength (span: TextSpan) = maximum(span.end - span.start)(0)
 
 let tokenEnd (value: Token) = value.position + value.length
 
-let tokenSpan (value: Token) = spanFromBounds(value.position)(tokenEnd(value))
+let tokenSpan (value: Token) =
+    value
+    |> tokenEnd
+    |> spanFromBounds(value.position)
 
 let tokenKindName (kind: TokenKind) =
     match kind with

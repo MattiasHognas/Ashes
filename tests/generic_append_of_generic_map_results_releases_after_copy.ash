@@ -17,7 +17,9 @@ let recursive show entries acc =
     match entries with
         | [] -> acc
         | Entry { name = name, direct = direct } :: rest ->
-            show(rest)(acc + " | " + name + (if direct then " yes" else " no"))
+            show(rest)(acc + " | " + name + (if direct
+            then " yes"
+            else " no"))
 
 let recursive countList items count =
     match items with
@@ -30,7 +32,11 @@ let recursive churn count acc =
     else churn(count - 1)("churn " + text.fromInt(count) :: acc)
 
 let entries =
-    list.append(list.append(list.map(toEntry(true))(["Mid"]))(list.map(toEntry(false))(["Testing"])))(list.map(toEntry(true))(["Base"]))
+    ["Base"]
+    |> list.map(toEntry(true))
+    |> list.append(["Testing"]
+    |> list.map(toEntry(false))
+    |> list.append(list.map(toEntry(true))(["Mid"])))
 
 let noise = churn(5000)([])
 

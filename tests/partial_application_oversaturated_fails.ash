@@ -2,4 +2,7 @@
 let add : Int -> Int -> Int =
     given (x) ->
         given (y) -> x + y
-in Ashes.IO.print(add(1)(2)(3))
+in
+    3
+    |> add(1)(2)
+    |> Ashes.IO.print

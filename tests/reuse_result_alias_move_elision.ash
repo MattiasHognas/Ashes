@@ -32,27 +32,50 @@ let recursive grow n t =
     then t
     else
         match t with
-            | Leaf -> grow(n - 1)(Node(Leaf)(1)(Leaf))
-            | Node(l, v, r) -> grow(n - 1)(Node(l)(v + 1)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(1)
+                |> grow(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + 1)
+                |> grow(n - 1)
 
 let recursive outer b nb t =
     if b >= nb
     then t
-    else outer(b + 1)(nb)(grow(3)(t))
+    else
+        t
+        |> grow(3)
+        |> outer(b + 1)(nb)
 
-let nested = outer(0)(4)(wrap(3)(Node(Leaf)(5)(Leaf)))
+let nested =
+    Leaf
+    |> Node(Leaf)(5)
+    |> wrap(3)
+    |> outer(0)(4)
 
 let recursive bump n t =
     if n <= 0
     then t
     else
         match t with
-            | Leaf -> bump(n - 1)(Node(Leaf)(1)(Leaf))
-            | Node(l, v, r) -> bump(n - 1)(Node(l)(v + 100)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(1)
+                |> bump(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + 100)
+                |> bump(n - 1)
 
-let w = wrap(7)(Node(Leaf)(1)(Leaf))
+let w =
+    Leaf
+    |> Node(Leaf)(1)
+    |> wrap(7)
 
 let keep = w
 
 let bumped = bump(2)(w)
-in Ashes.IO.print(Ashes.Text.fromInt(rootVal(nested)) + " " + Ashes.Text.fromInt(rootVal(keep)) + " " + Ashes.Text.fromInt(rootVal(bumped)))
+in
+    Ashes.IO.print(Ashes.Text.fromInt(rootVal(nested)) + " " + Ashes.Text.fromInt(rootVal(keep)) + " " + Ashes.Text.fromInt(rootVal(bumped)))

@@ -14,4 +14,6 @@
 //   every other command is.
 
 import AshesCompiler.Cli.Dispatch
-Ashes.IO.exit(runCli(Ashes.IO.args))
+Ashes.IO.args
+|> runCli
+|> Ashes.IO.exit

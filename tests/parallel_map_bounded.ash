@@ -19,4 +19,8 @@ let recursive loop i acc =
     then acc
     else
         loop(i - 1)(acc + sumList(Ashes.Task.Parallel.map(given (x) -> x + i)(base)))
-in Ashes.IO.print(Ashes.Text.fromInt(loop(300)(0)))
+in
+    0
+    |> loop(300)
+    |> Ashes.Text.fromInt
+    |> Ashes.IO.print

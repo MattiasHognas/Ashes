@@ -503,8 +503,10 @@ Format `.ash` source files. `ashes fmt` resolves formatting from the nearest `.e
 - `indent_size = <int>|tab`
 - `tab_width = <int>`
 - `end_of_line = lf|crlf`
+- `ashes_prefer_pipelines = true|false` (write a chain of two or more nested calls as a `|>`
+  pipeline; see the [formatter reference](formatter.md))
 
-Defaults when not provided are 4 spaces and platform newline. Without `-w`, formatted output is printed to stdout. With `-w`, files are updated in place.
+Defaults when not provided are 4 spaces, platform newline, and no pipeline rewriting. Without `-w`, formatted output is printed to stdout. With `-w`, files are updated in place.
 
 #### Synopsis
 

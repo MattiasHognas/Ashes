@@ -12,7 +12,8 @@ let recursive widen (n: Int) (text: Str) =
 let recursive build (n: Int) (acc: List(Str)) =
     if n == 0
     then acc
-    else build(n - 1)(widen(4)(Ashes.Text.fromInt(n)) :: acc)
+    else
+        build(n - 1)(widen(4)(Ashes.Text.fromInt(n)) :: acc)
 
 let recursive totalLength (xs: List(Str)) (n: Int) =
     match xs with

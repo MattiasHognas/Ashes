@@ -15,4 +15,6 @@ let recursive bump (n: Int) (c: Counter) =
 
 let bumped = bump(3000000)(Counter(count = 0, total = 0))
 
-Ashes.IO.print(Ashes.Text.fromInt(bumped.count + bumped.total))
+bumped.count + bumped.total
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

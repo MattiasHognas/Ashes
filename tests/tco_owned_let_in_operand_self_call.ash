@@ -11,4 +11,6 @@ let recursive count n acc =
             then 1 + count(n - 1)(s :: acc)
             else count(n - 1)(s :: acc)
 
-Ashes.IO.print(count(4)([]))
+[]
+|> count(4)
+|> Ashes.IO.print

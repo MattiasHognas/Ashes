@@ -35,7 +35,9 @@ let taskB =
             match Ashes.Task.Parallel.both(given (u) -> sumRange(0)(500000)(0))(given (u) -> sumRange(500000)(1000000)(0)) with
                 | (a, b) -> a + b)
 in
-    match Ashes.Task.run(Ashes.Task.all([taskA, taskB])) with
+    match [taskA, taskB]
+    |> Ashes.Task.all
+    |> Ashes.Task.run with
         | Ok(results) ->
             match results with
                 | ra :: rb :: [] -> Ashes.IO.print(Ashes.Text.fromInt(ra) + "|" + Ashes.Text.fromInt(rb))

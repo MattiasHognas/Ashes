@@ -34,4 +34,7 @@ let recursive run (round: Int) (total: Int) =
                 match found.item with
                     | item -> run(round - 1)(total + found.score + Ashes.Text.byteLength(item.name))
 
-Ashes.IO.print(Ashes.Text.fromInt(run(300000)(0)))
+0
+|> run(300000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

@@ -20,5 +20,7 @@ let recursive sumTextLengths n xs total =
         | s :: rest -> sumTextLengths(n - 1)(rest)(total + Ashes.Text.byteLength(s))
 
 Ashes.IO.print(
-    Ashes.Text.fromInt(Ashes.Text.byteLength(accumulateStr(200000)(""))) + "|" + Ashes.Text.fromInt(sumTextLengths(200000)(buildTexts(200000)([]))(0))
+    Ashes.Text.fromInt(""
+    |> accumulateStr(200000)
+    |> Ashes.Text.byteLength) + "|" + Ashes.Text.fromInt(sumTextLengths(200000)(buildTexts(200000)([]))(0))
 )

@@ -25,7 +25,9 @@ let adjustedValue =
         | return(value) -> value
 
 let sameValue =
-    match Ashes.Task.run(delayedSame([1, 2])) with
+    match [1, 2]
+    |> delayedSame
+    |> Ashes.Task.run with
         | Ok(value) -> value
         | Error(_) -> false
 

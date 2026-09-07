@@ -17,4 +17,7 @@ let recursive loop n acc =
                 match Ashes.IO.File.readChunk(fh)(3) with
                     | Error(_) -> acc + "[rerr]"
                     | Ok(chunk) -> loop(n - 1)(acc + chunk)
-in Ashes.IO.print(loop(3)(""))
+in
+    ""
+    |> loop(3)
+    |> Ashes.IO.print

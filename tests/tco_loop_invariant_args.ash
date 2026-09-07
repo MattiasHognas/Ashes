@@ -22,4 +22,8 @@ let recursive buildL table i acc =
 
 let f n = text.fromInt(n % 100)
 
-io.print(text.fromInt(text.byteLength(buildC(f)(6100)(""))) + " " + text.fromInt(text.byteLength(buildL(["xy", "z"])(6050)(""))))
+io.print(text.fromInt(""
+|> buildC(f)(6100)
+|> text.byteLength) + " " + text.fromInt(""
+|> buildL(["xy", "z"])(6050)
+|> text.byteLength))

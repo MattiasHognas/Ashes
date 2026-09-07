@@ -27,7 +27,10 @@ let classify (text: Str) =
 
 let fixedTok (bytes: Bytes) (position: Int) =
     if Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(position)) == 120
-    then Some(makeTok(Beta)("x")(0)(0.0)(position)(1))
+    then
+        1
+        |> makeTok(Beta)("x")(0)(0.0)(position)
+        |> Some
     else None
 
 let readNext (bytes: Bytes) (position: Int) =
@@ -80,4 +83,5 @@ let source = "abcdefabcxxxabcdefabc"
 let bytes = Ashes.Byte.fromText(source)
 
 match scan(bytes)(Ashes.Byte.length(bytes))(0)([])([]) with
-    | (toks, _notes) -> Ashes.IO.print(Ashes.Text.fromInt(countAlpha(toks)(0)) + " alpha, " + Ashes.Text.fromInt(countBeta(toks)(0)) + " beta, " + Ashes.Text.fromInt(countStop(toks)(0)) + " stop of " + Ashes.Text.fromInt(Ashes.Text.byteLength(source)))
+    | (toks, _notes) ->
+        Ashes.IO.print(Ashes.Text.fromInt(countAlpha(toks)(0)) + " alpha, " + Ashes.Text.fromInt(countBeta(toks)(0)) + " beta, " + Ashes.Text.fromInt(countStop(toks)(0)) + " stop of " + Ashes.Text.fromInt(Ashes.Text.byteLength(source)))

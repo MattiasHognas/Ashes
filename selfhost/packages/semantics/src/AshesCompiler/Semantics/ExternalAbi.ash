@@ -128,9 +128,10 @@ let externalAbiTypeSuccess abiType = ExternalAbiTypeResolution(abiType = Some(ab
 let externalAbiTypeFailure error = ExternalAbiTypeResolution(abiType = None, error = Some(error))
 
 let unsupportedExternalAbiType semanticType =
-    externalAbiTypeFailure(semanticType
+    semanticType
     |> formatSemanticType
-    |> UnsupportedExternalAbiRepresentation)
+    |> UnsupportedExternalAbiRepresentation
+    |> externalAbiTypeFailure
 
 let mapExternalAbiType constructor resolution =
     match resolution with

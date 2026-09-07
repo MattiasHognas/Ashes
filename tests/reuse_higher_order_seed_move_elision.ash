@@ -32,7 +32,8 @@ let rootVal t =
 let recursive build n =
     if n <= 0
     then Leaf
-    else Node(build(n - 1))(n)(Leaf)
+    else
+        Node(build(n - 1))(n)(Leaf)
 
 let pick t = t
 
@@ -41,39 +42,69 @@ let recursive grow n t =
     then t
     else
         match t with
-            | Leaf -> grow(n - 1)(Node(Leaf)(1)(Leaf))
-            | Node(l, v, r) -> grow(n - 1)(Node(l)(v + 1)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(1)
+                |> grow(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + 1)
+                |> grow(n - 1)
 
 let recursive accum n t =
     if n <= 0
     then t
     else
         match t with
-            | Leaf -> accum(n - 1)(Node(Leaf)(10)(Leaf))
-            | Node(l, v, r) -> accum(n - 1)(Node(l)(v + 10)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(10)
+                |> accum(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + 10)
+                |> accum(n - 1)
 
 let recursive bump n t =
     if n <= 0
     then t
     else
         match t with
-            | Leaf -> bump(n - 1)(Node(Leaf)(100)(Leaf))
-            | Node(l, v, r) -> bump(n - 1)(Node(l)(v + 100)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(100)
+                |> bump(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + 100)
+                |> bump(n - 1)
 
 let recursive dbump n t =
     if n <= 0
     then t
     else
         match t with
-            | Leaf -> dbump(n - 1)(Node(Leaf)(50)(Leaf))
-            | Node(l, v, r) -> dbump(n - 1)(Node(l)(v + 50)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(50)
+                |> dbump(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + 50)
+                |> dbump(n - 1)
 
 let recursive outer b nb t =
     if b >= nb
     then t
-    else outer(b + 1)(nb)(grow(3)(t))
+    else
+        t
+        |> grow(3)
+        |> outer(b + 1)(nb)
 
-let nested = outer(0)(4)(build(3))
+let nested =
+    3
+    |> build
+    |> outer(0)(4)
 
 let s = build(3)
 
@@ -89,5 +120,9 @@ let shared = build(7)
 
 let keepP = shared
 
-let pbumped = dbump(1)(pick(shared))
-in Ashes.IO.print(Ashes.Text.fromInt(rootVal(nested)) + " " + Ashes.Text.fromInt(rootVal(viaLet)) + " " + Ashes.Text.fromInt(rootVal(keep)) + " " + Ashes.Text.fromInt(rootVal(keepP)))
+let pbumped =
+    shared
+    |> pick
+    |> dbump(1)
+in
+    Ashes.IO.print(Ashes.Text.fromInt(rootVal(nested)) + " " + Ashes.Text.fromInt(rootVal(viaLet)) + " " + Ashes.Text.fromInt(rootVal(keep)) + " " + Ashes.Text.fromInt(rootVal(keepP)))

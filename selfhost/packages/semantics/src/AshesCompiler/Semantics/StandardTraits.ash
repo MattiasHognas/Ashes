@@ -86,23 +86,28 @@ let standardTraitMethods traitName parameterId =
                         "equal",
                         binaryType(parameter)(SemBool),
                         None
-                    ), constrained("notEqual")(binaryType(parameter)(SemBool))(Unit
+                    ), Unit
                     |> notEqualDefault
-                    |> Some)]
+                    |> Some
+                    |> constrained("notEqual")(binaryType(parameter)(SemBool))]
                 | "Ord" ->
                     [constrained(
                         "compare",
                         binaryType(parameter)(orderingType),
                         None
-                    ), constrained("less")(binaryType(parameter)(SemBool))(["Less"]
+                    ), ["Less"]
                     |> ordPredicateDefault
-                    |> Some), constrained("lessOrEqual")(binaryType(parameter)(SemBool))(["Less", "Equal"]
+                    |> Some
+                    |> constrained("less")(binaryType(parameter)(SemBool)), ["Less", "Equal"]
                     |> ordPredicateDefault
-                    |> Some), constrained("greater")(binaryType(parameter)(SemBool))(["Greater"]
+                    |> Some
+                    |> constrained("lessOrEqual")(binaryType(parameter)(SemBool)), ["Greater"]
                     |> ordPredicateDefault
-                    |> Some), constrained("greaterOrEqual")(binaryType(parameter)(SemBool))(["Greater", "Equal"]
+                    |> Some
+                    |> constrained("greater")(binaryType(parameter)(SemBool)), ["Greater", "Equal"]
                     |> ordPredicateDefault
-                    |> Some)]
+                    |> Some
+                    |> constrained("greaterOrEqual")(binaryType(parameter)(SemBool))]
                 | "Show" ->
                     [constrained("show")(unaryType(parameter)(SemString))(None)]
                 | "Hash" ->

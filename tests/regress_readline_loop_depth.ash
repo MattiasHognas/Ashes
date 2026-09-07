@@ -7,4 +7,7 @@ let recursive loop n =
     match Ashes.IO.readLine(Unit) with
         | None -> n
         | Some(_) -> loop(n + 1)
-in Ashes.IO.print(loop(0))
+in
+    0
+    |> loop
+    |> Ashes.IO.print

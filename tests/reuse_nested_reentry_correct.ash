@@ -25,15 +25,22 @@ let cmp a b =
 let recursive setFold i lim m =
     if i > lim
     then m
-    else setFold(i + 1)(lim)(Ashes.Collection.Map.setWith(cmp)(i)(i * 3)(m))
+    else
+        m
+        |> Ashes.Collection.Map.setWith(cmp)(i)(i * 3)
+        |> setFold(i + 1)(lim)
 
 let recursive outer batch nbatch m =
     if batch >= nbatch
     then m
-    else outer(batch + 1)(nbatch)(setFold(0)(99)(m))
+    else
+        m
+        |> setFold(0)(99)
+        |> outer(batch + 1)(nbatch)
 
 let final = outer(0)(30)(Ashes.Collection.Map.empty)
 in
     match Ashes.Collection.Map.getWith(cmp)(50)(final) with
         | None -> Ashes.IO.print("fail")
-        | Some(v) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + " " + Ashes.Text.fromInt(v))
+        | Some(v) ->
+            Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + " " + Ashes.Text.fromInt(v))

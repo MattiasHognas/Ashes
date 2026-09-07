@@ -42,7 +42,8 @@ let run unit =
                 in
                     let? manifest = Ashes.IO.File.readText(manifestPath)
                     in
-                        let? projectChecked = ensure(text.contains(manifest)("\"sourceRoots\":[\"src\"]"))("project manifest mismatch")
+                        let? projectChecked =
+                            ensure(text.contains(manifest)("\"sourceRoots\":[\"src\"]"))("project manifest mismatch")
                         in
                             let sourceRoot = path.join(style)(projectRoot)("src")
                             in
@@ -60,7 +61,8 @@ let run unit =
                                                     in
                                                         let? library = Ashes.IO.File.readText(libraryPath)
                                                         in
-                                                            let? libraryChecked = ensure(text.contains(library)("shipped-library"))("library asset mismatch")
+                                                            let? libraryChecked =
+                                                                ensure(text.contains(library)("shipped-library"))("library asset mismatch")
                                                             in
                                                                 let? runtime = Ashes.IO.File.readText(runtimePath)
                                                                 in

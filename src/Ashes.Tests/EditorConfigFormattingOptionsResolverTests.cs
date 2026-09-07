@@ -34,6 +34,33 @@ public sealed class EditorConfigFormattingOptionsResolverTests
     }
 
     [Test]
+    public void ResolveForPath_should_read_prefer_pipelines()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, ".editorconfig"), """
+                                                           root = true
+
+                                                           [*.ash]
+                                                           ashes_prefer_pipelines = true
+
+                                                           [plain/*.ash]
+                                                           ashes_prefer_pipelines = false
+                                                           """);
+            Directory.CreateDirectory(Path.Combine(root, "plain"));
+
+            EditorConfigFormattingOptionsResolver.ResolveForPath(Path.Combine(root, "Main.ash")).PreferPipelines.ShouldBeTrue();
+            EditorConfigFormattingOptionsResolver.ResolveForPath(Path.Combine(root, "plain", "Main.ash")).PreferPipelines.ShouldBeFalse();
+            EditorConfigFormattingOptionsResolver.ResolveForPath(null).PreferPipelines.ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void ResolveForPath_should_use_tabs_when_indent_style_is_tab()
     {
         var root = CreateTempDirectory();

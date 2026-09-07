@@ -22,4 +22,7 @@ let recursive render items =
         | Wrapped { instruction = Jump(label), location = _ } :: rest -> label + ";" + render(rest)
         | _ :: rest -> "other;" + render(rest)
 
-Ashes.IO.print(render(loop(3)([])))
+[]
+|> loop(3)
+|> render
+|> Ashes.IO.print

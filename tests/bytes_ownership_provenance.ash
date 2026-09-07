@@ -10,7 +10,10 @@ let makeClosure text =
     in
         given (_unit) -> Ashes.Byte.length(bytes))
 
-let makeBox text = ByteBox(Ashes.Byte.fromText(text))
+let makeBox text =
+    text
+    |> Ashes.Byte.fromText
+    |> ByteBox
 
 let makeTuple text = (Ashes.Byte.fromText(text), 9)
 
@@ -38,8 +41,12 @@ let tupleLength =
     match makeTuple("tuple") with
         | (bytes, value) -> Ashes.Byte.length(bytes) + value
 
-let forwardedLength = Ashes.Byte.length(forwarded(1u8))
+let forwardedLength =
+    1u8
+    |> forwarded
+    |> Ashes.Byte.length
 
-let listLength = totalLength(build(3)([]))(0)
+let listLength =
+    totalLength(build(3)([]))(0)
 
 Ashes.IO.print(Ashes.Text.fromInt(closureLength) + " " + Ashes.Text.fromInt(boxLength) + " " + Ashes.Text.fromInt(tupleLength) + " " + Ashes.Text.fromInt(forwardedLength) + " " + Ashes.Text.fromInt(listLength))

@@ -1,5 +1,8 @@
 // expect: ok
-let compose f g x = f(g(x))
+let compose f g x =
+    x
+    |> g
+    |> f
 in
     let add1 n = n + 1
     in

@@ -11,4 +11,7 @@ let recursive collect (n: Int) (text: Str) (count: Int) =
 
 let final = collect(300000)("seed")(0)
 
-Ashes.IO.print(Ashes.Text.fromInt(Ashes.Text.byteLength(final)))
+final
+|> Ashes.Text.byteLength
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

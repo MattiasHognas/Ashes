@@ -3,4 +3,7 @@ let unwrapOr opt def =
     match opt with
         | None -> def
         | Some(x) -> x
-in Ashes.IO.print(unwrapOr(None)(10))
+in
+    10
+    |> unwrapOr(None)
+    |> Ashes.IO.print

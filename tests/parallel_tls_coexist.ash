@@ -28,7 +28,7 @@ let recursive psum lo hi =
 let before = psum(0)(1000000)
 
 let tlsResult =
-    match Ashes.Task.run(async(match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
+    match (match await Ashes.Net.Tls.connect("localhost")(__TCP_PORT__) with
         | Error(err) -> err
         | Ok(sock) ->
             match await Ashes.Net.Tls.send(sock)("ping") with
@@ -38,7 +38,9 @@ let tlsResult =
                         | Error(err) -> err
                         | Ok(text) ->
                             let _ = await Ashes.Net.Tls.close(sock)
-                            in text)) with
+                            in text)
+    |> async
+    |> Ashes.Task.run with
         | Ok(text) -> text
         | Error(err) -> err
 

@@ -51,10 +51,15 @@ let recursive walk r n st =
                         in
                             if r == 2
                             then Hit(r)(perm2)(count2)
-                            else walk(r + 1)(n)(S(perm2)(count2))
+                            else
+                                count2
+                                |> S(perm2)
+                                |> walk(r + 1)(n)
 
 let result =
-    match walk(0)(5)(S([])([0, 1, 3])) with
+    match [0, 1, 3]
+    |> S([])
+    |> walk(0)(5) with
         | Done(p, c) -> "DONE perm=" + show(p) + " count=" + show(c)
         | Hit(r, p, c) -> "HIT r=" + text.fromInt(r) + " perm=" + show(p) + " count=" + show(c)
 

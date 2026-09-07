@@ -36,13 +36,26 @@ let recursive sgrow n t =
     then t
     else
         match t with
-            | Leaf -> sgrow(n - 1)(Node(Leaf)(1)(Leaf))
-            | Node(l, v, r) -> sgrow(n - 1)(Node(l)(v + 1)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(1)
+                |> sgrow(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + 1)
+                |> sgrow(n - 1)
 
 let recursive souter b nb t =
     if b >= nb
     then t
-    else souter(b + 1)(nb)(sgrow(3)(t))
+    else
+        t
+        |> sgrow(3)
+        |> souter(b + 1)(nb)
 
-let shared = souter(0)(4)(share(9))
-in Ashes.IO.print(Ashes.Text.fromInt(rootVal(shared)) + " " + Ashes.Text.fromInt(leftVal(shared)))
+let shared =
+    9
+    |> share
+    |> souter(0)(4)
+in
+    Ashes.IO.print(Ashes.Text.fromInt(rootVal(shared)) + " " + Ashes.Text.fromInt(leftVal(shared)))

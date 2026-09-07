@@ -4,4 +4,7 @@ let classify x =
         | n when n >= 101 -> "big"
         | n when n >= 11 -> "medium"
         | _ -> "small"
-in Ashes.IO.print(classify(50))
+in
+    50
+    |> classify
+    |> Ashes.IO.print

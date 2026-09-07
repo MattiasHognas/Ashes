@@ -46,7 +46,8 @@ let recursive collectWhyArgs args positionals projectOption =
     match args with
         | [] -> (positionals, projectOption)
         | "--project" :: value :: rest -> collectWhyArgs(rest)(positionals)(Some(value))
-        | other :: rest -> collectWhyArgs(rest)(append(positionals)([other]))(projectOption)
+        | other :: rest ->
+            collectWhyArgs(rest)(append(positionals)([other]))(projectOption)
 
 // Mirrors stage 0's `RunWhy` (`src/Ashes.Cli/Program.cs`): a bare `--help`/`-h` short-circuits;
 // otherwise the first positional argument is the target namespace (PascalCased, same as stage 0
@@ -103,7 +104,8 @@ let recursive bfsWhy queue seen target edges =
                         in
                             let extended =
                                 map(given (child) -> append(path)([child]))(children)
-                            in bfsWhy(append(restQueue)(extended))(current :: seen)(target)(edges)
+                            in
+                                bfsWhy(append(restQueue)(extended))(current :: seen)(target)(edges)
 
 // The stable, testable core of `ashes why`: given the direct-dependency root namespaces and the
 // lock file's own dependency edges (both already resolved by the caller), finds a path from any
@@ -136,7 +138,10 @@ let recursive lookupNamespaceByDir directory table =
 let directDependencyNamespace style projectDirectory namespaceByDir dependency =
     match dependency with
         | ProjectDependency { name = name, source = PathDependency(path, _versionConstraint) } ->
-            let dependencyDirectory = normalize(style)(join(style)(projectDirectory)(path))
+            let dependencyDirectory =
+                path
+                |> join(style)(projectDirectory)
+                |> normalize(style)
             in
                 match lookupNamespaceByDir(dependencyDirectory)(namespaceByDir) with
                     | Some(namespace) -> namespace
@@ -147,14 +152,19 @@ let directDependencyNamespace style projectDirectory namespaceByDir dependency =
 // to a namespace — these are the BFS roots for `why`, matching stage 0 exactly.
 let directDependencyNamespaces style projectDirectory namespaceByDir manifest =
     match manifest with
-        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = devDependencies, overrides = _overrides } -> append(map(directDependencyNamespace(style)(projectDirectory)(namespaceByDir))(dependencies))(map(directDependencyNamespace(style)(projectDirectory)(namespaceByDir))(devDependencies))
+        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = devDependencies, overrides = _overrides } ->
+            devDependencies
+            |> map(directDependencyNamespace(style)(projectDirectory)(namespaceByDir))
+            |> append(map(directDependencyNamespace(style)(projectDirectory)(namespaceByDir))(dependencies))
 
 let lockedPackageEdge locked =
     match locked with
         | LockedPackage { namespace = namespace, dependencies = dependencies } -> (namespace, dependencies)
 
 let readLockEdges style projectFilePath =
-    match Ashes.IO.File.readText(lockFilePath(style)(projectFilePath)) with
+    match projectFilePath
+    |> lockFilePath(style)
+    |> Ashes.IO.File.readText with
         | Error(_) -> []
         | Ok(source) ->
             match parseProjectLockFile(source) with
@@ -175,7 +185,8 @@ let runWhyInProject style manifestPath target =
                     match resolveProjectDependencyGraph(style)(layout) with
                         | Error(_) -> WhyFailed("Failed to resolve the project's dependency graph.")
                         | Ok(ProjectDependencyGraph { dependencies = resolvedDependencies }) ->
-                            let roots = directDependencyNamespaces(style)(projectDirectory)(namespaceByDirFor(resolvedDependencies))(manifest)
+                            let roots =
+                                directDependencyNamespaces(style)(projectDirectory)(namespaceByDirFor(resolvedDependencies))(manifest)
                             in
                                 let edges = readLockEdges(style)(manifestPath)
                                 in
@@ -212,7 +223,10 @@ let runWhy args =
         | WhyParsedArguments(arguments) ->
             match runWhyWithArguments(arguments) with
                 | WhyFound(path) ->
-                    let _ = Ashes.IO.print(Ashes.Text.join(" -> ")(path))
+                    let _ =
+                        path
+                        |> Ashes.Text.join(" -> ")
+                        |> Ashes.IO.print
                     in 0
                 | WhyNotFound(target) ->
                     let _ = Ashes.IO.print("'" + target + "' is not a dependency of this project.")

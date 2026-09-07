@@ -51,7 +51,10 @@ let clampVy vy = math.clampF(0.0 - 18.0)(18.0)(vy)
 
 let frac x = x - math.floor(x)
 
-let noise seed = frac(math.absF(math.sin(seed * 12.9898) * 43758.5453))
+let noise seed =
+    math.sin(seed * 12.9898) * 43758.5453
+    |> math.absF
+    |> frac
 
 let serveVelY points = (noise(math.toFloat(points) * 7.31) - 0.5) * 12.0
 
@@ -61,13 +64,15 @@ let applyEvent (state: State) event =
     match event with
         | Up -> state with playerY = clampPaddle(state.playerY - 1.0)
         | Down -> state with playerY = clampPaddle(state.playerY + 1.0)
-        | MouseRow(screenRow) -> state with playerY = clampPaddle(math.toFloat(screenRow - mouseRowOffset))
+        | MouseRow(screenRow) ->
+            state with playerY = clampPaddle(math.toFloat(screenRow - mouseRowOffset))
         | Quit -> state
 
 let recursive applyEvents (state: State) events =
     match events with
         | [] -> state
-        | event :: rest -> applyEvents(applyEvent(state)(event))(rest)
+        | event :: rest ->
+            applyEvents(applyEvent(state)(event))(rest)
 
 let moveCpu (state: State) =
     (let target =
@@ -135,7 +140,11 @@ let advanceBall (state: State) =
                             then serveBall((state with playerScore = state.playerScore + 1))(1)
                             else state with ballX = nx, ballY = ny, velY = vy)
 
-let step state events = advanceBall(moveCpu(applyEvents(state)(events)))
+let step state events =
+    events
+    |> applyEvents(state)
+    |> moveCpu
+    |> advanceBall
 
 let finished (state: State) =
     if state.playerScore >= winningScore

@@ -236,9 +236,10 @@ let typeExternalBuffer element ownership index context declarations =
                 | (_, true) -> externalTypingFailure(InvalidExternalOwnershipMarker(index))
                 | _ -> ExternalFunctionTypingResult(typing = None, error = None)
         | ExternalValueTypeResult { semanticType = semanticType, error = None } ->
-            externalTypingFailure(semanticType
+            semanticType
             |> formatSemanticType
-            |> InvalidExternalBufferElement)
+            |> InvalidExternalBufferElement
+            |> externalTypingFailure
         | ExternalValueTypeResult { error = Some(error) } -> externalTypingFailure(error)
 
 let recursive typeExternalParameter parsedType ownership index context declarations =
@@ -304,9 +305,11 @@ let recursive typeExternalParameter parsedType ownership index context declarati
                                 declarations
                             )
                         | _ ->
-                            emptyExternalParameters(true)(Some(elementType
+                            elementType
                             |> formatSemanticType
-                            |> InvalidExternalOutElement))
+                            |> InvalidExternalOutElement
+                            |> Some
+                            |> emptyExternalParameters(true)
                 | ExternalValueTypeResult { error = Some(error) } -> emptyExternalParameters(true)(Some(error))
         | ParsedNativeString(_, _, _) ->
             emptyExternalParameters(true)(Some(

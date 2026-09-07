@@ -4,4 +4,7 @@ let calc x =
     in
         let shifted = (flags & 6) << 2
         in shifted >> 1
-in Ashes.IO.print(calc(5))
+in
+    5
+    |> calc
+    |> Ashes.IO.print

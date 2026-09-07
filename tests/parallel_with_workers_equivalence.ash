@@ -15,8 +15,14 @@ let id =
     given (x) -> x
 
 let scoped =
-    Ashes.Task.Parallel.withWorkers(1)(given (_u) -> Ashes.Task.Parallel.reduce(plus)(0)(id)(range(0)(100)))
+    Ashes.Task.Parallel.withWorkers(1)(given (_u) ->
+        100
+        |> range(0)
+        |> Ashes.Task.Parallel.reduce(plus)(0)(id))
 
-let plain = Ashes.Task.Parallel.reduce(plus)(0)(id)(range(0)(100))
+let plain =
+    100
+    |> range(0)
+    |> Ashes.Task.Parallel.reduce(plus)(0)(id)
 
 Ashes.IO.print(Ashes.Text.fromInt(scoped) + "|" + Ashes.Text.fromInt(plain))

@@ -77,9 +77,15 @@ let recursive insertUniqueInt item list =
 let recursive sortUniqueInts list =
     match list with
         | [] -> []
-        | head :: tail -> insertUniqueInt(head)(sortUniqueInts(tail))
+        | head :: tail ->
+            tail
+            |> sortUniqueInts
+            |> insertUniqueInt(head)
 
-let recursive unionUniqueInts left right = sortUniqueInts(append(left)(right))
+let recursive unionUniqueInts left right =
+    right
+    |> append(left)
+    |> sortUniqueInts
 
 let recursive intersectUniqueInts left right =
     match left with
@@ -513,7 +519,10 @@ let getUsedTemps inst =
         | Return(s) -> [s]
         | _ -> []
 
-let getAllTemps inst = append(getDefinedTemps(inst))(getUsedTemps(inst))
+let getAllTemps inst =
+    inst
+    |> getUsedTemps
+    |> append(getDefinedTemps(inst))
 
 let getWrittenLocalSlots inst =
     match inst with
@@ -550,14 +559,22 @@ let recursive computeDefinedBefore instructions limit index acc =
     else
         match instructions with
             | [] -> acc
-            | IrInstruction { instruction = inst } :: tail -> computeDefinedBefore(tail)(limit)(index + 1)(unionUniqueInts(acc)(getDefinedTemps(inst)))
+            | IrInstruction { instruction = inst } :: tail ->
+                inst
+                |> getDefinedTemps
+                |> unionUniqueInts(acc)
+                |> computeDefinedBefore(tail)(limit)(index + 1)
 
 let recursive computeUsedAfter instructions startIndex index acc =
     match instructions with
         | [] -> acc
         | IrInstruction { instruction = inst } :: tail ->
             if index > startIndex
-            then computeUsedAfter(tail)(startIndex)(index + 1)(unionUniqueInts(acc)(getUsedTemps(inst)))
+            then
+                inst
+                |> getUsedTemps
+                |> unionUniqueInts(acc)
+                |> computeUsedAfter(tail)(startIndex)(index + 1)
             else computeUsedAfter(tail)(startIndex)(index + 1)(acc)
 
 let recursive computeLiveTempsAcrossAwaitsAux instructions awaitPositions =
@@ -568,7 +585,10 @@ let recursive computeLiveTempsAcrossAwaitsAux instructions awaitPositions =
             in
                 let usedAfter = computeUsedAfter(instructions)(awaitPos)(0)([])
                 in
-                    let live = removeInt(0)(intersectUniqueInts(definedBefore)(usedAfter))
+                    let live =
+                        usedAfter
+                        |> intersectUniqueInts(definedBefore)
+                        |> removeInt(0)
                     in live :: computeLiveTempsAcrossAwaitsAux(instructions)(tail)
 
 let computeLiveTempsAcrossAwaits instructions awaitPositions = computeLiveTempsAcrossAwaitsAux(instructions)(awaitPositions)
@@ -611,25 +631,41 @@ let recursive computeWrittenLocalsBefore instructions limit index acc =
     else
         match instructions with
             | [] -> acc
-            | IrInstruction { instruction = inst } :: tail -> computeWrittenLocalsBefore(tail)(limit)(index + 1)(unionUniqueInts(acc)(getWrittenLocalSlots(inst)))
+            | IrInstruction { instruction = inst } :: tail ->
+                inst
+                |> getWrittenLocalSlots
+                |> unionUniqueInts(acc)
+                |> computeWrittenLocalsBefore(tail)(limit)(index + 1)
 
 let recursive computeReadLocalsAfter instructions startIndex index acc =
     match instructions with
         | [] -> acc
         | IrInstruction { instruction = inst } :: tail ->
             if index > startIndex
-            then computeReadLocalsAfter(tail)(startIndex)(index + 1)(unionUniqueInts(acc)(getReadLocalSlots(inst)))
+            then
+                inst
+                |> getReadLocalSlots
+                |> unionUniqueInts(acc)
+                |> computeReadLocalsAfter(tail)(startIndex)(index + 1)
             else computeReadLocalsAfter(tail)(startIndex)(index + 1)(acc)
 
 let recursive computeAllWrittenLocals instructions acc =
     match instructions with
         | [] -> acc
-        | IrInstruction { instruction = inst } :: tail -> computeAllWrittenLocals(tail)(unionUniqueInts(acc)(getWrittenLocalSlots(inst)))
+        | IrInstruction { instruction = inst } :: tail ->
+            inst
+            |> getWrittenLocalSlots
+            |> unionUniqueInts(acc)
+            |> computeAllWrittenLocals(tail)
 
 let recursive computeAllReadLocals instructions acc =
     match instructions with
         | [] -> acc
-        | IrInstruction { instruction = inst } :: tail -> computeAllReadLocals(tail)(unionUniqueInts(acc)(getReadLocalSlots(inst)))
+        | IrInstruction { instruction = inst } :: tail ->
+            inst
+            |> getReadLocalSlots
+            |> unionUniqueInts(acc)
+            |> computeAllReadLocals(tail)
 
 let recursive replicateValue (count: Int) item =
     if count <= 0
@@ -644,7 +680,11 @@ let recursive computeLiveLocalsAcrossAwaitsAux instructions awaitPositions =
             in
                 let readAfter = computeReadLocalsAfter(instructions)(awaitPos)(0)([])
                 in
-                    let live = removeInt(1)(removeInt(0)(intersectUniqueInts(writtenBefore)(readAfter)))
+                    let live =
+                        readAfter
+                        |> intersectUniqueInts(writtenBefore)
+                        |> removeInt(0)
+                        |> removeInt(1)
                     in live :: computeLiveLocalsAcrossAwaitsAux(instructions)(tail)
 
 let computeLiveLocalsAcrossAwaits instructions awaitPositions hasBackEdge =
@@ -654,14 +694,22 @@ let computeLiveLocalsAcrossAwaits instructions awaitPositions hasBackEdge =
         in
             let readAnywhere = computeAllReadLocals(instructions)([])
             in
-                let liveAnywhere = removeInt(1)(removeInt(0)(intersectUniqueInts(writtenAnywhere)(readAnywhere)))
-                in replicateValue(listLength(awaitPositions))(liveAnywhere)
+                let liveAnywhere =
+                    readAnywhere
+                    |> intersectUniqueInts(writtenAnywhere)
+                    |> removeInt(0)
+                    |> removeInt(1)
+                in
+                    replicateValue(listLength(awaitPositions))(liveAnywhere)
     else computeLiveLocalsAcrossAwaitsAux(instructions)(awaitPositions)
 
 let recursive unionAllLists lists acc =
     match lists with
         | [] -> acc
-        | head :: tail -> unionAllLists(tail)(unionUniqueInts(acc)(head))
+        | head :: tail ->
+            head
+            |> unionUniqueInts(acc)
+            |> unionAllLists(tail)
 
 let recursive assignOffsets items baseOffset step =
     match items with
@@ -894,7 +942,11 @@ let emitResumePrologue instructions awaitPositions liveAcross liveLocalsAcross t
                                         in
                                             let resumeInst = IrInstruction(instruction = Resume(stateStructTemp)(awaitInstTarget)(restoreFrames), location = None)
                                             in
-                                                let allInsts = append([loadCleared])(append(restoreTempInsts)(append(restoreLocalInsts)([loadResult, resumeInst])))
+                                                let allInsts =
+                                                    [loadResult, resumeInst]
+                                                    |> append(restoreLocalInsts)
+                                                    |> append(restoreTempInsts)
+                                                    |> append([loadCleared])
                                                 in (allInsts, tempAfterLocals))
 
 let recursive saveLiveTemps temps tempToSlotOffset stateStructTemp acc =
@@ -957,7 +1009,10 @@ let emitSuspendAtAwait awaitTask (stateIdx: Int) liveAcross liveLocalsAcross tem
                                                     in
                                                         let returnStatus = IrInstruction(instruction = Return(statusTemp), location = loc)
                                                         in
-                                                            let allInsts = append(saveTempInsts)(append(saveLocalInsts)([storeAwaited, loadNextState, storeNextState, suspendInst, loadStatus, returnStatus]))
+                                                            let allInsts =
+                                                                [storeAwaited, loadNextState, storeNextState, suspendInst, loadStatus, returnStatus]
+                                                                |> append(saveLocalInsts)
+                                                                |> append(saveTempInsts)
                                                             in (allInsts, nextStateConst))
 
 let recursive emitStateSegmentAux segment (stateIdx: Int) liveAcross liveLocalsAcross tempToSlotOffset localToSlotOffset stateStructTemp statusTemp captureCount currentTemp acc =
@@ -970,7 +1025,8 @@ let recursive emitStateSegmentAux segment (stateIdx: Int) liveAcross liveLocalsA
                         AwaitTask(target)(taskTemp)
                     )(stateIdx)(liveAcross)(liveLocalsAcross)(tempToSlotOffset)(localToSlotOffset)(stateStructTemp)(statusTemp)(currentTemp)(loc) with
                         | (suspendInsts, tempAfterSuspend) ->
-                            let newAcc = append(reverse(suspendInsts))(acc)
+                            let newAcc =
+                                append(reverse(suspendInsts))(acc)
                             in emitStateSegmentAux(tail)(stateIdx)(liveAcross)(liveLocalsAcross)(tempToSlotOffset)(localToSlotOffset)(stateStructTemp)(statusTemp)(captureCount)(tempAfterSuspend)(newAcc)
                 | Return(source) ->
                     let storeRes = IrInstruction(instruction = StoreMemOffset(stateStructTemp)(taskResultSlotOffset)(source), location = loc)
@@ -995,9 +1051,13 @@ let recursive emitStateSegmentAux segment (stateIdx: Int) liveAcross liveLocalsA
                                             in
                                                 let returnStatus = IrInstruction(instruction = Return(statusTemp), location = loc)
                                                 in
-                                                    let epilogueInsts = append([storeRes])(append(clearInsts)([loadCompleted, storeCompleted, loadStatus, returnStatus]))
+                                                    let epilogueInsts =
+                                                        [loadCompleted, storeCompleted, loadStatus, returnStatus]
+                                                        |> append(clearInsts)
+                                                        |> append([storeRes])
                                                     in
-                                                        let newAcc = append(reverse(epilogueInsts))(acc)
+                                                        let newAcc =
+                                                            append(reverse(epilogueInsts))(acc)
                                                         in emitStateSegmentAux(tail)(stateIdx)(liveAcross)(liveLocalsAcross)(tempToSlotOffset)(localToSlotOffset)(stateStructTemp)(statusTemp)(captureCount)(completedConst)(newAcc)
                 | _ ->
                     let adjusted =
@@ -1035,9 +1095,13 @@ let recursive emitAllStates segments (stateIdx: Int) stateCount instructions awa
                                 segment
                             )(stateIdx)(liveAcross)(liveLocalsAcross)(tempToSlotOffset)(localToSlotOffset)(stateStructTemp)(statusTemp)(captureCount)(tempAfterPrologue) with
                                 | (segmentInsts, tempAfterSegment) ->
-                                    let stateInsts = append([labelInst])(append(prologueInsts)(segmentInsts))
+                                    let stateInsts =
+                                        segmentInsts
+                                        |> append(prologueInsts)
+                                        |> append([labelInst])
                                     in
-                                        let newAcc = append(reverse(stateInsts))(acc)
+                                        let newAcc =
+                                            append(reverse(stateInsts))(acc)
                                         in
                                             emitAllStates(
                                                 restSegments
@@ -1056,7 +1120,10 @@ let emitMultiStateBody instructions awaitPositions liveAcross liveLocalsAcross t
                             segments
                         )(0)(stateCount)(instructions)(awaitPositions)(liveAcross)(liveLocalsAcross)(tempToSlotOffset)(localToSlotOffset)(stateStructTemp)(statusTemp)(captureCount)(tempAfterDispatch)(stateLabels)([]) with
                             | (stateInsts, tempAfterStates) ->
-                                let headerAndStates = append([loadStateIdx])(append(dispatchInsts)(stateInsts))
+                                let headerAndStates =
+                                    stateInsts
+                                    |> append(dispatchInsts)
+                                    |> append([loadStateIdx])
                                 in (headerAndStates, tempAfterStates))
 
 let transformStateMachine instructions captureCount =

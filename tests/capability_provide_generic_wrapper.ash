@@ -11,4 +11,6 @@ let cmp =
     given (x) ->
         given (y) -> Ord.compare(x)(y)
 
-Ashes.IO.print(cmp(9)(4))
+4
+|> cmp(9)
+|> Ashes.IO.print

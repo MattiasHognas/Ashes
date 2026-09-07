@@ -17,4 +17,7 @@ let outer =
                         | Ok(chunk) -> chunk
             in
                 given (x) -> inner(x)
-in Ashes.IO.print(outer(0))
+in
+    0
+    |> outer
+    |> Ashes.IO.print

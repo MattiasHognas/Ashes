@@ -21,7 +21,10 @@ let step (n: Int) (state: (Str, List(Entry))) =
 let fresh (n: Int) (state: (Str, List(Entry))) =
     match state with
         | (_text, entries) ->
-            let label = widen(5)(Ashes.Text.fromInt(n % 10))
+            let label =
+                n % 10
+                |> Ashes.Text.fromInt
+                |> widen(5)
             in (label, Entry(key = label, count = n) :: entries)
 
 let recursive threaded (n: Int) (state: (Str, List(Entry))) =
@@ -29,14 +32,20 @@ let recursive threaded (n: Int) (state: (Str, List(Entry))) =
     then
         match state with
             | (text, entries) -> Ashes.Text.byteLength(text) * Ashes.Collection.List.length(entries) / 20000
-    else threaded(n - 1)(step(n)(state))
+    else
+        state
+        |> step(n)
+        |> threaded(n - 1)
 
 let recursive relabeled (n: Int) (state: (Str, List(Entry))) =
     if n == 0
     then
         match state with
             | (text, entries) -> Ashes.Text.byteLength(text) * Ashes.Collection.List.length(entries)
-    else relabeled(n - 1)(fresh(n)(state))
+    else
+        state
+        |> fresh(n)
+        |> relabeled(n - 1)
 
 let recursive mixed (n: Int) (state: (Str, List(Entry))) =
     if n == 0
@@ -45,7 +54,10 @@ let recursive mixed (n: Int) (state: (Str, List(Entry))) =
             | (text, entries) -> Ashes.Text.byteLength(text) * Ashes.Collection.List.length(entries) / 20000
     else
         mixed(n - 1)(if n % 3 == 0
-        then fresh(n)(step(n)(state))
+        then
+            state
+            |> step(n)
+            |> fresh(n)
         else step(n)(state))
 
 Ashes.IO.print(Ashes.Text.fromInt(threaded(20000)((widen(16)("ab"), []))) + "|" + Ashes.Text.fromInt(relabeled(20000)((widen(16)("ab"), []))) + "|" + Ashes.Text.fromInt(mixed(20000)((widen(16)("ab"), []))))

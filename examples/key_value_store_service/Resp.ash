@@ -41,12 +41,21 @@ let parseInline buffer =
         if idx < 0
         then RespNeedMore
         else
-            let line = stripCarriage(str.take(buffer)(idx))
-            in RespParsed(dropBlank(str.split(line)(" ")))(str.drop(buffer)(idx + 1)))
+            let line =
+                idx
+                |> str.take(buffer)
+                |> stripCarriage
+            in
+                idx + 1
+                |> str.drop(buffer)
+                |> RespParsed(" "
+                |> str.split(line)
+                |> dropBlank))
 
 let recursive parseBulks buffer n acc =
     if n == 0
-    then RespParsed(reverseWords([])(acc))(buffer)
+    then
+        RespParsed(reverseWords([])(acc))(buffer)
     else
         let idx = str.indexOf(buffer)(crlf)
         in
@@ -58,14 +67,17 @@ let recursive parseBulks buffer n acc =
                     if str.startsWith(header)("$") == false
                     then RespMalformed("expected bulk string")
                     else
-                        match text.parseInt(str.drop(header)(1)) with
+                        match 1
+                        |> str.drop(header)
+                        |> text.parseInt with
                             | Error(_bad) -> RespMalformed("invalid bulk length")
                             | Ok(len) ->
                                 let rest = str.drop(buffer)(idx + 2)
                                 in
                                     if str.length(rest) < len + 2
                                     then RespNeedMore
-                                    else parseBulks(str.drop(rest)(len + 2))(n - 1)(str.take(rest)(len) :: acc)
+                                    else
+                                        parseBulks(str.drop(rest)(len + 2))(n - 1)(str.take(rest)(len) :: acc)
 
 let parseArray buffer =
     (let idx = str.indexOf(buffer)(crlf)
@@ -73,9 +85,12 @@ let parseArray buffer =
         if idx < 0
         then RespNeedMore
         else
-            match text.parseInt(str.drop(str.take(buffer)(idx))(1)) with
+            match 1
+            |> str.drop(str.take(buffer)(idx))
+            |> text.parseInt with
                 | Error(_bad) -> RespMalformed("invalid array length")
-                | Ok(count) -> parseBulks(str.drop(buffer)(idx + 2))(count)([]))
+                | Ok(count) ->
+                    parseBulks(str.drop(buffer)(idx + 2))(count)([]))
 
 let parse buffer =
     if buffer == ""
@@ -91,7 +106,8 @@ let errorReply msg = "-ERR " + msg + crlf
 
 let number n = ":" + text.fromInt(n) + crlf
 
-let bulk s = "$" + text.fromInt(text.byteLength(s)) + crlf + s + crlf
+let bulk s =
+    "$" + text.fromInt(text.byteLength(s)) + crlf + s + crlf
 
 let nullBulk _ = "$-1" + crlf
 
@@ -100,4 +116,5 @@ let recursive bulkSeq items =
         | [] -> ""
         | item :: rest -> bulk(item) + bulkSeq(rest)
 
-let array items = "*" + text.fromInt(countWords(items)) + crlf + bulkSeq(items)
+let array items =
+    "*" + text.fromInt(countWords(items)) + crlf + bulkSeq(items)

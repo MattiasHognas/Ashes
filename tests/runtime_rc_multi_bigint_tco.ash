@@ -9,7 +9,10 @@ let recursive loop : Int -> BigInt -> BigInt -> Unit needs {ConsoleIO} =
         given (left) ->
             given (right) ->
                 if n == 0
-                then io.print(text.fromBigInt(left + right))
+                then
+                    left + right
+                    |> text.fromBigInt
+                    |> io.print
                 else loop(n - 1)(right)(left)
 
 loop(1)(1N)(2N)

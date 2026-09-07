@@ -243,7 +243,9 @@ let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int
                                                     in
                                                         let loadClosure = LoadMemOffset(closureTemp)(frameTemp)((globalCount + 1 + opIndex) * 8)
                                                         in
-                                                            match emitCurriedClosureCalls(closureTemp)(closureTemp + 1)(argTemps)(append(switchInstructions)([loadClosure])) with
+                                                            match [loadClosure]
+                                                            |> append(switchInstructions)
+                                                            |> emitCurriedClosureCalls(closureTemp)(closureTemp + 1)(argTemps) with
                                                                 | (callResultTemp, callInstructions, afterCallTemp) ->
                                                                     let restoreInstructions = emitPerformEvidenceRestore(0)(globalCount)(savedTemps)(callInstructions)
                                                                     in

@@ -1077,9 +1077,10 @@ and armsReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
                 | (armEnv, afterPattern) ->
                     match reachOf(context)(armEnv)(removeScopeNames(patternBinders(pattern)([]))(scope))(afterPattern)(body) with
                         | ReachStep { reach = armReach, token = afterArm } ->
-                            armsReach(context)(env)(scope)(afterArm)(scrutineeReach)(rest)(armReach
+                            armReach
                             |> joinArm(acc)
-                            |> Some)
+                            |> Some
+                            |> armsReach(context)(env)(scope)(afterArm)(scrutineeReach)(rest)
 and joinArm (acc: Maybe(ResultReachState)) (armReach: ResultReachState) =
     match acc with
         | Some(reach) -> reachJoin(reach)(armReach)
@@ -1351,9 +1352,10 @@ and overApplyArms (context: ReachContext) (markers: List(Str)) (index: Int) (env
                 | (armEnv, afterPattern) ->
                     match overApplyReach(context)(body)(markers)(index)(armEnv)(removeScopeNames(patternBinders(pattern)([]))(scope))(afterPattern) with
                         | ReachStep { reach = armReach, token = afterArm } ->
-                            overApplyArms(context)(markers)(index)(env)(scope)(afterArm)(scrutineeReach)(rest)(armReach
+                            armReach
                             |> joinArm(acc)
-                            |> Some)
+                            |> Some
+                            |> overApplyArms(context)(markers)(index)(env)(scope)(afterArm)(scrutineeReach)(rest)
 
 let recursive parameterEnv (parameters: List(Str)) =
     match parameters with

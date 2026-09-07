@@ -47,9 +47,10 @@ let recursive discoverNormalized style directory =
             |> ProjectPathProbeError(join(style)(directory)("ashes.json"))
             |> Error
         | Ok(true) ->
-            Ok("ashes.json"
+            "ashes.json"
             |> join(style)(directory)
-            |> Some)
+            |> Some
+            |> Ok
         | Ok(false) ->
             match parent(style)(directory) with
                 | parentDirectory ->
@@ -65,9 +66,10 @@ let discoverProjectFile style startDirectory =
 let selectProjectFile style currentDirectory explicitProject =
     match explicitProject with
         | Some(projectPath) ->
-            Ok(projectPath
+            projectPath
             |> join(style)(currentDirectory)
-            |> Some)
+            |> Some
+            |> Ok
         | None -> discoverProjectFile(style)(currentDirectory)
 
 let recursive resolvePaths style directory paths =

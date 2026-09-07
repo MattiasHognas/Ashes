@@ -13,7 +13,10 @@ let large =
 
 let count = Ashes.Collection.List.length(large)
 
-let maybeTop = Ashes.Collection.List.head(Ashes.Collection.List.reverse(large))
+let maybeTop =
+    large
+    |> Ashes.Collection.List.reverse
+    |> Ashes.Collection.List.head
 
 let adjusted =
     Ashes.Core.Maybe.map(given (x) -> x + count)(maybeTop)

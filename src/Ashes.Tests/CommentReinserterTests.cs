@@ -16,10 +16,7 @@ public sealed class CommentReinserterTests
                 return null;
             }
 
-            var formatted = Ashes.Formatter.Formatter.Format(
-                program,
-                preferPipelines: current.Contains("|>", StringComparison.Ordinal),
-                options: new FormattingOptions { NewLine = "\n" });
+            var formatted = Ashes.Formatter.Formatter.Format(program, new FormattingOptions { NewLine = "\n" });
             return CommentReinserter.ReinsertStandaloneCommentLines(current, formatted, "\n");
         });
     }

@@ -85,7 +85,10 @@ implement Ord(Box) =
                     then Greater
                     else Equal
 
-let showBox boxed = Ashes.Text.fromInt(value(boxed))
+let showBox boxed =
+    boxed
+    |> value
+    |> Ashes.Text.fromInt
 
 let showBool boolean =
     if boolean
@@ -94,5 +97,25 @@ let showBool boolean =
 
 let join left right = left + "|" + right
 
-let output = join(showBox(Box(7) + Box(2)))(join(showBox(Box(7) - Box(8)))(join(showBox(Box(5) * Box(4)))(join(showBox(Box(8) / Box(4)))(join(showBox(Box(7) % Box(3)))(join(showBox(-Box(5)))(join(showBox(!Box(0)))(join(showBox(Box(3) & Box(6)))(join(showBox(Box(3) | Box(6)))(join(showBox(Box(3) ^ Box(6)))(join(showBox(Box(1) << Box(4)))(join(showBox(Box(8) >> Box(1)))(join(showBox(~Box(5)))(join(showBool(Box(3) == Box(3)))(join(showBool(Box(3) != Box(4)))(join(showBool(Box(3) < Box(4)))(join(showBool(Box(3) <= Box(3)))(join(showBool(Box(4) > Box(3)))(showBool(Box(4) >= Box(4))))))))))))))))))))
+let output =
+    Box(4) >= Box(4)
+    |> showBool
+    |> join(showBool(Box(4) > Box(3)))
+    |> join(showBool(Box(3) <= Box(3)))
+    |> join(showBool(Box(3) < Box(4)))
+    |> join(showBool(Box(3) != Box(4)))
+    |> join(showBool(Box(3) == Box(3)))
+    |> join(showBox(~Box(5)))
+    |> join(showBox(Box(8) >> Box(1)))
+    |> join(showBox(Box(1) << Box(4)))
+    |> join(showBox(Box(3) ^ Box(6)))
+    |> join(showBox(Box(3) | Box(6)))
+    |> join(showBox(Box(3) & Box(6)))
+    |> join(showBox(!Box(0)))
+    |> join(showBox(-Box(5)))
+    |> join(showBox(Box(7) % Box(3)))
+    |> join(showBox(Box(8) / Box(4)))
+    |> join(showBox(Box(5) * Box(4)))
+    |> join(showBox(Box(7) - Box(8)))
+    |> join(showBox(Box(7) + Box(2)))
 in Ashes.IO.print(output)

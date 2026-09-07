@@ -3,4 +3,6 @@
 let uses =
     given (effect) -> effect
 
-Ashes.IO.print(uses("ok"))
+"ok"
+|> uses
+|> Ashes.IO.print

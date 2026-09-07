@@ -233,8 +233,14 @@ let recursive countTempUses instructions acc =
                                 match lookupAssociation(u)(entries) with
                                     | Some(c) -> c + 1
                                     | None -> 1
-                            in addUses(uTail)(setAssociation(u)(count)(entries))
-                in countTempUses(tail)(addUses(used)(acc))
+                            in
+                                entries
+                                |> setAssociation(u)(count)
+                                |> addUses(uTail)
+                in
+                    acc
+                    |> addUses(used)
+                    |> countTempUses(tail)
 
 let recursive collectCopyTypeProducers instructions acc =
     match instructions with
@@ -258,7 +264,10 @@ let elideTrivialOwnershipCopies instructions =
                         match inst with
                             | RcDup(dest, src, false, _) ->
                                 let resolvedSrc = resolveTemp(remap)(src)
-                                in buildRemap(tail)(setAssociation(dest)(resolvedSrc)(remap))
+                                in
+                                    remap
+                                    |> setAssociation(dest)(resolvedSrc)
+                                    |> buildRemap(tail)
                             | Borrow(dest, src) ->
                                 let resolvedSrc = resolveTemp(remap)(src)
                                 in
@@ -275,7 +284,10 @@ let elideTrivialOwnershipCopies instructions =
                                                 else isSingleUse
                                             in
                                                 if isEligible
-                                                then buildRemap(tail)(setAssociation(dest)(resolvedSrc)(remap))
+                                                then
+                                                    remap
+                                                    |> setAssociation(dest)(resolvedSrc)
+                                                    |> buildRemap(tail)
                                                 else buildRemap(tail)(remap)
                             | _ -> buildRemap(tail)(remap)
             in
@@ -307,7 +319,9 @@ let recursive isTempUsedInInstructions instructions temp =
     match instructions with
         | [] -> false
         | IrInstruction { instruction = inst } :: tail ->
-            if listContains(temp)(getUsedTemps(inst))
+            if inst
+            |> getUsedTemps
+            |> listContains(temp)
             then true
             else isTempUsedInInstructions(tail)(temp)
 
@@ -366,8 +380,14 @@ let recursive countDefinitions instructions acc =
                                 match lookupAssociation(d)(entries) with
                                     | Some(c) -> c + 1
                                     | None -> 1
-                            in addDefs(dTail)(setAssociation(d)(count)(entries))
-                in countDefinitions(tail)(addDefs(defs)(acc))
+                            in
+                                entries
+                                |> setAssociation(d)(count)
+                                |> addDefs(dTail)
+                in
+                    acc
+                    |> addDefs(defs)
+                    |> countDefinitions(tail)
 
 // Every single-defined temp mapped to its defining instruction.
 let recursive collectSingleDefiningInstructions instructions defCounts acc =
@@ -379,9 +399,15 @@ let recursive collectSingleDefiningInstructions instructions defCounts acc =
                     | [] -> entries
                     | d :: dTail ->
                         if lookupAssociation(d)(defCounts) == Some(1)
-                        then addDefs(dTail)(setAssociation(d)(inst)(entries))
+                        then
+                            entries
+                            |> setAssociation(d)(inst)
+                            |> addDefs(dTail)
                         else addDefs(dTail)(entries)
-            in collectSingleDefiningInstructions(tail)(defCounts)(addDefs(getDefinedTemps(inst))(acc))
+            in
+                acc
+                |> addDefs(getDefinedTemps(inst))
+                |> collectSingleDefiningInstructions(tail)(defCounts)
 
 let recursive countUses instructions acc =
     match instructions with
@@ -395,8 +421,14 @@ let recursive countUses instructions acc =
                             match lookupAssociation(u)(entries) with
                                 | Some(c) -> c + 1
                                 | None -> 1
-                        in addUses(uTail)(setAssociation(u)(count)(entries))
-            in countUses(tail)(addUses(getUsedTemps(inst))(acc))
+                        in
+                            entries
+                            |> setAssociation(u)(count)
+                            |> addUses(uTail)
+            in
+                acc
+                |> addUses(getUsedTemps(inst))
+                |> countUses(tail)
 
 // Known-closure devirtualization. A CallClosure whose closure temp is produced by a
 // MakeClosure/MakeClosureStack with a statically known label becomes a direct CallKnown of that
@@ -415,7 +447,10 @@ let recursive countStoresBySlot instructions stores sources =
                 match lookupAssociation(slot)(stores) with
                     | Some(c) -> c + 1
                     | None -> 1
-            in countStoresBySlot(tail)(setAssociation(slot)(count)(stores))(setAssociation(slot)(source)(sources))
+            in
+                sources
+                |> setAssociation(slot)(source)
+                |> countStoresBySlot(tail)(setAssociation(slot)(count)(stores))
         | _ :: tail -> countStoresBySlot(tail)(stores)(sources)
 
 // The closure object's resource-dropper word: {code, env, packed size/ownership, dropper}.
@@ -487,11 +522,17 @@ let tryBuildKnownCall (facts: ClosureDefinitionFacts) dest argTemp flagTemp defi
     match definition with
         | MakeClosure(_, fnLabel, envTemp, _, _, _, _) ->
             if lookupAssociation(envTemp)(facts.defCounts) == Some(1)
-            then Some(CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)(false))
+            then
+                false
+                |> CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)
+                |> Some
             else None
         | MakeClosureStack(_, fnLabel, envTemp, envSize, _, _) ->
             if lookupAssociation(envTemp)(facts.defCounts) == Some(1)
-            then Some(CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)(envSize > 0))
+            then
+                envSize > 0
+                |> CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)
+                |> Some
             else None
         | _ -> None
 
@@ -555,13 +596,19 @@ let recursive countBranchRefsToLabels instructions acc =
                         match lookupAssociation(target)(acc) with
                             | Some(c) -> c + 1
                             | None -> 1
-                    in countBranchRefsToLabels(tail)(setAssociation(target)(count)(acc))
+                    in
+                        acc
+                        |> setAssociation(target)(count)
+                        |> countBranchRefsToLabels(tail)
                 | JumpIfFalse(_, target) ->
                     let count =
                         match lookupAssociation(target)(acc) with
                             | Some(c) -> c + 1
                             | None -> 1
-                    in countBranchRefsToLabels(tail)(setAssociation(target)(count)(acc))
+                    in
+                        acc
+                        |> setAssociation(target)(count)
+                        |> countBranchRefsToLabels(tail)
                 | SwitchTag(_, cases, defaultLabel) ->
                     let recursive addCases cs entries =
                         match cs with
@@ -573,7 +620,10 @@ let recursive countBranchRefsToLabels instructions acc =
                                         match lookupAssociation(l)(entries) with
                                             | Some(n) -> n + 1
                                             | None -> 1
-                                    in addCases(cTail)(setAssociation(l)(c)(entries))
+                                    in
+                                        entries
+                                        |> setAssociation(l)(c)
+                                        |> addCases(cTail)
                     in
                         let mapWithCases = addCases(cases)(acc)
                         in
@@ -581,7 +631,10 @@ let recursive countBranchRefsToLabels instructions acc =
                                 match lookupAssociation(defaultLabel)(mapWithCases) with
                                     | Some(n) -> n + 1
                                     | None -> 1
-                            in countBranchRefsToLabels(tail)(setAssociation(defaultLabel)(defCount)(mapWithCases))
+                            in
+                                mapWithCases
+                                |> setAssociation(defaultLabel)(defCount)
+                                |> countBranchRefsToLabels(tail)
                 | _ -> countBranchRefsToLabels(tail)(acc)
 
 let emptyFoldFacts = FoldFacts(ints = [], floats = [], bools = [], localInts = [], localFloats = [], localBools = [])
@@ -658,24 +711,40 @@ let meetFacts (snapshots: List(FoldFacts)) =
         | [] -> emptyFoldFacts
         | first :: rest ->
             FoldFacts(
-                ints = meetAssociation(intEquals)(first.ints)(map(snapshotInts)(rest)),
-                floats = meetAssociation(floatEquals)(first.floats)(map(snapshotFloats)(rest)),
-                bools = meetAssociation(boolEquals)(first.bools)(map(snapshotBools)(rest)),
-                localInts = meetAssociation(intEquals)(first.localInts)(map(snapshotLocalInts)(rest)),
-                localFloats = meetAssociation(floatEquals)(first.localFloats)(map(snapshotLocalFloats)(rest)),
-                localBools = meetAssociation(boolEquals)(first.localBools)(map(snapshotLocalBools)(rest))
+                ints = rest
+                |> map(snapshotInts)
+                |> meetAssociation(intEquals)(first.ints),
+                floats = rest
+                |> map(snapshotFloats)
+                |> meetAssociation(floatEquals)(first.floats),
+                bools = rest
+                |> map(snapshotBools)
+                |> meetAssociation(boolEquals)(first.bools),
+                localInts = rest
+                |> map(snapshotLocalInts)
+                |> meetAssociation(intEquals)(first.localInts),
+                localFloats = rest
+                |> map(snapshotLocalFloats)
+                |> meetAssociation(floatEquals)(first.localFloats),
+                localBools = rest
+                |> map(snapshotLocalBools)
+                |> meetAssociation(boolEquals)(first.localBools)
             )
 
 // One snapshot per predecessor edge observed so far, keyed by target label.
 let recordEdgeSnapshot target facts saved =
     match lookupAssociation(target)(saved) with
-        | Some(snapshots) -> setAssociation(target)(append(snapshots)([facts]))(saved)
+        | Some(snapshots) ->
+            setAssociation(target)(append(snapshots)([facts]))(saved)
         | None -> setAssociation(target)([facts])(saved)
 
 let recursive recordSwitchCaseSnapshots cases facts saved =
     match cases with
         | [] -> saved
-        | switchCase :: tail -> recordSwitchCaseSnapshots(tail)(facts)(recordEdgeSnapshot(switchCaseLabel(switchCase))(facts)(saved))
+        | switchCase :: tail ->
+            saved
+            |> recordEdgeSnapshot(switchCaseLabel(switchCase))(facts)
+            |> recordSwitchCaseSnapshots(tail)(facts)
 
 // The case a switch on an already-known tag takes: the first case carrying that tag, else the default.
 let recursive switchTakenLabel tag cases defaultLabel =
@@ -747,117 +816,154 @@ let foldConstants instructions =
                 | [] -> reverse(acc)
                 | (IrInstruction { instruction = inst, location = loc } as irInst) :: tail ->
                     (match inst with
-                        | LoadConstInt(dest, value) -> foldLoop(tail)(factsWithInt(dest)(value)(facts))(saved)(false)(irInst :: acc)
-                        | LoadConstFloat(dest, value) -> foldLoop(tail)(factsWithFloat(dest)(value)(facts))(saved)(false)(irInst :: acc)
-                        | LoadConstBool(dest, value) -> foldLoop(tail)(factsWithBool(dest)(value)(facts))(saved)(false)(irInst :: acc)
+                        | LoadConstInt(dest, value) ->
+                            foldLoop(tail)(factsWithInt(dest)(value)(facts))(saved)(false)(irInst :: acc)
+                        | LoadConstFloat(dest, value) ->
+                            foldLoop(tail)(factsWithFloat(dest)(value)(facts))(saved)(false)(irInst :: acc)
+                        | LoadConstBool(dest, value) ->
+                            foldLoop(tail)(factsWithBool(dest)(value)(facts))(saved)(false)(irInst :: acc)
                         | AddInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv + rv)(facts))(saved)(false)(intResult(dest)(lv + rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithInt(dest)(lv + rv)(facts))(saved)(false)(intResult(dest)(lv + rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | SubInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv - rv)(facts))(saved)(false)(intResult(dest)(lv - rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithInt(dest)(lv - rv)(facts))(saved)(false)(intResult(dest)(lv - rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | MulInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv * rv)(facts))(saved)(false)(intResult(dest)(lv * rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithInt(dest)(lv * rv)(facts))(saved)(false)(intResult(dest)(lv * rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | DivInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
                                 | Some((lv, rv)) ->
                                     if rv != 0
-                                    then foldLoop(tail)(factsWithInt(dest)(lv / rv)(facts))(saved)(false)(intResult(dest)(lv / rv)(loc) :: acc)
+                                    then
+                                        foldLoop(tail)(factsWithInt(dest)(lv / rv)(facts))(saved)(false)(intResult(dest)(lv / rv)(loc) :: acc)
                                     else foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | DivUInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
                                 | Some((lv, rv)) ->
                                     if rv != 0
-                                    then foldLoop(tail)(factsWithInt(dest)(lv / rv)(facts))(saved)(false)(intResult(dest)(lv / rv)(loc) :: acc)
+                                    then
+                                        foldLoop(tail)(factsWithInt(dest)(lv / rv)(facts))(saved)(false)(intResult(dest)(lv / rv)(loc) :: acc)
                                     else foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | AndInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv & rv)(facts))(saved)(false)(intResult(dest)(lv & rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithInt(dest)(lv & rv)(facts))(saved)(false)(intResult(dest)(lv & rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | OrInt(dest, l, r) ->
                             (match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> (foldLoop(tail)(factsWithInt(dest)(lv | rv)(facts))(saved)(false)(intResult(dest)(lv | rv)(loc) :: acc))
+                                | Some((lv, rv)) ->
+                                    (foldLoop(tail)(factsWithInt(dest)(lv | rv)(facts))(saved)(false)(intResult(dest)(lv | rv)(loc) :: acc))
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc))
                         | XorInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv ^ rv)(facts))(saved)(false)(intResult(dest)(lv ^ rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithInt(dest)(lv ^ rv)(facts))(saved)(false)(intResult(dest)(lv ^ rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | ShlInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv << rv)(facts))(saved)(false)(intResult(dest)(lv << rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithInt(dest)(lv << rv)(facts))(saved)(false)(intResult(dest)(lv << rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | ShrInt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv >> rv)(facts))(saved)(false)(intResult(dest)(lv >> rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithInt(dest)(lv >> rv)(facts))(saved)(false)(intResult(dest)(lv >> rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | AddFloat(dest, l, r) ->
                             match foldFloatPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv + rv)(facts))(saved)(false)(floatResult(dest)(lv + rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithFloat(dest)(lv + rv)(facts))(saved)(false)(floatResult(dest)(lv + rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | SubFloat(dest, l, r) ->
                             match foldFloatPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv - rv)(facts))(saved)(false)(floatResult(dest)(lv - rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithFloat(dest)(lv - rv)(facts))(saved)(false)(floatResult(dest)(lv - rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | MulFloat(dest, l, r) ->
                             match foldFloatPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv * rv)(facts))(saved)(false)(floatResult(dest)(lv * rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithFloat(dest)(lv * rv)(facts))(saved)(false)(floatResult(dest)(lv * rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | DivFloat(dest, l, r) ->
                             match foldFloatPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv / rv)(facts))(saved)(false)(floatResult(dest)(lv / rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithFloat(dest)(lv / rv)(facts))(saved)(false)(floatResult(dest)(lv / rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntEq(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv == rv)(facts))(saved)(false)(boolResult(dest)(lv == rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithBool(dest)(lv == rv)(facts))(saved)(false)(boolResult(dest)(lv == rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntNe(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv != rv)(facts))(saved)(false)(boolResult(dest)(lv != rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithBool(dest)(lv != rv)(facts))(saved)(false)(boolResult(dest)(lv != rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntGt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv > rv)(facts))(saved)(false)(boolResult(dest)(lv > rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithBool(dest)(lv > rv)(facts))(saved)(false)(boolResult(dest)(lv > rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntGe(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv >= rv)(facts))(saved)(false)(boolResult(dest)(lv >= rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithBool(dest)(lv >= rv)(facts))(saved)(false)(boolResult(dest)(lv >= rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntLt(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv < rv)(facts))(saved)(false)(boolResult(dest)(lv < rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithBool(dest)(lv < rv)(facts))(saved)(false)(boolResult(dest)(lv < rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntLe(dest, l, r) ->
                             match foldIntPair(facts)(l)(r) with
-                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv <= rv)(facts))(saved)(false)(boolResult(dest)(lv <= rv)(loc) :: acc)
+                                | Some((lv, rv)) ->
+                                    foldLoop(tail)(factsWithBool(dest)(lv <= rv)(facts))(saved)(false)(boolResult(dest)(lv <= rv)(loc) :: acc)
                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
-                        | StoreLocal(slot, source) -> foldLoop(tail)(factsWithStore(slot)(source)(facts))(saved)(false)(irInst :: acc)
+                        | StoreLocal(slot, source) ->
+                            foldLoop(tail)(factsWithStore(slot)(source)(facts))(saved)(false)(irInst :: acc)
                         | LoadLocal(dest, slot) ->
                             match lookupAssociation(slot)(facts.localInts) with
-                                | Some(value) -> foldLoop(tail)(factsWithInt(dest)(value)(facts))(saved)(false)(intResult(dest)(value)(loc) :: acc)
+                                | Some(value) ->
+                                    foldLoop(tail)(factsWithInt(dest)(value)(facts))(saved)(false)(intResult(dest)(value)(loc) :: acc)
                                 | None ->
                                     match lookupAssociation(slot)(facts.localFloats) with
-                                        | Some(value) -> foldLoop(tail)(factsWithFloat(dest)(value)(facts))(saved)(false)(floatResult(dest)(value)(loc) :: acc)
+                                        | Some(value) ->
+                                            foldLoop(tail)(factsWithFloat(dest)(value)(facts))(saved)(false)(floatResult(dest)(value)(loc) :: acc)
                                         | None ->
                                             match lookupAssociation(slot)(facts.localBools) with
-                                                | Some(value) -> foldLoop(tail)(factsWithBool(dest)(value)(facts))(saved)(false)(boolResult(dest)(value)(loc) :: acc)
+                                                | Some(value) ->
+                                                    foldLoop(tail)(factsWithBool(dest)(value)(facts))(saved)(false)(boolResult(dest)(value)(loc) :: acc)
                                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
-                        | Label(name) -> foldLoop(tail)(factsAtLabel(name)(branchRefs)(facts)(saved)(prevIsTerminator))(removeAssociation(name)(saved))(false)(irInst :: acc)
-                        | Jump(target) -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(irInst :: acc)
+                        | Label(name) ->
+                            foldLoop(tail)(factsAtLabel(name)(branchRefs)(facts)(saved)(prevIsTerminator))(removeAssociation(name)(saved))(false)(irInst :: acc)
+                        | Jump(target) ->
+                            foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(irInst :: acc)
                         | JumpIfFalse(condition, target) ->
                             match lookupAssociation(condition)(facts.bools) with
                                 | Some(true) -> foldLoop(tail)(facts)(saved)(false)(acc)
-                                | Some(false) -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(IrInstruction(instruction = Jump(target), location = loc) :: acc)
-                                | None -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(false)(irInst :: acc)
+                                | Some(false) ->
+                                    foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(IrInstruction(instruction = Jump(target), location = loc) :: acc)
+                                | None ->
+                                    foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(false)(irInst :: acc)
                         | SwitchTag(tagTemp, cases, defaultLabel) ->
                             match lookupAssociation(tagTemp)(facts.ints) with
-                                | Some(tag) -> foldLoop(tail)(facts)(recordEdgeSnapshot(switchTakenLabel(tag)(cases)(defaultLabel))(facts)(saved))(true)(IrInstruction(instruction = Jump(switchTakenLabel(tag)(cases)(defaultLabel)), location = loc) :: acc)
-                                | None -> foldLoop(tail)(facts)(recordEdgeSnapshot(defaultLabel)(facts)(recordSwitchCaseSnapshots(cases)(facts)(saved)))(true)(irInst :: acc)
+                                | Some(tag) ->
+                                    foldLoop(tail)(facts)(recordEdgeSnapshot(switchTakenLabel(tag)(cases)(defaultLabel))(facts)(saved))(true)(IrInstruction(instruction = defaultLabel
+                                    |> switchTakenLabel(tag)(cases)
+                                    |> Jump, location = loc) :: acc)
+                                | None ->
+                                    foldLoop(tail)(facts)(saved
+                                    |> recordSwitchCaseSnapshots(cases)(facts)
+                                    |> recordEdgeSnapshot(defaultLabel)(facts))(true)(irInst :: acc)
                         | Return(_) -> foldLoop(tail)(facts)(saved)(true)(irInst :: acc)
                         | _ -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc))
         in foldLoop(instructions)(emptyFoldFacts)([])(false)([]))
@@ -1052,7 +1158,10 @@ let recursive collectAllUsedTemps instructions acc =
                             if listContains(u)(xs)
                             then addUnique(uTail)(xs)
                             else addUnique(uTail)(u :: xs)
-                in collectAllUsedTemps(tail)(addUnique(used)(acc))
+                in
+                    acc
+                    |> addUnique(used)
+                    |> collectAllUsedTemps(tail)
 
 let recursive collectAllReadSlots instructions acc =
     match instructions with
@@ -1067,7 +1176,10 @@ let recursive collectAllReadSlots instructions acc =
                             if listContains(r)(xs)
                             then addUnique(rTail)(xs)
                             else addUnique(rTail)(r :: xs)
-                in collectAllReadSlots(tail)(addUnique(read)(acc))
+                in
+                    acc
+                    |> addUnique(read)
+                    |> collectAllReadSlots(tail)
 
 let isDeadInstruction inst usedTemps readSlots =
     match inst with
@@ -1103,7 +1215,10 @@ let elideErasedRcDrops instructions =
     (let recursive collectLoadLocals insts idx acc =
         match insts with
             | [] -> acc
-            | IrInstruction { instruction = LoadLocal(t, slot) } :: tail -> collectLoadLocals(tail)(idx + 1)(setAssociation(t)(idx)(acc))
+            | IrInstruction { instruction = LoadLocal(t, slot) } :: tail ->
+                acc
+                |> setAssociation(t)(idx)
+                |> collectLoadLocals(tail)(idx + 1)
             | _ :: tail -> collectLoadLocals(tail)(idx + 1)(acc)
     in
         let useCounts = countTempUses(instructions)([])
@@ -1270,7 +1385,8 @@ let recursive returnedClosureLabel instructions singleDefs knownLabels current s
 // The one heap closure label every Return of the function provably yields, if any.
 // Every single-defined temp of the function mapped to its defining instruction, computed once
 // per function so the fixpoint rounds below and the per-function rewrites share it.
-let functionSingleDefinitions (fn: IrFunction) = collectSingleDefiningInstructions(fn.instructions)(countDefinitions(fn.instructions)([]))([])
+let functionSingleDefinitions (fn: IrFunction) =
+    collectSingleDefiningInstructions(fn.instructions)(countDefinitions(fn.instructions)([]))([])
 
 let recursive containsCallClosure instructions =
     match instructions with
@@ -1291,7 +1407,8 @@ let recursive addKnownReturnedClosureLabels functionFacts knownLabels changed =
                 | Some(_) -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
                 | None ->
                     match returnedClosureLabel(fn.instructions)(singleDefs)(knownLabels)(None)(false) with
-                        | Some(label) -> addKnownReturnedClosureLabels(rest)(setAssociation(functionLabel(fn))(label)(knownLabels))(true)
+                        | Some(label) ->
+                            addKnownReturnedClosureLabels(rest)(setAssociation(functionLabel(fn))(label)(knownLabels))(true)
                         | None -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
 
 let recursive runKnownReturnedClosureLabels functionFacts knownLabels =
@@ -1303,7 +1420,8 @@ let recursive runKnownReturnedClosureLabels functionFacts knownLabels =
 // labels known so far, so a chain of curried helpers converges over several passes while a
 // genuine cycle never does. Each function's single-definition facts are computed once, ahead of
 // every round.
-let computeKnownReturnedClosureLabels (functions: List(IrFunction)) knownLabels = runKnownReturnedClosureLabels(withSingleDefinitions(functions)([]))(knownLabels)
+let computeKnownReturnedClosureLabels (functions: List(IrFunction)) knownLabels =
+    runKnownReturnedClosureLabels(withSingleDefinitions(functions)([]))(knownLabels)
 
 // A CallClosure whose closure temp is the result of a CallKnown to a function with a known
 // returned label becomes a plain read of the closure object's environment word (offset 8, the
@@ -1588,9 +1706,12 @@ let cseInvalidateCaches (state: LocalCseState) = state with fieldCache = [], cal
 // keyed by value rather than by raw temp.
 let trackLocalCseAlias inst (state: LocalCseState) =
     match inst with
-        | Borrow(target, source) -> Some((state with valueOf = setAssociation(target)(resolveCseValue(state.valueOf)(source))(state.valueOf)))
-        | RcDup(target, source, _, _) -> Some((state with valueOf = setAssociation(target)(resolveCseValue(state.valueOf)(source))(state.valueOf)))
-        | StoreLocal(slot, source) -> Some((state with slotValue = setAssociation(slot)(resolveCseValue(state.valueOf)(source))(state.slotValue)))
+        | Borrow(target, source) ->
+            Some((state with valueOf = setAssociation(target)(resolveCseValue(state.valueOf)(source))(state.valueOf)))
+        | RcDup(target, source, _, _) ->
+            Some((state with valueOf = setAssociation(target)(resolveCseValue(state.valueOf)(source))(state.valueOf)))
+        | StoreLocal(slot, source) ->
+            Some((state with slotValue = setAssociation(slot)(resolveCseValue(state.valueOf)(source))(state.slotValue)))
         | LoadLocal(target, slot) ->
             match lookupAssociation(slot)(state.slotValue) with
                 | Some(known) -> Some((state with valueOf = setAssociation(target)(known)(state.valueOf)))
@@ -1645,7 +1766,8 @@ let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
 let recursive eliminateLocalRedundantComputationPass evaluable hasEnvAndArgParams instructions (state: LocalCseState) acc =
     match instructions with
         | [] -> reverse(acc)
-        | (IrInstruction { instruction = Label(_) } as labelInst) :: tail -> eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(emptyLocalCseState(hasEnvAndArgParams))(labelInst :: acc)
+        | (IrInstruction { instruction = Label(_) } as labelInst) :: tail ->
+            eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(emptyLocalCseState(hasEnvAndArgParams))(labelInst :: acc)
         | (IrInstruction { instruction = inst, location = loc } as irInst) :: tail ->
             match trackLocalCseAlias(inst)(state) with
                 | Some(nextState) -> eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(nextState)(irInst :: acc)
@@ -1653,7 +1775,8 @@ let recursive eliminateLocalRedundantComputationPass evaluable hasEnvAndArgParam
                     match eliminateLocalCseInstruction(evaluable)(inst)(loc)(state) with
                         | (nextState, rewritten) -> eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(nextState)(rewritten :: acc)
 
-let eliminateLocalRedundantComputation evaluable hasEnvAndArgParams instructions = eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(instructions)(emptyLocalCseState(hasEnvAndArgParams))([])
+let eliminateLocalRedundantComputation evaluable hasEnvAndArgParams instructions =
+    eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(instructions)(emptyLocalCseState(hasEnvAndArgParams))([])
 
 // Closure environment scalarization. A stack closure with one or two 8-byte scalar captures
 // whose only use is already a devirtualized CallKnown packs those values through an AllocStack +
@@ -1778,7 +1901,9 @@ let recursive collectScalarEnvCallSites allInsts insts singleDefs useCounts func
         | IrInstruction { instruction = CallKnown(_, label, envTemp, _, flagTemp, true) } :: tail ->
             match lookupAssociation(envTemp)(singleDefs) with
                 | Some(AllocStack(_, envSize)) ->
-                    if scalarEnvSiteShapeMatches(envSize)(flagTemp)(lookupAssociation(envTemp)(useCounts))
+                    if useCounts
+                    |> lookupAssociation(envTemp)
+                    |> scalarEnvSiteShapeMatches(envSize)(flagTemp)
                     then
                         match findStoredWord(envTemp)(0)(allInsts) with
                             | None -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
@@ -1856,7 +1981,10 @@ let scalarizeSingleCaptureStackClosures (entry: IrFunction) (functions: List(IrF
         match scalarizeCallSitesInFunction(functions)(initialState)(entry) with
             | (newEntry, entryState) ->
                 match scalarizeCallSitesInFunctions(functions)(entryState)(functions)([]) with
-                    | (newFunctions, finalState) -> (newEntry, append(newFunctions)(reverse(finalState.newFunctions))))
+                    | (newFunctions, finalState) ->
+                        (newEntry, finalState.newFunctions
+                        |> reverse
+                        |> append(newFunctions)))
 
 // Captured-closure devirtualization. A stitched module refers to its sibling functions through
 // alias bindings that lambdas capture, so a call such as `parserCurrent(state)` inside another
@@ -1998,7 +2126,10 @@ let recursive groupCaptureSites (sites: List(CaptureSite)) (groups: List(((Str, 
                 match lookupSlotEntry(site.targetLabel)(site.index)(groups) with
                     | Some(existing) -> site :: existing
                     | None -> [site]
-            in groupCaptureSites(tail)(setSlotEntry(site.targetLabel)(site.index)(members)(groups))
+            in
+                groups
+                |> setSlotEntry(site.targetLabel)(site.index)(members)
+                |> groupCaptureSites(tail)
 
 let recursive resolveCaptureLabel (creatorLabel: Str) (facts: ClosureDefinitionFacts) (temp: IrTemp) known knownReturned (depth: Int) =
     if depth > 16
@@ -2060,7 +2191,8 @@ let recursive resolveCaptureGroups (groups: List(((Str, Int), List(CaptureSite))
                     | None ->
                         match resolveCaptureGroup(sites)(known)(knownReturned)(None)(false) with
                             | CaptureUnknown -> resolveCaptureGroups(tail)(known)((label, index) :: conflicting)(knownReturned)(true)
-                            | CaptureKnown(resolved) -> resolveCaptureGroups(tail)(setSlotEntry(label)(index)(resolved)(known))(conflicting)(knownReturned)(true)
+                            | CaptureKnown(resolved) ->
+                                resolveCaptureGroups(tail)(setSlotEntry(label)(index)(resolved)(known))(conflicting)(knownReturned)(true)
                             | CapturePending -> resolveCaptureGroups(tail)(known)(conflicting)(knownReturned)(changed)
 
 // Whole-program fixpoint over the capture graph: each pass settles the groups whose sites resolve
@@ -2123,7 +2255,8 @@ let devirtualizeCapturedClosureCalls (entry: IrFunction) (functions: List(IrFunc
                 | (sites, unresolvable) ->
                     match computeKnownCapturedClosureLabels(groupCaptureSites(sites)([]))([])(unresolvable)(knownReturned) with
                         | [] -> (entry, functions)
-                        | knownCaptured -> (devirtualizeCapturedClosureCallsInFunction(knownCaptured)(entry), map(devirtualizeCapturedClosureCallsInFunction(knownCaptured))(functions)))
+                        | knownCaptured ->
+                            (devirtualizeCapturedClosureCallsInFunction(knownCaptured)(entry), map(devirtualizeCapturedClosureCallsInFunction(knownCaptured))(functions)))
 
 // Currying-stage inlining. A curried function of several parameters lowers to a chain of stages,
 // each of which only copies its captures and its argument into a fresh environment and returns
@@ -2264,7 +2397,10 @@ let recursive collectCurryingStages (functions: List(IrFunction)) (acc: List((St
         | [] -> acc
         | fn :: tail ->
             match tryMatchCurryingStage(fn) with
-                | Some(stage) -> collectCurryingStages(tail)(setAssociation(fn.label)(stage)(acc))
+                | Some(stage) ->
+                    acc
+                    |> setAssociation(fn.label)(stage)
+                    |> collectCurryingStages(tail)
                 | None -> collectCurryingStages(tail)(acc)
 
 let calleeAcceptsCallerFrameEnvironment (callee: IrFunction) =
@@ -2287,8 +2423,12 @@ let recursive indexStageChainSites (indexed: List((Int, IrInstruction))) envLoad
         | [] -> (envLoads, calls)
         | (position, irInst) :: tail ->
             match irInst with
-                | IrInstruction { instruction = LoadMemOffset(_, basePtr, 8) } -> indexStageChainSites(tail)(setAssociation(basePtr)(position)(envLoads))(calls)
-                | IrInstruction { instruction = CallKnown(_, _, envTemp, _, _, _) } -> indexStageChainSites(tail)(envLoads)(setAssociation(envTemp)(position)(calls))
+                | IrInstruction { instruction = LoadMemOffset(_, basePtr, 8) } ->
+                    indexStageChainSites(tail)(setAssociation(basePtr)(position)(envLoads))(calls)
+                | IrInstruction { instruction = CallKnown(_, _, envTemp, _, _, _) } ->
+                    calls
+                    |> setAssociation(envTemp)(position)
+                    |> indexStageChainSites(tail)(envLoads)
                 | _ -> indexStageChainSites(tail)(envLoads)(calls)
 
 let instructionKindAt (position: Int) (indexed: List((Int, IrInstruction))) =
@@ -2407,7 +2547,10 @@ let recursive rebuildWithStageExpansions (indexed: List((Int, IrInstruction))) e
             then rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(acc)
             else
                 match lookupAssociation(position)(expansions) with
-                    | Some(replacement) -> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(append(reverse(replacement))(acc))
+                    | Some(replacement) ->
+                        acc
+                        |> append(reverse(replacement))
+                        |> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)
                     | None ->
                         match lookupAssociation(position)(rewrites) with
                             | Some(rewritten) -> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(rewritten :: acc)
@@ -2434,7 +2577,8 @@ let inlineCurryingStages (entry: IrFunction) (functions: List(IrFunction)) =
     in
         match collectCurryingStages(all)([]) with
             | [] -> (entry, functions)
-            | stages -> (inlineCurryingStagesInFunction(stages)(all)(entry), map(inlineCurryingStagesInFunction(stages)(all))(functions)))
+            | stages ->
+                (inlineCurryingStagesInFunction(stages)(all)(entry), map(inlineCurryingStagesInFunction(stages)(all))(functions)))
 
 // Control-flow simplification. Three locally safe rewrites that need no reachability analysis:
 // a branch aimed at a label that is immediately followed by nothing but an unconditional Jump is
@@ -2483,9 +2627,18 @@ let redirectSwitchCase redirect (switchCase: IrSwitchCase) = IrSwitchCase(tag = 
 let recursive rewriteBranchTargets instructions redirect acc =
     match instructions with
         | [] -> reverse(acc)
-        | IrInstruction { instruction = Jump(target), location = loc } :: tail -> rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = Jump(redirectedLabel(redirect)(target)), location = loc) :: acc)
-        | IrInstruction { instruction = JumpIfFalse(condition, target), location = loc } :: tail -> rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = JumpIfFalse(condition)(redirectedLabel(redirect)(target)), location = loc) :: acc)
-        | IrInstruction { instruction = SwitchTag(tagTemp, cases, defaultLabel), location = loc } :: tail -> rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = SwitchTag(tagTemp)(map(redirectSwitchCase(redirect))(cases))(redirectedLabel(redirect)(defaultLabel)), location = loc) :: acc)
+        | IrInstruction { instruction = Jump(target), location = loc } :: tail ->
+            rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = target
+            |> redirectedLabel(redirect)
+            |> Jump, location = loc) :: acc)
+        | IrInstruction { instruction = JumpIfFalse(condition, target), location = loc } :: tail ->
+            rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = target
+            |> redirectedLabel(redirect)
+            |> JumpIfFalse(condition), location = loc) :: acc)
+        | IrInstruction { instruction = SwitchTag(tagTemp, cases, defaultLabel), location = loc } :: tail ->
+            rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = defaultLabel
+            |> redirectedLabel(redirect)
+            |> SwitchTag(tagTemp)(map(redirectSwitchCase(redirect))(cases)), location = loc) :: acc)
         | head :: tail -> rewriteBranchTargets(tail)(redirect)(head :: acc)
 
 let recursive dropUnreferencedLabels instructions refs acc =
@@ -2517,9 +2670,11 @@ let simplifyControlFlow instructions =
         let redirected =
             match hops with
                 | [] -> instructions
-                | _ -> rewriteBranchTargets(instructions)(resolveRedirects(hops)(hops)([]))([])
+                | _ ->
+                    rewriteBranchTargets(instructions)(resolveRedirects(hops)(hops)([]))([])
         in
-            let withoutUnreferencedLabels = dropUnreferencedLabels(redirected)(countBranchRefsToLabels(redirected)([]))([])
+            let withoutUnreferencedLabels =
+                dropUnreferencedLabels(redirected)(countBranchRefsToLabels(redirected)([]))([])
             in elideRedundantFallthroughJumps(withoutUnreferencedLabels)([]))
 
 let recursive instructionCount instructions (acc: Int) =
@@ -2531,7 +2686,10 @@ let recursive instructionCount instructions (acc: Int) =
 // rewrite that removes nothing, a redirected target, resolves each chain fully on its first
 // pass), which bounds the loop.
 let recursive simplifyControlFlowToFixedPoint instructions =
-    (let simplified = elideUnreachableCode(simplifyControlFlow(instructions))
+    (let simplified =
+        instructions
+        |> simplifyControlFlow
+        |> elideUnreachableCode
     in
         if instructionCount(simplified)(0) == instructionCount(instructions)(0)
         then simplified
@@ -2544,13 +2702,20 @@ let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
         in
             let insts2 = fuseAdjacentRuntimeRcPairs(insts1)
             in
-                let insts3 = devirtualizeKnownClosureCalls(parameterSlotsOf(fn))(insts2)
+                let insts3 =
+                    devirtualizeKnownClosureCalls(parameterSlotsOf(fn))(insts2)
                 in
                     let insts4 = foldConstants(insts3)
                     in
-                        let insts5 = elideTrivialOwnershipCopies(reduceIdentitiesAndStrength(insts4))
+                        let insts5 =
+                            insts4
+                            |> reduceIdentitiesAndStrength
+                            |> elideTrivialOwnershipCopies
                         in
-                            let insts6 = elideTrivialOwnershipCopies(eliminateLocalRedundantComputation(evaluable)(fn.hasEnvAndArgParams)(insts5))
+                            let insts6 =
+                                insts5
+                                |> eliminateLocalRedundantComputation(evaluable)(fn.hasEnvAndArgParams)
+                                |> elideTrivialOwnershipCopies
                             in
                                 let insts7 = simplifyControlFlowToFixedPoint(insts6)
                                 in
@@ -2660,7 +2825,10 @@ let recursive collectConcatFolds allInsts instructions singleDefs useCounts cons
                         match (parts, absorbed) with
                             | (innermostPart :: _, innermostLink :: _) ->
                                 if chainRangeIsSafe(allInsts)(innermostPart)(innermostLink)(target)(false)
-                                then collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)((target, parts, managed) :: folds)(append(absorbed)(absorbedAll))
+                                then
+                                    absorbedAll
+                                    |> append(absorbed)
+                                    |> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)((target, parts, managed) :: folds)
                                 else collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
                             | _ -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
         | _ :: tail -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
@@ -2708,13 +2876,16 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
         in
             let optEntry = optimizeIrFunctionWithEvaluable(evaluable)(programAfterCtEval.entryFunction)
             in
-                let optFuncs = map(optimizeIrFunctionWithEvaluable(evaluable))(programAfterCtEval.functions)
+                let optFuncs =
+                    map(optimizeIrFunctionWithEvaluable(evaluable))(programAfterCtEval.functions)
                 in
                     match devirtualizeCapturedClosureCalls(optEntry)(optFuncs) with
                         | (capturedEntry, capturedFuncs) ->
                             let firstKnownLabels = computeKnownReturnedClosureLabels(capturedFuncs)([])
                             in
-                                match inlineCurryingStages(devirtualizeReturnedClosureCallsInFunction(firstKnownLabels)(capturedEntry))(map(devirtualizeReturnedClosureCallsInFunction(firstKnownLabels))(capturedFuncs)) with
+                                match capturedFuncs
+                                |> map(devirtualizeReturnedClosureCallsInFunction(firstKnownLabels))
+                                |> inlineCurryingStages(devirtualizeReturnedClosureCallsInFunction(firstKnownLabels)(capturedEntry)) with
                                     | (inlinedEntry, inlinedFuncs) ->
                                         match scalarizeSingleCaptureStackClosures(inlinedEntry)(inlinedFuncs) with
                                             | (scalEntry, scalFuncs) ->
@@ -2722,13 +2893,20 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
                                                 in
                                                     let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(scalEntry)
                                                     in
-                                                        let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(scalFuncs)
+                                                        let devirtFuncs =
+                                                            map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(scalFuncs)
                                                         in
                                                             let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
                                                             in
-                                                                let finalEntry = foldConcatStrChains(stripRedundantArenaBrackets(nonAllocating)(devirtEntry))
+                                                                let finalEntry =
+                                                                    devirtEntry
+                                                                    |> stripRedundantArenaBrackets(nonAllocating)
+                                                                    |> foldConcatStrChains
                                                                 in
-                                                                    let finalFuncs = map(foldConcatStrChains)(map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs))
+                                                                    let finalFuncs =
+                                                                        devirtFuncs
+                                                                        |> map(stripRedundantArenaBrackets(nonAllocating))
+                                                                        |> map(foldConcatStrChains)
                                                                     in
                                                                         IrProgram(
                                                                             entryFunction = finalEntry,

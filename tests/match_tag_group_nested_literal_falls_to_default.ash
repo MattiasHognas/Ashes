@@ -10,4 +10,6 @@ let recursive walk lines acc =
         | [] -> acc
         | line :: rest -> walk(rest)(acc + classify(line) + ",")
 
-Ashes.IO.print(walk([">ONE", "ACGT", "TTGA", ">TWO", "GGCC"])(""))
+""
+|> walk([">ONE", "ACGT", "TTGA", ">TWO", "GGCC"])
+|> Ashes.IO.print

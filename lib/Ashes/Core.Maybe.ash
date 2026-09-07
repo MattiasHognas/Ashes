@@ -1,7 +1,10 @@
 let map f value =
     match value with
         | None -> None
-        | Some(inner) -> Some(f(inner))
+        | Some(inner) ->
+            inner
+            |> f
+            |> Some
 
 let flatMap f value =
     match value with

@@ -175,33 +175,52 @@ and substituteTraitParameters substitutions semanticType =
             match findHeadSubstitution(parameterId)(substitutions) with
                 | None -> semanticType
                 | Some(replacement) -> replacement
-        | SemList(element) -> SemList(substituteTraitParameters(substitutions)(element))
-        | SemTuple(elements) -> SemTuple(substituteTraitParameterTypes(substitutions)(elements))
+        | SemList(element) ->
+            element
+            |> substituteTraitParameters(substitutions)
+            |> SemList
+        | SemTuple(elements) ->
+            elements
+            |> substituteTraitParameterTypes(substitutions)
+            |> SemTuple
         | SemFunction(argument, result, row) ->
             let substitutedRow =
                 match row with
                     | None -> None
-                    | Some(value) -> Some(substituteTraitParameters(substitutions)(value))
+                    | Some(value) ->
+                        value
+                        |> substituteTraitParameters(substitutions)
+                        |> Some
             in
                 SemFunction(
                     substituteTraitParameters(substitutions)(argument),
                     substituteTraitParameters(substitutions)(result),
                     substitutedRow
                 )
-        | SemCapability(name, arguments) -> SemCapability(name)(substituteTraitParameterTypes(substitutions)(arguments))
+        | SemCapability(name, arguments) ->
+            arguments
+            |> substituteTraitParameterTypes(substitutions)
+            |> SemCapability(name)
         | SemRow(capabilities, tail) ->
             let substitutedTail =
                 match tail with
                     | None -> None
-                    | Some(value) -> Some(substituteTraitParameters(substitutions)(value))
-            in SemRow(substituteTraitParameterTypes(substitutions)(capabilities))(substitutedTail)
+                    | Some(value) ->
+                        value
+                        |> substituteTraitParameters(substitutions)
+                        |> Some
+            in
+                SemRow(substituteTraitParameterTypes(substitutions)(capabilities))(substitutedTail)
         | SemNamed(symbolId, name, arguments) ->
             SemNamed(
                 symbolId,
                 name,
                 substituteTraitParameterTypes(substitutions)(arguments)
             )
-        | SemPointer(pointee) -> SemPointer(substituteTraitParameters(substitutions)(pointee))
+        | SemPointer(pointee) ->
+            pointee
+            |> substituteTraitParameters(substitutions)
+            |> SemPointer
         | _ -> semanticType
 
 let substituteTraitConstraint substitutions constraint =
@@ -347,7 +366,9 @@ let recursive resolveTraitDependencies dependencies environment trace depth reve
                     ), error = Some(error))
                 | _ ->
                     TraitDependencyResolution(plans = reverse(reversed), error = Some(
-                        MissingTraitImplementation(head)(canonicalResolutionTrace(head)(trace))
+                        trace
+                        |> canonicalResolutionTrace(head)
+                        |> MissingTraitImplementation(head)
                     ))
 // Generic goals must shrink through requirements; concrete goals are safe under the exact cycle and
 // depth guards even when their selected implementation has a same-sized requirement.
@@ -359,7 +380,8 @@ and resolveMatchedTraitEvidence goal implementation substitutions environment tr
                 let nonDecreasing =
                     if traitConstraintIsConcrete(goal)
                     then None
-                    else firstNonDecreasingRequirement(traitConstraintStructuralSize(goal))(resolvedRequirements)
+                    else
+                        firstNonDecreasingRequirement(traitConstraintStructuralSize(goal))(resolvedRequirements)
                 in
                     match nonDecreasing with
                         | Some(requirement) ->
@@ -404,10 +426,18 @@ and resolveMatchedTraitEvidence goal implementation substitutions environment tr
                                             )
 and resolveTraitEvidenceFrom goal environment trace depth =
     if resolutionDepthExceeded(depth)
-    then evidenceFailure(TraitResolutionDepthExceeded(goal)(64)(canonicalResolutionTrace(goal)(trace)))
+    then
+        trace
+        |> canonicalResolutionTrace(goal)
+        |> TraitResolutionDepthExceeded(goal)(64)
+        |> evidenceFailure
     else
         if traceContains(goal)(trace)
-        then evidenceFailure(CyclicTraitResolution(canonicalResolutionTrace(goal)(trace)))
+        then
+            trace
+            |> canonicalResolutionTrace(goal)
+            |> CyclicTraitResolution
+            |> evidenceFailure
         else
             match goal with
                 | TraitConstraint { traitName = traitName, typeArguments = typeArguments } ->
@@ -423,7 +453,9 @@ and resolveTraitEvidenceFrom goal environment trace depth =
                                 if traitConstraintIsConcrete(goal)
                                 then
                                     evidenceFailure(
-                                        MissingTraitImplementation(goal)(canonicalResolutionTrace(goal)(trace))
+                                        trace
+                                        |> canonicalResolutionTrace(goal)
+                                        |> MissingTraitImplementation(goal)
                                     )
                                 else evidenceSuccess(TraitEvidenceParameter(goal))
                             | TraitImplementationMatch { implementation = implementation, substitutions = substitutions } :: [] ->
@@ -437,14 +469,19 @@ and resolveTraitEvidenceFrom goal environment trace depth =
                                 )
                             | _ ->
                                 evidenceFailure(
-                                    AmbiguousTraitImplementation(goal)(canonicalResolutionTrace(goal)(trace))
+                                    trace
+                                    |> canonicalResolutionTrace(goal)
+                                    |> AmbiguousTraitImplementation(goal)
                                 )
 
 let resolveTraitEvidence goal environment = resolveTraitEvidenceFrom(goal)(environment)([])(0)
 
 let recursive firstEvidenceParameterTrace plan trace =
     match plan with
-        | TraitEvidenceParameter(constraint) -> Some(canonicalResolutionTrace(constraint)(trace))
+        | TraitEvidenceParameter(constraint) ->
+            trace
+            |> canonicalResolutionTrace(constraint)
+            |> Some
         | TraitEvidenceInstance(goal, _implementation, requirements, supertraits) ->
             match firstEvidenceParameterTraceFrom(requirements)(goal :: trace) with
                 | Some(parameterTrace) -> Some(parameterTrace)
@@ -464,6 +501,12 @@ let requireTraitEvidence goal environment =
                 | None -> evidenceSuccess(plan)
                 | Some(trace) ->
                     match reverse(trace) with
-                        | parameter :: _ -> evidenceFailure(AmbiguousTraitEvidence(parameter)(trace))
-                        | [] -> evidenceFailure(AmbiguousTraitEvidence(goal)([goal]))
+                        | parameter :: _ ->
+                            trace
+                            |> AmbiguousTraitEvidence(parameter)
+                            |> evidenceFailure
+                        | [] ->
+                            [goal]
+                            |> AmbiguousTraitEvidence(goal)
+                            |> evidenceFailure
         | result -> result

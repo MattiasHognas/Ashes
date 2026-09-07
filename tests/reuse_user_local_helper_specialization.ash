@@ -36,7 +36,10 @@ let upd newKey tenths =
         match map with
             | Empty -> mkNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
+                let ordering =
+                    key
+                    |> Ashes.Byte.fromText
+                    |> Ashes.Byte.compare(Ashes.Byte.fromText(newKey))
                 in
                     if ordering == 0
                     then
@@ -54,8 +57,12 @@ let upd newKey tenths =
                                     in mkNode(left)(key)((newMin, newMax, sm + tenths, ct + 1))(right)
                     else
                         if ordering <= -1
-                        then mkNode(go(left))(key)(value)(right)
-                        else mkNode(left)(key)(value)(go(right))
+                        then
+                            mkNode(go(left))(key)(value)(right)
+                        else
+                            right
+                            |> go
+                            |> mkNode(left)(key)(value)
     in go)
 
 let getStr wanted map =
@@ -63,7 +70,10 @@ let getStr wanted map =
         match current with
             | Empty -> None
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(wanted))(Ashes.Byte.fromText(key))
+                let ordering =
+                    key
+                    |> Ashes.Byte.fromText
+                    |> Ashes.Byte.compare(Ashes.Byte.fromText(wanted))
                 in
                     if ordering == 0
                     then Some(value)
@@ -83,7 +93,10 @@ let recursive loop i n map =
     then map
     else
         let key = "k" + Ashes.Text.fromInt(i - i / 50 * 50)
-        in loop(i + 1)(n)(upd(key)(i)(map))
+        in
+            map
+            |> upd(key)(i)
+            |> loop(i + 1)(n)
 
 let recursive readAll j m sumAcc ctAcc =
     if j >= 50
@@ -98,4 +111,5 @@ let n = 500000
 let final = loop(0)(n)(Empty)
 in
     match readAll(0)(final)(0)(0) with
-        | (totalSum, totalCt) -> Ashes.IO.print(Ashes.Text.fromInt(size(final)) + "|" + Ashes.Text.fromInt(totalSum) + "|" + Ashes.Text.fromInt(totalCt))
+        | (totalSum, totalCt) ->
+            Ashes.IO.print(Ashes.Text.fromInt(size(final)) + "|" + Ashes.Text.fromInt(totalSum) + "|" + Ashes.Text.fromInt(totalCt))

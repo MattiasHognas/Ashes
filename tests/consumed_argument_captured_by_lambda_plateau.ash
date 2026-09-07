@@ -20,11 +20,22 @@ let recursive loop (n: Int) (total: Int) =
     if n == 0
     then total
     else
-        let kept = box(fill(64)(Ashes.Text.fromInt(n)))
+        let kept =
+            n
+            |> Ashes.Text.fromInt
+            |> fill(64)
+            |> box
         in
-            let scratch = fill(64)(Ashes.Text.fromInt(n + 1))
+            let scratch =
+                n + 1
+                |> Ashes.Text.fromInt
+                |> fill(64)
             in
                 match kept with
-                    | Box { reader = reader } -> loop(n - 1)(total + Ashes.Text.byteLength(reader(0)) + Ashes.Text.byteLength(scratch))
+                    | Box { reader = reader } ->
+                        loop(n - 1)(total + Ashes.Text.byteLength(reader(0)) + Ashes.Text.byteLength(scratch))
 
-Ashes.IO.print(Ashes.Text.fromInt(loop(200000)(0)))
+0
+|> loop(200000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

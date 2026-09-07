@@ -19,4 +19,6 @@ and count =
             then k
             else measure(n - 1)(Circle(k))
 
-Ashes.IO.print(measure(4)(Square(9)))
+Square(9)
+|> measure(4)
+|> Ashes.IO.print

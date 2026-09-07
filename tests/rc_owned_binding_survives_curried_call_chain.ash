@@ -75,22 +75,32 @@ let recursive grow s n =
 
 let report scanned =
     match scanned with
-        | (toks, notes) -> Ashes.Text.fromInt(countMatching(toks)(0)) + " " + Ashes.Text.fromInt(checksum(toks)(0)) + " " + Ashes.Text.fromInt(countNotes(notes)(0))
+        | (toks, notes) ->
+            Ashes.Text.fromInt(countMatching(toks)(0)) + " " + Ashes.Text.fromInt(checksum(toks)(0)) + " " + Ashes.Text.fromInt(countNotes(notes)(0))
 
 let viaView =
     (let source = grow("")(4000)
     in
         let bytes = Ashes.Byte.fromText(source)
-        in report(scan(bytes)(Ashes.Byte.length(bytes))(0)([])([])))
+        in
+            []
+            |> scan(bytes)(Ashes.Byte.length(bytes))(0)([])
+            |> report)
 
 let viaText =
     (let source = grow("")(4000)
-    in report(scanText(source)(Ashes.Text.byteLength(source))(0)([])([])))
+    in
+        []
+        |> scanText(source)(Ashes.Text.byteLength(source))(0)([])
+        |> report)
 
 let viaCallSite =
     (let source = grow("")(4000)
     in
         let byteCount = Ashes.Text.byteLength(source)
-        in report(scan(Ashes.Byte.fromText(source))(byteCount)(0)([])([])))
+        in
+            []
+            |> scan(Ashes.Byte.fromText(source))(byteCount)(0)([])
+            |> report)
 
 Ashes.IO.print(viaView + " | " + viaText + " | " + viaCallSite)

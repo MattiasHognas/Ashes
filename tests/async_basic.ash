@@ -1,4 +1,6 @@
 // expect: 42
-Ashes.IO.print(match Ashes.Task.run(async 42) with
+Ashes.IO.print(match 42
+|> async
+|> Ashes.Task.run with
     | Ok(n) -> n
     | Error(_) -> 0)

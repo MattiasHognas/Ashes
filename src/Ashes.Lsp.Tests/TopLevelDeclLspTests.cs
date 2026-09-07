@@ -314,7 +314,7 @@ public sealed class TopLevelDeclLspTests
         var diag = new Diagnostics();
         var program = new Parser(source, diag).ParseProgram();
         diag.Errors.Count.ShouldBe(0);
-        var expected = global::Ashes.Formatter.Formatter.Format(program, preferPipelines: false, options: options);
+        var expected = global::Ashes.Formatter.Formatter.Format(program, options);
 
         var actual = DocumentService.Format(source, filePath: null);
 

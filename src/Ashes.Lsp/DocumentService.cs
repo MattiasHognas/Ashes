@@ -749,12 +749,7 @@ public static partial class DocumentService
                 return null;
             }
 
-            var formatted = global::Ashes.Formatter.Formatter.Format(
-                program,
-                preferPipelines: current.Contains("|>", StringComparison.Ordinal)
-                    || current.Contains("|?>", StringComparison.Ordinal)
-                    || current.Contains("|!>", StringComparison.Ordinal),
-                options: formattingOptions);
+            var formatted = global::Ashes.Formatter.Formatter.Format(program, formattingOptions);
 
             return global::Ashes.Formatter.CommentReinserter.ReinsertStandaloneCommentLines(current, formatted, formattingOptions.NewLine);
         });

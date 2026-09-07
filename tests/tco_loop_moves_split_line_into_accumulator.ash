@@ -15,7 +15,10 @@ let recursive walk items acc =
         | [] -> acc
         | line :: rest -> walk(rest)(line :: acc)
 
-let collect (source: Str) = text.join("\n")(walk(text.split(source)("\n"))([]))
+let collect (source: Str) =
+    []
+    |> walk(text.split(source)("\n"))
+    |> text.join("\n")
 
 let recursive churn count acc =
     if count == 0
