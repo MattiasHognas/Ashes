@@ -571,7 +571,7 @@ same public behavior.
   Three more stage-0 levers followed in the same change: the lifetime placement's alias-store
   scan indexed by slot (5.5 to 4.0 min), hover-type recording skipped outside the language
   server and resolved layout types memoized (4.0 to 3.4 min), and parallel code generation over
-  partitions of the program module linked as several objects (3.4 to 1.9 min; see
+  partitions of the program module merged into one relocatable object (3.4 to 1.9 min; see
   [Parallel code generation](../internals/architecture.md#parallel-code-generation)). Compile
   phases are reported under `ASHES_TIMING`. Stage 1: the self-hosted trait lowering (TRT-13 to
   TRT-15) must build dictionaries over shared implementation functions from the start, never the
@@ -2501,22 +2501,30 @@ same public behavior.
   function, defines its own range and the runtime helpers, and holds the entry function and the
   shared globals in partition 0 alone (the other partitions declare those globals), optimize and
   emit the partitions' objects on separate threads, link the vendored bitcode payloads into
-  partition 0, and mark a very large entry function `optnone` so its once-run body is not
+  partition 0, keep the shared thread-local arena cursors thread-local (local-exec) in the
+  declarations the other partitions get, make the libc-named helpers every module defines weak
+  outside partition 0, and mark a very large entry function `optnone` so its once-run body is not
   optimized. Source of truth: `LlvmCodegen.ParallelObjects.cs`, `ProgramPartition` in
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
-  `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's multi-object link.
+  `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
 
 #### Object parsing and executable linking
 
-- [ ] **LNK-14** Link several relocatable objects into one executable, for every target: lay the
-  objects' text sections out one after another behind the entry trampoline, their allocated data
-  sections one after another in the data segment, resolve an undefined symbol in one object
-  through a merged table of every object's global and weak symbols (local symbols stay private to
-  their object), take the entry from the first object, and take the union of the objects' dynamic
-  imports numbered in name order. Source of truth: `LlvmImageLinkerElf.MultiObject.cs` and its
-  siblings for the other image formats. Programs with debug or TLS sections are linked from one
-  object.
+- [ ] **LNK-14** Merge several relocatable objects into one, the way `ld -r` does, so the
+  ordinary single-object linker links a program compiled in partitions: concatenate the sections
+  of the same name (same type and flags) at each input section's alignment, PROGBITS, NOBITS
+  (`.bss` and the arm64 `.tbss` arena cursors), and the processor-specific `.eh_frame` alike;
+  rebuild the symbol table with every object's locals first (section index remapped, value
+  rebased by the input section's offset, one section symbol per merged section) and the globals
+  and weaks deduplicated by name (a definition beats an undefined reference, a global definition
+  beats a weak one, two global definitions are an error); rewrite every `.rela.*` entry with the
+  offset rebased, the symbol index remapped, and the addend of a section-symbol reference
+  increased by the input section's offset, leaving the relocation type untouched so one merge
+  serves x86-64 and AArch64; drop `.llvm_addrsig`, reject debug sections. Source of truth:
+  `ElfRelocatableObjects.cs` (and its `.Merge` and `.Writer` partials); the COFF counterpart
+  (`CoffRelocatableObjects.cs`) is not implemented yet, so the Windows targets compile as one
+  module.
 - [ ] **LNK-1** Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in

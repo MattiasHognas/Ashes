@@ -513,9 +513,7 @@ internal static partial class LlvmImageLinker
         BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(offset + 56, 8), 0);           // sh_entsize
     }
 
-    // An object without the entry symbol (a partition of a multi-object link) is parsed with a null
-    // entry name and records no entry offset.
-    private static ParsedElfObject ParseElfObject(byte[] objectBytes, string? entrySymbolName)
+    private static ParsedElfObject ParseElfObject(byte[] objectBytes, string entrySymbolName)
     {
         ReadOnlySpan<byte> bytes = objectBytes;
         (ElfSectionHeader[] sections, ushort sectionNamesIndex) = ParseElfObjectReadSectionHeaders(bytes);
@@ -542,9 +540,7 @@ internal static partial class LlvmImageLinker
             .Where(section => allocatedSectionIndices.Contains((int)section.Info))
             .ToList();
 
-        int entryOffset = entrySymbolName is null
-            ? -1
-            : FindEntryOffset(bytes, symtab, symbolStrings, textSectionIndex, entrySymbolName);
+        int entryOffset = FindEntryOffset(bytes, symtab, symbolStrings, textSectionIndex, entrySymbolName);
         return new ParsedElfObject(
             TextBytes: textBytes,
             EntryOffsetInText: entryOffset,

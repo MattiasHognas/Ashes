@@ -588,12 +588,13 @@ public sealed class LinuxArm64BackendCoverageTests
         return await CompileRunWithLinuxArm64LlvmAsync(ir, environmentVariables, expectedExitCode).ConfigureAwait(false);
     }
 
-    private static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmAsync(
+    internal static async Task<ExecutionResult> CompileRunWithLinuxArm64LlvmAsync(
         IrProgram ir,
         IReadOnlyDictionary<string, string>? environmentVariables = null,
-        int expectedExitCode = 0)
+        int expectedExitCode = 0,
+        BackendCompileOptions? compileOptions = null)
     {
-        var elfBytes = new LinuxArm64LlvmBackend().Compile(ir);
+        var elfBytes = new LinuxArm64LlvmBackend().Compile(ir, compileOptions);
 
         var tmpDir = CreateTempDirectory();
         var exePath = Path.Combine(tmpDir, $"llvm_arm64_{Guid.NewGuid():N}");
@@ -795,6 +796,9 @@ public sealed class LinuxArm64BackendCoverageTests
         return bytes.AsSpan().IndexOf(needle) >= 0;
     }
 
+    // Whether compiled linux-arm64 programs can run here: natively, or under qemu with a sysroot.
+    internal static bool CanExecuteLinuxArm64() => TryResolveLinuxArm64ExecutionEnvironment(out _);
+
     private static bool TryResolveLinuxArm64ExecutionEnvironment(out LinuxArm64ExecutionEnvironment environment)
     {
         if (!OperatingSystem.IsLinux())
@@ -986,5 +990,5 @@ public sealed class LinuxArm64BackendCoverageTests
 
     private readonly record struct LinuxArm64ExecutionEnvironment(string? EmulatorPath, string? SysrootPath);
 
-    private readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
+    internal readonly record struct ExecutionResult(string Stdout, string Stderr, int ExitCode);
 }
