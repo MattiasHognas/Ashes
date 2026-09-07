@@ -947,7 +947,7 @@ public sealed partial class Lowering
             RequireCapabilitiesInAmbient([capabilityInstance]);
         }
 
-        int resultTemp = EmitPerform(capabilitySym, qv.Name, argTemps);
+        int resultTemp = EmitPerform(capabilitySym, qv.Name, argTemps, Prune(currentType));
         return (resultTemp, currentType);
     }
 
@@ -1015,11 +1015,12 @@ public sealed partial class Lowering
     /// Emits the runtime for a perform site: load the capability's innermost handler frame, swap every
     /// handler-evidence global to the frame's snapshot (the arm runs under the evidence in scope at
     /// its handler's installation, with the handler itself removed), call the arm closure with the
-    /// operation's arguments, and restore the globals. Typing makes an absent handler unreachable;
+    /// operation's arguments, restore the globals, and take ownership of the arm's result (see
+    /// <see cref="PlanPerformResultOwnership"/>). Typing makes an absent handler unreachable;
     /// a guard panics with a clear message rather than dereferencing null if that invariant is ever
     /// broken.
     /// </summary>
-    private int EmitPerform(CapabilitySymbol capabilitySym, string opName, List<int> argTemps)
+    private int EmitPerform(CapabilitySymbol capabilitySym, string opName, List<int> argTemps, TypeRef resultType)
     {
         int capabilityIndex = _capabilityIndices[capabilitySym.Name];
         int opIndex = OperationDeclIndex(capabilitySym, opName);
@@ -1040,13 +1041,8 @@ public sealed partial class Lowering
 
         int closureTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(closureTemp, frameTemp, (globalCount + 1 + opIndex) * 8));
-        int currentTemp = closureTemp;
-        foreach (var argTemp in argTemps)
-        {
-            int callTarget = NewTemp();
-            Emit(new IrInst.CallClosure(callTarget, currentTemp, argTemp));
-            currentTemp = callTarget;
-        }
+        PerformResultPlan resultPlan = PlanPerformResultOwnership(resultType);
+        (int armResultTemp, int returnsRuntimeManagedFlagTemp) = EmitPerformCallArm(closureTemp, argTemps, resultPlan);
 
         // Store into a dedicated result temp before restoring, so the value read after the join
         // label is the arm's result regardless of the argument count.
@@ -1059,7 +1055,12 @@ public sealed partial class Lowering
 
         int resultTemp = NewTemp();
         int resultSlot = NewLocal();
-        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        Emit(new IrInst.StoreLocal(resultSlot, armResultTemp));
+        if (resultPlan.Ownership == PerformResultOwnership.Adopt)
+        {
+            EmitPerformAdoptResult(armResultTemp, returnsRuntimeManagedFlagTemp, resultSlot, resultPlan, siteId, doneLabel);
+        }
+
         Emit(new IrInst.Jump(doneLabel));
 
         Emit(new IrInst.Label(unhandledLabel));
@@ -1070,7 +1071,120 @@ public sealed partial class Lowering
 
         Emit(new IrInst.Label(doneLabel));
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        if (resultPlan.Ownership == PerformResultOwnership.Adopt)
+        {
+            MarkRuntimeManagedTemp(resultTemp, LoweredTempOwnershipReason.UnknownCallResult, type: resultType);
+        }
+
         return resultTemp;
+    }
+
+    private enum PerformResultOwnership
+    {
+        Unchanged,
+        Adopt,
+        ArenaResult,
+    }
+
+    private readonly record struct PerformResultPlan(
+        PerformResultOwnership Ownership,
+        CopyOutKind CopyOutKind,
+        int CopySize,
+        IrInst.ListHeadCopyKind ListHeadCopy);
+
+    /// <summary>
+    /// Decides how a perform site takes the arm's result. A result with a resolved shallow or list
+    /// copy-out layout is adopted: the site reads the arm closure's result-ownership bit at the
+    /// saturating call, keeps a reference-counted result as newly produced, and normalizes an arena
+    /// result into a reference-counted copy, so it owns a reference-counted value on both branches.
+    /// A result whose layout is still unresolved is requested in the arena through bit 1 of the
+    /// ownership word, so the arm copies a reference-counted result out and releases the original;
+    /// a function that may execute inside a coroutine requests the same for a copyable result,
+    /// since its placement cannot own the reference. Copy types, closures, and resources pass
+    /// through unchanged.
+    /// </summary>
+    private PerformResultPlan PlanPerformResultOwnership(TypeRef resultType)
+    {
+        CopyOutKind copyOutKind = GetCallCopyOutKind(
+            resultType,
+            out int copySize,
+            out IrInst.ListHeadCopyKind listHeadCopy);
+        PerformResultOwnership ownership;
+        if (copyOutKind is CopyOutKind.Shallow or CopyOutKind.List)
+        {
+            ownership = AllowsAsyncIndependentRcPlacement
+                ? PerformResultOwnership.Adopt
+                : PerformResultOwnership.ArenaResult;
+        }
+        else
+        {
+            ownership = RequestsArenaResult(resultType)
+                ? PerformResultOwnership.ArenaResult
+                : PerformResultOwnership.Unchanged;
+        }
+
+        return new PerformResultPlan(ownership, copyOutKind, copySize, listHeadCopy);
+    }
+
+    /// <summary>
+    /// Applies the operation's arguments to the arm closure through the ordinary closure ABI and
+    /// returns the saturating call's result temp. Only the saturating call produces the operation's
+    /// result (the earlier calls of a curried operation return the next arm closure), so it alone
+    /// reads the closure's result-ownership bit when the result is adopted, or passes the arena
+    /// result request word when the arena form is requested; the returned flag temp is -1 otherwise.
+    /// </summary>
+    private (int ResultTemp, int ReturnsRuntimeManagedFlagTemp) EmitPerformCallArm(
+        int closureTemp,
+        List<int> argTemps,
+        PerformResultPlan resultPlan)
+    {
+        int currentTemp = closureTemp;
+        int returnsRuntimeManagedFlagTemp = -1;
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            bool saturatingCall = i == argTemps.Count - 1;
+            int ownershipWordTemp = -1;
+            if (saturatingCall && resultPlan.Ownership == PerformResultOwnership.Adopt)
+            {
+                returnsRuntimeManagedFlagTemp = EmitClosureReturnsRuntimeManagedFlag(currentTemp);
+            }
+            else if (saturatingCall && resultPlan.Ownership == PerformResultOwnership.ArenaResult)
+            {
+                ownershipWordTemp = EmitArenaResultRequestWord(-1);
+            }
+
+            int callTarget = NewTemp();
+            Emit(new IrInst.CallClosure(callTarget, currentTemp, argTemps[i], ownershipWordTemp));
+            currentTemp = callTarget;
+        }
+
+        return (currentTemp, returnsRuntimeManagedFlagTemp);
+    }
+
+    /// <summary>
+    /// Takes ownership of an adopted perform result: a reference-counted arm result is kept as
+    /// newly produced, and an arena arm result is normalized into an independently owned
+    /// reference-counted copy stored over it in <paramref name="resultSlot"/>. Both branches
+    /// continue at <paramref name="doneLabel"/>.
+    /// </summary>
+    private void EmitPerformAdoptResult(
+        int armResultTemp,
+        int returnsRuntimeManagedFlagTemp,
+        int resultSlot,
+        PerformResultPlan resultPlan,
+        int siteId,
+        string doneLabel)
+    {
+        string copyLabel = $"capability_copy_arena_result_{siteId}";
+        Emit(new IrInst.JumpIfFalse(returnsRuntimeManagedFlagTemp, copyLabel));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = EmitRuntimeManagedResultCopyOut(
+            armResultTemp,
+            resultPlan.CopyOutKind,
+            resultPlan.ListHeadCopy,
+            resultPlan.CopySize);
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
     }
 
     /// <summary>Saves the current evidence and switches to the handler frame's snapshot. Returns the saved-evidence temps.</summary>
@@ -1227,7 +1341,7 @@ public sealed partial class Lowering
             handle, returnArm, bodyTemp, bodyType, resultType, request);
 
         // 8. Fold the collected one-shot post-resume continuations over the result.
-        int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp);
+        int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp, resultType);
         return (finalResultTemp, resultType);
     }
 
@@ -1424,7 +1538,11 @@ public sealed partial class Lowering
         }
     }
 
-    // The return arm transforms the body's final value; without one the value passes through.
+    // The return arm transforms the body's final value; without one the value passes through. A
+    // body value the handle owns as a reference-counted result (an adopted perform result) is
+    // handed to the return arm as a continuation applied under the owned-argument contract, so
+    // the arm neither copies it at a scope boundary nor loses its release; any other value is
+    // matched in place.
     private int LowerHandleApplyReturnArm(
         Expr.Handle handle,
         HandlerArm? returnArm,
@@ -1437,6 +1555,11 @@ public sealed partial class Lowering
         {
             Unify(resultType, bodyType);
             return bodyTemp;
+        }
+
+        if (OwnsRuntimeManagedHandleValue(bodyTemp))
+        {
+            return LowerHandleApplyReturnArmContinuation(handle, returnArm, bodyTemp, bodyType, resultType);
         }
 
         int bodySlot = NewLocal();
@@ -1458,12 +1581,17 @@ public sealed partial class Lowering
     // Folds the collected one-shot post-resume continuations over the result, LIFO (the
     // most recent perform's continuation is innermost in the reduction), decrementing the
     // live-posts counter as each is consumed. Posts run here — outside the handle — under the
-    // enclosing evidence, matching the deep-handler reduction C[handle E[v] with h].
-    private int LowerHandleFoldPosts(int postsHeadPtrTemp, int currentResultTemp)
+    // enclosing evidence, matching the deep-handler reduction C[handle E[v] with h]. A result the
+    // handle owns as a reference-counted value is handed to each post under the owned-argument
+    // contract, so the fold's slot holds an owned reference-counted value before and after every
+    // post and the final value is reference-counted.
+    private int LowerHandleFoldPosts(int postsHeadPtrTemp, int currentResultTemp, TypeRef resultType)
     {
         int foldId = _nextCapabilitySiteId++;
         string foldLoopLabel = $"posts_fold_{foldId}";
         string foldDoneLabel = $"posts_fold_done_{foldId}";
+        bool ownedResult = OwnsRuntimeManagedHandleValue(currentResultTemp)
+            && HasCompleteCopyOut(resultType);
         int foldResultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(foldResultSlot, currentResultTemp));
         int foldHeadSlot = NewLocal();
@@ -1482,8 +1610,18 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadMemOffset(postClosureTemp, headTemp, 0));
         int foldInTemp = NewTemp();
         Emit(new IrInst.LoadLocal(foldInTemp, foldResultSlot));
-        int foldOutTemp = NewTemp();
-        Emit(new IrInst.CallClosure(foldOutTemp, postClosureTemp, foldInTemp));
+        int foldOutTemp;
+        if (ownedResult)
+        {
+            foldOutTemp = EmitOwnedContinuationCall(
+                postClosureTemp, foldInTemp, resultType, resultType, $"posts_fold_{foldId}_post");
+        }
+        else
+        {
+            foldOutTemp = NewTemp();
+            Emit(new IrInst.CallClosure(foldOutTemp, postClosureTemp, foldInTemp));
+        }
+
         Emit(new IrInst.StoreLocal(foldResultSlot, foldOutTemp));
         int nextCellTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(nextCellTemp, headTemp, 8));
@@ -1493,7 +1631,114 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(foldDoneLabel));
         int finalResultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(finalResultTemp, foldResultSlot));
+        if (ownedResult)
+        {
+            MarkRuntimeManagedTemp(finalResultTemp, LoweredTempOwnershipReason.UnknownCallResult, type: resultType);
+        }
+
         return finalResultTemp;
+    }
+
+    // A value the current function owns as a newly produced reference-counted result, as opposed
+    // to a borrowed read of a binding whose own owner releases it.
+    private bool OwnsRuntimeManagedHandleValue(int valueTemp)
+        => IsRuntimeManagedResultTemp(valueTemp) && !IsBorrowedOwnershipTemp(valueTemp);
+
+    // Whether a call result of this type is normalized by a copy-out that reproduces the whole
+    // graph (strings, bytes, shallow-copyable ADTs, lists over such heads), so a reference-counted
+    // copy shares nothing with the arguments the call borrowed.
+    private bool HasCompleteCopyOut(TypeRef type)
+        => GetCallCopyOutKind(type, out _, out _) is CopyOutKind.Shallow or CopyOutKind.List;
+
+    // Applies the return arm as a continuation `given pattern -> body` to the body value the
+    // handle owns. The arm belongs lexically to the enclosing context, so its capability row flows
+    // to the enclosing row exactly as an operation arm's does.
+    private int LowerHandleApplyReturnArmContinuation(
+        Expr.Handle handle,
+        HandlerArm returnArm,
+        int bodyTemp,
+        TypeRef bodyType,
+        TypeRef resultType)
+    {
+        var continuation = (Expr.Lambda)BuildArmLambda(returnArm.Parameters, returnArm.Body, GetSpan(returnArm.Body));
+        TypeRef continuationType = new TypeRef.TFun(bodyType, resultType) { Row = NewTypeVar() };
+        (int closureTemp, TypeRef closureType) = LowerLambda(
+            continuation,
+            stackAllocateClosure: true,
+            LoweredValueRequest.None.WithExpectedType(DetachRows(continuationType)));
+        using (PushDiagnosticContext("in handler return arm"))
+        {
+            Unify(DetachRows(closureType), DetachRows(continuationType));
+        }
+
+        SubsumeCalleeRow(InnermostArrowRow(closureType, 1), GetSpan(handle));
+        return EmitOwnedContinuationCall(
+            closureTemp, bodyTemp, bodyType, Prune(resultType), $"handle_return_{_nextCapabilitySiteId++}");
+    }
+
+    /// <summary>
+    /// Applies a continuation closure to a value the current function owns as a reference-counted
+    /// result, under the ordinary closure call's ownership contract. The argument is retained when
+    /// the closure's entry adopts reference-counted arguments (bit 62 of its packed word) and
+    /// handed over with bit 0 of the ownership word set to that same flag. A result whose type has
+    /// a complete copy-out layout is adopted when the closure reports a reference-counted result
+    /// (bit 63) and normalized into a reference-counted copy otherwise, after which the original
+    /// argument is released; a copy-type result cannot reach the argument, which is released after
+    /// the call; any other result may still borrow the argument, which is then released only when
+    /// the closure adopted its own retained reference. The returned temp is reference-counted
+    /// exactly when the result type has a complete copy-out layout.
+    /// </summary>
+    private int EmitOwnedContinuationCall(
+        int closureTemp,
+        int argumentTemp,
+        TypeRef argumentType,
+        TypeRef resultType,
+        string labelPrefix)
+    {
+        int acceptsFlagTemp = EmitClosureAcceptsRuntimeManagedArgumentFlag(closureTemp);
+        int passedArgumentTemp = EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, acceptsFlagTemp);
+        CopyOutKind copyOutKind = GetCallCopyOutKind(
+            resultType,
+            out int copySize,
+            out IrInst.ListHeadCopyKind listHeadCopy);
+        bool adoptsResult = copyOutKind is CopyOutKind.Shallow or CopyOutKind.List;
+        int returnsFlagTemp = adoptsResult ? EmitClosureReturnsRuntimeManagedFlag(closureTemp) : -1;
+        int callTarget = NewTemp();
+        Emit(new IrInst.CallClosure(callTarget, closureTemp, passedArgumentTemp, acceptsFlagTemp));
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, callTarget));
+        if (adoptsResult)
+        {
+            string copyLabel = $"{labelPrefix}_copy_arena_result";
+            string ownedLabel = $"{labelPrefix}_owned_result";
+            Emit(new IrInst.JumpIfFalse(returnsFlagTemp, copyLabel));
+            Emit(new IrInst.Jump(ownedLabel));
+            Emit(new IrInst.Label(copyLabel));
+            int copiedTemp = EmitRuntimeManagedResultCopyOut(callTarget, copyOutKind, listHeadCopy, copySize);
+            Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+            Emit(new IrInst.Label(ownedLabel));
+            EmitRuntimeManagedResultDrop(argumentTemp, argumentType);
+        }
+        else if (CanArenaReset(resultType))
+        {
+            EmitRuntimeManagedResultDrop(argumentTemp, argumentType);
+        }
+        else
+        {
+            string keptLabel = $"{labelPrefix}_argument_kept";
+            Emit(new IrInst.JumpIfFalse(acceptsFlagTemp, keptLabel));
+            EmitRuntimeManagedResultDrop(argumentTemp, argumentType);
+            Emit(new IrInst.Label(keptLabel));
+        }
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        if (adoptsResult)
+        {
+            MarkRuntimeManagedTemp(resultTemp, LoweredTempOwnershipReason.UnknownCallResult, type: resultType);
+        }
+
+        return resultTemp;
     }
 
     /// <summary>
@@ -1513,36 +1758,43 @@ public sealed partial class Lowering
             return null;
         }
 
-        // Parameter patterns: plain variables bind directly; anything else binds a fresh name and
-        // matches on it inside the lambda.
-        var paramNames = new string[arm.Parameters.Count];
-        for (int i = 0; i < arm.Parameters.Count; i++)
+        return BuildArmLambda(arm.Parameters, body, GetSpan(arm.Body));
+    }
+
+    /// <summary>
+    /// Builds the curried lambda binding an arm's parameters over its body. Plain variable patterns
+    /// bind directly; anything else binds a fresh name and matches on it inside the lambda.
+    /// </summary>
+    private Expr BuildArmLambda(IReadOnlyList<Pattern> parameters, Expr body, TextSpan bodySpan)
+    {
+        var paramNames = new string[parameters.Count];
+        for (int i = 0; i < parameters.Count; i++)
         {
-            paramNames[i] = arm.Parameters[i] switch
+            paramNames[i] = parameters[i] switch
             {
                 Pattern.Var v => v.Name,
                 _ => $"__arm_arg_{_nextCapabilitySiteId++}",
             };
         }
 
-        for (int i = arm.Parameters.Count - 1; i >= 0; i--)
+        for (int i = parameters.Count - 1; i >= 0; i--)
         {
-            if (arm.Parameters[i] is Pattern.Var or Pattern.Wildcard)
+            if (parameters[i] is Pattern.Var or Pattern.Wildcard)
             {
                 continue;
             }
 
             var scrutinee = new Expr.Var(paramNames[i]);
-            AstSpans.Set(scrutinee, GetSpan(arm.Parameters[i]));
-            var match = new Expr.Match(scrutinee, [new MatchCase(arm.Parameters[i], body)], GetSpan(arm.Parameters[i]).Start);
-            AstSpans.Set(match, GetSpan(arm.Body));
+            AstSpans.Set(scrutinee, GetSpan(parameters[i]));
+            var match = new Expr.Match(scrutinee, [new MatchCase(parameters[i], body)], GetSpan(parameters[i]).Start);
+            AstSpans.Set(match, bodySpan);
             body = match;
         }
 
-        for (int i = arm.Parameters.Count - 1; i >= 0; i--)
+        for (int i = parameters.Count - 1; i >= 0; i--)
         {
             var lambda = new Expr.Lambda(paramNames[i], body);
-            AstSpans.Set(lambda, GetSpan(arm.Body));
+            AstSpans.Set(lambda, bodySpan);
             body = lambda;
         }
 

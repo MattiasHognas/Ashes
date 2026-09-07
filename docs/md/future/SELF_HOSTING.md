@@ -157,7 +157,7 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    `malloc` stand-ins, reuse, `--debug-disable-reuse` parity, and the four explain snapshots.
    Gate hard on the challenge benchmarks: this is where compile-time and RSS regressions would
    first appear.
-   Gates: OPT-22..OPT-27, OPT-29, OPT-30, OPT-32..OPT-36, OPT-38..OPT-42, OPT-44..OPT-49,
+   Gates: OPT-22..OPT-27, OPT-29, OPT-30, OPT-32..OPT-36, OPT-38..OPT-42, OPT-44..OPT-51,
    CG-6, CG-10, CG-16, SEM-18, SEM-19, PKG-8, and CG-4's arena/drop tail.
 3. **Trait and capability physical lowering.** The one keystone decision — call-site dictionary
    forwarding via constraint-aware local type reconstruction, or a merged type-variable space —
@@ -2063,19 +2063,39 @@ same public behavior.
   leaked the returned string in both compilers, fixed by the returns bit of a returned
   normalized parameter (see the arena-result boundary above); a result pipe (`|?>`) and an
   awaited task (`await echo(fresh)` inside an async body) both plateau at 8.2 MB; a handler arm
-  (`handle Tag.tag(s) with | Tag.tag(text) -> resume(text)`) leaks the arm's
-  reference-counted copy of `text`, which the perform site takes for an arena value and the
-  handle copies at its scope boundary (about 615 bytes per call in stage 0); a record holding a
+  (`handle Tag.tag(s) with | Tag.tag(text) -> resume(text)`) leaked the arm's
+  reference-counted copy of `text`, which the perform site took for an arena value and the
+  handle copied at its scope boundary (about 615 bytes per call in stage 0), until OPT-49a made
+  the perform site adopt it and the handle release it (8.2 MB plateau); a record holding a
   closure that captures the normalized parameter (`Box(reader = given (u) -> s)`) leaked the
   owned string through an arena environment nothing released, fixed in stage 0 by OPT-49b
   below (the closure owns the capture on the reference-counted heap and the record releases
   the closure as a child). `tests/consumed_argument_*` pin the correct output of every shape
   through stage 0. The remaining work is split below.
-- [ ] **OPT-49a** Stage 0: the perform site adopts a handler arm's reference-counted result.
+- [x] **OPT-49a** Stage 0: the perform site adopts a handler arm's reference-counted result.
   Read the arm closure's returns bit at the call, take the value as newly produced on that
   branch and copy it out otherwise, so the handle's scope-boundary copy no longer duplicates a
   value nothing releases; the arm closure built by `LowerHandleLowerArmClosures` must carry the
   returns bit its lowered body earned.
+  Done (2026-09-07): `EmitPerform` reads the arm closure's returns bit at the saturating call
+  and adopts the result as newly produced on that branch, normalizing an arena result into a
+  reference-counted copy otherwise (`PlanPerformResultOwnership`: a resolved string, bytes,
+  list, or shallow-copyable ADT result adopts; an unresolved layout, or a function that may
+  execute inside a coroutine, requests the arena form through bit 1 of the ownership word;
+  copy types, closures, and resources are unchanged). A closure's returns bit is now the
+  compiled body's own fact rather than gated on the creating function's placement context
+  (`LowerLambdaCoreMakeClosure` and the two label-reconstructed `MakeClosure` sites), so the arm
+  closure reports the result its entry normalization earns. A return arm over a body value the
+  handle owns applies as a continuation under the ordinary closure ownership contract
+  (`EmitOwnedContinuationCall`: retain the argument when the closure adopts arguments, adopt or
+  normalize the result by its returns bit, release the original once the result cannot reach
+  it), and the posts fold applies the same contract per post, so the scope-boundary copy is
+  gone and the caller releases the value. `tests/consumed_argument_through_handler.ash`
+  through stage 0: 28.7 MB peak at 40000 iterations and 110.6 MB at 200000 before, 8.2 MB at
+  both after, output unchanged; `tests/handler_arm_reference_counted_result_plateau.ash` pins
+  the 200000-iteration output, and the one-shot post, non-identity return arm, `Int` return
+  arm, and let-forwarded body shapes all plateau at 8.2 MB. Two neighbouring shapes still leak
+  and are split out as OPT-50 and OPT-51.
 - [x] **OPT-49b** Stage 0: a closure capturing an entry-normalized parameter owns the capture.
   The environment holding the owned string (or record) is placed on the reference-counted heap
   with its dropper, and the record storing that closure counts it as a fresh owned child, so the
@@ -2105,6 +2125,23 @@ same public behavior.
   record may hold a function-typed field (`UnsupportedTypeDeclaration` today); until then the
   handler, result-pipe, await, and closure-capture shapes cannot be compiled by the self-hosted
   compiler and OPT-49a and OPT-49b have no mirror.
+- [ ] **OPT-50** Stage 0: a function that may execute under a live handler post ignores an
+  unknown callee's returns bit. `apply (f: Str -> Str) (s: Str) = handle f(s) with ...` applied
+  to `identity` (whose entry normalizes and returns its parameter) leaks the returned string:
+  the caller's placement context turns off `needsResultOwnership`, so the result is copied at
+  `ArenaCallBoundary` and the callee's reference-counted original is never released (measured
+  2026-09-07: 28.7 MB peak at 40000 iterations, 110.6 MB at 200000, about 520 bytes per call).
+  Model the call as the perform site does since OPT-49a: read the returns bit, adopt or
+  normalize the result, release the consumed arguments once the result cannot reach them, and
+  request the arena form only where the caller cannot own the value.
+- [ ] **OPT-51** Stage 0: an arm result whose type has no complete copy-out layout keeps the
+  arm's reference-counted child alive. With `capability Tag = | tag : Str -> Wrapped` and
+  `Tag.tag(text) -> resume(Just(text))` the arm builds the constructor in the arena over its
+  entry-normalized copy of `text`; the perform site leaves such a result unchanged
+  (`PerformResultOwnership.Unchanged`) and the copy leaks at the same rate as OPT-50 (measured
+  2026-09-07). Either the constructor should adopt the normalized parameter as a fresh owned
+  child on the reference-counted heap, or the site should request the arena form and the arm
+  release the copy.
 
 #### LLVM code generation and runtime integration
 
