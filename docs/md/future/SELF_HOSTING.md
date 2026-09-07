@@ -1278,7 +1278,17 @@ same public behavior.
   `DuplicateRuntimeManagedOwnedValueForTransfer` skips pattern owners); an arm returning the
   direct read of an admitted loop parameter resets its bracket as stage 0 does for a
   runtime-managed owner's read. `tco_record_head_consed_into_sibling_accumulator` is a
-  whole-program parity fixture.
+  whole-program parity fixture. The two record-head loops followed: a field access reads its
+  receiver without the pattern-owner borrow (stage 0's `TryLowerRecordFieldLoad` loads the
+  receiver plain even for a pattern owner); a pattern owner stored into a constructor argument
+  takes its identity marker under a transferring request as well as under an owning one
+  (`retainEscapingConstructorArgument`); a runtime-managed ADT slot passed through unchanged at
+  a back edge whose other argument changes shape is retained (`RcDup`, stage 0's
+  `TcoBackEdgeRetainRuntimeManagedArg`) rather than deep-copied, and its arena reservation
+  zeroing stands down like a runtime argument's (`resetArgumentIsManaged`); and the deferred
+  reset's inline release of an iteration owner runs with the span cleared, as stage 0 resolves
+  the deferred blocks without a location. `tco_returned_record_head` and
+  `tco_record_head_stored_into_copy_adt_successor` are whole-program parity fixtures.
   Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
@@ -1448,22 +1458,22 @@ same public behavior.
   the closure environment normalizer emits its leaf `CopyOutArena` without a location, as stage
   0's deep-copy emitter does. A survey of the
   fifteen import-free loop fixtures against stage 0's lowered IR
-  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches thirteen
+  (`tests/tco_runtime_managed_*`, `tco_arena_variant_accumulator_plateau`) now matches fourteen
   exactly (`fresh_list_rebuild`, `record_accumulator`, `tuple_accumulator`,
   `str_param_non_affine`, `list_accumulator`, `str_accumulator`, `find_string_head`,
   `record_list_accumulator`, `owned_child_record_accumulator`,
   `param_string_field_into_successor`, `param_field_read_into_successor`,
-  `record_param_consed_into_sibling_accumulator`, and the whole-program parity fixtures
+  `record_param_consed_into_sibling_accumulator`, `find_record_head`,
+  `consumed_record_heads_escape`, and the whole-program parity fixtures
   `tco_tuple_parameter_rebuild`, `tco_str_parameter_fresh_successor`,
   `tco_consumed_list_parameter_borrowed_head`, `tco_consumed_list_parameter_returned_head`,
   `tco_record_parameter_exit_before_list_accumulator`, `tco_owned_child_record_accumulator`,
   `tco_record_string_field_into_successor`, `tco_record_field_read_into_successor`,
-  `tco_consumed_record_list_tuple_result`, `tco_record_head_consed_into_sibling_accumulator`);
-  `find_record_head` (293 masked lines: one extra `Borrow` beside the numbering),
-  `consumed_record_heads_escape` (604: the pattern head stored into a copy-ADT successor's
-  field, where stage 0 retains it and the self-hosted back edge copies it, and the reads'
-  borrow and release order around it), and `tco_arena_variant_accumulator_plateau` (366) carry
-  the remaining divergences of OPT-25's aggregate tail. Related interim narrowing: the
+  `tco_consumed_record_list_tuple_result`, `tco_record_head_consed_into_sibling_accumulator`,
+  `tco_returned_record_head`, `tco_record_head_stored_into_copy_adt_successor`);
+  `tco_arena_variant_accumulator_plateau` (366 masked lines: the reuse-specialization and dead
+  retention-flag blocks stage 0 still emits around the arena back edge) carries the remaining
+  divergence of OPT-25's aggregate tail. Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per

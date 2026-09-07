@@ -3805,12 +3805,10 @@ let locatedInstruction (location: Maybe(IrSourceLocation)) kind = IrInstruction(
 
 let unlocatedInstruction (kind: IrInstructionKind) (state: CoreLoweringState) = state with reversedInstructions = IrInstruction(instruction = kind, location = None) :: state.reversedInstructions
 
-// The iteration-local owners a back edge releases before its reset, each loaded back and
-// released under a runtime-managed `RcDrop` naming its slot (stage 0's `EmitOwnedValueDrop` at
-// the deferred back edge).
 // The iteration-local owners released at a back edge, stage 0's `EmitOwnedValueDrop` for each:
 // an owner whose release plan reaches past its own cell walks its owned children inline, any
-// other owner releases as one drop naming its slot.
+// other owner releases as one drop naming its slot. The deferred reset carries no location, so
+// the inline walk runs with the current span cleared and the span is put back afterwards.
 let recursive emitResolvedOwnedDrops (drops: List((Int, Str))) (state: CoreLoweringState) =
     match drops with
         | [] -> state
@@ -3819,10 +3817,10 @@ let recursive emitResolvedOwnedDrops (drops: List((Int, Str))) (state: CoreLower
                 | FreshTemp { state = tempState, temp = temp } ->
                     match unlocatedInstruction(LoadLocal(temp)(slot))(tempState) with
                         | loaded ->
-                            emitResolvedOwnedDrops(rest)(match emitInlineOwnerRelease(temp)(slot)(loaded) with
-                                | Some(released) -> released
+                            emitResolvedOwnedDrops(rest)((match emitInlineOwnerRelease(temp)(slot)((loaded with currentSpan = None)) with
+                                | Some(released) -> released with currentSpan = loaded.currentSpan
                                 | None ->
-                                    unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))(loaded))
+                                    unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))(loaded)))
 
 let recursive argumentsSurviveReset (types: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -5038,8 +5036,21 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                 if isRuntime
                 then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
                 else
-                    match emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression)(state) with
-                        | (copied, copyTemp) -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)(copied)
+                    // A back edge passing the parameter's own value on, when another edge
+                    // rebuilds it: the read is the reference-counted value the parameter holds
+                    // (stage 0's `TcoBackEdgeRetainRuntimeManagedArg`), retained for the next
+                    // iteration since the predecessor release still runs.
+                    if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
+                    then
+                        match freshTemp(state) with
+                            | FreshTemp { state = allocated, temp = duplicate } ->
+                                allocated
+                                |> unlocatedInstruction(RcDup(duplicate)(temp)(true)(false))
+                                |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+                                |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
+                    else
+                        match emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression)(state) with
+                            | (copied, copyTemp) -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)(copied)
         | TcoResetArgument { managedStr = Some(activeSlot), parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
             if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
             then normalizeRuntimeManagedBackEdgeArguments(rest)(reversedStores)(state)
@@ -5129,13 +5140,21 @@ let recursive emitRuntimeManagedBackEdgeStores (stores: List((Int, Int, Int))) (
 // arena string reservation (it lives above the watermark), so the reservation slots of an affine
 // accumulator whose successor stays in the arena are zeroed; a reference-counted reservation
 // survives the reset and keeps its bounds.
+// A reset argument whose parameter slot the frame placed on the reference-counted heap.
+let resetArgumentIsManaged (argument: TcoResetArgument) =
+    match (argument.managedStr, argument.managedAdt, argument.managedList) with
+        | (Some(_str), _adt, _list) -> true
+        | (None, Some(_adt), _list) -> true
+        | (None, None, Some(_list)) -> true
+        | _ -> false
+
 let recursive zeroArenaReservations (arguments: List(TcoResetArgument)) (reservations: List((Int, Int, Int))) (zeroTemp: Int) (state: CoreLoweringState) =
     match arguments with
         | [] -> state
         | argument :: rest ->
             match lookupAffineReservation(argument.parameterSlot)(reservations) with
                 | Some((reservationStart, reservationEnd)) ->
-                    if argument.argumentRuntime
+                    if argument.argumentRuntime || isTcoBackEdgeArgPassThrough(argument.argumentExpression)(argument.parameterSlot)(state) && resetArgumentIsManaged(argument)
                     then zeroArenaReservations(rest)(reservations)(zeroTemp)(state)
                     else
                         state
@@ -11842,7 +11861,7 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
         | ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition } ->
             lowered
             |> (given (value: LoweredCoreValue) ->
-                if runtimeManaged || tailPosition || transferSlotRequested(transferSlot)
+                if runtimeManaged || tailPosition || transferSlotRequested(transferSlot) || transfers
                 then duplicatePatternOwnerChild(argument)(value)
                 else value)
             |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
@@ -12589,7 +12608,7 @@ let lowerRecordFieldAccess receiverName fieldName state =
                 | None -> failure(state)(UnknownLoweringBinding(receiverName + "." + fieldName))
                 | Some(binding) ->
                     state
-                    |> lowerBoundVariable((binding with ownedRead = false))
+                    |> lowerBoundVariable((binding with ownedRead = false, patternOwner = None))
                     |> finishRecordFieldAccess(receiverName)(fieldName)
 
 let finishUpdatedRecordField expectedType reversedTemps reversedTypes lowered =
