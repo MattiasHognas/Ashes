@@ -5,4 +5,24 @@ let intToStr n = Ashes.Text.fromInt(n)
 
 let space = " "
 
-io.print(intToStr(math.roundToInt(math.sin(0.0))) + space + intToStr(math.roundToInt(math.cos(0.0))) + space + intToStr(math.roundToInt(math.exp(0.0))) + space + intToStr(math.roundToInt(math.ln(math.e))) + space + intToStr(math.roundToInt(math.powF(2.0)(10.0))) + space + intToStr(math.roundToInt(math.log2(8.0))) + space + intToStr(math.roundToInt(math.log10(1000.0))) + space + intToStr(math.roundToInt(math.cbrt(27.0))) + space + intToStr(math.roundToInt(math.hypot(3.0)(4.0))) + space + intToStr(math.roundToInt(math.fmod(10.0)(3.0))) + space + intToStr(math.roundToInt(math.atan2(1.0)(1.0) * 4.0)))
+io.print(intToStr(0.0
+|> math.sin
+|> math.roundToInt) + space + intToStr(0.0
+|> math.cos
+|> math.roundToInt) + space + intToStr(0.0
+|> math.exp
+|> math.roundToInt) + space + intToStr(math.e
+|> math.ln
+|> math.roundToInt) + space + intToStr(10.0
+|> math.powF(2.0)
+|> math.roundToInt) + space + intToStr(8.0
+|> math.log2
+|> math.roundToInt) + space + intToStr(1000.0
+|> math.log10
+|> math.roundToInt) + space + intToStr(27.0
+|> math.cbrt
+|> math.roundToInt) + space + intToStr(4.0
+|> math.hypot(3.0)
+|> math.roundToInt) + space + intToStr(3.0
+|> math.fmod(10.0)
+|> math.roundToInt) + space + intToStr(math.roundToInt(math.atan2(1.0)(1.0) * 4.0)))

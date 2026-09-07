@@ -67,7 +67,7 @@ let assertIdempotent source =
 
 let assertExpressionWithOptions expected options source =
     (let actual =
-        formatExpressionWithOptions(expressionFrom(source))(false)(options)
+        formatExpressionWithOptions(expressionFrom(source))(options)
     in
         if expected == actual
         then Unit
@@ -75,7 +75,7 @@ let assertExpressionWithOptions expected options source =
 
 let assertExpressionWithPipelines expected source =
     (let actual =
-        formatExpressionWithOptions(expressionFrom(source))(true)(formattingOptionsDefault)
+        formatExpressionWithOptions(expressionFrom(source))((formattingOptionsDefault with preferPipelines = true))
     in
         if expected == actual
         then Unit
@@ -330,32 +330,32 @@ let run unit =
     |> (given (_) ->
         assertExpressionWithOptions(
             "outer(\n  \"first\",\n  inner(\n    1,\n    2\n  ),\n  []\n)\n",
-            FormattingOptions(indentSize = 2, useTabs = false, newLine = "\n"),
+            FormattingOptions(indentSize = 2, useTabs = false, newLine = "\n", preferPipelines = false),
             "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
         ))
     |> (given (_) ->
         assertExpressionWithOptions(
             "outer(\n\t\"first\",\n\tinner(\n\t\t1,\n\t\t2\n\t),\n\t[]\n)\n",
-            FormattingOptions(indentSize = 4, useTabs = true, newLine = "\n"),
+            FormattingOptions(indentSize = 4, useTabs = true, newLine = "\n", preferPipelines = false),
             "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
         ))
     |> (given (_) ->
         assertExpressionWithOptions(
             "outer(\r\n    \"first\",\r\n    inner(\r\n        1,\r\n        2\r\n    ),\r\n    []\r\n)\r\n",
-            FormattingOptions(indentSize = 4, useTabs = false, newLine = "\r\n"),
+            FormattingOptions(indentSize = 4, useTabs = false, newLine = "\r\n", preferPipelines = false),
             "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
         ))
     |> (given (_) ->
         assertExpressionWithOptions(
             "given (left) ->\n    given (right) -> left + right\n",
-            FormattingOptions(indentSize = 0, useTabs = false, newLine = "not-a-newline"),
+            FormattingOptions(indentSize = 0, useTabs = false, newLine = "not-a-newline", preferPipelines = false),
             "given (left, right)->left+right"
         ))
     |> (given (_) ->
         "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
         |> expressionFrom
         |> formatExpression
-        |> test.assertEqual(formatExpressionWithOptions(expressionFrom("outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"))(false)(formattingOptionsDefault)))
+        |> test.assertEqual(formatExpressionWithOptions(expressionFrom("outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"))(formattingOptionsDefault)))
     |> (given (_) -> assertExpressionWithPipelines("x\n|> f\n|> g\n")("g(f(x))"))
     |> (given (_) -> assertExpressionWithPipelines("x\n|> f\n|> g\n|> h\n")("h(g(f(x)))"))
     |> (given (_) -> assertExpressionWithPipelines("f(x)\n")("f(x)"))
@@ -387,6 +387,12 @@ let run unit =
         ))
     |> (given (_) -> assertExpressionWithPipelines("y\n|> f(x)\n|> g\n")("g(f(x, y))"))
     |> (given (_) -> assertExpressionWithPipelines("y\n|> f(x)\n|> g\n")("g(f(x)(y))"))
+    |> (given (_) -> assertExpressionWithOptions("x\n|> f\n|> g\n")(formattingOptionsDefault)("x |> f |> g"))
+    |> (given (_) -> assertExpressionWithOptions("1 |> inc\n")(formattingOptionsDefault)("1 |> inc"))
+    |> (given (_) -> assertExpressionWithOptions("print(double(inc(1)))\n")(formattingOptionsDefault)("print(double(inc(1)))"))
+    |> (given (_) -> assertExpressionWithOptions("f(2 |> inc)\n")(formattingOptionsDefault)("f(2 |> inc)"))
+    |> (given (_) -> assertExpressionWithOptions("(x |> f |> g) + 1\n")(formattingOptionsDefault)("(x |> f |> g) + 1"))
+    |> (given (_) -> assertExpressionWithOptions("x\n|> f\n|?> g\n")(formattingOptionsDefault)("x |> f |?> g"))
     |> (given (_) -> Ashes.IO.print("all self-hosted formatter tests passed"))
 
 run(Unit)

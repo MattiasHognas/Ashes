@@ -46,7 +46,8 @@ let variableName (names: List((Int, Str))) (variableId: Int) =
     match lookupVariableName(names)(variableId) with
         | Some(name) -> (name, names)
         | None ->
-            let name = variableNameFrom(length(names))("")
+            let name =
+                variableNameFrom(length(names))("")
             in (name, append(names)([(variableId, name)]))
 
 let capabilityEntryName (entry: SemanticType) =
@@ -107,7 +108,10 @@ and renderedType (names: List((Int, Str))) (semanticType: SemanticType) =
 and typeListText (names: List((Int, Str))) (precedence: Int) (types: List(SemanticType)) = typeListTextInto(names)(precedence)(types)([])
 and typeListTextInto (names: List((Int, Str))) (precedence: Int) (types: List(SemanticType)) (reversed: List(Str)) =
     match types with
-        | [] -> (Ashes.Text.join(", ")(reverse(reversed)), names)
+        | [] ->
+            (reversed
+            |> reverse
+            |> Ashes.Text.join(", "), names)
         | head :: rest ->
             match typeText(names)(precedence)(head) with
                 | (headText, nextNames) -> typeListTextInto(nextNames)(precedence)(rest)(headText :: reversed)
@@ -118,7 +122,9 @@ and capabilityText (names: List((Int, Str))) (name: Str) (arguments: List(Semant
             match typeListText(names)(0)(arguments) with
                 | (argumentsText, nextNames) -> (name + "(" + argumentsText + ")", nextNames)
 and rowText (names: List((Int, Str))) (capabilities: List(SemanticType)) (tail: Maybe(SemanticType)) =
-    match typeListText(names)(0)(sortBy(capabilityBefore)(capabilities)) with
+    match capabilities
+    |> sortBy(capabilityBefore)
+    |> typeListText(names)(0) with
         | (itemsText, itemNames) ->
             match tail with
                 | Some(SemVariable(variableId)) ->
@@ -173,7 +179,10 @@ let mismatchDiagnostic (left: SemanticType) (right: SemanticType) (site: CoreMis
 // mismatch or a recursive type. An arity mismatch keeps only its counts, so it has none.
 let loweringErrorDiagnostic (error: CoreLoweringError) =
     match error with
-        | CoreCallTypeMismatch(TypeMismatch(left, right), site) -> Some(mismatchDiagnostic(left)(right)(site))
+        | CoreCallTypeMismatch(TypeMismatch(left, right), site) ->
+            site
+            |> mismatchDiagnostic(left)(right)
+            |> Some
         | CoreCallTypeMismatch(InfiniteType(_variableId, _semanticType), site) ->
             Some(
                 DiagnosticEntry(

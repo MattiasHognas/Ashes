@@ -17,7 +17,10 @@ let recursive build n acc =
     else
         match Ashes.IO.File.open("recadt_input.txt") with
             | Error(_e) -> acc
-            | Ok(fh) -> build(n - 1)(Put(fh)(acc))
+            | Ok(fh) ->
+                acc
+                |> Put(fh)
+                |> build(n - 1)
 
 let bag = build(3)(MtBag)
 in

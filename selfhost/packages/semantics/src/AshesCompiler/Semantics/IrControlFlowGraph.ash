@@ -242,9 +242,10 @@ let recursive intersectDominators (dominators: List(List(Int))) (predecessors: L
                 | Some(set) ->
                     match acc with
                         | Some(current) ->
-                            intersectDominators(dominators)(rest)(set
+                            set
                             |> sortedSetIntersect(current)
-                            |> Some)
+                            |> Some
+                            |> intersectDominators(dominators)(rest)
                         | None -> intersectDominators(dominators)(rest)(Some(set))
                 | None -> intersectDominators(dominators)(rest)(acc)
 

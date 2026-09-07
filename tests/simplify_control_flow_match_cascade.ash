@@ -12,5 +12,8 @@ let area s =
         | Rectangle(w, h) -> w * h
         | Triangle(b, h) -> b * h / 2
 
-let result = area(Rectangle(2)(5))
+let result =
+    5
+    |> Rectangle(2)
+    |> area
 in Ashes.IO.print(result)

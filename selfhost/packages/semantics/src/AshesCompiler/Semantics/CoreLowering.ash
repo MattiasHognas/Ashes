@@ -2735,9 +2735,10 @@ let scopeCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
             |> coverageEnvironment
             |> classifyHeapLayout(named) with
                 | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
-                    Some(state
+                    state
                     |> shallowAdtCopySizeBytes(name)
-                    |> ShallowScopeCopyOut)
+                    |> ShallowScopeCopyOut
+                    |> Some
                 | _ -> None
         | _ -> None
 
@@ -3975,9 +3976,10 @@ let recursive argumentCopyPlanOf (semanticType: SemanticType) (state: CoreLoweri
             |> coverageEnvironment
             |> classifyHeapLayout(named) with
                 | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
-                    Some(state
+                    state
                     |> shallowAdtCopySizeBytes(name)
-                    |> ShallowAdtArgumentCopy)
+                    |> ShallowAdtArgumentCopy
+                    |> Some
                 | HeapLayoutFacts { children = children } as facts ->
                     if runtimeManagedAdtLayout(facts)
                     then
@@ -4576,9 +4578,10 @@ let recursive captureCopyOf (resolved: SemanticType) (state: CoreLoweringState) 
             else
                 match (constructorLayoutsOfType(name)(state.constructorLayouts), heapFactsOf(named)(state)) with
                     | (_layout :: [], HeapLayoutFacts { structuralCopy = ShallowCopy }) ->
-                        Some(state
+                        state
                         |> shallowAdtCopySizeBytes(name)
-                        |> LeafCaptureCopy)
+                        |> LeafCaptureCopy
+                        |> Some
                     | (_layout :: [], facts) ->
                         if runtimeManagedAdtLayout(facts)
                         then
@@ -9597,9 +9600,10 @@ let recursive lowerPattern pattern valueTemp valueType failLabel state =
         | unsupported ->
             LoweredCorePattern(
                 state = state,
-                error = Some(unsupported
+                error = unsupported
                 |> patternName
-                |> UnsupportedCoreLoweringPattern)
+                |> UnsupportedCoreLoweringPattern
+                |> Some
             )
 
 let lowerMatchGuard guard failLabel lower patternResult =
@@ -12915,9 +12919,10 @@ let finishRecordFieldAccess _receiverName fieldName lowered =
                             |> recordLayout(typeName)
                             |> finishRecordFieldLayout(typeName)(fieldName)(receiverTemp)(receiverType)(typedState)
                         | (typedState, None) ->
-                            failure(typedState)(receiverType
+                            receiverType
                             |> resolveType(typedState)
-                            |> CoreRecordUpdateRequiresRecord)
+                            |> CoreRecordUpdateRequiresRecord
+                            |> failure(typedState)
                 | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
 
 // The receiver of a field access is read without the owned-read borrow: stage 0's
@@ -15267,9 +15272,10 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprHandle(body, arms) -> lowerHandle(body)(arms)(lowerCore)(state)
         | ExprResultPipe(left, right) -> lowerResultPipe(left)(right)(lowerCore)(state)
         | unsupported ->
-            failure(state)(unsupported
+            unsupported
             |> expressionName
-            |> UnsupportedCoreLoweringExpression)
+            |> UnsupportedCoreLoweringExpression
+            |> failure(state)
 
 // The context's request reaches the dispatch trimmed to what this expression kind forwards; an
 // expected type a kind does not forward is unified with its result afterwards. The result state
@@ -15782,9 +15788,10 @@ let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int
         | TypeConstructor { name = name, parameters = parameters, fieldNames = fieldNames } ->
             match typeExprArityErrorsList(parameters)(layouts) with
                 | Some((typeName, expected, actual)) ->
-                    Error(actual
+                    actual
                     |> arityMismatchMessage(typeName)(expected)
-                    |> UnsupportedTypeDeclaration)
+                    |> UnsupportedTypeDeclaration
+                    |> Error
                 | None ->
                     match constructorFieldSemanticTypes(parameters)(parameterTypes)(declaringTypeName(resultType))(resultType) with
                         | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, one of the type's own type parameters, or a pure function over those)"))

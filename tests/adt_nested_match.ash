@@ -10,4 +10,7 @@ in
             match inner with
                 | None -> None
                 | Some(x) -> x
-        in Ashes.IO.print(unwrapOr(outer)(0))
+        in
+            0
+            |> unwrapOr(outer)
+            |> Ashes.IO.print

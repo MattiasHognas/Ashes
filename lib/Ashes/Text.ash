@@ -9,7 +9,10 @@ let recursive countCodepoints bytes i limit acc =
     if i >= limit
     then acc
     else
-        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+        let b =
+            i
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
         in
             let isStart =
                 if b < 128
@@ -22,13 +25,17 @@ let recursive countCodepoints bytes i limit acc =
 
 let length text =
     (let bytes = Ashes.Byte.fromText(text)
-    in countCodepoints(bytes)(0)(Ashes.Byte.length(bytes))(0))
+    in
+        countCodepoints(bytes)(0)(Ashes.Byte.length(bytes))(0))
 
 let recursive cpByteOffset bytes i cpSeen targetCp limit =
     if i >= limit
     then limit
     else
-        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+        let b =
+            i
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
         in
             let isStart =
                 if b < 128
@@ -87,7 +94,10 @@ let recursive byteFind tb needle from tlen nlen firstByte =
                 then idx
                 else byteFind(tb)(needle)(idx + 1)(tlen)(nlen)(firstByte))
 
-let firstByteOf text = Ashes.Number.UInt.toInt(Ashes.Byte.get(Ashes.Byte.fromText(text))(0))
+let firstByteOf text =
+    0
+    |> Ashes.Byte.get(Ashes.Byte.fromText(text))
+    |> Ashes.Number.UInt.toInt
 
 let startsWith text prefix =
     (let nlen = Ashes.Text.byteLength(prefix)
@@ -107,7 +117,10 @@ let indexOf text needle =
     else
         let tb = Ashes.Byte.fromText(text)
         in
-            let bytePos = byteFind(tb)(needle)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(needle))(firstByteOf(needle))
+            let bytePos =
+                needle
+                |> firstByteOf
+                |> byteFind(tb)(needle)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(needle))
             in
                 if bytePos < 0
                 then -1
@@ -118,7 +131,8 @@ let contains text needle =
     then true
     else
         let tb = Ashes.Byte.fromText(text)
-        in byteFind(tb)(needle)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(needle))(firstByteOf(needle)) >= 0
+        in
+            byteFind(tb)(needle)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(needle))(firstByteOf(needle)) >= 0
 
 let recursive reverseTexts remaining acc =
     match remaining with
@@ -137,7 +151,8 @@ let split text separator =
     then [text]
     else
         let tb = Ashes.Byte.fromText(text)
-        in piecesBetween(tb)(separator)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(separator))(firstByteOf(separator))([])
+        in
+            piecesBetween(tb)(separator)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(separator))(firstByteOf(separator))([])
 
 let isDigitText text =
     match text with
@@ -232,13 +247,17 @@ let recursive dropLeadingWhiteSpace tb n i =
     if i >= n
     then ""
     else
-        if isWhiteSpaceByte(Ashes.Number.UInt.toInt(Ashes.Byte.get(tb)(i)))
+        if i
+        |> Ashes.Byte.get(tb)
+        |> Ashes.Number.UInt.toInt
+        |> isWhiteSpaceByte
         then dropLeadingWhiteSpace(tb)(n)(i + 1)
         else Ashes.Byte.subText(tb)(i)(n - i)
 
 let trimStart text =
     (let tb = Ashes.Byte.fromText(text)
-    in dropLeadingWhiteSpace(tb)(Ashes.Byte.length(tb))(0))
+    in
+        dropLeadingWhiteSpace(tb)(Ashes.Byte.length(tb))(0))
 
 let recursive lastAndInit text =
     match Ashes.Text.unconsText(text) with
@@ -255,17 +274,29 @@ let recursive dropTrailingWhiteSpace tb j =
     if j <= 0
     then ""
     else
-        if isWhiteSpaceByte(Ashes.Number.UInt.toInt(Ashes.Byte.get(tb)(j - 1)))
+        if j - 1
+        |> Ashes.Byte.get(tb)
+        |> Ashes.Number.UInt.toInt
+        |> isWhiteSpaceByte
         then dropTrailingWhiteSpace(tb)(j - 1)
         else Ashes.Byte.subText(tb)(0)(j)
 
 let trimEnd text =
     (let tb = Ashes.Byte.fromText(text)
-    in dropTrailingWhiteSpace(tb)(Ashes.Byte.length(tb)))
+    in
+        tb
+        |> Ashes.Byte.length
+        |> dropTrailingWhiteSpace(tb))
 
-let trim text = trimEnd(trimStart(text))
+let trim text =
+    text
+    |> trimStart
+    |> trimEnd
 
-let compare left right = Ashes.Byte.compare(Ashes.Byte.fromText(left))(Ashes.Byte.fromText(right))
+let compare left right =
+    right
+    |> Ashes.Byte.fromText
+    |> Ashes.Byte.compare(Ashes.Byte.fromText(left))
 
 let join separator parts =
     (let recursive rev acc xs =
@@ -297,5 +328,11 @@ let join separator parts =
                         | only :: rest ->
                             match rest with
                                 | [] -> only
-                                | _ -> reduce(pairwiseGo([])(ps))
-                in reduce(interleaveGo([])(parts)))
+                                | _ ->
+                                    ps
+                                    |> pairwiseGo([])
+                                    |> reduce
+                in
+                    parts
+                    |> interleaveGo([])
+                    |> reduce)

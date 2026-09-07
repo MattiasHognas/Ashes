@@ -98,7 +98,10 @@ let recursive instantiatedConstructorFields (typeName: Str) (arguments: List(Sem
             match constructorSchemeFields(scheme) with
                 | (fields, SemNamed(_symbolId, candidate, resultArguments)) ->
                     if candidate == typeName
-                    then map(applySubstitution(resultParameterMapping(resultArguments)(arguments)))(fields) :: instantiatedConstructorFields(typeName)(arguments)(rest)
+                    then
+                        map(arguments
+                        |> resultParameterMapping(resultArguments)
+                        |> applySubstitution)(fields) :: instantiatedConstructorFields(typeName)(arguments)(rest)
                     else instantiatedConstructorFields(typeName)(arguments)(rest)
                 | _ -> instantiatedConstructorFields(typeName)(arguments)(rest)
 
@@ -122,7 +125,10 @@ let recursive isResourceBearingType (isDeclaredResource: Str -> Bool) (schemes: 
             else
                 if containsTypeName(name)(visiting)
                 then false
-                else anyConstructorResourceBearing(isDeclaredResource)(schemes)(name :: visiting)(instantiatedConstructorFields(name)(arguments)(schemes))
+                else
+                    schemes
+                    |> instantiatedConstructorFields(name)(arguments)
+                    |> anyConstructorResourceBearing(isDeclaredResource)(schemes)(name :: visiting)
         | SemTuple(elements) -> anyResourceBearingType(isDeclaredResource)(schemes)(visiting)(elements)
         | SemList(element) -> isResourceBearingType(isDeclaredResource)(schemes)(visiting)(element)
         | _ -> false

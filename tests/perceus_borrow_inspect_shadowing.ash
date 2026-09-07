@@ -18,4 +18,6 @@ let recursive sum values fallback total =
                                 match tail with
                                     | Body(other) -> total + other
 
-Ashes.IO.print(sum([Body(value = 1), Body(value = 0)])([Body(value = 2)])(0))
+0
+|> sum([Body(value = 1), Body(value = 0)])([Body(value = 2)])
+|> Ashes.IO.print

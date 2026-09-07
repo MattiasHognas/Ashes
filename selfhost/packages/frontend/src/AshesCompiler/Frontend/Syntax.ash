@@ -16,6 +16,7 @@ export (
     value callArgumentsInline,
     value callArgumentsMultilineStart,
     value callArgumentsMultilineContinuation,
+    value callArgumentsPipe,
     type Expr(..),
     type TypeParameter(..),
     type TypeConstructor(..),
@@ -90,6 +91,9 @@ let callArgumentsInline : CallArgumentListLayout = 0
 let callArgumentsMultilineStart : CallArgumentListLayout = 1
 
 let callArgumentsMultilineContinuation : CallArgumentListLayout = 2
+
+// The call was written as a pipeline stage: the argument, then `|>`, then the function.
+let callArgumentsPipe : CallArgumentListLayout = 3
 
 type Expr =
     | ExprAt(TextSpan, Expr)

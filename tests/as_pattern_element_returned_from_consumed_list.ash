@@ -35,7 +35,8 @@ let recursive loop (remaining: List(Int)) (facts: List(Facts)) (acc: List(Str)) 
             match factsOf(blockIndex)(facts) with
                 | Facts { factsLoads = loads } ->
                     match factsOf(blockIndex + 100)(facts) with
-                        | Facts { factsBlock = missing } -> loop(rest)(facts)(Ashes.Text.fromInt(blockIndex) + ":" + Ashes.Text.fromInt(count(loads)) + "/" + Ashes.Text.fromInt(missing - 100) :: acc)
+                        | Facts { factsBlock = missing } ->
+                            loop(rest)(facts)(Ashes.Text.fromInt(blockIndex) + ":" + Ashes.Text.fromInt(count(loads)) + "/" + Ashes.Text.fromInt(missing - 100) :: acc)
 
 let recursive show (items: List(Str)) =
     match items with
@@ -45,4 +46,7 @@ let recursive show (items: List(Str)) =
                 | [] -> item
                 | _ -> show(rest) + " " + item
 
-Ashes.IO.print(show(loop([0, 1, 2])(buildFacts(0)(3))([])))
+[]
+|> loop([0, 1, 2])(buildFacts(0)(3))
+|> show
+|> Ashes.IO.print

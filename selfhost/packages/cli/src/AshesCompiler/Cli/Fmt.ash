@@ -48,7 +48,10 @@ let recursive partitionFmtFlags args writeInPlace targets =
         | [] -> (writeInPlace, targets)
         | "-w" :: rest -> partitionFmtFlags(rest)(true)(targets)
         | "--write" :: rest -> partitionFmtFlags(rest)(true)(targets)
-        | other :: rest -> partitionFmtFlags(rest)(writeInPlace)(append(targets)([other]))
+        | other :: rest ->
+            [other]
+            |> append(targets)
+            |> partitionFmtFlags(rest)(writeInPlace)
 
 // Mirrors stage 0's `ParseFmtArguments` (`src/Ashes.Cli/Program.cs`): a bare `--help`/`-h`
 // short-circuits before any other parsing; zero arguments overall is a user error (exit 1, a
@@ -64,7 +67,8 @@ let parseFmtArguments args =
                 | (writeInPlace, target :: []) -> FmtParsedArguments(FmtArguments(writeInPlace = writeInPlace, target = target))
                 | (_, _) -> FmtUsageError("Provide exactly one file or directory.")
 
-let hasAshExtension path = Ashes.Text.asciiLower(Ashes.IO.Path.extension(Ashes.IO.Path.Unix)(path)) == ".ash"
+let hasAshExtension path =
+    Ashes.Text.asciiLower(Ashes.IO.Path.extension(Ashes.IO.Path.Unix)(path)) == ".ash"
 
 // `Ashes.IO.Directory.entries` errors on any non-directory path (a plain file, a missing path, or
 // a symlink), so attempting it on a known-existing child is this stdlib's only available "is this
@@ -82,7 +86,10 @@ let recursive collectAshFilesFromDirectory dir names =
                             | Ok(nested) ->
                                 match collectAshFilesFromDirectory(dir)(rest) with
                                     | Error(message) -> Error(message)
-                                    | Ok(remaining) -> Ok(append(nested)(remaining))
+                                    | Ok(remaining) ->
+                                        remaining
+                                        |> append(nested)
+                                        |> Ok
                     | Error(_) ->
                         match collectAshFilesFromDirectory(dir)(rest) with
                             | Error(message) -> Error(message)
@@ -104,7 +111,10 @@ let collectAshFiles path =
                 | Ok(names) ->
                     match collectAshFilesFromDirectory(path)(names) with
                         | Error(message) -> Error(message)
-                        | Ok(files) -> Ok(sortList(files))
+                        | Ok(files) ->
+                            files
+                            |> sortList
+                            |> Ok
                 | Error(_) ->
                     if hasAshExtension(path)
                     then Ok([path])
@@ -147,7 +157,10 @@ let recursive readAndFormatAll paths formatted =
         | path :: rest ->
             match readAndFormat(path) with
                 | Error(message) -> Error(message)
-                | Ok(result) -> readAndFormatAll(rest)(append(formatted)([result]))
+                | Ok(result) ->
+                    [result]
+                    |> append(formatted)
+                    |> readAndFormatAll(rest)
 
 let recursive writeFormattedFiles files =
     match files with
@@ -168,7 +181,10 @@ let recursive previewFormattedFiles files multiple =
         | FormattedFile { path = path, text = text } :: rest ->
             let _ =
                 if multiple
-                then Ashes.IO.writeLine(separatorRule(path))
+                then
+                    path
+                    |> separatorRule
+                    |> Ashes.IO.writeLine
                 else Unit
             in
                 let _ = Ashes.IO.write(text)
@@ -195,7 +211,8 @@ let runFmtWithArguments arguments =
                                 match writeFormattedFiles(formatted) with
                                     | Error(message) -> FmtFailed(message)
                                     | Ok(_) ->
-                                        let _ = Ashes.IO.print("OK Formatted " + Ashes.Text.fromInt(length(files)) + " file(s).")
+                                        let _ =
+                                            Ashes.IO.print("OK Formatted " + Ashes.Text.fromInt(length(files)) + " file(s).")
                                         in FmtSucceeded(0)
                             else
                                 let _ = previewFormattedFiles(formatted)(length(files) > 1)

@@ -13,7 +13,9 @@ let summed =
         given (x) -> acc + x)(0)(doubled)
 
 let viaTask =
-    match task.run(task.task(1)) with
+    match 1
+    |> task.task
+    |> task.run with
         | Error(_e) -> "err"
         | Ok(_v) -> "ok"
 

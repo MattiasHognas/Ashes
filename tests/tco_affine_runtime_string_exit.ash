@@ -12,4 +12,8 @@ let recursive build partial i output =
         else output
     else build(partial)(i - 1)(output + "xx")
 
-io.print(text.fromInt(text.byteLength(build(false)(3000)(""))) + " " + text.fromInt(text.byteLength(build(true)(3000)(""))))
+io.print(text.fromInt(""
+|> build(false)(3000)
+|> text.byteLength) + " " + text.fromInt(""
+|> build(true)(3000)
+|> text.byteLength))

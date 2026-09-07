@@ -13,4 +13,7 @@ let recursive loop n =
         match Ashes.IO.Process.spawn("/bin/sleep")(["60"]) with
             | Error(_e) -> "spawn-failed"
             | Ok(_proc) -> loop(n - 1)
-in Ashes.IO.print(loop(2000))
+in
+    2000
+    |> loop
+    |> Ashes.IO.print

@@ -2,7 +2,9 @@
 // tcp-expect: GET /switch HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n
 // tcp-send: HTTP/1.1 101 Switching Protocols\r\nConnection: close\r\n\r\nswitching
 // expect: HTTP 101
-Ashes.IO.print(match Ashes.Task.run(async await Ashes.Net.Http.get("http://127.0.0.1:__TCP_PORT__/switch")) with
+Ashes.IO.print(match await Ashes.Net.Http.get("http://127.0.0.1:__TCP_PORT__/switch")
+|> async
+|> Ashes.Task.run with
     | Ok(Ok(text)) -> text
     | Ok(Error(err)) -> err
     | Error(err) -> err)

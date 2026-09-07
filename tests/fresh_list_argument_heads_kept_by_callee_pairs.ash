@@ -11,8 +11,14 @@ let mkLabel n = "endif_" + Ashes.Text.fromInt(n)
 
 let recursive buildInsts n acc =
     if n <= 0
-    then Inst(op = LabelO(mkLabel(0))) :: acc
-    else buildInsts(n - 1)(Inst(op = JumpO(mkLabel(0))) :: acc)
+    then
+        Inst(op = 0
+        |> mkLabel
+        |> LabelO) :: acc
+    else
+        buildInsts(n - 1)(Inst(op = 0
+        |> mkLabel
+        |> JumpO) :: acc)
 
 let recursive collectNames xs =
     match xs with
@@ -52,11 +58,17 @@ let recursive walk assoc xs total =
 let run unit =
     (let xs = buildInsts(3)([])
     in
-        let assoc = pairUp(collectNames(xs))
+        let assoc =
+            xs
+            |> collectNames
+            |> pairUp
         in
             let noise = churnPairs(50)([])
             in
                 let total = walk(assoc)(xs)(0)
-                in Ashes.IO.print(Ashes.Text.fromInt(total + countPairs(noise)(0))))
+                in
+                    total + countPairs(noise)(0)
+                    |> Ashes.Text.fromInt
+                    |> Ashes.IO.print)
 
 run(Unit)

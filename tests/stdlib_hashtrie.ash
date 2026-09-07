@@ -37,7 +37,9 @@ let recursive fill i acc =
     else
         let key = "station-" + Ashes.Text.fromInt(i)
         in
-            fill(i + 1)(Ashes.Collection.HashTrie.upsertHashed(Ashes.Collection.HashTrie.hashText(key))(key)(i)(given (old) -> old + 1000000)(acc))
+            acc
+            |> Ashes.Collection.HashTrie.upsertHashed(Ashes.Collection.HashTrie.hashText(key))(key)(i)(given (old) -> old + 1000000)
+            |> fill(i + 1)
 
 let big = fill(0)(Ashes.Collection.HashTrie.empty)
 

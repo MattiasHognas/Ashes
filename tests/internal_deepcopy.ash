@@ -12,4 +12,5 @@ let recursive len xs =
         | _h :: t -> 1 + len(t)
 in
     match copy with
-        | ((a, b), n, items) -> Ashes.IO.print(a + "|" + b + "|" + Ashes.Text.fromInt(n) + "|" + Ashes.Text.fromInt(len(items)))
+        | ((a, b), n, items) ->
+            Ashes.IO.print(a + "|" + b + "|" + Ashes.Text.fromInt(n) + "|" + Ashes.Text.fromInt(len(items)))

@@ -19,7 +19,10 @@ let serveOne port handler =
                 then Ok(0)
                 else Error(e)
             | Ok(client) ->
-                let _ = Ashes.Task.spawn(handler(client))
+                let _ =
+                    client
+                    |> handler
+                    |> Ashes.Task.spawn
                 in loop(listener)
     in
         match await Ashes.Net.Tcp.Server.listen(port) with

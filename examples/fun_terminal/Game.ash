@@ -50,7 +50,8 @@ let recursive tableEdge col acc =
 
 let scoreLine (state: State) = ansi.green("you " + text.fromInt(state.playerScore)) + "  " + ansi.red("cpu " + text.fromInt(state.cpuScore)) + "  " + ansi.dim("first to " + text.fromInt(physics.winningScore) + " | w/s, arrows or mouse | q quits")
 
-let renderFrame (state: State) = ansi.home + scoreLine(state) + "\n" + ansi.blue(tableEdge(0)("")) + "\n" + renderRows(0)(math.roundToInt(state.ballX))(math.roundToInt(state.ballY))(math.roundToInt(state.playerY))(math.roundToInt(state.cpuY))("") + ansi.blue(tableEdge(0)(""))
+let renderFrame (state: State) =
+    ansi.home + scoreLine(state) + "\n" + ansi.blue(tableEdge(0)("")) + "\n" + renderRows(0)(math.roundToInt(state.ballX))(math.roundToInt(state.ballY))(math.roundToInt(state.playerY))(math.roundToInt(state.cpuY))("") + ansi.blue(tableEdge(0)(""))
 
 let finalLine (state: State) =
     if state.playerScore >= physics.winningScore

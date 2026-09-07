@@ -22,14 +22,20 @@ let ordered =
         given (b) -> join(a)(b))("")(given (x) -> x)(["a", "b", "c", "d", "e", "f", "g", "h"])
 
 let orderedOdd =
-    Ashes.Task.Parallel.reduce(given (a) ->
-        given (b) -> join(a)(b))("")(given (x) -> Ashes.Text.fromInt(x))(range(0)(13))
+    13
+    |> range(0)
+    |> Ashes.Task.Parallel.reduce(given (a) ->
+        given (b) -> join(a)(b))("")(given (x) -> Ashes.Text.fromInt(x))
 
 let total =
-    Ashes.Task.Parallel.reduce(given (a) ->
-        given (b) -> a + b)(0)(given (x) -> x)(range(0)(100))
+    100
+    |> range(0)
+    |> Ashes.Task.Parallel.reduce(given (a) ->
+        given (b) -> a + b)(0)(given (x) -> x)
 
 let counted =
-    Ashes.Task.Parallel.reduce(given (a) ->
-        given (b) -> a + b)(0)(given (_x) -> 1)(range(0)(100))
+    100
+    |> range(0)
+    |> Ashes.Task.Parallel.reduce(given (a) ->
+        given (b) -> a + b)(0)(given (_x) -> 1)
 in Ashes.IO.print(empty + "|" + one + "|" + ordered + "|" + orderedOdd + "|" + Ashes.Text.fromInt(total) + "|" + Ashes.Text.fromInt(counted))

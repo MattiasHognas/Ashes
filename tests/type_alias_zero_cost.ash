@@ -8,4 +8,6 @@ let unwrap id =
     match id with
         | UserId(value) -> value
 
-Ashes.IO.print(unwrap(UserId(42)))
+UserId(42)
+|> unwrap
+|> Ashes.IO.print

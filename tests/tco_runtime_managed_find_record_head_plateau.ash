@@ -31,4 +31,7 @@ let recursive run (round: Int) (best: Int) =
                 then found.weight + Ashes.Text.byteLength(found.name)
                 else best)
 
-Ashes.IO.print(Ashes.Text.fromInt(run(300000)(0)))
+0
+|> run(300000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

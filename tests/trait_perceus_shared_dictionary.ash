@@ -6,4 +6,7 @@ let same : a -> a -> Bool requires {Eq(a)} =
 
 let shared = [1, 2, 3]
 
-Ashes.IO.print(Show.show(same(shared)(shared)))
+shared
+|> same(shared)
+|> Show.show
+|> Ashes.IO.print

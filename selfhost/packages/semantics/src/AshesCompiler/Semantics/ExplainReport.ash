@@ -174,14 +174,20 @@ let selectorOf (rest: Str) =
 let splitExplainValue (value: Str) =
     match Ashes.Text.indexOf(value)(":") with
         | -1 -> (value, None)
-        | separator -> (Ashes.Text.substring(value)(0)(separator), selectorOf(Ashes.Text.substring(value)(separator + 1)(Ashes.Text.length(value) - separator - 1)))
+        | separator ->
+            (Ashes.Text.substring(value)(0)(separator), Ashes.Text.length(value) - separator - 1
+            |> Ashes.Text.substring(value)(separator + 1)
+            |> selectorOf)
 
 // Parses one `--explain` value, in either the bare `ownership` or the filtered `ownership:Map.set`
 // form, into its kind and optional selector; an unknown kind is an error naming it.
 let parseExplainValue (value: Str) =
     match splitExplainValue(value) with
         | (kindText, filter) ->
-            match explainKindNamed(Ashes.Text.asciiLower(Ashes.Text.trim(kindText))) with
+            match kindText
+            |> Ashes.Text.trim
+            |> Ashes.Text.asciiLower
+            |> explainKindNamed with
                 | Some(kind) -> Ok((kind, filter))
                 | None -> Error("Unknown explain type '" + kindText + "'.")
 

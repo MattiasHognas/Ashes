@@ -19,7 +19,8 @@ let scale =
     given (v: Float) ->
         given (n: Int) -> v * math.toFloat(n)
 
-let describe (b: Body) label = label + text.formatFloat(energy(b))(1)
+let describe (b: Body) label =
+    label + text.formatFloat(energy(b))(1)
 
 let lenOf (xs: List(Int)) = list.length(xs)
 

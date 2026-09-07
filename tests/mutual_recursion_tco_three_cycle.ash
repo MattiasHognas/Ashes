@@ -12,4 +12,6 @@ and c n =
         | 0 -> 2
         | _ -> a(n - 1)
 
-Ashes.IO.print(a(2000000))
+2000000
+|> a
+|> Ashes.IO.print

@@ -9,16 +9,34 @@ let one = big.fromInt(1)
 
 let sum = big.add(a)(one)
 
-let m = big.mul(big.fromInt(1000000000000))(big.fromInt(1000000000000))
+let m =
+    1000000000000
+    |> big.fromInt
+    |> big.mul(big.fromInt(1000000000000))
 
-let neg = big.sub(big.fromInt(5))(big.fromInt(8))
+let neg =
+    8
+    |> big.fromInt
+    |> big.sub(big.fromInt(5))
 
-let q = big.div(big.fromInt(1000000))(big.fromInt(7))
+let q =
+    7
+    |> big.fromInt
+    |> big.div(big.fromInt(1000000))
 
-let r = big.mod(big.fromInt(1000000))(big.fromInt(7))
+let r =
+    7
+    |> big.fromInt
+    |> big.mod(big.fromInt(1000000))
 
-let c1 = big.compare(big.fromInt(3))(big.fromInt(9))
+let c1 =
+    9
+    |> big.fromInt
+    |> big.compare(big.fromInt(3))
 
-let c2 = big.compare(big.fromInt(4))(big.fromInt(4))
+let c2 =
+    4
+    |> big.fromInt
+    |> big.compare(big.fromInt(4))
 
 io.print(Ashes.Text.fromBigInt(sum) + sp + Ashes.Text.fromBigInt(m) + sp + Ashes.Text.fromBigInt(neg) + sp + Ashes.Text.fromBigInt(q) + sp + Ashes.Text.fromBigInt(r) + sp + Ashes.Text.fromInt(c1) + sp + Ashes.Text.fromInt(c2))

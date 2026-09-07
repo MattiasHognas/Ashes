@@ -63,7 +63,8 @@ let recursive collectAddArgs args positionals pathOption isDev projectOption =
         | "--path" :: value :: rest -> collectAddArgs(rest)(positionals)(Some(value))(isDev)(projectOption)
         | "--dev" :: rest -> collectAddArgs(rest)(positionals)(pathOption)(true)(projectOption)
         | "--project" :: value :: rest -> collectAddArgs(rest)(positionals)(pathOption)(isDev)(Some(value))
-        | other :: rest -> collectAddArgs(rest)(append(positionals)([other]))(pathOption)(isDev)(projectOption)
+        | other :: rest ->
+            collectAddArgs(rest)(append(positionals)([other]))(pathOption)(isDev)(projectOption)
 
 // Mirrors stage 0's `RunAdd` (`src/Ashes.Cli/Program.cs`): a bare `--help`/`-h` short-circuits;
 // otherwise the first positional argument is the package name (used verbatim, never PascalCased —
@@ -79,13 +80,19 @@ let parseAddArguments args =
                 | ([], _, _, _) -> AddMissingPackageName
                 | (packageName :: _rest, pathOption, isDev, projectOption) -> AddParsedArguments(AddArguments(packageName = packageName, pathOption = pathOption, isDev = isDev, projectOption = projectOption))
 
-let recursive normalizePathSeparators (path: Str) = Ashes.Text.join("/")(Ashes.Text.split(path)("\\"))
+let recursive normalizePathSeparators (path: Str) =
+    "\\"
+    |> Ashes.Text.split(path)
+    |> Ashes.Text.join("/")
 
 // A `--path` dependency writes an object value; a registry dependency writes a SemVer string
 // (default `*`), matching stage 0's `RunAdd` exactly.
 let dependencyValue pathOption =
     match pathOption with
-        | Some(path) -> JsonObject("path")(JsonStr(normalizePathSeparators(path)))(JsonObjectEnd)
+        | Some(path) ->
+            JsonObject("path")(path
+            |> normalizePathSeparators
+            |> JsonStr)(JsonObjectEnd)
         | None -> JsonStr("*")
 
 let fieldNameFor isDev =
@@ -117,7 +124,10 @@ let recursive setJsonObjectField (key: Str) (value: AddJson) (obj: AddJson) =
         | JsonObject(k, v, rest) ->
             if k == key
             then JsonObject(k)(value)(rest)
-            else JsonObject(k)(v)(setJsonObjectField(key)(value)(rest))
+            else
+                rest
+                |> setJsonObjectField(key)(value)
+                |> JsonObject(k)(v)
         | other -> other
 
 // Mirrors stage 0's tolerant handling of a malformed existing dependency field
@@ -193,7 +203,8 @@ let runAddInProject manifestPath packageName pathOption isDev =
                     then
                         let fieldName = fieldNameFor(isDev)
                         in
-                            let updated = addPackageToManifest(fieldName)(packageName)(dependencyValue(pathOption))(root)
+                            let updated =
+                                addPackageToManifest(fieldName)(packageName)(dependencyValue(pathOption))(root)
                             in
                                 match Ashes.IO.File.writeText(manifestPath)(stringifyIndented(0)(updated) + "\n") with
                                     | Ok(_) -> AddSucceeded(packageName)(fieldName)

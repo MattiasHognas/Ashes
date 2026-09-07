@@ -28,11 +28,15 @@ let valOf d k m =
 let recursive bump n acc =
     if n <= 0
     then acc
-    else bump(n - 1)(Ashes.Collection.Map.setWith(cmp)(0)(999)(acc))
+    else
+        acc
+        |> Ashes.Collection.Map.setWith(cmp)(0)(999)
+        |> bump(n - 1)
 
 let w = Ashes.Collection.Map.setWith(cmp)(0)(100)(Ashes.Collection.Map.empty)
 
 let keep = w
 
 let bumped = bump(3)(w)
-in Ashes.IO.print(Ashes.Text.fromInt(valOf(-1)(0)(keep)) + " " + Ashes.Text.fromInt(valOf(-1)(0)(bumped)))
+in
+    Ashes.IO.print(Ashes.Text.fromInt(valOf(-1)(0)(keep)) + " " + Ashes.Text.fromInt(valOf(-1)(0)(bumped)))

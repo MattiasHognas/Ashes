@@ -7,4 +7,7 @@ let recursive addAll values total =
         | [] -> total
         | value :: rest -> addAll(rest)(total + value)
 
-Ashes.IO.print(render(addAll([20, 22])(0)))
+0
+|> addAll([20, 22])
+|> render
+|> Ashes.IO.print

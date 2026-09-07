@@ -11,7 +11,11 @@ let cmp a b =
         then -1
         else 1
 
-let m = Ashes.Collection.Map.setWith(cmp)(3)("three")(Ashes.Collection.Map.setWith(cmp)(1)("one")(Ashes.Collection.Map.setWith(cmp)(2)("two")(Ashes.Collection.Map.empty)))
+let m =
+    Ashes.Collection.Map.empty
+    |> Ashes.Collection.Map.setWith(cmp)(2)("two")
+    |> Ashes.Collection.Map.setWith(cmp)(1)("one")
+    |> Ashes.Collection.Map.setWith(cmp)(3)("three")
 
 let copy = Ashes.Internal.deepCopy(m)
 
@@ -19,4 +23,5 @@ let summary =
     Ashes.Collection.Map.foldLeft(given (acc) ->
         given (k) ->
             given (v) -> acc + Ashes.Text.fromInt(k) + "=" + v + ";")("")(copy)
-in Ashes.IO.print(summary + "|" + Ashes.Text.fromInt(Ashes.Collection.Map.size(copy)))
+in
+    Ashes.IO.print(summary + "|" + Ashes.Text.fromInt(Ashes.Collection.Map.size(copy)))

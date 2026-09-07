@@ -11,4 +11,7 @@ in
         match xs with
             | [] -> acc
             | _ :: rest -> len(rest)(acc + 1)
-    in Ashes.IO.print(len(build(250000)([]))(0))
+    in
+        0
+        |> len(build(250000)([]))
+        |> Ashes.IO.print

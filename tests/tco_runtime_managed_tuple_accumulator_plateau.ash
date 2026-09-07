@@ -11,4 +11,7 @@ let recursive step (n: Int) (s: (Int, Int)) =
             then a + b
             else step(n - 1)((b, a + n))
 
-Ashes.IO.print(Ashes.Text.fromInt(step(3000000)((1, 2))))
+(1, 2)
+|> step(3000000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

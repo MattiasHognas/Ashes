@@ -14,4 +14,6 @@ and c =
 
 let ten = a(10)
 
-Ashes.IO.print(c(ten))
+ten
+|> c
+|> Ashes.IO.print

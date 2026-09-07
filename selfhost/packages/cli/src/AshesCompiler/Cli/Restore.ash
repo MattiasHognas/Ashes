@@ -115,7 +115,10 @@ let recursive printResolvedDependencies dependencies =
     match dependencies with
         | [] -> Unit
         | dependency :: rest ->
-            let _ = Ashes.IO.print(formatResolvedDependency(dependency))
+            let _ =
+                dependency
+                |> formatResolvedDependency
+                |> Ashes.IO.print
             in printResolvedDependencies(rest)
 
 let dependencyCountWord count =

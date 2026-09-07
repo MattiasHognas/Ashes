@@ -12,4 +12,7 @@ and collect =
             then acc
             else countDown(n - 1)
 
-Ashes.IO.print(length(countDown(10000001)))
+10000001
+|> countDown
+|> length
+|> Ashes.IO.print

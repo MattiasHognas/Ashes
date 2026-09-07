@@ -1832,7 +1832,10 @@ public sealed class Parser
             var right = ParseLogicalOr();
             left = op switch
             {
-                TokenKind.PipeGreater => RegisterExpr(new Expr.Call(right, left), start, AstSpans.GetOrDefault(right).End),
+                TokenKind.PipeGreater => RegisterExpr(
+                    new Expr.Call(right, left) { ArgumentListLayout = CallArgumentListLayout.Pipe },
+                    start,
+                    AstSpans.GetOrDefault(right).End),
                 TokenKind.PipeQuestionGreater => RegisterExpr(new Expr.ResultPipe(left, right), start, AstSpans.GetOrDefault(right).End),
                 TokenKind.PipeBangGreater => RegisterExpr(new Expr.ResultMapErrorPipe(left, right), start, AstSpans.GetOrDefault(right).End),
                 _ => throw new InvalidOperationException()

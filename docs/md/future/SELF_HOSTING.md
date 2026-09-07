@@ -2699,7 +2699,10 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
 - [~] **CLI-5** `fmt` discovery, preview/write behavior, malformed-file handling, and canonical exit codes.
   Done: sorted recursive discovery, `-w` vs. preview, changed-files-only writes, the inline-module
   skip, and stage 0's exit codes — `-w` output byte-identical to stage 0's. Open: `.editorconfig`
-  resolution and the elapsed-time clause in the write summary.
+  resolution (including `ashes_prefer_pipelines`, which the repository's own `.editorconfig` turns
+  on and which stage 1's `FormattingOptions.preferPipelines` already carries; until it is
+  resolved, stage 1's `fmt` formats with the option off and so leaves nested call chains as
+  calls where stage 0 writes pipelines) and the elapsed-time clause in the write summary.
 - [~] **CLI-6** `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, dependencies, and lock
   files. Done: all six — `init` byte-identical to stage 0; `add`/`remove` edit raw manifest JSON so
   unknown fields survive (one shared indented writer; `add` deliberately does not reproduce stage

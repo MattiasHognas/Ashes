@@ -8,13 +8,14 @@ let port = 6380
 
 let _banner = io.writeLine("key-value store listening on 127.0.0.1:6380")
 
-match tasks.run(async(match await server.listen(port) with
+match (match await server.listen(port) with
     | Error(bindError) -> Error(bindError)
     | Ok(listener) ->
         let recursive connLoop client buffer store =
             match parse(buffer) with
                 | RespMalformed(msg) ->
-                    let _sent = await tcp.send(client)(errorReply(msg))
+                    let _sent =
+                        await tcp.send(client)(errorReply(msg))
                     in
                         let _closed = await tcp.close(client)
                         in store
@@ -49,8 +50,16 @@ match tasks.run(async(match await server.listen(port) with
                         if acceptError == "__ashes_server_shutdown"
                         then Ok(Unit)
                         else Error(acceptError)
-                    | Ok(client) -> acceptLoop(connLoop(client)("")(store))
-            in acceptLoop(emptyStore(Unit)))) with
+                    | Ok(client) ->
+                        store
+                        |> connLoop(client)("")
+                        |> acceptLoop
+            in
+                Unit
+                |> emptyStore
+                |> acceptLoop)
+|> async
+|> tasks.run with
     | Ok(Ok(_stopped)) -> io.print("server stopped")
     | Ok(Error(loopError)) -> io.print(loopError)
     | Error(runError) -> io.print(runError)

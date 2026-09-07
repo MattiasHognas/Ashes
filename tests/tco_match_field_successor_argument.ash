@@ -21,7 +21,10 @@ let recursive sumList values =
 
 let advance r state =
     match state with
-        | S(perm, count) -> Continue(S(perm)(setAt(0)(r)(count)))(r)
+        | S(perm, count) ->
+            Continue(count
+            |> setAt(0)(r)
+            |> S(perm))(r)
 
 let finish state total =
     match state with
@@ -35,4 +38,6 @@ let recursive loop remaining state total =
             | Done -> finish(state)(total)
             | Continue(next, r) -> loop(remaining - 1)(next)(total + 1)
 
-Ashes.IO.print(loop(200000)(S([1, 2, 3])([0, 0, 0]))(0))
+0
+|> loop(200000)(S([1, 2, 3])([0, 0, 0]))
+|> Ashes.IO.print

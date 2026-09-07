@@ -1,6 +1,9 @@
 let map f value =
     match value with
-        | Ok(inner) -> Ok(f(inner))
+        | Ok(inner) ->
+            inner
+            |> f
+            |> Ok
         | Error(err) -> Error(err)
 
 let flatMap f value =
@@ -13,7 +16,10 @@ let bind = flatMap
 let mapError f value =
     match value with
         | Ok(inner) -> Ok(inner)
-        | Error(err) -> Error(f(err))
+        | Error(err) ->
+            err
+            |> f
+            |> Error
 
 let getOrElse fallback value =
     match value with

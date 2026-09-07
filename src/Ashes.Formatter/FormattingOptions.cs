@@ -22,6 +22,13 @@ public readonly record struct FormattingOptions
     public string NewLine { get; init; } = "\n";
 
     /// <summary>
+    /// When true, a chain of two or more nested calls is written as a <c>|&gt;</c> pipeline. Off by
+    /// default: a call written as a call stays a call, and only a pipeline written as one is laid
+    /// out as a pipeline.
+    /// </summary>
+    public bool PreferPipelines { get; init; }
+
+    /// <summary>
     /// Returns a copy with any out-of-range values replaced by defaults: a non-positive
     /// <see cref="IndentSize"/> becomes 4, and a <see cref="NewLine"/> other than <c>"\n"</c> or
     /// <c>"\r\n"</c> becomes <c>"\n"</c>.

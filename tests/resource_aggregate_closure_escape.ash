@@ -18,4 +18,7 @@ let boxed =
 in
     match boxed with
         | None -> Ashes.IO.print("none")
-        | Some(f) -> Ashes.IO.print(f(0))
+        | Some(f) ->
+            0
+            |> f
+            |> Ashes.IO.print

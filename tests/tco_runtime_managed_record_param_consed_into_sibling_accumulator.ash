@@ -34,4 +34,5 @@ let recursive reversed (items: List(State)) (acc: List(State)) =
 let collected = collect(20000)(State(count = 10000, label = "seed"))([])
 
 match total(collected)(0)(0) with
-    | (sum, labels) -> Ashes.IO.print(Ashes.Text.fromInt(sum) + " " + Ashes.Text.fromInt(labels) + " " + firstLabels(collected)(3) + "|" + firstLabels(reversed(collected)([]))(3))
+    | (sum, labels) ->
+        Ashes.IO.print(Ashes.Text.fromInt(sum) + " " + Ashes.Text.fromInt(labels) + " " + firstLabels(collected)(3) + "|" + firstLabels(reversed(collected)([]))(3))

@@ -21,9 +21,19 @@ let recursive loop (n: Int) (total: Int) =
     if n == 0
     then total
     else
-        let kept = decorate(fill(64)(Ashes.Text.fromInt(n)))
+        let kept =
+            n
+            |> Ashes.Text.fromInt
+            |> fill(64)
+            |> decorate
         in
-            let scratch = fill(64)(Ashes.Text.fromInt(n + 1))
+            let scratch =
+                n + 1
+                |> Ashes.Text.fromInt
+                |> fill(64)
             in loop(n - 1)(total + Ashes.Text.byteLength(kept) + Ashes.Text.byteLength(scratch))
 
-Ashes.IO.print(Ashes.Text.fromInt(loop(40000)(0)))
+0
+|> loop(40000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

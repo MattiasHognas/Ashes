@@ -210,6 +210,40 @@ Spacing
 - Binary operators use spaces around the operator.
 - Comparison operators use spaces around the operator.
 - Function calls keep their existing canonical form: `f(x)` for parenthesized calls and `f x` for whitespace application.
+
+Pipelines
+
+- A `|>`, `|?>`, or `|!>` written in the source stays a pipeline, and a nested call written as a
+  call stays a call. The formatter never rewrites one form into the other, and what else the file
+  contains has no bearing on either.
+- With `ashes_prefer_pipelines = true` in the governing `.editorconfig`, a chain of two or more
+  nested calls (`print(double(inc(1)))`) is written as a pipeline (`1 |> inc |> double |> print`)
+  as if the source had spelled it that way; a chain that reaches a constructor stops there
+  (`Some(x) |> f |> g`), and a chain with a `let`, `if`, `match`, or `handle` stage is left as
+  calls. Pipelines written in the source are laid out the same way with or without the option.
+- A pipeline of two or more stages is laid out one stage per line: the piped value first, then
+  each stage on its own line at the same indentation, starting with its operator. This applies
+  wherever the pipeline is a whole expression: a `let` value or body, a branch or arm body of
+  `if`, `match`, or `handle`, a lambda body, a top-level declaration's value, the trailing
+  expression, a call argument, a list or tuple element, or a parenthesized value.
+- A single-stage pipeline stays inline (`x |> f`), and so does a pipeline that is an operand of
+  another operator (`(x |> f |> g) + 1`), parenthesized where the surrounding precedence
+  requires it.
+- A stage is written like a call's function: a lambda, `let`, `if`, `match`, or `handle` stage is
+  parenthesized.
+
+Example:
+
+```ash
+let total =
+    items
+    |> Ashes.Collection.List.map(given (item) -> item * 2)
+    |> Ashes.Collection.List.sum
+
+let label = total |> Ashes.Text.fromInt
+
+Ashes.IO.print(Ashes.Text.trim(label))
+```
 - An inline parenthesized argument list remains inline. When the first written argument starts on a
   new line, the formatter preserves a multiline parenthesized call: every argument appears on its own
   line, indented one level; commas follow every argument except the last; and the closing parenthesis

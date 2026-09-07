@@ -432,13 +432,19 @@ let recursive discoverSourceFunctionOrigins (expr: Expr) (enclosingSource: Maybe
             let recursive go elems =
                 match elems with
                     | [] -> []
-                    | head :: tail -> append(discoverSourceFunctionOrigins(head)(enclosingSource)(sourceContext))(go(tail))
+                    | head :: tail ->
+                        tail
+                        |> go
+                        |> append(discoverSourceFunctionOrigins(head)(enclosingSource)(sourceContext))
             in go(elements)
         | ExprList(elements, _hasTrailing) ->
             let recursive go elems =
                 match elems with
                     | [] -> []
-                    | head :: tail -> append(discoverSourceFunctionOrigins(head)(enclosingSource)(sourceContext))(go(tail))
+                    | head :: tail ->
+                        tail
+                        |> go
+                        |> append(discoverSourceFunctionOrigins(head)(enclosingSource)(sourceContext))
             in go(elements)
         | ExprCons(head, tail) ->
             append(
@@ -459,13 +465,23 @@ let recursive discoverSourceFunctionOrigins (expr: Expr) (enclosingSource: Maybe
                                     match guard with
                                         | Some(g) -> discoverSourceFunctionOrigins(g)(enclosingSource)(sourceContext)
                                         | None -> []
-                                in append(bodyOrigins)(append(guardOrigins)(goArms(tail)))
-                in append(scrutOrigins)(goArms(arms))
+                                in
+                                    tail
+                                    |> goArms
+                                    |> append(guardOrigins)
+                                    |> append(bodyOrigins)
+                in
+                    arms
+                    |> goArms
+                    |> append(scrutOrigins)
         | ExprRecord(_name, fields, _hasTrailing) ->
             let recursive goFields flds =
                 match flds with
                     | [] -> []
-                    | (_fName, fVal) :: tail -> append(discoverSourceFunctionOrigins(fVal)(enclosingSource)(sourceContext))(goFields(tail))
+                    | (_fName, fVal) :: tail ->
+                        tail
+                        |> goFields
+                        |> append(discoverSourceFunctionOrigins(fVal)(enclosingSource)(sourceContext))
             in goFields(fields)
         | ExprRecordUpdate(target, fields) ->
             let targetOrigins = discoverSourceFunctionOrigins(target)(enclosingSource)(sourceContext)
@@ -473,8 +489,14 @@ let recursive discoverSourceFunctionOrigins (expr: Expr) (enclosingSource: Maybe
                 let recursive goFields flds =
                     match flds with
                         | [] -> []
-                        | (_fName, fVal) :: tail -> append(discoverSourceFunctionOrigins(fVal)(enclosingSource)(sourceContext))(goFields(tail))
-                in append(targetOrigins)(goFields(fields))
+                        | (_fName, fVal) :: tail ->
+                            tail
+                            |> goFields
+                            |> append(discoverSourceFunctionOrigins(fVal)(enclosingSource)(sourceContext))
+                in
+                    fields
+                    |> goFields
+                    |> append(targetOrigins)
         | ExprHandle(body, arms) ->
             let bodyOrigins = discoverSourceFunctionOrigins(body)(enclosingSource)(sourceContext)
             in
@@ -487,5 +509,8 @@ let recursive discoverSourceFunctionOrigins (expr: Expr) (enclosingSource: Maybe
                             )(
                                 goArms(tail)
                             )
-                in append(bodyOrigins)(goArms(arms))
+                in
+                    arms
+                    |> goArms
+                    |> append(bodyOrigins)
         | _ -> []

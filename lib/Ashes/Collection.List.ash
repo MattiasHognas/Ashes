@@ -2,7 +2,8 @@ let foldLeft f initial xs =
     (let recursive go acc rest =
         match rest with
             | [] -> acc
-            | head :: tail -> go(f(acc)(head))(tail)
+            | head :: tail ->
+                go(f(acc)(head))(tail)
     in go(initial)(xs))
 
 let fold = foldLeft
@@ -83,7 +84,10 @@ let recursive sortBy before xs =
         | single :: [] -> single :: []
         | _ :: _ ->
             match splitAlt(xs) with
-                | (left, right) -> merge(before)(sortBy(before)(left))(sortBy(before)(right))
+                | (left, right) ->
+                    right
+                    |> sortBy(before)
+                    |> merge(before)(sortBy(before)(left))
 
 let sort values =
     sortBy(given (left) ->

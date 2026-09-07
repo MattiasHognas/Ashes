@@ -51,7 +51,8 @@ let recursive collectRemoveArgs args positionals projectOption =
     match args with
         | [] -> (positionals, projectOption)
         | "--project" :: value :: rest -> collectRemoveArgs(rest)(positionals)(Some(value))
-        | other :: rest -> collectRemoveArgs(rest)(append(positionals)([other]))(projectOption)
+        | other :: rest ->
+            collectRemoveArgs(rest)(append(positionals)([other]))(projectOption)
 
 // Mirrors stage 0's `RunRemove` (`src/Ashes.Cli/Program.cs`): a bare `--help`/`-h` short-circuits;
 // otherwise the first positional argument is the package name and `--project <manifest>` is
@@ -109,7 +110,9 @@ let recursive removeObjectField (key: Str) (obj: RemoveJson) =
 let dropFieldIfEmpty fieldName root =
     match getObjectField(fieldName)(root) with
         | Some(fieldValue) ->
-            if isEmptyObject(asJsonObjectOrEmpty(fieldValue))
+            if fieldValue
+            |> asJsonObjectOrEmpty
+            |> isEmptyObject
             then
                 match removeObjectField(fieldName)(root) with
                     | (updatedRoot, _removed) -> updatedRoot
@@ -121,10 +124,15 @@ let dropFieldIfEmpty fieldName root =
 let removePackageFromField fieldName packageName root =
     match getObjectField(fieldName)(root) with
         | Some(fieldValue) ->
-            match removeObjectField(packageName)(asJsonObjectOrEmpty(fieldValue)) with
+            match fieldValue
+            |> asJsonObjectOrEmpty
+            |> removeObjectField(packageName) with
                 | (updatedField, removed) ->
                     if removed
-                    then (dropFieldIfEmpty(fieldName)(setJsonObjectField(fieldName)(updatedField)(root)), true)
+                    then
+                        (root
+                        |> setJsonObjectField(fieldName)(updatedField)
+                        |> dropFieldIfEmpty(fieldName), true)
                     else (root, false)
         | None -> (root, false)
 

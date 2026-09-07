@@ -27,21 +27,37 @@ let dummyFacts ordinal name slot =
     )
 
 let testOrdinaryTailCallDetection unit =
-    (let _ = test.assertEqual(true)(isTailPosition(InTailPos))
+    (let _ =
+        InTailPos
+        |> isTailPosition
+        |> test.assertEqual(true)
     in
-        let _ = test.assertEqual(false)(isTailPosition(NotInTailPos))
+        let _ =
+            NotInTailPos
+            |> isTailPosition
+            |> test.assertEqual(false)
         in
             let unaryLam = ExprLambda("x")(ExprVar("x"))(None)
             in
-                let binaryLam = ExprLambda("x")(ExprLambda("y")(ExprVar("x"))(None))(None)
+                let binaryLam =
+                    ExprLambda("x")(ExprLambda("y")(ExprVar("x"))(None))(None)
                 in
-                    let _ = test.assertEqual(1)(countLambdaArity(0)(unaryLam))
+                    let _ =
+                        unaryLam
+                        |> countLambdaArity(0)
+                        |> test.assertEqual(1)
                     in
-                        let _ = test.assertEqual(2)(countLambdaArity(0)(binaryLam))
+                        let _ =
+                            binaryLam
+                            |> countLambdaArity(0)
+                            |> test.assertEqual(2)
                         in
                             let params = collectLambdaParamNames([])(binaryLam)
                             in
-                                let _ = test.assertEqual(2)(Ashes.Collection.List.length(params))
+                                let _ =
+                                    params
+                                    |> Ashes.Collection.List.length
+                                    |> test.assertEqual(2)
                                 in
                                     let tailCallExpr =
                                         ExprIf(
@@ -72,9 +88,15 @@ let testOrdinaryTailCallDetection unit =
                                                 ExprVar("c")
                                             )
                                         in
-                                            let _ = test.assertEqual(true)(hasTailSelfCalls(tailCallExpr)("myFunc")(2))
+                                            let _ =
+                                                2
+                                                |> hasTailSelfCalls(tailCallExpr)("myFunc")
+                                                |> test.assertEqual(true)
                                             in
-                                                let _ = test.assertEqual(false)(hasTailSelfCalls(nonTailCallExpr)("myFunc")(1))
+                                                let _ =
+                                                    1
+                                                    |> hasTailSelfCalls(nonTailCallExpr)("myFunc")
+                                                    |> test.assertEqual(false)
                                                 in Unit)
 
 let testMutualRecursionTcoPlanning unit =
@@ -109,9 +131,15 @@ let testMutualRecursionTcoPlanning unit =
                                 in
                                     let dispatchParams = buildMutualDispatchParamNames(1)(plan.sharedParamNames)
                                     in
-                                        let _ = test.assertEqual(2)(Ashes.Collection.List.length(dispatchParams))
+                                        let _ =
+                                            dispatchParams
+                                            |> Ashes.Collection.List.length
+                                            |> test.assertEqual(2)
                                         in
-                                            let _ = test.assertEqual("_recgroup_wrapper_isEven")(formatMutualWrapperLabel("isEven"))
+                                            let _ =
+                                                "isEven"
+                                                |> formatMutualWrapperLabel
+                                                |> test.assertEqual("_recgroup_wrapper_isEven")
                                             in Unit)
 
 let testMutualRecursionMismatches unit =
@@ -272,17 +300,37 @@ let testTcoPlacementTransitions unit =
 let testOperatorOperandsAreNotTailCalls unit =
     (let selfCall = ExprCall(ExprVar("f"))(ExprVar("x"))(false)(callArgumentsInline)
     in
-        let _ = test.assertEqual(true)(hasTailSelfCalls(ExprIf(ExprVar("even"))(ExprAdd(ExprInt(1))(selfCall))(selfCall))("f")(1))
+        let _ =
+            1
+            |> hasTailSelfCalls(ExprIf(ExprVar("even"))(ExprAdd(ExprInt(1))(selfCall))(selfCall))("f")
+            |> test.assertEqual(true)
         in
-            let _ = test.assertEqual(false)(hasTailSelfCalls(ExprAdd(ExprInt(1))(selfCall))("f")(1))
+            let _ =
+                1
+                |> hasTailSelfCalls(ExprAdd(ExprInt(1))(selfCall))("f")
+                |> test.assertEqual(false)
             in
-                let _ = test.assertEqual(false)(hasTailSelfCalls(ExprAdd(selfCall)(ExprInt(1)))("f")(1))
+                let _ =
+                    1
+                    |> hasTailSelfCalls(ExprAdd(selfCall)(ExprInt(1)))("f")
+                    |> test.assertEqual(false)
                 in
-                    let _ = test.assertEqual(false)(hasTailSelfCalls(ExprEqual(selfCall)(ExprInt(1)))("f")(1))
+                    let _ =
+                        1
+                        |> hasTailSelfCalls(ExprEqual(selfCall)(ExprInt(1)))("f")
+                        |> test.assertEqual(false)
                     in
-                        let _ = test.assertEqual(false)(hasTailSelfCalls(ExprLogicalNot(ExprEqual(selfCall)(ExprInt(1))))("f")(1))
+                        let _ =
+                            1
+                            |> hasTailSelfCalls(ExprInt(1)
+                            |> ExprEqual(selfCall)
+                            |> ExprLogicalNot)("f")
+                            |> test.assertEqual(false)
                         in
-                            let _ = test.assertEqual(false)(hasTailSelfCalls(ExprIf(ExprVar("even"))(ExprAdd(ExprInt(1))(selfCall))(ExprInt(0)))("f")(1))
+                            let _ =
+                                1
+                                |> hasTailSelfCalls(ExprIf(ExprVar("even"))(ExprAdd(ExprInt(1))(selfCall))(ExprInt(0)))("f")
+                                |> test.assertEqual(false)
                             in Unit)
 
 let runTcoTests unit =

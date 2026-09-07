@@ -16,10 +16,16 @@ let recursive loop tag i n m =
     if i >= n
     then m
     else
-        let b0 = Ashes.Number.UInt.toInt(Ashes.Byte.get(tag)(0))
+        let b0 =
+            0
+            |> Ashes.Byte.get(tag)
+            |> Ashes.Number.UInt.toInt
         in
             let key = Ashes.Text.fromInt(i)
-            in loop(tag)(i + 1)(n)(Ashes.Collection.Map.setWith(Ashes.Text.compare)(key)(b0 + i)(m))
+            in
+                m
+                |> Ashes.Collection.Map.setWith(Ashes.Text.compare)(key)(b0 + i)
+                |> loop(tag)(i + 1)(n)
 
 let tag = Ashes.Byte.fromText("Z")
 

@@ -7,4 +7,6 @@ let recursive firstMatch key entries =
             then v
             else firstMatch(key)(tail)
 
-Ashes.IO.print(firstMatch("y")([("x", "a"), ("y", "b"), ("z", "c")]))
+[("x", "a"), ("y", "b"), ("z", "c")]
+|> firstMatch("y")
+|> Ashes.IO.print

@@ -84,7 +84,8 @@ let recursive reachesAt (constructors: List(Str)) (callees: List((Str, List(Str)
             | ExprTuple(elements) -> anyReaches(constructors)(callees)(depth)(elements)(variable)
             | ExprList(elements, _multiline) -> anyReaches(constructors)(callees)(depth)(elements)(variable)
             | ExprCons(head, tail) -> reachesAt(constructors)(callees)(depth)(head)(variable) || reachesAt(constructors)(callees)(depth)(tail)(variable)
-            | ExprCall(_callee, _argument, _sugar, _layout) -> callReaches(constructors)(callees)(depth)(callSpineOf(expression)([]))(variable)
+            | ExprCall(_callee, _argument, _sugar, _layout) ->
+                callReaches(constructors)(callees)(depth)(callSpineOf(expression)([]))(variable)
             | _ -> false
 and anyReaches (constructors: List(Str)) (callees: List((Str, List(Str), Expr))) (depth: Int) (expressions: List(Expr)) (variable: Str) =
     match expressions with

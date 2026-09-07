@@ -13,6 +13,11 @@ let recursive total n acc =
     in
         if n == 0
         then acc
-        else total(n - 1)(helper(acc)))
+        else
+            acc
+            |> helper
+            |> total(n - 1))
 
-Ashes.IO.print(total(4)(0))
+0
+|> total(4)
+|> Ashes.IO.print

@@ -9,7 +9,8 @@ let inspect unit =
     (let recursive climb style directory count =
         if count <= 0
         then Ok(directory)
-        else climb(style)(path.parent(style)(directory))(count - 1)
+        else
+            climb(style)(path.parent(style)(directory))(count - 1)
     in
         let? current = Ashes.IO.Environment.currentDirectory(Unit)
         in

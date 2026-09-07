@@ -115,14 +115,21 @@ and renderDependencyChildrenList prefix ancestors children edges versions =
     match children with
         | [] -> []
         | namespace :: [] -> renderDependencyChild(prefix)(ancestors)(namespace)(edges)(versions)(true)
-        | namespace :: rest -> append(renderDependencyChild(prefix)(ancestors)(namespace)(edges)(versions)(false))(renderDependencyChildrenList(prefix)(ancestors)(rest)(edges)(versions))
-and renderDependencyChildren prefix ancestors namespace edges versions = renderDependencyChildrenList(prefix)(ancestors)(treeEdgesFor(namespace)(edges))(edges)(versions)
+        | namespace :: rest ->
+            versions
+            |> renderDependencyChildrenList(prefix)(ancestors)(rest)(edges)
+            |> append(renderDependencyChild(prefix)(ancestors)(namespace)(edges)(versions)(false))
+and renderDependencyChildren prefix ancestors namespace edges versions =
+    renderDependencyChildrenList(prefix)(ancestors)(treeEdgesFor(namespace)(edges))(edges)(versions)
 
 let recursive renderRootEntries entries edges versions =
     match entries with
         | [] -> []
         | (namespace, isPath) :: [] -> renderRootEntry(namespace)(isPath)(edges)(versions)(true)
-        | (namespace, isPath) :: rest -> append(renderRootEntry(namespace)(isPath)(edges)(versions)(false))(renderRootEntries(rest)(edges)(versions))
+        | (namespace, isPath) :: rest ->
+            versions
+            |> renderRootEntries(rest)(edges)
+            |> append(renderRootEntry(namespace)(isPath)(edges)(versions)(false))
 and renderRootEntry namespace isPath edges versions isLast =
     (let connector = treeConnector(isLast)
     in
@@ -167,7 +174,10 @@ let recursive treeLookupNamespaceByDir (directory: Str) (table: List((Str, Str))
 let dependencyTreeEntry style projectDirectory namespaceByDir dependency =
     match dependency with
         | ProjectDependency { name = name, source = PathDependency(path, _versionConstraint) } ->
-            let dependencyDirectory = normalize(style)(join(style)(projectDirectory)(path))
+            let dependencyDirectory =
+                path
+                |> join(style)(projectDirectory)
+                |> normalize(style)
             in
                 match treeLookupNamespaceByDir(dependencyDirectory)(namespaceByDir) with
                     | Some(namespace) -> (namespace, true)
@@ -179,14 +189,19 @@ let dependencyTreeEntry style projectDirectory namespaceByDir dependency =
 // exactly.
 let directDependencyTreeEntries style projectDirectory namespaceByDir manifest =
     match manifest with
-        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = devDependencies, overrides = _overrides } -> append(map(dependencyTreeEntry(style)(projectDirectory)(namespaceByDir))(dependencies))(map(dependencyTreeEntry(style)(projectDirectory)(namespaceByDir))(devDependencies))
+        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = devDependencies, overrides = _overrides } ->
+            devDependencies
+            |> map(dependencyTreeEntry(style)(projectDirectory)(namespaceByDir))
+            |> append(map(dependencyTreeEntry(style)(projectDirectory)(namespaceByDir))(dependencies))
 
 let lockedPackageEntry locked =
     match locked with
         | LockedPackage { namespace = namespace, version = version, source = _source, hash = _hash, dependencies = dependencies } -> (namespace, version, dependencies)
 
 let readLockEntries style projectFilePath =
-    match Ashes.IO.File.readText(lockFilePath(style)(projectFilePath)) with
+    match projectFilePath
+    |> lockFilePath(style)
+    |> Ashes.IO.File.readText with
         | Error(_) -> []
         | Ok(source) ->
             match parseProjectLockFile(source) with
@@ -225,12 +240,19 @@ let runTreeInProject style manifestPath =
                     match resolveProjectDependencyGraph(style)(layout) with
                         | Error(_) -> TreeFailed("Failed to resolve the project's dependency graph.")
                         | Ok(ProjectDependencyGraph { dependencies = resolvedDependencies }) ->
-                            let entries = directDependencyTreeEntries(style)(projectDirectory)(treeNamespaceByDirFor(resolvedDependencies))(manifest)
+                            let entries =
+                                directDependencyTreeEntries(style)(projectDirectory)(treeNamespaceByDirFor(resolvedDependencies))(manifest)
                             in
                                 let lockEntries = readLockEntries(style)(manifestPath)
                                 in
-                                    let lines = renderDependencyTree(manifestRootLabel(manifest))(entries)(lockEdges(lockEntries))(lockVersions(lockEntries))
-                                    in TreeRendered(Ashes.Text.join("\n")(lines))
+                                    let lines =
+                                        lockEntries
+                                        |> lockVersions
+                                        |> renderDependencyTree(manifestRootLabel(manifest))(entries)(lockEdges(lockEntries))
+                                    in
+                                        lines
+                                        |> Ashes.Text.join("\n")
+                                        |> TreeRendered
 
 // Resolves the manifest to use (an explicit `--project`, or discovery upward from the current
 // directory) and runs `runTreeInProject` against it.

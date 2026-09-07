@@ -26,12 +26,19 @@ let cmp a b =
 let recursive inner i lim m =
     if i > lim
     then m
-    else inner(i + 1)(lim)(Ashes.Collection.Map.setWith(cmp)(i)(i * 10)(m))
+    else
+        m
+        |> Ashes.Collection.Map.setWith(cmp)(i)(i * 10)
+        |> inner(i + 1)(lim)
 
 let recursive outer b nb m =
     if b >= nb
     then m
-    else outer(b + 1)(nb)(inner(0)(4)(Ashes.Collection.Map.setWith(cmp)(0)(0)(m)))
+    else
+        m
+        |> Ashes.Collection.Map.setWith(cmp)(0)(0)
+        |> inner(0)(4)
+        |> outer(b + 1)(nb)
 
 let seeded = Ashes.Collection.Map.setWith(cmp)(0)(0)(Ashes.Collection.Map.empty)
 
@@ -39,4 +46,5 @@ let final = outer(0)(3)(seeded)
 in
     match Ashes.Collection.Map.getWith(cmp)(4)(final) with
         | None -> Ashes.IO.print("fail")
-        | Some(v) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + " " + Ashes.Text.fromInt(v))
+        | Some(v) ->
+            Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + " " + Ashes.Text.fromInt(v))

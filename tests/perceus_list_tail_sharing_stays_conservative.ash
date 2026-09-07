@@ -24,6 +24,12 @@ let recursive sum values acc =
 let recursive repeat n total =
     if n == 0
     then total
-    else repeat(n - 1)(total + sum(passThroughHead(build(500)([])))(0))
+    else
+        repeat(n - 1)(total + sum([]
+        |> build(500)
+        |> passThroughHead)(0))
 
-io.print(text.fromInt(repeat(1000)(0)))
+0
+|> repeat(1000)
+|> text.fromInt
+|> io.print

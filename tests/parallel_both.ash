@@ -23,4 +23,5 @@ let scalars =
 let lists =
     match Ashes.Task.Parallel.both(given (u) -> 0)(given (u) -> 1 :: 2 :: 3 :: []) with
         | (z, xs) -> showList(xs)
-in Ashes.IO.print(scalars + "|" + lists + "|" + Ashes.Text.fromInt(psum(0)(1000)))
+in
+    Ashes.IO.print(scalars + "|" + lists + "|" + Ashes.Text.fromInt(psum(0)(1000)))

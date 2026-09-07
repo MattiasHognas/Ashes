@@ -23,4 +23,8 @@ let s2 =
     match regex.compile("Q") with
         | Ok(rx) -> regex.replace(rx)(s1)("X")
         | Error(e) -> s1
-in io.print(text.fromInt(text.byteLength(s2)))
+in
+    s2
+    |> text.byteLength
+    |> text.fromInt
+    |> io.print

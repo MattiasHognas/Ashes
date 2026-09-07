@@ -16,5 +16,8 @@ let compute =
     in go(5)(0))
 in
     match Ashes.Task.run(compute) with
-        | Ok(n) -> Ashes.IO.print(Ashes.Text.fromInt(n))
+        | Ok(n) ->
+            n
+            |> Ashes.Text.fromInt
+            |> Ashes.IO.print
         | Error(_e2) -> Ashes.IO.print("err")

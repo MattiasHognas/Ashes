@@ -7,7 +7,10 @@ let b = Ashes.Byte.fromText("Hamburg;12.0")
 let r =
     match Ashes.Byte.scanHash(b)(59)(0) with
         | (idx, h) ->
-            let want = Ashes.Byte.hash(Ashes.Byte.fromText("Hamburg"))
+            let want =
+                "Hamburg"
+                |> Ashes.Byte.fromText
+                |> Ashes.Byte.hash
             in
                 if h == want
                 then "idx=" + Ashes.Text.fromInt(idx) + " hash-ok"

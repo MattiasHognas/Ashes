@@ -1346,7 +1346,7 @@ and parserParsePipeTail left state =
                                     parserAt(
                                         parserExprStart(left),
                                         parserExprEnd(right),
-                                        ExprCall(right)(left)(false)(callArgumentsInline)
+                                        ExprCall(right)(left)(false)(callArgumentsPipe)
                                     ),
                                     afterRight
                                 )

@@ -205,8 +205,14 @@ let recursive substituteAliasType parameterIds arguments semanticType =
             match findAliasArgument(parameterId)(parameterIds)(arguments) with
                 | Some(argument) -> argument
                 | None -> semanticType
-        | SemList(element) -> SemList(substituteAliasType(parameterIds)(arguments)(element))
-        | SemTuple(elements) -> SemTuple(substituteAliasTypes(parameterIds)(arguments)(elements))
+        | SemList(element) ->
+            element
+            |> substituteAliasType(parameterIds)(arguments)
+            |> SemList
+        | SemTuple(elements) ->
+            elements
+            |> substituteAliasTypes(parameterIds)(arguments)
+            |> SemTuple
         | SemFunction(argument, result, capabilityRow) ->
             let substitutedArgument = substituteAliasType(parameterIds)(arguments)(argument)
             in
@@ -215,7 +221,10 @@ let recursive substituteAliasType parameterIds arguments semanticType =
                     let substitutedRow =
                         match capabilityRow with
                             | None -> None
-                            | Some(row) -> Some(substituteAliasType(parameterIds)(arguments)(row))
+                            | Some(row) ->
+                                row
+                                |> substituteAliasType(parameterIds)(arguments)
+                                |> Some
                     in SemFunction(substitutedArgument)(substitutedResult)(substitutedRow)
         | SemCapability(name, capabilityArguments) ->
             SemCapability(
@@ -228,7 +237,10 @@ let recursive substituteAliasType parameterIds arguments semanticType =
                 let substitutedTail =
                     match tail with
                         | None -> None
-                        | Some(tailType) -> Some(substituteAliasType(parameterIds)(arguments)(tailType))
+                        | Some(tailType) ->
+                            tailType
+                            |> substituteAliasType(parameterIds)(arguments)
+                            |> Some
                 in SemRow(substitutedCapabilities)(substitutedTail)
         | SemNamed(symbolId, name, typeArguments) ->
             SemNamed(
@@ -236,7 +248,10 @@ let recursive substituteAliasType parameterIds arguments semanticType =
                 name,
                 substituteAliasTypes(parameterIds)(arguments)(typeArguments)
             )
-        | SemPointer(pointee) -> SemPointer(substituteAliasType(parameterIds)(arguments)(pointee))
+        | SemPointer(pointee) ->
+            pointee
+            |> substituteAliasType(parameterIds)(arguments)
+            |> SemPointer
         | _ -> semanticType
 and substituteAliasTypes parameterIds arguments semanticTypes =
     match semanticTypes with
@@ -270,14 +285,18 @@ let recursive resolveNamed name arguments context =
                 | ([], Some(primitive)) -> TypeResolutionResult(semanticType = primitive, error = None)
                 | (_, Some(_primitive)) ->
                     TypeResolutionResult(semanticType = SemNever, error = Some(
-                        TypeNameArityMismatch(name)(0)(typeListLength(arguments))
+                        arguments
+                        |> typeListLength
+                        |> TypeNameArityMismatch(name)(0)
                     ))
                 | _ ->
                     match (name, arguments) with
                         | ("List", element :: []) -> TypeResolutionResult(semanticType = SemList(element), error = None)
                         | ("List", _) ->
                             TypeResolutionResult(semanticType = SemNever, error = Some(
-                                TypeNameArityMismatch(name)(1)(typeListLength(arguments))
+                                arguments
+                                |> typeListLength
+                                |> TypeNameArityMismatch(name)(1)
                             ))
                         | ("Ptr", pointee :: []) ->
                             TypeResolutionResult(semanticType = SemPointer(
@@ -285,7 +304,9 @@ let recursive resolveNamed name arguments context =
                             ), error = None)
                         | ("Ptr", _) ->
                             TypeResolutionResult(semanticType = SemNever, error = Some(
-                                TypeNameArityMismatch(name)(1)(typeListLength(arguments))
+                                arguments
+                                |> typeListLength
+                                |> TypeNameArityMismatch(name)(1)
                             ))
                         | (_, []) ->
                             match findTypeParameter(name)(parameters) with
@@ -314,7 +335,10 @@ and resolveTypeDefinition name arguments definitions =
             else
                 TypeResolutionResult(
                     semanticType = SemNever,
-                    error = Some(TypeNameArityMismatch(name)(typeListLength(parameterIds))(typeListLength(arguments)))
+                    error = arguments
+                    |> typeListLength
+                    |> TypeNameArityMismatch(name)(typeListLength(parameterIds))
+                    |> Some
                 )
         | Some(AliasTypeDefinition(_definitionName, parameterIds, target)) ->
             let expectedArity = typeListLength(parameterIds)
@@ -337,7 +361,9 @@ and resolveTypeDefinition name arguments definitions =
             then TypeResolutionResult(semanticType = SemOpaque(definitionName), error = None)
             else
                 TypeResolutionResult(semanticType = SemNever, error = Some(
-                    TypeNameArityMismatch(name)(0)(typeListLength(arguments))
+                    arguments
+                    |> typeListLength
+                    |> TypeNameArityMismatch(name)(0)
                 ))
 
 let resolveSemanticTypeApplication name arguments context = resolveNamed(name)(arguments)(context)
@@ -352,7 +378,10 @@ let recursive semanticRuntimeRepresentation semanticType context =
                     )(context)
                 | Some(_ordinaryDefinition) -> semanticType
                 | None -> semanticType
-        | (SemPointer(pointee), _) -> SemPointer(semanticRuntimeRepresentation(pointee)(context))
+        | (SemPointer(pointee), _) ->
+            context
+            |> semanticRuntimeRepresentation(pointee)
+            |> SemPointer
         | _ -> semanticType
 and findZeroCostTypeDefinition symbolId definitions =
     match definitions with
@@ -432,7 +461,10 @@ and resolveTypeExpression typeExpression context =
                                                     let row =
                                                         match (resolvedCapabilities, tailName) with
                                                             | ([], None) -> None
-                                                            | (_, None) -> Some(SemRow(resolvedCapabilities)(None))
+                                                            | (_, None) ->
+                                                                None
+                                                                |> SemRow(resolvedCapabilities)
+                                                                |> Some
                                                             | (_, Some(_)) ->
                                                                 Some(
                                                                     SemRow(resolvedCapabilities)(Some(tailType))
@@ -477,7 +509,10 @@ let isLowerTypeName name =
         if Ashes.Byte.length(bytes) <= 0
         then false
         else
-            let first = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(0))
+            let first =
+                0
+                |> Ashes.Byte.get(bytes)
+                |> Ashes.Number.UInt.toInt
             in
                 if first >= 97
                 then first <= 122

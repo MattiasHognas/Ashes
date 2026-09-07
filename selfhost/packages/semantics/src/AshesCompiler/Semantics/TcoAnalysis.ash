@@ -123,7 +123,9 @@ let checkTailApp targetNames arity expr acc =
         | None -> acc
 
 let recursive collectTailCallsInExpr targetNames arity inTail expr acc =
-    if notBool(isTailPosition(inTail))
+    if inTail
+    |> isTailPosition
+    |> notBool
     then acc
     else
         match expr with
@@ -248,13 +250,17 @@ let tryPlanMutualRecursionTco groupName members =
                         let allSameArity =
                             map(given (m) -> getMemberArity(m) == firstArity)(members)
                         in
-                            if notBool(checkAllBooleans(allSameArity))
+                            if allSameArity
+                            |> checkAllBooleans
+                            |> notBool
                             then None
                             else
                                 let allParamTypes =
                                     map(given (m) -> getMemberParamTypes(m))(members)
                                 in
-                                    if notBool(checkAllParamsMatch(firstArity)(allParamTypes))
+                                    if allParamTypes
+                                    |> checkAllParamsMatch(firstArity)
+                                    |> notBool
                                     then None
                                     else
                                         let firstReturnType = getMemberReturnType(first)
@@ -262,7 +268,9 @@ let tryPlanMutualRecursionTco groupName members =
                                             let allReturnTypes =
                                                 map(given (m) -> getMemberReturnType(m))(members)
                                             in
-                                                if notBool(checkAllEqualTypes(firstReturnType)(allReturnTypes))
+                                                if allReturnTypes
+                                                |> checkAllEqualTypes(firstReturnType)
+                                                |> notBool
                                                 then None
                                                 else
                                                     let dispatchName = "__recgroup_dispatch_" + groupName

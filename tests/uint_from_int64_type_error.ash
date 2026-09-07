@@ -3,4 +3,8 @@
 import Ashes.IO
 import Ashes.Text
 import Ashes.Number.UInt
-Ashes.IO.print(Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Number.UInt.fromInt64(5u8))))
+5u8
+|> Ashes.Number.UInt.fromInt64
+|> Ashes.Number.UInt.toInt
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

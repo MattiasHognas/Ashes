@@ -24,7 +24,10 @@ let compile pattern =
     (let code = Ashes.Internal.Regex.compileRaw(pattern)
     in
         if code == 0
-        then Error(Ashes.Internal.Regex.compileError(pattern))
+        then
+            pattern
+            |> Ashes.Internal.Regex.compileError
+            |> Error
         else Ok(CompiledRegex(code)))
 
 let isMatch regex text =

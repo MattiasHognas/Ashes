@@ -1385,12 +1385,7 @@ static string FormatAshSourceBodyToFixedPoint(string sourceWithoutImports, Forma
         var program = new Parser(current, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var formattedBody = Formatter.Format(
-            program,
-            preferPipelines: current.Contains("|>", StringComparison.Ordinal)
-                || current.Contains("|?>", StringComparison.Ordinal)
-                || current.Contains("|!>", StringComparison.Ordinal),
-            options: formattingOptions);
+        var formattedBody = Formatter.Format(program, formattingOptions);
         // The AST carries no trivia, so the formatter alone would drop every non-leading comment;
         // reinsert standalone comment lines at their anchored positions (same as LSP formatting).
         return CommentReinserter.ReinsertStandaloneCommentLines(current, formattedBody, lineEnding);

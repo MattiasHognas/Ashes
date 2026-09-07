@@ -35,10 +35,12 @@ let recursive loopB s p n =
         | Acc(a, b) ->
             if n <= 0
             then a + b + slen(s)(0)
-            else loopB(s + "q")(Acc(a + 1)(b + 1))(n - 1)
+            else
+                loopB(s + "q")(Acc(a + 1)(b + 1))(n - 1)
 
 let ra = loopA("")(0 :: [])(5)
 
-let rb = loopB("")(Acc(0)(0))(5)
+let rb =
+    loopB("")(Acc(0)(0))(5)
 
 Ashes.IO.print(Ashes.Text.fromInt(ra) + " " + Ashes.Text.fromInt(rb))

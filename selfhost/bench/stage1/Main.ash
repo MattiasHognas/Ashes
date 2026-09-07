@@ -35,7 +35,9 @@ let recursive readSources paths acc =
             if text.trim(path) == ""
             then readSources(rest)(acc)
             else
-                match file.readText(text.trim(path)) with
+                match path
+                |> text.trim
+                |> file.readText with
                     | Error(_) -> readSources(rest)(acc)
                     | Ok(source) ->
                         match parseImportHeader(source) with
@@ -83,7 +85,8 @@ let recursive parseAll sources acc =
 let recursive countFormatted programs acc =
     match programs with
         | [] -> acc
-        | (program, _importFree) :: rest -> countFormatted(rest)(acc + text.byteLength(formatProgram(program)))
+        | (program, _importFree) :: rest ->
+            countFormatted(rest)(acc + text.byteLength(formatProgram(program)))
 
 let recursive countInferred environment programs acc =
     match programs with
@@ -146,10 +149,13 @@ match io.args with
         match file.readText(listPath) with
             | Error(error) -> io.print("cannot read file list: " + error)
             | Ok(listText) ->
-                match text.parseInt(text.trim(iterationsText)) with
+                match iterationsText
+                |> text.trim
+                |> text.parseInt with
                     | Error(_) -> io.print("iterations must be an integer")
                     | Ok(iterations) ->
-                        let sources = readSources(text.split(listText)("\n"))([])
+                        let sources =
+                            readSources(text.split(listText)("\n"))([])
                         in
                             let programs = parseAll(sources)([])
                             in runPhases(phase)(sources)(programs)(iterations)

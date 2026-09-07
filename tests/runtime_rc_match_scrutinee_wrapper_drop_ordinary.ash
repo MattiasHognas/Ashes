@@ -18,7 +18,8 @@ let recursive nextStep n st =
     then Done
     else
         match st with
-            | S(xs, c) -> Continue(S(xs)(c + 1))(n)
+            | S(xs, c) ->
+                Continue(S(xs)(c + 1))(n)
 
 let recursive pairLength xs =
     match xs with
@@ -44,4 +45,10 @@ let nested st =
             match st2 with
                 | S(xs, c) -> c + r2
 
-io.print(text.fromInt(readOnce(S([9])(5))) + " " + text.fromInt(usedTwice(S([1, 2, 3])(0))) + " " + text.fromInt(nested(S([4, 5])(1))))
+io.print(text.fromInt(5
+|> S([9])
+|> readOnce) + " " + text.fromInt(0
+|> S([1, 2, 3])
+|> usedTwice) + " " + text.fromInt(1
+|> S([4, 5])
+|> nested))

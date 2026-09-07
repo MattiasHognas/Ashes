@@ -34,8 +34,12 @@ let recursive advance r n state =
                     let count2 = setAt(r)(r)(count)
                     in
                         if r % 2 == 0
-                        then Continue(S(perm2)(count2))(r)
-                        else advance(r + 1)(n)(S(perm2)(count2))
+                        then
+                            Continue(S(perm2)(count2))(r)
+                        else
+                            count2
+                            |> S(perm2)
+                            |> advance(r + 1)(n)
 
 let finish state total =
     match state with
@@ -49,4 +53,6 @@ let recursive loop remaining state total =
             | Done -> finish(state)(total)
             | Continue(next, r) -> loop(remaining - 1)(next)(total + 1)
 
-Ashes.IO.print(loop(200000)(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))(0))
+0
+|> loop(200000)(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))
+|> Ashes.IO.print

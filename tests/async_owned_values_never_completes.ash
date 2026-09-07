@@ -19,9 +19,15 @@ let parked delayMs =
     in
         let items = [build(1), build(2)]
         in
-            let boxed = Boxed(build(3))
+            let boxed =
+                3
+                |> build
+                |> Boxed
             in
-                let raw = Ashes.Byte.fromText(build(4))
+                let raw =
+                    4
+                    |> build
+                    |> Ashes.Byte.fromText
                 in
                     let render =
                         given (suffix) -> text + suffix
@@ -29,15 +35,21 @@ let parked delayMs =
                         match await Ashes.Task.sleep(delayMs) with
                             | Ok(_u) ->
                                 match boxed with
-                                    | Boxed(inner) -> Ashes.Text.byteLength(render("!")) + Ashes.Collection.List.length(items) + Ashes.Byte.length(raw) + Ashes.Text.byteLength(inner)
+                                    | Boxed(inner) ->
+                                        Ashes.Text.byteLength(render("!")) + Ashes.Collection.List.length(items) + Ashes.Byte.length(raw) + Ashes.Text.byteLength(inner)
                             | Error(_e) -> -1)
 
 let driver =
-    match Ashes.Task.run(async(let _spawned = Ashes.Task.spawn(parked(600000))
+    match (let _spawned =
+        600000
+        |> parked
+        |> Ashes.Task.spawn
     in
         match await Ashes.Task.sleep(5) with
             | Ok(_u) -> "ok"
-            | Error(_e) -> "err")) with
+            | Error(_e) -> "err")
+    |> async
+    |> Ashes.Task.run with
         | Ok(v) -> v
         | Error(_e) -> "err"
 

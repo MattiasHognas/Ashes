@@ -21,13 +21,17 @@ let recursive nextStep n st =
     then Done
     else
         match st with
-            | S(xs, c) -> Continue(S(xs)(c + 1))(n)
+            | S(xs, c) ->
+                Continue(S(xs)(c + 1))(n)
 
 let recursive loop n st acc =
     match nextStep(n)(st) with
         | Done -> acc
         | Continue(st2, r2) -> loop(n - 1)(st2)(acc + r2)
 
-let result = loop(100000)(S([1, 2, 3])(0))(0)
+let result =
+    loop(100000)(S([1, 2, 3])(0))(0)
 
-io.print(text.fromInt(result))
+result
+|> text.fromInt
+|> io.print

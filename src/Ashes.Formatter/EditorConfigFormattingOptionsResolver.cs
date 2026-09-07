@@ -33,7 +33,8 @@ public static class EditorConfigFormattingOptionsResolver
         {
             IndentSize = options.IndentSize,
             UseTabs = options.UseTabs,
-            NewLine = options.NewLine
+            NewLine = options.NewLine,
+            PreferPipelines = options.PreferPipelines
         };
 
         var configPaths = CollectEditorConfigPaths(directory);
@@ -51,7 +52,8 @@ public static class EditorConfigFormattingOptionsResolver
         {
             IndentSize = state.IndentSize > 0 ? state.IndentSize : 4,
             UseTabs = state.UseTabs,
-            NewLine = state.NewLine is "\n" or "\r\n" ? state.NewLine : Environment.NewLine
+            NewLine = state.NewLine is "\n" or "\r\n" ? state.NewLine : Environment.NewLine,
+            PreferPipelines = state.PreferPipelines
         };
     }
 
@@ -65,6 +67,7 @@ public static class EditorConfigFormattingOptionsResolver
         public int? TabWidth;
         public bool HasIndentSize;
         public bool IndentSizeUsesTabWidth;
+        public bool PreferPipelines;
     }
 
     /// <summary>
@@ -208,6 +211,20 @@ public static class EditorConfigFormattingOptionsResolver
             else if (value.Equals("crlf", StringComparison.OrdinalIgnoreCase))
             {
                 state.NewLine = "\r\n";
+            }
+
+            return;
+        }
+
+        if (key.Equals("ashes_prefer_pipelines", StringComparison.OrdinalIgnoreCase))
+        {
+            if (value.Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                state.PreferPipelines = true;
+            }
+            else if (value.Equals("false", StringComparison.OrdinalIgnoreCase))
+            {
+                state.PreferPipelines = false;
             }
         }
     }

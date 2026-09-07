@@ -8,4 +8,7 @@ let describe r =
         | Good(n) when n >= 11 -> "big ok"
         | Good(n) -> "small ok"
         | Bad(e) -> e
-in Ashes.IO.print(describe(Good(42)))
+in
+    Good(42)
+    |> describe
+    |> Ashes.IO.print

@@ -230,9 +230,10 @@ let expectResultMapperEffect unit =
     (let resultType = SemNamed(-1)("Result")([SemInt, SemString])
     in
         let mapperType =
-            SemFunction(SemString)(SemBool)(None
+            None
             |> SemRow([SemCapability("Clock")([])])
-            |> Some)
+            |> Some
+            |> SemFunction(SemString)(SemBool)
         in
             let environment =
                 Unit

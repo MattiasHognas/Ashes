@@ -1,2 +1,4 @@
 // expect: 6
-Ashes.IO.print(Ashes.Text.byteLength("héllo"))
+"héllo"
+|> Ashes.Text.byteLength
+|> Ashes.IO.print

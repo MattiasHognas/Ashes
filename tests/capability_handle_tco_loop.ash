@@ -8,7 +8,10 @@ let recursive loop =
         given (acc) ->
             if i >= 100000
             then acc
-            else loop(i + 1)(Step.bump(acc))
+            else
+                acc
+                |> Step.bump
+                |> loop(i + 1)
 
 let result =
     handle loop(0)(0) with

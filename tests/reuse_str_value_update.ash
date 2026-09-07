@@ -19,7 +19,10 @@ let cmp a b =
 let recursive loop i lim m =
     if i > lim
     then m
-    else loop(i + 1)(lim)(Ashes.Collection.Map.setWith(cmp)(0)(Ashes.Text.fromInt(i))(m))
+    else
+        m
+        |> Ashes.Collection.Map.setWith(cmp)(0)(Ashes.Text.fromInt(i))
+        |> loop(i + 1)(lim)
 
 let seeded = Ashes.Collection.Map.setWith(cmp)(0)("seed")(Ashes.Collection.Map.empty)
 

@@ -13,4 +13,8 @@ let source = build(300000)("")
 
 let mixed = source + "aäb"
 
-Ashes.IO.print(text.fromInt(text.length(source)) + " " + text.fromInt(text.length(text.take(source)(5))) + " " + text.fromInt(text.length(text.drop(source)(5))) + " " + text.take(source)(5) + " " + text.fromInt(text.length(mixed)) + " " + text.take(text.drop(mixed)(300000))(1) + text.drop(mixed)(300002))
+Ashes.IO.print(text.fromInt(text.length(source)) + " " + text.fromInt(5
+|> text.take(source)
+|> text.length) + " " + text.fromInt(5
+|> text.drop(source)
+|> text.length) + " " + text.take(source)(5) + " " + text.fromInt(text.length(mixed)) + " " + text.take(text.drop(mixed)(300000))(1) + text.drop(mixed)(300002))

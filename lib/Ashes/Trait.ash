@@ -253,19 +253,31 @@ implement Show(BigInt) =
 
 implement Show(u8) =
     | show =
-        given (value) -> Ashes.Text.fromInt(Ashes.Number.UInt.toInt(value))
+        given (value) ->
+            value
+            |> Ashes.Number.UInt.toInt
+            |> Ashes.Text.fromInt
 
 implement Show(u16) =
     | show =
-        given (value) -> Ashes.Text.fromInt(Ashes.Number.UInt.toInt(value))
+        given (value) ->
+            value
+            |> Ashes.Number.UInt.toInt
+            |> Ashes.Text.fromInt
 
 implement Show(u32) =
     | show =
-        given (value) -> Ashes.Text.fromInt(Ashes.Number.UInt.toInt(value))
+        given (value) ->
+            value
+            |> Ashes.Number.UInt.toInt
+            |> Ashes.Text.fromInt
 
 implement Show(u64) =
     | show =
-        given (value) -> Ashes.Text.fromInt(Ashes.Number.UInt.toInt(value))
+        given (value) ->
+            value
+            |> Ashes.Number.UInt.toInt
+            |> Ashes.Text.fromInt
 
 implement Show(Bool) =
     | show =
@@ -291,11 +303,19 @@ implement Hash(Float) =
         given (value) ->
             if value == 0.0
             then 0
-            else Ashes.Byte.hash(Ashes.Byte.fromText(Ashes.Text.fromFloat(value)))
+            else
+                value
+                |> Ashes.Text.fromFloat
+                |> Ashes.Byte.fromText
+                |> Ashes.Byte.hash
 
 implement Hash(BigInt) =
     | hash =
-        given (value) -> Ashes.Byte.hash(Ashes.Byte.fromText(Ashes.Text.fromBigInt(value)))
+        given (value) ->
+            value
+            |> Ashes.Text.fromBigInt
+            |> Ashes.Byte.fromText
+            |> Ashes.Byte.hash
 
 implement Hash(u8) =
     | hash =
@@ -322,7 +342,10 @@ implement Hash(Bool) =
 
 implement Hash(Str) =
     | hash =
-        given (value) -> Ashes.Byte.hash(Ashes.Byte.fromText(value))
+        given (value) ->
+            value
+            |> Ashes.Byte.fromText
+            |> Ashes.Byte.hash
 
 implement Hash(Rune) =
     | hash =
@@ -756,7 +779,8 @@ implement Show(List(a)) requires {Show(a)} =
                 | value :: [] -> "[" + Show.show(value) + "]"
                 | value :: tail ->
                     let renderedTail = Show.show(tail)
-                    in "[" + Show.show(value) + ", " + Ashes.Byte.subText(Ashes.Byte.fromText(renderedTail))(1)(Ashes.Text.byteLength(renderedTail) - 1)
+                    in
+                        "[" + Show.show(value) + ", " + Ashes.Byte.subText(Ashes.Byte.fromText(renderedTail))(1)(Ashes.Text.byteLength(renderedTail) - 1)
 
 implement Hash(List(a)) requires {Hash(a)} =
     | hash =

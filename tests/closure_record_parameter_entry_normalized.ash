@@ -23,6 +23,10 @@ let recursive loop (n: Int) (total: Int) =
                 match forwarded with
                     | Box { reader = reader } ->
                         match kept with
-                            | Box { reader = original } -> loop(n - 1)(total + Ashes.Text.byteLength(reader(0)) + Ashes.Text.byteLength(original(1)))
+                            | Box { reader = original } ->
+                                loop(n - 1)(total + Ashes.Text.byteLength(reader(0)) + Ashes.Text.byteLength(original(1)))
 
-Ashes.IO.print(Ashes.Text.fromInt(loop(50000)(0)))
+0
+|> loop(50000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

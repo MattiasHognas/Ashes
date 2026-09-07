@@ -9,4 +9,6 @@ provide Clock =
 let stamp =
     given (_) -> Clock.now(Unit)
 
-Ashes.IO.print(stamp(Unit))
+Unit
+|> stamp
+|> Ashes.IO.print

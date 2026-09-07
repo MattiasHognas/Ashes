@@ -19,13 +19,22 @@ let recursive loop n state =
     if n == 0
     then
         match state with
-            | S(left, right) -> sum(left)(sum(right)(0))
+            | S(left, right) ->
+                0
+                |> sum(right)
+                |> sum(left)
     else
         match state with
             | S(left, right) ->
                 let nextLeft = replaceFirst(n)(left)
                 in
                     let nextRight = replaceFirst(n + 10)(right)
-                    in loop(n - 1)(S(nextLeft)(nextRight))
+                    in
+                        nextRight
+                        |> S(nextLeft)
+                        |> loop(n - 1)
 
-io.print(loop(2)(S([1, 2])([3, 4])))
+[3, 4]
+|> S([1, 2])
+|> loop(2)
+|> io.print

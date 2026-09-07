@@ -15,4 +15,6 @@ let recursive loop =
                                 given (x: Int) -> x + a + b + c
                             in loop(n - 1)(step(1) - a - c)
 
-Ashes.IO.print(loop(20000000)(0))
+0
+|> loop(20000000)
+|> Ashes.IO.print

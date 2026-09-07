@@ -68,7 +68,10 @@ let recursive scanLineStarts (bytes: Bytes) (limit: Int) (i: Int) (acc: List(Int
     if i >= limit
     then reverse(acc)
     else
-        let b = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+        let b =
+            i
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
         in
             if b == 10
             then scanLineStarts(bytes)(limit)(i + 1)(i + 1 :: acc)
@@ -79,7 +82,10 @@ let recursive scanLineStarts (bytes: Bytes) (limit: Int) (i: Int) (acc: List(Int
                     // '\r' carriage return
                     if i + 1 < limit
                     then
-                        let nextB = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i + 1))
+                        let nextB =
+                            i + 1
+                            |> Ashes.Byte.get(bytes)
+                            |> Ashes.Number.UInt.toInt
                         in
                             if nextB == 10
                             then scanLineStarts(bytes)(limit)(i + 2)(i + 2 :: acc)
@@ -177,14 +183,17 @@ let recursive lookupModuleSource (filePath: Str) (moduleSources: List((Str, Str)
 let recursive buildItemIndexes (regions: List(StitchedItemRegion)) (moduleSources: List((Str, Str))) =
     match regions with
         | [] -> []
-        | StitchedItemRegion { itemFilePath = filePath } :: tail -> buildSourceTextIndex(lookupModuleSource(filePath)(moduleSources)) :: buildItemIndexes(tail)(moduleSources)
+        | StitchedItemRegion { itemFilePath = filePath } :: tail ->
+            buildSourceTextIndex(lookupModuleSource(filePath)(moduleSources)) :: buildItemIndexes(tail)(moduleSources)
 
 // A context for a stitched project: each module's file text keyed by its path, the item regions in
 // combined order, and the entry file as the default path for spans resolved without an item.
 let createStitchedSourceContext (moduleSources: List((Str, Str))) (regions: List(StitchedItemRegion)) (defaultPath: Str) =
     SourceContext(
         defaultFilePath = defaultPath,
-        mainSourceIndex = buildSourceTextIndex(lookupModuleSource(defaultPath)(moduleSources)),
+        mainSourceIndex = moduleSources
+        |> lookupModuleSource(defaultPath)
+        |> buildSourceTextIndex,
         moduleRegions = [],
         moduleSourceIndexes = [],
         itemRegions = regions,

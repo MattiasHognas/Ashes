@@ -13,7 +13,10 @@ let rebuild values =
 let recursive passThrough n values =
     if n == 0
     then values
-    else passThrough(n - 1)(rebuild(values))
+    else
+        values
+        |> rebuild
+        |> passThrough(n - 1)
 
 let recursive sum values total =
     match values with

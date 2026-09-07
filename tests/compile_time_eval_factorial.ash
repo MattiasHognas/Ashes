@@ -5,4 +5,6 @@ let recursive factorial =
         then 1
         else n * factorial(n - 1)
 
-Ashes.IO.print(factorial(12))
+12
+|> factorial
+|> Ashes.IO.print

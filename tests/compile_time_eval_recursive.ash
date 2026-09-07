@@ -5,4 +5,6 @@ let recursive fib =
         then n
         else fib(n - 1) + fib(n - 2)
 
-Ashes.IO.print(fib(30))
+30
+|> fib
+|> Ashes.IO.print

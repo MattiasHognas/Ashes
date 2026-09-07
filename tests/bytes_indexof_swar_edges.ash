@@ -11,34 +11,67 @@ import Ashes.Text as text
 let recursive buildRun value count acc =
     if count <= 0
     then acc
-    else buildRun(value)(count - 1)(bytes.appendByte(acc)(uint.fromInt(value)))
+    else
+        value
+        |> uint.fromInt
+        |> bytes.appendByte(acc)
+        |> buildRun(value)(count - 1)
 
-let payload = bytes.appendByte(buildRun(65)(20)(bytes.empty(Unit)))(uint.fromInt(59))
+let payload =
+    59
+    |> uint.fromInt
+    |> bytes.appendByte(Unit
+    |> bytes.empty
+    |> buildRun(65)(20))
 
 let hit at = bytes.indexOf(payload)(65)(at)
 
 let semicolonAt = bytes.indexOf(payload)(59)(0)
 
-let zeroes = bytes.appendByte(buildRun(128)(3)(bytes.empty(Unit)))(uint.fromInt(0))
+let zeroes =
+    0
+    |> uint.fromInt
+    |> bytes.appendByte(Unit
+    |> bytes.empty
+    |> buildRun(128)(3))
 
 let zeroHit = bytes.indexOf(zeroes)(0)(0)
 
-let highHit = bytes.indexOf(bytes.appendByte(buildRun(127)(5)(bytes.empty(Unit)))(uint.fromInt(128)))(128)(0)
+let highHit =
+    bytes.indexOf(128
+    |> uint.fromInt
+    |> bytes.appendByte(Unit
+    |> bytes.empty
+    |> buildRun(127)(5)))(128)(0)
 
 let viewBase = bytes.fromText("xxAbcdefgh")
 
-let unalignedView = bytes.fromText(bytes.subView(viewBase)(2)(8))
+let unalignedView =
+    8
+    |> bytes.subView(viewBase)(2)
+    |> bytes.fromText
 
 let viewHit = bytes.indexOf(unalignedView)(100)(0)
 
 let recursive buildLong count acc =
     if count <= 0
-    then bytes.appendByte(acc)(uint.fromInt(33))
-    else buildLong(count - 1)(bytes.appendByte(acc)(uint.fromInt(46)))
+    then
+        33
+        |> uint.fromInt
+        |> bytes.appendByte(acc)
+    else
+        46
+        |> uint.fromInt
+        |> bytes.appendByte(acc)
+        |> buildLong(count - 1)
 
-let longScan = bytes.indexOf(buildLong(64)(bytes.empty(Unit)))(33)(0)
+let longScan =
+    bytes.indexOf(Unit
+    |> bytes.empty
+    |> buildLong(64))(33)(0)
 
-let results = [hit(0), hit(7), hit(8), hit(15), hit(16), semicolonAt, bytes.indexOf(payload)(90)(0), bytes.indexOf(payload)(65)(21), zeroHit, highHit, viewHit, longScan, bytes.indexOf(bytes.empty(Unit))(65)(0)]
+let results =
+    [hit(0), hit(7), hit(8), hit(15), hit(16), semicolonAt, bytes.indexOf(payload)(90)(0), bytes.indexOf(payload)(65)(21), zeroHit, highHit, viewHit, longScan, bytes.indexOf(bytes.empty(Unit))(65)(0)]
 
 let recursive render items acc =
     match items with
@@ -48,4 +81,6 @@ let recursive render items acc =
             then text.fromInt(value)
             else acc + " " + text.fromInt(value))
 
-io.print(render(results)(""))
+""
+|> render(results)
+|> io.print

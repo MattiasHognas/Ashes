@@ -16,7 +16,10 @@ let upd by =
     (let recursive go t =
         match t with
             | Leaf -> Leaf
-            | Node(l, v, r) -> mk(go(l))(v + by)(go(r))
+            | Node(l, v, r) ->
+                r
+                |> go
+                |> mk(go(l))(v + by)
     in go)
 
 let rootVal t =
@@ -27,11 +30,19 @@ let rootVal t =
 let recursive loop n t =
     if n <= 0
     then t
-    else loop(n - 1)(upd(1)(t))
+    else
+        t
+        |> upd(1)
+        |> loop(n - 1)
 
 let initial = Node(Leaf)(5)(Leaf)
 
 let shared = loop(3)(initial)
 
-let big = loop(1000000)(Node(Node(Leaf)(1)(Leaf))(2)(Node(Leaf)(3)(Leaf)))
-in Ashes.IO.print(Ashes.Text.fromInt(rootVal(initial)) + " " + Ashes.Text.fromInt(rootVal(shared)) + " " + Ashes.Text.fromInt(rootVal(big)))
+let big =
+    Leaf
+    |> Node(Leaf)(3)
+    |> Node(Node(Leaf)(1)(Leaf))(2)
+    |> loop(1000000)
+in
+    Ashes.IO.print(Ashes.Text.fromInt(rootVal(initial)) + " " + Ashes.Text.fromInt(rootVal(shared)) + " " + Ashes.Text.fromInt(rootVal(big)))

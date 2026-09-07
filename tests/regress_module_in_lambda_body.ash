@@ -14,4 +14,5 @@ in
                 if head == ";"
                 then n
                 else countUntilSemi(tail)(n + 1)
-    in Ashes.IO.print(Ashes.Text.fromInt(firstB("abc")) + ":" + Ashes.Text.fromInt(countUntilSemi("abc;d")(0)))
+    in
+        Ashes.IO.print(Ashes.Text.fromInt(firstB("abc")) + ":" + Ashes.Text.fromInt(countUntilSemi("abc;d")(0)))

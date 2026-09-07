@@ -19,8 +19,12 @@ let recursive setTree key value tree =
             then Node(left)(nodeKey)(value)(right)
             else
                 if key <= nodeKey
-                then Node(setTree(key)(value)(left))(nodeKey)(nodeValue)(right)
-                else Node(left)(nodeKey)(nodeValue)(setTree(key)(value)(right))
+                then
+                    Node(setTree(key)(value)(left))(nodeKey)(nodeValue)(right)
+                else
+                    right
+                    |> setTree(key)(value)
+                    |> Node(left)(nodeKey)(nodeValue)
 
 let recursive getTree key tree =
     match tree with
@@ -51,18 +55,28 @@ let recursive groupListsIntoMap items grouped =
         | [] -> grouped
         | item :: rest ->
             groupListsIntoMap(rest)(
-                Ashes.Collection.HashMap.set(Ashes.Text.fromInt(itemPosition(item)))([itemText(item)])(grouped)
+                Ashes.Collection.HashMap.set(item
+                |> itemPosition
+                |> Ashes.Text.fromInt)([itemText(item)])(grouped)
             )
 
 let recursive groupRecordsIntoMap items grouped =
     match items with
         | [] -> grouped
-        | item :: rest -> groupRecordsIntoMap(rest)(Ashes.Collection.HashMap.set(Ashes.Text.fromInt(itemPosition(item)))(item)(grouped))
+        | item :: rest ->
+            grouped
+            |> Ashes.Collection.HashMap.set(item
+            |> itemPosition
+            |> Ashes.Text.fromInt)(item)
+            |> groupRecordsIntoMap(rest)
 
 let recursive groupListsIntoTree items grouped =
     match items with
         | [] -> grouped
-        | item :: rest -> groupListsIntoTree(rest)(setTree(itemPosition(item))([itemText(item)])(grouped))
+        | item :: rest ->
+            grouped
+            |> setTree(itemPosition(item))([itemText(item)])
+            |> groupListsIntoTree(rest)
 
 let recursive churn count acc =
     if count == 0
@@ -93,11 +107,14 @@ let recursive renderTreeLists keys grouped =
                 | Some(text :: _) -> Ashes.Text.fromInt(key) + " -> " + text :: renderTreeLists(rest)(grouped)
                 | _ -> Ashes.Text.fromInt(key) + " missing" :: renderTreeLists(rest)(grouped)
 
-let mapOfLists = groupListsIntoMap(build(3)([]))(Ashes.Collection.HashMap.empty)
+let mapOfLists =
+    groupListsIntoMap(build(3)([]))(Ashes.Collection.HashMap.empty)
 
-let mapOfRecords = groupRecordsIntoMap(build(3)([]))(Ashes.Collection.HashMap.empty)
+let mapOfRecords =
+    groupRecordsIntoMap(build(3)([]))(Ashes.Collection.HashMap.empty)
 
-let treeOfLists = groupListsIntoTree(build(3)([]))(Leaf)
+let treeOfLists =
+    groupListsIntoTree(build(3)([]))(Leaf)
 
 let noise = churn(5000)([])
 

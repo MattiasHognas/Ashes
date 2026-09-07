@@ -77,7 +77,10 @@ let recursive reusePatternFieldBindings (pattern: Pattern) =
 and reuseIndexedFieldBindings (index: Int) (subPatterns: List(Pattern)) =
     match subPatterns with
         | [] -> []
-        | subPattern :: rest -> append(reuseFieldBindingFor(index)(subPattern))(reuseIndexedFieldBindings(index + 1)(rest))
+        | subPattern :: rest ->
+            rest
+            |> reuseIndexedFieldBindings(index + 1)
+            |> append(reuseFieldBindingFor(index)(subPattern))
 and reuseFieldBindingFor (index: Int) (subPattern: Pattern) =
     match reuseUnspanPattern(subPattern) with
         | PatternVar(name) -> [(index, name)]

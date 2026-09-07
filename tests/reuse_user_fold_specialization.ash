@@ -19,16 +19,21 @@ let max left right =
     then left
     else right
 
-let makeNode left key value right = Node(max(height(left))(height(right)) + 1)(left)(key)(value)(right)
+let makeNode left key value right =
+    Node(max(height(left))(height(right)) + 1)(left)(key)(value)(right)
 
 let rotateLeft map =
     match map with
-        | Node(_height, left, key, value, Node(_rightHeight, rightLeft, rightKey, rightValue, rightRight)) -> makeNode(makeNode(left)(key)(value)(rightLeft))(rightKey)(rightValue)(rightRight)
+        | Node(_height, left, key, value, Node(_rightHeight, rightLeft, rightKey, rightValue, rightRight)) ->
+            makeNode(makeNode(left)(key)(value)(rightLeft))(rightKey)(rightValue)(rightRight)
         | _ -> map
 
 let rotateRight map =
     match map with
-        | Node(_height, Node(_leftHeight, leftLeft, leftKey, leftValue, leftRight), key, value, right) -> makeNode(leftLeft)(leftKey)(leftValue)(makeNode(leftRight)(key)(value)(right))
+        | Node(_height, Node(_leftHeight, leftLeft, leftKey, leftValue, leftRight), key, value, right) ->
+            right
+            |> makeNode(leftRight)(key)(value)
+            |> makeNode(leftLeft)(leftKey)(leftValue)
         | _ -> map
 
 let balance map =
@@ -44,7 +49,10 @@ let balance map =
                         | Node(_leftHeight, leftLeft, _leftKey, _leftValue, leftRight) ->
                             if height(leftLeft) >= height(leftRight)
                             then rotateRight(normalized)
-                            else rotateRight(makeNode(rotateLeft(left))(key)(value)(right))
+                            else
+                                right
+                                |> makeNode(rotateLeft(left))(key)(value)
+                                |> rotateRight
                 else
                     if height(right) >= height(left) + 2
                     then
@@ -53,7 +61,11 @@ let balance map =
                             | Node(_rightHeight, rightLeft, _rightKey, _rightValue, rightRight) ->
                                 if height(rightRight) >= height(rightLeft)
                                 then rotateLeft(normalized)
-                                else rotateLeft(makeNode(left)(key)(value)(rotateRight(right)))
+                                else
+                                    right
+                                    |> rotateRight
+                                    |> makeNode(left)(key)(value)
+                                    |> rotateLeft
                     else normalized
 
 let getStr wanted map =
@@ -61,7 +73,10 @@ let getStr wanted map =
         match current with
             | Empty -> None
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(wanted))(Ashes.Byte.fromText(key))
+                let ordering =
+                    key
+                    |> Ashes.Byte.fromText
+                    |> Ashes.Byte.compare(Ashes.Byte.fromText(wanted))
                 in
                     if ordering == 0
                     then Some(value)
@@ -76,7 +91,10 @@ let upd newKey tenths =
         match map with
             | Empty -> makeNode(Empty)(newKey)((tenths, tenths, tenths, 1))(Empty)
             | Node(_height, left, key, value, right) ->
-                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(newKey))(Ashes.Byte.fromText(key))
+                let ordering =
+                    key
+                    |> Ashes.Byte.fromText
+                    |> Ashes.Byte.compare(Ashes.Byte.fromText(newKey))
                 in
                     if ordering == 0
                     then
@@ -94,8 +112,15 @@ let upd newKey tenths =
                                     in makeNode(left)(key)((newMin, newMax, sm + tenths, ct + 1))(right)
                     else
                         if ordering <= -1
-                        then balance(makeNode(go(left))(key)(value)(right))
-                        else balance(makeNode(left)(key)(value)(go(right)))
+                        then
+                            right
+                            |> makeNode(go(left))(key)(value)
+                            |> balance
+                        else
+                            right
+                            |> go
+                            |> makeNode(left)(key)(value)
+                            |> balance
     in go)
 
 let recursive loop i map =
@@ -103,7 +128,10 @@ let recursive loop i map =
     then map
     else
         let key = "k" + Ashes.Text.fromInt(i - i / 20 * 20)
-        in loop(i + 1)(upd(key)(i)(map))
+        in
+            map
+            |> upd(key)(i)
+            |> loop(i + 1)
 
 let final = loop(17)(Empty)
 

@@ -3,4 +3,7 @@
 import Ashes.IO
 import Ashes.Text
 import Ashes.Number.UInt
-Ashes.IO.print(Ashes.Text.fromInt(Ashes.Number.UInt.toInt(5)))
+5
+|> Ashes.Number.UInt.toInt
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

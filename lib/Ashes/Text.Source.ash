@@ -29,7 +29,10 @@ let isBoundary text offset =
                         if offset == length
                         then true
                         else
-                            if isContinuation(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(offset)))
+                            if offset
+                            |> Ashes.Byte.get(bytes)
+                            |> Ashes.Number.UInt.toInt
+                            |> isContinuation
                             then false
                             else true)
 
@@ -37,7 +40,10 @@ let recursive clampBoundary bytes offset =
     if offset <= 0
     then 0
     else
-        if isContinuation(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(offset)))
+        if offset
+        |> Ashes.Byte.get(bytes)
+        |> Ashes.Number.UInt.toInt
+        |> isContinuation
         then clampBoundary(bytes)(offset - 1)
         else offset
 
@@ -78,7 +84,10 @@ let byteOffsetToPosition text encoding offset =
                     if i >= bounded
                     then Position(line = line, character = character)
                     else
-                        let first = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+                        let first =
+                            i
+                            |> Ashes.Byte.get(bytes)
+                            |> Ashes.Number.UInt.toInt
                         in
                             if first == 13
                             then
@@ -119,7 +128,10 @@ let positionToByteOffset text encoding position =
                             if line >= targetLine
                             then i
                             else
-                                let first = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+                                let first =
+                                    i
+                                    |> Ashes.Byte.get(bytes)
+                                    |> Ashes.Number.UInt.toInt
                                 in
                                     if first == 13
                                     then
@@ -143,7 +155,10 @@ let positionToByteOffset text encoding position =
                                     if character >= targetCharacter
                                     then i
                                     else
-                                        let first = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(i))
+                                        let first =
+                                            i
+                                            |> Ashes.Byte.get(bytes)
+                                            |> Ashes.Number.UInt.toInt
                                         in
                                             if first == 10
                                             then i

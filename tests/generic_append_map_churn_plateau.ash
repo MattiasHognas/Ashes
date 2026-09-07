@@ -17,7 +17,13 @@ let recursive loop i acc =
     if i == 0
     then acc
     else
-        let entries = list.append(list.map(toEntry)([Ashes.Text.fromInt(i)]))(list.map(toEntry)(["Testing"]))
+        let entries =
+            ["Testing"]
+            |> list.map(toEntry)
+            |> list.append(list.map(toEntry)([Ashes.Text.fromInt(i)]))
         in loop(i - 1)(acc + list.length(entries))
 
-Ashes.IO.print(Ashes.Text.fromInt(loop(200000)(0)))
+0
+|> loop(200000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

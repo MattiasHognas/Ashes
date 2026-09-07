@@ -215,7 +215,8 @@ public sealed class ParserTests
     {
         var expr = Parse("1 |> inc |> double").ShouldBeOfType<Expr.Call>();
         expr.Func.ShouldBe(new Expr.Var("double"));
-        expr.Arg.ShouldBe(new Expr.Call(new Expr.Var("inc"), new Expr.IntLit(1)));
+        expr.ArgumentListLayout.ShouldBe(CallArgumentListLayout.Pipe);
+        expr.Arg.ShouldBe(new Expr.Call(new Expr.Var("inc"), new Expr.IntLit(1)) { ArgumentListLayout = CallArgumentListLayout.Pipe });
     }
 
     [Test]

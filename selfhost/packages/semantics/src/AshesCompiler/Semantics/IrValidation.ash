@@ -460,7 +460,11 @@ let validateSingleInstruction functionLabel instIndex localCount tempCount defin
                                 let targetIssues = validateInstructionTargets(functionLabel)(instIndex)(definedLabels)(targets)
                                 in
                                     let strIssues = validateStringLiteralReference(functionLabel)(instIndex)(knownStringLabels)(kind)
-                                    in append(localIssues)(append(tempIssues)(append(targetIssues)(strIssues)))
+                                    in
+                                        strIssues
+                                        |> append(targetIssues)
+                                        |> append(tempIssues)
+                                        |> append(localIssues)
 
 let recursive validateInstructions functionLabel instIndex localCount tempCount definedLabels knownStringLabels instructions =
     match instructions with
@@ -489,7 +493,10 @@ let validateCoroutineInfo functionLabel (coroutine: Maybe(CoroutineInfo)) =
                         if cc < 0
                         then [validationError("negative coroutine capture count " + Ashes.Text.fromInt(cc))(Some(functionLabel))(None)]
                         else []
-                    in append(scIssue)(append(sssIssue)(ccIssue))
+                    in
+                        ccIssue
+                        |> append(sssIssue)
+                        |> append(scIssue)
 
 let recursive validateDebugLocalNames functionLabel localCount localNames =
     match localNames with
@@ -553,7 +560,10 @@ let validateIrFunction stringLiterals (func: IrFunction) =
                             if tempCount < 0
                             then [validationError("negative tempCount " + Ashes.Text.fromInt(tempCount))(Some(label))(None)]
                             else []
-                        in append(labelIssue)(append(localCountIssue)(tempCountIssue))
+                        in
+                            tempCountIssue
+                            |> append(localCountIssue)
+                            |> append(labelIssue)
             in
                 let definedLabels = collectDefinedLabels(instructions)
                 in
@@ -578,7 +588,9 @@ let validateIrFunction stringLiterals (func: IrFunction) =
                                                 append(headerIssues)(
                                                     append(duplicateLabelIssues)(
                                                         append(instructionIssues)(
-                                                            append(coroutineIssues)(append(debugNameIssues)(debugTypeIssues))
+                                                            debugTypeIssues
+                                                            |> append(debugNameIssues)
+                                                            |> append(coroutineIssues)
                                                         )
                                                     )
                                                 )
@@ -641,7 +653,9 @@ let validateIrProgram (program: IrProgram) =
                                                         let allIssues =
                                                             append(entryIssues)(
                                                                 append(duplicateFuncIssues)(
-                                                                    append(duplicateStringIssues)(append(capGlobalIssues)(functionIssues))
+                                                                    functionIssues
+                                                                    |> append(capGlobalIssues)
+                                                                    |> append(duplicateStringIssues)
                                                                 )
                                                             )
                                                         in

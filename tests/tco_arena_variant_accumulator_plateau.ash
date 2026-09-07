@@ -16,10 +16,16 @@ let recursive step (n: Int) (s: Slot) =
             | Filled(a, b) -> a + b
     else
         match s with
-            | Empty -> step(n - 1)(Filled(n)(1))
+            | Empty ->
+                1
+                |> Filled(n)
+                |> step(n - 1)
             | Filled(a, b) ->
                 step(n - 1)(if n % 1000 == 0
                 then Empty
                 else Filled(a + 1)(b + n))
 
-Ashes.IO.print(Ashes.Text.fromInt(step(3000000)(Empty)))
+Empty
+|> step(3000000)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

@@ -108,13 +108,28 @@ type ReuseDecision =
 
 let stripPrefix (prefix: Str) (name: Str) =
     if Ashes.Text.startsWith(name)(prefix)
-    then Ashes.Text.drop(name)(Ashes.Text.length(prefix))
+    then
+        prefix
+        |> Ashes.Text.length
+        |> Ashes.Text.drop(name)
     else name
 
-let reuseDecisionKindName (kind: ReuseDecisionKind) = stripPrefix("Decide")(Ashes.Trait.Show.show(kind))
+let reuseDecisionKindName (kind: ReuseDecisionKind) =
+    kind
+    |> Ashes.Trait.Show.show
+    |> stripPrefix("Decide")
 
-let reuseDecisionMechanismName (mechanism: ReuseDecisionMechanism) = stripPrefix("Via")(Ashes.Trait.Show.show(mechanism))
+let reuseDecisionMechanismName (mechanism: ReuseDecisionMechanism) =
+    mechanism
+    |> Ashes.Trait.Show.show
+    |> stripPrefix("Via")
 
-let reuseDecisionOutcomeName (outcome: ReuseDecisionOutcome) = stripPrefix("Outcome")(Ashes.Trait.Show.show(outcome))
+let reuseDecisionOutcomeName (outcome: ReuseDecisionOutcome) =
+    outcome
+    |> Ashes.Trait.Show.show
+    |> stripPrefix("Outcome")
 
-let reuseDecisionReasonName (reason: ReuseDecisionReason) = stripPrefix("Because")(Ashes.Trait.Show.show(reason))
+let reuseDecisionReasonName (reason: ReuseDecisionReason) =
+    reason
+    |> Ashes.Trait.Show.show
+    |> stripPrefix("Because")

@@ -8,4 +8,8 @@ let describe (plan: Plan) =
         | Leaf(x) -> x
         | Empty -> 0
 
-Ashes.IO.print(Ashes.Text.fromInt(describe(Leaf(1)(2))))
+2
+|> Leaf(1)
+|> describe
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

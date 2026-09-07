@@ -71,7 +71,10 @@ let recursive plSeqReduce combine identity f xs =
     match xs with
         | [] -> identity
         | h :: [] -> f(h)
-        | h :: t -> combine(f(h))(plSeqReduce(combine)(identity)(f)(t))
+        | h :: t ->
+            t
+            |> plSeqReduce(combine)(identity)(f)
+            |> combine(f(h))
 
 let recursive mapGrained grain f xs =
     match xs with
@@ -83,7 +86,13 @@ let recursive mapGrained grain f xs =
             else
                 let half = plLength(xs) / 2
                 in
-                    match Ashes.Task.Parallel.both(given (_u) -> mapGrained(grain)(f)(plTake(xs)(half)))(given (_u) -> mapGrained(grain)(f)(plDrop(xs)(half))) with
+                    match Ashes.Task.Parallel.both(given (_u) ->
+                        half
+                        |> plTake(xs)
+                        |> mapGrained(grain)(f))(given (_u) ->
+                        half
+                        |> plDrop(xs)
+                        |> mapGrained(grain)(f)) with
                         | (leftRes, rightRes) -> plAppend(leftRes)(rightRes)
 
 let recursive reduceGrained grain combine identity f xs =
@@ -96,7 +105,13 @@ let recursive reduceGrained grain combine identity f xs =
             else
                 let half = plLength(xs) / 2
                 in
-                    match Ashes.Task.Parallel.both(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plTake(xs)(half)))(given (_u) -> reduceGrained(grain)(combine)(identity)(f)(plDrop(xs)(half))) with
+                    match Ashes.Task.Parallel.both(given (_u) ->
+                        half
+                        |> plTake(xs)
+                        |> reduceGrained(grain)(combine)(identity)(f))(given (_u) ->
+                        half
+                        |> plDrop(xs)
+                        |> reduceGrained(grain)(combine)(identity)(f)) with
                         | (leftRes, rightRes) -> combine(leftRes)(rightRes)
 
 let map f xs = mapGrained(1)(f)(xs)
@@ -133,4 +148,5 @@ let recursive splitChunksGo bytes len sep lo n acc =
                     then (bytes, lo, len) :: acc
                     else splitChunksGo(bytes)(len)(sep)(nl + 1)(n - 1)((bytes, lo, nl + 1) :: acc)
 
-let splitChunks bytes sep n = splitChunksGo(bytes)(Ashes.Byte.length(bytes))(sep)(0)(n)([])
+let splitChunks bytes sep n =
+    splitChunksGo(bytes)(Ashes.Byte.length(bytes))(sep)(0)(n)([])

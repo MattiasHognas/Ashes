@@ -50,15 +50,31 @@ let firstSpan re text =
         | None -> "none"
         | Some(s) -> showSpan(s)
 
-let a1 = assertEqual(true)(isMatch(digits)("abc123"))
+let a1 =
+    "abc123"
+    |> isMatch(digits)
+    |> assertEqual(true)
 
-let a2 = assertEqual(false)(isMatch(digits)("abcdef"))
+let a2 =
+    "abcdef"
+    |> isMatch(digits)
+    |> assertEqual(false)
 
-let a3 = assertEqual("3:6")(firstSpan(digits)("abc123def"))
+let a3 =
+    "abc123def"
+    |> firstSpan(digits)
+    |> assertEqual("3:6")
 
-let a4 = assertEqual("1:2,3:5,6:9,")(showSpans(findAll(digits)("a1b22c333")))
+let a4 =
+    "a1b22c333"
+    |> findAll(digits)
+    |> showSpans
+    |> assertEqual("1:2,3:5,6:9,")
 
-let a5 = assertEqual("a#b#c#")(replace(digits)("a1b22c333")("#"))
+let a5 =
+    "#"
+    |> replace(digits)("a1b22c333")
+    |> assertEqual("a#b#c#")
 
 let pair = Ashes.Text.Regex.compile("([a-z]+)=([0-9]+)")
 
@@ -69,7 +85,11 @@ let capsText =
 
 let a6 = assertEqual("x=42,x,42,")(capsText)
 
-let a7 = assertEqual("0:6,7:13,")(showSpans(findAll(Ashes.Text.Regex.compile("\\w+"))("héllo wörld")))
+let a7 =
+    "héllo wörld"
+    |> findAll(Ashes.Text.Regex.compile("\\w+"))
+    |> showSpans
+    |> assertEqual("0:6,7:13,")
 
 let alt = Ashes.Text.Regex.compile("(a)|(b)")
 

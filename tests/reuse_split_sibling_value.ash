@@ -15,7 +15,9 @@ let recursive fill i acc =
     else
         let key = "k" + Ashes.Text.fromInt(i)
         in
-            fill(i + 1)(Ashes.Collection.HashTrie.upsertHashed(Ashes.Collection.HashTrie.hashText(key))(key)((i, i))(given (old) -> old)(acc))
+            acc
+            |> Ashes.Collection.HashTrie.upsertHashed(Ashes.Collection.HashTrie.hashText(key))(key)((i, i))(given (old) -> old)
+            |> fill(i + 1)
 
 let recursive bump i acc =
     if i >= 200
@@ -23,11 +25,16 @@ let recursive bump i acc =
     else
         let key = "k" + Ashes.Text.fromInt(i)
         in
-            bump(i + 1)(Ashes.Collection.HashTrie.upsertHashed(Ashes.Collection.HashTrie.hashText(key))(key)((-1, -1))(given (old) ->
+            acc
+            |> Ashes.Collection.HashTrie.upsertHashed(Ashes.Collection.HashTrie.hashText(key))(key)((-1, -1))(given (old) ->
                 match old with
-                    | (a, b) -> (a + 1000, b))(acc))
+                    | (a, b) -> (a + 1000, b))
+            |> bump(i + 1)
 
-let t = bump(0)(fill(0)(Ashes.Collection.HashTrie.empty))
+let t =
+    Ashes.Collection.HashTrie.empty
+    |> fill(0)
+    |> bump(0)
 
 let recursive verify i bad =
     if i >= 200

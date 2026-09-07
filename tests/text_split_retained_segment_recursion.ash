@@ -2,7 +2,8 @@
 
 import Ashes.Text
 import Ashes.Byte
-let sameText left right = Ashes.Byte.compare(Ashes.Byte.fromText(left))(Ashes.Byte.fromText(right)) == 0
+let sameText left right =
+    Ashes.Byte.compare(Ashes.Byte.fromText(left))(Ashes.Byte.fromText(right)) == 0
 
 let recursive containsText name names =
     match names with
@@ -18,7 +19,10 @@ let recursive lastPart parts =
         | name :: [] -> name
         | _head :: tail -> lastPart(tail)
 
-let leaf name = lastPart(Ashes.Text.split(name)("."))
+let leaf name =
+    "."
+    |> Ashes.Text.split(name)
+    |> lastPart
 
 let recursive check remaining seen =
     match remaining with
@@ -30,4 +34,6 @@ let recursive check remaining seen =
                 then "duplicate " + current
                 else check(tail)(current :: seen)
 
-Ashes.IO.print(check(["Eq", "Ord", "Show", "Hash"])([]))
+[]
+|> check(["Eq", "Ord", "Show", "Hash"])
+|> Ashes.IO.print

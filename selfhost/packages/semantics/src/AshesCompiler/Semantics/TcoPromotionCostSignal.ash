@@ -202,7 +202,9 @@ let evaluateTcoRcEligibility facts semTypeOpt includeFreshClosures =
                         let consumedTail =
                             if facts.consumedListTail
                             then
-                                if notBool(canArenaResetType(elem))
+                                if elem
+                                |> canArenaResetType
+                                |> notBool
                                 then notBool(facts.borrowInspectOnly)
                                 else false
                             else false

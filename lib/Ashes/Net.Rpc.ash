@@ -49,7 +49,9 @@ let parseContentLength line =
                         then
                             let valueStr = Ashes.Byte.subText(lb)(plen)(llen - plen)
                             in
-                                match Ashes.Text.parseInt(rpcTrimStart(valueStr)) with
+                                match valueStr
+                                |> rpcTrimStart
+                                |> Ashes.Text.parseInt with
                                     | Ok(n) -> Some(n)
                                     | Error(_) -> None
                         else None)

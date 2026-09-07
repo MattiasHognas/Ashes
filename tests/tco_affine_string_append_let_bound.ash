@@ -29,4 +29,8 @@ let recursive chain i acc =
         let acc2 = acc + "a" + "b" + "c"
         in chain(i - 1)(acc2)
 
-io.print(text.fromInt(text.byteLength(big(100000)(""))) + " " + content(20)("") + " " + text.fromInt(text.byteLength(chain(10)(""))))
+io.print(text.fromInt(""
+|> big(100000)
+|> text.byteLength) + " " + content(20)("") + " " + text.fromInt(""
+|> chain(10)
+|> text.byteLength))

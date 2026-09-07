@@ -103,4 +103,7 @@ let instToInt i =
         | Inst47 -> 47
         | Inst48 -> 48
         | Inst49 -> 49
-in Ashes.IO.print(instToInt(Inst25))
+in
+    Inst25
+    |> instToInt
+    |> Ashes.IO.print

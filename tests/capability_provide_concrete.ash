@@ -7,4 +7,6 @@ provide Ord(Int) =
         given (a) ->
             given (b) -> a - b
 
-Ashes.IO.print(Ord.compare(9)(4))
+4
+|> Ord.compare(9)
+|> Ashes.IO.print

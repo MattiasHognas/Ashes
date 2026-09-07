@@ -2,7 +2,11 @@
 import Ashes.Collection.Map
 import Ashes.IO
 import Ashes.Text
-let map = Ashes.Collection.Map.set(3)("three")(Ashes.Collection.Map.set(1)("one")(Ashes.Collection.Map.set(2)("two updated")(Ashes.Collection.Map.empty)))
+let map =
+    Ashes.Collection.Map.empty
+    |> Ashes.Collection.Map.set(2)("two updated")
+    |> Ashes.Collection.Map.set(1)("one")
+    |> Ashes.Collection.Map.set(3)("three")
 in
     let fromListMap = Ashes.Collection.Map.fromList((4, "four") :: (2, "two") :: [])
     in

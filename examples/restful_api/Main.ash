@@ -15,10 +15,15 @@ provide Store =
                 | Ok(_written) -> Unit
                 | Error(e) -> io.panic("cannot write todos.json: " + e)
 
-let onRequest req = async(route(req))
+let onRequest req =
+    req
+    |> route
+    |> async
 
 let _banner = io.writeLine("todo API listening on http://127.0.0.1:8080")
 
-match tasks.run(http.serveParallel(8080)(1)(onRequest)) with
+match onRequest
+|> http.serveParallel(8080)(1)
+|> tasks.run with
     | Ok(_stopped) -> io.print("server stopped")
     | Error(e) -> io.print(e)

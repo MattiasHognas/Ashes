@@ -4,4 +4,7 @@ let recursive f n acc =
     then 0
     else f(0)(acc - 1)
 
-Ashes.IO.print(Ashes.Text.fromInt(f(3)(5)))
+5
+|> f(3)
+|> Ashes.Text.fromInt
+|> Ashes.IO.print

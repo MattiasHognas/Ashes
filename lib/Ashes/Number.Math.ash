@@ -38,9 +38,15 @@ let remOf a b = a - a / b * b
 let recursive gcdGo a b =
     if b == 0
     then a
-    else gcdGo(b)(remOf(a)(b))
+    else
+        b
+        |> remOf(a)
+        |> gcdGo(b)
 
-let gcd a b = gcdGo(abs(a))(abs(b))
+let gcd a b =
+    b
+    |> abs
+    |> gcdGo(abs(a))
 
 let lcm a b =
     if a == 0

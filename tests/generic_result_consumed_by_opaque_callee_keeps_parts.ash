@@ -22,7 +22,10 @@ let record (label: Str) (state: Labels) = Labels(seen = label :: state.seen)
 let recursive stash (entries: List(Entry)) (store: Str -> Labels -> Labels) (state: Labels) =
     match entries with
         | [] -> state
-        | Entry { name = name } :: rest -> stash(rest)(store)(store(name)(state))
+        | Entry { name = name } :: rest ->
+            state
+            |> store(name)
+            |> stash(rest)(store)
 
 let recursive show labels acc =
     match labels with
@@ -40,7 +43,9 @@ let recursive churn count acc =
     else churn(count - 1)("churn " + text.fromInt(count) :: acc)
 
 let labels =
-    stash(list.append(list.map(toEntry(true))(["Testing"]))(list.map(toEntry(false))(["Mid"])))(record)(Labels(seen = []))
+    stash(["Mid"]
+    |> list.map(toEntry(false))
+    |> list.append(list.map(toEntry(true))(["Testing"])))(record)(Labels(seen = []))
 
 let noise = churn(5000)([])
 

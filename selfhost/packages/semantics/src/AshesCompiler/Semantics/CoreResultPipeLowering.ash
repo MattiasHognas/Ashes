@@ -73,7 +73,9 @@ let emitResultPipeBranches (leftTemp: Int) (funcTemp: Int) (okTag: Int) (okTagle
                                             ]
                                         in
                                             CoreResultPipeEmission(
-                                                instructions = append(dispatchInstructions)(append(storeInstructions)(joinInstructions)),
+                                                instructions = joinInstructions
+                                                |> append(storeInstructions)
+                                                |> append(dispatchInstructions),
                                                 nextTemp = resultTemp + 1,
                                                 nextLocal = startLocal + 1,
                                                 resultTemp = resultTemp

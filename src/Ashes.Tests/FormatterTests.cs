@@ -36,11 +36,7 @@ public sealed class FormatterTests
         var program = new Parser(source, diagnostics).ParseProgram();
         diagnostics.Errors.ShouldBeEmpty();
 
-        return Ashes.Formatter.Formatter.Format(
-            program,
-            preferPipelines: source.Contains("|>", StringComparison.Ordinal)
-                || source.Contains("|?>", StringComparison.Ordinal)
-                || source.Contains("|!>", StringComparison.Ordinal));
+        return Ashes.Formatter.Formatter.Format(program);
     }
 
     private static string NormalizeLineEndings(string text)
@@ -347,17 +343,58 @@ public sealed class FormatterTests
     }
 
     [Test]
-    public void Format_should_write_call_chains_as_pipeline()
+    public void Format_should_write_pipe_chains_as_multiline_pipeline()
     {
         var formatted = Ashes.Formatter.Formatter.Format(
             new Expr.Call(
                 new Expr.Var("print"),
                 new Expr.Call(
                     new Expr.Var("double"),
-                    new Expr.Call(new Expr.Var("inc"), new Expr.IntLit(1)))),
-            preferPipelines: true);
+                    new Expr.Call(new Expr.Var("inc"), new Expr.IntLit(1)) { ArgumentListLayout = CallArgumentListLayout.Pipe })
+                { ArgumentListLayout = CallArgumentListLayout.Pipe })
+            { ArgumentListLayout = CallArgumentListLayout.Pipe });
 
         formatted.ShouldBe("1\n|> inc\n|> double\n|> print\n");
+    }
+
+    [Test]
+    public void Format_should_write_nested_calls_as_pipeline_when_preferred()
+    {
+        var options = new Ashes.Formatter.FormattingOptions { PreferPipelines = true };
+        var chain = new Expr.Call(
+            new Expr.Var("print"),
+            new Expr.Call(
+                new Expr.Var("double"),
+                new Expr.Call(new Expr.Var("inc"), new Expr.IntLit(1))));
+        var constructorHead = new Expr.Call(
+            new Expr.Var("g"),
+            new Expr.Call(
+                new Expr.Var("f"),
+                new Expr.Call(new Expr.Var("Some"), new Expr.Var("x"))));
+
+        Ashes.Formatter.Formatter.Format(chain, options).ShouldBe("1\n|> inc\n|> double\n|> print\n");
+        Ashes.Formatter.Formatter.Format(constructorHead, options).ShouldBe("Some(x)\n|> f\n|> g\n");
+        Ashes.Formatter.Formatter.Format(chain).ShouldBe("print(double(inc(1)))\n");
+    }
+
+    [Test]
+    public void Format_should_keep_nested_calls_as_calls_beside_a_pipeline()
+    {
+        const string source = "let a = 1 |> inc |> double\nlet b = print(double(inc(2)))\na + b\n";
+
+        var formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("let a =\n    1\n    |> inc\n    |> double\n\nlet b = print(double(inc(2)))\n\na + b\n");
+    }
+
+    [Test]
+    public void Format_should_keep_a_single_stage_pipe_inline()
+    {
+        const string source = "let a = 1 |> inc\nlet b = f(2 |> inc)([3 |> inc])\na + b\n";
+
+        var formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("let a = 1 |> inc\n\nlet b = f(2 |> inc)([3 |> inc])\n\na + b\n");
     }
 
     [Test]
@@ -514,7 +551,7 @@ public sealed class FormatterTests
         var expr = new Ashes.Frontend.Parser(source, diag).ParseExpression();
         diag.Errors.ShouldBeEmpty();
 
-        var formatted = Ashes.Formatter.Formatter.Format(expr, preferPipelines: true);
+        var formatted = Ashes.Formatter.Formatter.Format(expr);
 
         formatted.ShouldContain("Ok(\"42\")\n    |?> parse\n    |!> wrap");
     }

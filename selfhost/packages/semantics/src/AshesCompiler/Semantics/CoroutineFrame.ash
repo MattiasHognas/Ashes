@@ -151,7 +151,10 @@ let buildCoroutineFrameSlots transformResult captureTemps bodyInstructions =
                 let tempSlots = buildSavedTempSlots(savedTempOffsets)
                 in
                     let localSlots = buildSavedLocalSlots(savedLocalOffsets)(bodyInstructions)(savedTempOffsets)
-                    in append(captureSlots)(append(tempSlots)(localSlots))
+                    in
+                        localSlots
+                        |> append(tempSlots)
+                        |> append(captureSlots)
 
 let buildCoroutineRepresentationRecord coroutineLabel transformResult captureTemps bodyInstructions =
     match transformResult with

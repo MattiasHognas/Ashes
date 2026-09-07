@@ -15,4 +15,7 @@ let recursive loop (n: Int) (acc: Box) =
             loop(n - 1)(Box(reader = given (u: Int) -> text))
 
 match loop(50000)(Box(reader = given (u: Int) -> "seed")) with
-    | Box { reader = reader } -> Ashes.IO.print(reader(0))
+    | Box { reader = reader } ->
+        0
+        |> reader
+        |> Ashes.IO.print

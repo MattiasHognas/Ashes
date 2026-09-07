@@ -13,8 +13,14 @@ let recursive loop n t =
     then t
     else
         match t with
-            | Leaf -> loop(n - 1)(Node(Leaf)(n)(Leaf))
-            | Node(l, v, r) -> loop(n - 1)(Node(l)(v + n)(r))
+            | Leaf ->
+                Leaf
+                |> Node(Leaf)(n)
+                |> loop(n - 1)
+            | Node(l, v, r) ->
+                r
+                |> Node(l)(v + n)
+                |> loop(n - 1)
 
 let rootVal t =
     match t with
@@ -26,4 +32,5 @@ let initial = Node(Leaf)(5)(Leaf)
 let shared = loop(3)(initial)
 
 let big = loop(100)(Leaf)
-in Ashes.IO.print(Ashes.Text.fromInt(rootVal(initial)) + " " + Ashes.Text.fromInt(rootVal(shared)) + " " + Ashes.Text.fromInt(rootVal(big)))
+in
+    Ashes.IO.print(Ashes.Text.fromInt(rootVal(initial)) + " " + Ashes.Text.fromInt(rootVal(shared)) + " " + Ashes.Text.fromInt(rootVal(big)))

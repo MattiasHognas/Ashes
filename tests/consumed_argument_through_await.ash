@@ -16,13 +16,21 @@ let compute =
         if n == 0
         then total
         else
-            match await echo(fill(64)(Ashes.Text.fromInt(n))) with
+            match await echo(n
+            |> Ashes.Text.fromInt
+            |> fill(64)) with
                 | Error(_message) -> -1
                 | Ok(kept) ->
-                    let scratch = fill(64)(Ashes.Text.fromInt(n + 1))
+                    let scratch =
+                        n + 1
+                        |> Ashes.Text.fromInt
+                        |> fill(64)
                     in loop(n - 1)(total + Ashes.Text.byteLength(kept) + Ashes.Text.byteLength(scratch))
     in loop(40000)(0))
 
 match Ashes.Task.run(compute) with
-    | Ok(n) -> Ashes.IO.print(Ashes.Text.fromInt(n))
+    | Ok(n) ->
+        n
+        |> Ashes.Text.fromInt
+        |> Ashes.IO.print
     | Error(_e) -> Ashes.IO.print("err")

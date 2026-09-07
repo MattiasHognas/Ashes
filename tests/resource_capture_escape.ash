@@ -14,4 +14,7 @@ let reader =
                 match Ashes.IO.File.readChunk(fh)(5) with
                     | Error(_) -> "read-err"
                     | Ok(chunk) -> chunk
-in Ashes.IO.print(reader(0))
+in
+    0
+    |> reader
+    |> Ashes.IO.print

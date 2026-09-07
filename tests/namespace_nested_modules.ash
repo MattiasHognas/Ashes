@@ -16,7 +16,10 @@ let summed =
     list.foldLeft(given (acc) ->
         given (x) -> acc + x)(0)(doubled)
 
-let stored = map.getStr("k")(map.setStr("k")(30)(map.empty))
+let stored =
+    map.empty
+    |> map.setStr("k")(30)
+    |> map.getStr("k")
 
 let jsonText =
     match json.parse("{\"n\": 1}") with

@@ -36,7 +36,8 @@ type ModuleSourceError =
     | ReservedModuleSource(Str)
     deriving {Eq, Show}
 
-let moduleRelativePath moduleName = join("/")(Ashes.Text.split(moduleName)(".")) + ".ash"
+let moduleRelativePath moduleName =
+    join("/")(Ashes.Text.split(moduleName)(".")) + ".ash"
 
 let rootedPath root relativePath =
     if Ashes.Text.startsWith(relativePath)("/")
@@ -89,17 +90,28 @@ let recursive projectAttempts roots relativePath =
 let shippedCandidate relativePath shippedRoot =
     match shippedRoot with
         | None -> None
-        | Some(root) -> Some(rootedPath(root)(relativePath))
+        | Some(root) ->
+            relativePath
+            |> rootedPath(root)
+            |> Some
 
 let attemptedPaths roots relativePath =
     match shippedCandidate(relativePath)(roots.shippedRoot) with
-        | None -> projectAttempts(allProjectRoots(roots))(relativePath)
-        | Some(candidate) -> appendList(projectAttempts(allProjectRoots(roots))(relativePath))([candidate])
+        | None ->
+            projectAttempts(allProjectRoots(roots))(relativePath)
+        | Some(candidate) ->
+            appendList(projectAttempts(allProjectRoots(roots))(relativePath))([candidate])
 
 let missingReserved moduleName relativePath roots =
     match shippedCandidate(relativePath)(roots.shippedRoot) with
-        | None -> Error(MissingModuleSource(deepCopy(moduleName))([]))
-        | Some(candidate) -> Error(MissingModuleSource(deepCopy(moduleName))([candidate]))
+        | None ->
+            []
+            |> MissingModuleSource(deepCopy(moduleName))
+            |> Error
+        | Some(candidate) ->
+            [candidate]
+            |> MissingModuleSource(deepCopy(moduleName))
+            |> Error
 
 let resolveReserved moduleName relativePath roots available =
     match shippedCandidate(relativePath)(roots.shippedRoot) with
@@ -111,15 +123,26 @@ let resolveReserved moduleName relativePath roots available =
 
 let resolveUnreserved moduleName relativePath roots available =
     match projectMatches(roots)(relativePath)(available) with
-        | first :: second :: rest -> Error(AmbiguousModuleSource(deepCopy(moduleName))(first :: second :: rest))
+        | first :: second :: rest ->
+            first :: second :: rest
+            |> AmbiguousModuleSource(deepCopy(moduleName))
+            |> Error
         | source :: [] -> Ok(ProjectModuleSource(source))
         | [] ->
             match shippedCandidate(relativePath)(roots.shippedRoot) with
                 | Some(candidate) ->
                     if containsPath(candidate)(available)
                     then Ok(ShippedModuleSource(candidate))
-                    else Error(MissingModuleSource(deepCopy(moduleName))(attemptedPaths(roots)(relativePath)))
-                | None -> Error(MissingModuleSource(deepCopy(moduleName))(attemptedPaths(roots)(relativePath)))
+                    else
+                        relativePath
+                        |> attemptedPaths(roots)
+                        |> MissingModuleSource(deepCopy(moduleName))
+                        |> Error
+                | None ->
+                    relativePath
+                    |> attemptedPaths(roots)
+                    |> MissingModuleSource(deepCopy(moduleName))
+                    |> Error
 
 let resolveModuleSourcePath moduleName roots available relativePath =
     if Ashes.Text.startsWith(moduleName)("Ashes.")
@@ -129,4 +152,7 @@ let resolveModuleSourcePath moduleName roots available relativePath =
 let resolveModuleSource moduleName roots available =
     if moduleName == "Ashes"
     then Error(ReservedModuleSource("Ashes"))
-    else resolveModuleSourcePath(moduleName)(roots)(available)(moduleRelativePath(moduleName))
+    else
+        moduleName
+        |> moduleRelativePath
+        |> resolveModuleSourcePath(moduleName)(roots)(available)

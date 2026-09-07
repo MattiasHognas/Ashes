@@ -20,10 +20,15 @@ in
             let tail = []
             in head :: tail
     in
-        let _spawned = Ashes.Task.spawn(async(shared))
+        let _spawned =
+            shared
+            |> async
+            |> Ashes.Task.spawn
         in
             let _driven =
-                Ashes.Task.run(async(match await Ashes.Task.sleep(0) with
+                (match await Ashes.Task.sleep(0) with
                     | Ok(_value) -> 0
-                    | Error(_error) -> 0))
+                    | Error(_error) -> 0)
+                |> async
+                |> Ashes.Task.run
             in shared))

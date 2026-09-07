@@ -27,7 +27,11 @@ let recursive spin n box =
     then box
     else
         match box with
-            | B(xs) -> spin(n - 1)(B(rotateFirst(1)(xs)))
+            | B(xs) ->
+                xs
+                |> rotateFirst(1)
+                |> B
+                |> spin(n - 1)
 
 let recursive show xs =
     match xs with

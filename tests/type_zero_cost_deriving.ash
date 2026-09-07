@@ -4,4 +4,6 @@ import Ashes.Text
 type UserId = UserId(Int)
     deriving {Show}
 
-Ashes.IO.print(Ashes.Trait.Show.show(UserId(42)))
+UserId(42)
+|> Ashes.Trait.Show.show
+|> Ashes.IO.print

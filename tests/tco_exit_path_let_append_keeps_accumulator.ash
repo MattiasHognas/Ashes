@@ -8,7 +8,8 @@ let recursive joined root names =
             then joined(root)(rest)
             else
                 let path = root + "/" + name
-                in path + ":" + Ashes.Text.fromInt(Ashes.Text.length(path)) :: joined(root)(rest)
+                in
+                    path + ":" + Ashes.Text.fromInt(Ashes.Text.length(path)) :: joined(root)(rest)
 
 let recursive count xs =
     match xs with
@@ -27,7 +28,10 @@ let recursive churn n acc =
 
 let root = Ashes.Text.substring("/home/user/source/project/.worktrees/generic-reverse-audit/lib/Ashes/Collection/List/Sorted/x")(0)(95)
 
-let paths = joined(root)(numbered(20)([]))
+let paths =
+    []
+    |> numbered(20)
+    |> joined(root)
 
 let noise = churn(3000)([])
 

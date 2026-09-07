@@ -18,9 +18,10 @@ let displayTrait unit =
     TraitDecl(name = "Display", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [unaryStringMethod(
         "tag",
         None
-    ), unaryStringMethod("render")(None
+    ), None
     |> ExprLambda("value")(ExprString("default"))
-    |> Some)])
+    |> Some
+    |> unaryStringMethod("render")])
 
 let displayIntImplementation unit =
     TraitImplementationDecl(traitName = "Display", typeArguments = [TypeNamed(

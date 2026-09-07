@@ -13,7 +13,10 @@ let large =
 
 let count = List.length(large)
 
-let maybeTop = List.head(List.reverse(large))
+let maybeTop =
+    large
+    |> List.reverse
+    |> List.head
 
 let adjusted =
     Maybe.map(given (x) -> x + count)(maybeTop)

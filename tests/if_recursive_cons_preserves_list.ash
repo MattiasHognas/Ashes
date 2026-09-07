@@ -11,4 +11,8 @@ in
         match xs with
             | [] -> acc
             | head :: tail -> digits(acc * 10 + head)(tail)
-    in Ashes.IO.print(digits(0)(copy([1, 2, 3, 4])))
+    in
+        [1, 2, 3, 4]
+        |> copy
+        |> digits(0)
+        |> Ashes.IO.print
