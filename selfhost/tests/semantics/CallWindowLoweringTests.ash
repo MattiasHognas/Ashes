@@ -120,13 +120,18 @@ let expectFreshArgumentRetainedUnderAcceptsBit unit =
     |> (given (_) -> Unit)
 
 // A helper whose result keeps its argument takes a fresh argument outright: the accepts bit is
-// still passed, but the argument is neither retained nor released by the caller.
+// still passed, but the argument is neither retained nor released by the caller. The helper
+// returns its entry-normalized parameter, so its closure carries the returns bit as well and
+// the caller adopts the reference-counted result without a copy, releasing it after its use.
 let expectKeptFreshArgumentIsTransferred unit =
     "let makeText n =\n    let text = Ashes.Text.fromInt(n)\n    in text\n\nlet keep (text: Str) = text\n\nAshes.IO.print(keep(makeText(7)))"
     |> dumpSource
+    |> expectInstruction("MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true")
     |> expectInstruction("AndInt                Target=14 Left=12 Right=13")
     |> expectInstruction("CallClosure           Target=18 ClosureTemp=5 ArgTemp=9 RuntimeManagedArgumentFlagTemp=14")
-    |> expectInstruction("CopyOutArena          DestTemp=19 SrcTemp=18 RuntimeManaged=true Purpose=RcNormalization")
+    |> expectInstruction("PrintStr              Source=18")
+    |> expectInstruction("RcDrop                SourceTemp=18 TypeName=String RuntimeManaged=true")
+    |> expectNoInstructionText("DestTemp=19 SrcTemp=18")
     |> expectNoInstructionText("rc_call_argument_not_retained")
     |> expectNoInstructionText("RcDrop                SourceTemp=9")
     |> (given (_) -> Unit)

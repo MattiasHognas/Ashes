@@ -1558,6 +1558,14 @@ same public behavior.
   record is placed on the RC heap and releases the owned copy with itself; the selfhost decides
   the normalization before the body is lowered for the same reason (`withNormalizedAlwaysReturnedParameter`)
   and computes the function-body request against the prepared body state, not the outer one.
+  A function whose body result is a plain read of that normalized parameter (`identity (s: Str)
+  = s`) returns the owned value on both flag paths, so both compilers count the body result as
+  runtime-managed for a plain function (`ReturnsNormalizedAlwaysReturnedParameter` /
+  `adoptNormalizedParameterResult`): the closure carries the returns bit beside the accepts
+  bit, callers adopt the value instead of copying it, and the epilogue honors a generic
+  caller's arena-result request, which `apply(identity)(fresh)` through a parameter function
+  had been missing (512 bytes leaked per call in both compilers;
+  `tests/runtime_rc_normalized_parameter_returned_through_parameter_function_plateau.ash`).
   The churn fixture is flat at 8.2 MB (stage 0) and 5.6 MB (selfhost) at both 20000 and 200000
   iterations. Done (2026-09-06): the same loop over a string-returning function
   (`tests/generic_map_string_churn_plateau.ash`) grew from 8.2 MB to 12.3 MB, because the

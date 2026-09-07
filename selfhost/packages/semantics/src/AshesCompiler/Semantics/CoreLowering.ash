@@ -903,9 +903,15 @@ let recursive letValueIsLambda (value: Expr) =
 // `SourceFunction`; any other value leaves the lambda origins alone. A lambda under `let ... in`
 // wrappers inside the value is not armed and lifts as a closure helper.
 // The parameter chain and innermost body of a curried lambda value.
+// The innermost body keeps its own source-location wrapper, so a body spliced into a call site
+// (an inlined helper) is located where it was written rather than at the call.
 let recursive lambdaParameterChain (value: Expr) (parameters: List(Str)) =
     match value with
-        | ExprAt(_span, inner) -> lambdaParameterChain(inner)(parameters)
+        | ExprAt(_span, inner) ->
+            match inner with
+                | ExprAt(_innerSpan, _nested) -> lambdaParameterChain(inner)(parameters)
+                | ExprLambda(_parameter, _body, _annotation) -> lambdaParameterChain(inner)(parameters)
+                | _ -> (reverse(parameters), value)
         | ExprLambda(parameter, body, _annotation) -> lambdaParameterChain(body)(parameter :: parameters)
         | body -> (reverse(parameters), body)
 
@@ -5450,28 +5456,54 @@ let normalizeRequestedArenaResult (bodyTemp: Int) (bodyType: SemanticType) (stat
                                                                         (emit(LoadLocal(resultTemp)(resultSlot))(resultState), resultTemp)
     else (state, bodyTemp)
 
+// Whether `bodyTemp` is defined by a plain read of local `slot`.
+let recursive definesSlotRead (bodyTemp: Int) (slot: Int) (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadLocal(target, source) } :: rest ->
+            if target == bodyTemp
+            then source == slot
+            else definesSlotRead(bodyTemp)(slot)(rest)
+        | _ :: rest -> definesSlotRead(bodyTemp)(slot)(rest)
+
+// Stage 0's `ReturnsNormalizedAlwaysReturnedParameter`: a function whose entry normalizes its
+// always-returned parameter returns that owned value whenever its body's result is a plain
+// read of the parameter's slot (the adopted argument or the entry copy, reference-counted
+// either way), so the body result counts as newly produced: the closure advertises a
+// runtime-managed result and a caller asking for an arena result gets the boundary copy with
+// the original released. A loop function's parameter slot is the loop's own business.
+let adoptNormalizedParameterResult (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | Some(_frame) -> state
+        | None ->
+            if acceptsRuntimeManagedArgument(label)(state) && isRuntimeTemp(bodyTemp)(state) == false && definesSlotRead(bodyTemp)(1)(state.reversedInstructions)
+            then markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
+            else state
+
 let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
-        | LoweredCoreValue { state = loweredBody, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            let returned =
-                match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
-                    | (normalized, returnedTemp) ->
-                        normalized
-                        |> emit(Return(returnedTemp))
-                        |> resolvePendingTcoResets
+        | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
+            let loweredBody = adoptNormalizedParameterResult(label)(bodyTemp)(bodyState)
             in
-                match pruneDeadCaptures(captures)(returned.reversedInstructions) with
-                    | (survivors, prunedInstructions) ->
-                        let finishedBody = finishLiftedFunction(label)(origin)((returned with reversedInstructions = prunedInstructions))
-                        in
-                            finishedBody
-                            |> restoreOuterFrame(typedOuter)
-                            |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(loweredBody))
-                            |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
-                            |> markCapturedResourcesMoved(survivors)
-                            |> allocateEnvironment(captures)(survivors)(stackAllocate)
-                            |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                let returned =
+                    match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
+                        | (normalized, returnedTemp) ->
+                            normalized
+                            |> emit(Return(returnedTemp))
+                            |> resolvePendingTcoResets
+                in
+                    match pruneDeadCaptures(captures)(returned.reversedInstructions) with
+                        | (survivors, prunedInstructions) ->
+                            let finishedBody = finishLiftedFunction(label)(origin)((returned with reversedInstructions = prunedInstructions))
+                            in
+                                finishedBody
+                                |> restoreOuterFrame(typedOuter)
+                                |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(loweredBody))
+                                |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
+                                |> markCapturedResourcesMoved(survivors)
+                                |> allocateEnvironment(captures)(survivors)(stackAllocate)
+                                |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus
@@ -10630,24 +10662,26 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
         | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None }) ->
             match bindType(resultType)(bodyType)(bodyState) with
                 | (failedState, Some(error)) -> failure(failedState)(error)
-                | (typedBody, None) ->
-                    let finishedBody =
-                        match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
-                            | (normalized, returnedTemp) ->
-                                normalized
-                                |> emit(Return(returnedTemp))
-                                |> resolvePendingTcoResets
-                                |> finishLiftedFunction(label)(origin)
+                | (boundBody, None) ->
+                    let typedBody = adoptNormalizedParameterResult(label)(bodyTemp)(boundBody)
                     in
-                        let restored =
-                            finishedBody
-                            |> restoreOuterFrame(typedOuter)
-                            |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(typedBody))
-                            |> recordReturnedClosureLabel(label)(bodyTemp)(typedBody.reversedInstructions)
+                        let finishedBody =
+                            match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
+                                | (normalized, returnedTemp) ->
+                                    normalized
+                                    |> emit(Return(returnedTemp))
+                                    |> resolvePendingTcoResets
+                                    |> finishLiftedFunction(label)(origin)
                         in
-                            match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
-                                | (closureState, closureTemp) ->
-                                    success(closureTemp)(resolveType(finishedBody)(semanticType))(closureState)
+                            let restored =
+                                finishedBody
+                                |> restoreOuterFrame(typedOuter)
+                                |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(typedBody))
+                                |> recordReturnedClosureLabel(label)(bodyTemp)(typedBody.reversedInstructions)
+                            in
+                                match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
+                                    | (closureState, closureTemp) ->
+                                        success(closureTemp)(resolveType(finishedBody)(semanticType))(closureState)
 
 // A curried parameter lambda written as `let recursive f a b = ...` sugar carries its
 // declaration's span in stage 0's syntax tree, so the chain's inner lambdas are lowered under it.

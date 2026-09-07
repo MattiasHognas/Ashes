@@ -135,6 +135,13 @@ let checkFixture root name =
 // its transferred pointer child guarded by the token's uniqueness, and the nullary rebuild reusing
 // the dead cell; reuse_shared_falls_back keeps a scrutinee aliased by a second `let` on the arena
 // path with no token at all.
+// inlined_entry_helper_under_back_edge adds a user helper whose body is a `let recursive go ...
+// in go(seed)(xs)` entry, spliced into the loop's back-edge argument: the argument stored into
+// a fresh local, the worker closure built in the loop, and the two direct applications. A
+// function returning its own entry-normalized parameter (the returns bit beside the accepts
+// bit, and the epilogue copying the result into the arena on a generic caller's request) is
+// pinned in CallWindowLoweringTests instead: stage 0 locates the synthesized entry
+// normalization at the binding, which this lowering does not yet reproduce.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -172,5 +179,6 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("reuse_record_update"))
         |> (given (_) -> checkFixture(root)("reuse_list_map"))
         |> (given (_) -> checkFixture(root)("reuse_shared_falls_back"))
+        |> (given (_) -> checkFixture(root)("inlined_entry_helper_under_back_edge"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

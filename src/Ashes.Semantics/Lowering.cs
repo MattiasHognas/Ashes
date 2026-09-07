@@ -6488,7 +6488,7 @@ public sealed partial class Lowering
         // lambda's own MakeClosure call below (read before RestoreFrame restores the enclosing temp facts)
         // and persisted by label for LowerVarUnbound/Binding.Self, which reconstruct a reference to this
         // same already-compiled function from a different scope later.
-        bool bodyRuntimeManaged = IsRuntimeManagedResultTemp(bodyTemp);
+        bool bodyRuntimeManaged = LambdaBodyResultRuntimeManaged(label, argSlot, bodyTemp, savedTcoCtx is null && !isChainLambda);
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
         RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
@@ -6728,6 +6728,33 @@ public sealed partial class Lowering
         _inst.RemoveRange(generatedStart, generated.Count);
         _inst.InsertRange(0, generated);
         _runtimeNormalizedFunctionArgumentLabels.Add(label);
+    }
+
+    // A function whose entry normalizes its always-returned parameter returns that owned value
+    // whenever its body's result is a plain read of the parameter's slot: the adopted argument or
+    // the entry copy, reference-counted either way. Its closure advertises a runtime-managed
+    // result, so a caller adopts the value instead of copying it and orphaning the original, and
+    // a caller asking for an arena result gets the boundary copy with the original released.
+    private bool LambdaBodyResultRuntimeManaged(string label, int argumentSlot, int bodyTemp, bool plainFunction)
+        => IsRuntimeManagedResultTemp(bodyTemp)
+            || (plainFunction && ReturnsNormalizedAlwaysReturnedParameter(label, argumentSlot, bodyTemp));
+
+    private bool ReturnsNormalizedAlwaysReturnedParameter(string label, int argumentSlot, int bodyTemp)
+    {
+        if (!_runtimeNormalizedFunctionArgumentLabels.Contains(label))
+        {
+            return false;
+        }
+
+        for (int i = _inst.Count - 1; i >= 0; i--)
+        {
+            if (_inst[i] is IrInst.LoadLocal { Target: int target, Slot: int slot } && target == bodyTemp)
+            {
+                return slot == argumentSlot;
+            }
+        }
+
+        return false;
     }
 
     // Lowers the body with the entry-normalized parameter (if any) visible to the body's
