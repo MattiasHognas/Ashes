@@ -236,7 +236,16 @@ Set the `ASHES_TIMING` environment variable to any value to report how long each
 took on stderr, one `timing: <phase> <milliseconds> ms` line per phase: `lower` (semantic
 lowering with lifetime placement), `optimize` (the IR optimizer), and `backend` with its
 `backend.emit-module`, `backend.verify`, `backend.llvm-passes`, `backend.bitcode-link`,
-`backend.object-code`, and `backend.link` parts. The generated code is unaffected.
+`backend.object-code`, and `backend.link` parts (a split program reports `backend.parallel-objects`
+with one `backend.partition<N>.llvm-passes` and `backend.partition<N>.object-code` pair per
+partition instead). The generated code is unaffected.
+
+A large linux-x64 program (1024 lifted functions or more) is optimized and turned into object
+code in parallel partitions and linked as several objects; see
+[Parallel code generation](../internals/architecture.md#parallel-code-generation). Set
+`ASHES_LLVM_JOBS` to the number of partitions to use, or to `1` to keep a single module. The
+partition count is derived from the program's size by default, so the same source produces the
+same executable on every machine.
 
 ---
 

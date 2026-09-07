@@ -306,6 +306,24 @@ All backends implement `IBackend` and delegate to the same
 `LlvmCodegen.Compile()` entry point, which branches internally based on
 the target ID.
 
+### Parallel code generation
+
+A large linux-x64 program is split into several LLVM modules that are optimized and turned into
+object code on separate threads and linked as several objects. The partition count depends only
+on the program's size (one partition per 1024 lifted functions, at most 16), so the image is
+reproducible across machines; `ASHES_LLVM_JOBS` overrides it, `1` keeps a single module, and
+debug builds always use a single module. Each partition is its own LLVM context and module: it
+declares every lifted function but defines only the contiguous, instruction-count-balanced range
+it owns, only partition 0 defines the entry function, and the runtime helper functions are
+defined in every module so they still inline. The globals partition 0 defines (the arena cursors,
+the capability handler slots, the string literals its functions use) are exported from it and
+replaced by external declarations in the other partitions, so every object shares one set of
+runtime state; a literal only a later partition uses stays that partition's own. The vendored
+bitcode payloads are linked into partition 0 alone. The ELF linker then lays the objects' text
+sections out one after another behind the entry trampoline, their allocated data sections one
+after another in the data segment, and resolves an undefined symbol in one object through a
+merged table of every object's global symbols; local symbols stay private to their object.
+
 ### External dependencies
 
 | Dependency | Source | Purpose |

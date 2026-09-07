@@ -187,6 +187,18 @@ internal static class LlvmTargetArchitectureExtensions
 
 internal readonly record struct LlvmCpuSelection(string Cpu, bool UseHostDetection);
 
+/// <summary>
+/// One partition of a program split for parallel code generation: the module with
+/// <paramref name="Index"/> defines the bodies of the lifted functions <paramref name="Assignment"/>
+/// maps to that index, and only partition 0 defines the entry function and the shared globals.
+/// </summary>
+internal sealed record ProgramPartition(int Index, IReadOnlyDictionary<string, int> Assignment)
+{
+    public bool EmitsEntry => Index == 0;
+
+    public bool EmitsBody(string label) => Assignment.TryGetValue(label, out int owner) && owner == Index;
+}
+
 internal sealed record LlvmTargetContext(
     LlvmContextHandle Context,
     LlvmModuleHandle Module,
@@ -200,6 +212,12 @@ internal sealed record LlvmTargetContext(
     // (sched_getaffinity popcount on linux; GetSystemInfo on win-x64).
     long? ParallelWorkerCap = null) : IDisposable
 {
+    /// <summary>
+    /// The partition of the program this module holds when the program is split for parallel
+    /// code generation; null when the module holds the whole program.
+    /// </summary>
+    public ProgramPartition? Partition { get; init; }
+
     private int _moduleConstantCounter;
 
     private readonly Dictionary<string, LlvmValueHandle> _stringLiteralGlobals = new(StringComparer.Ordinal);

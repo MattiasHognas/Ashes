@@ -14,12 +14,16 @@ namespace Ashes.Backend.Backends;
 /// null uses the built-in default.</param>
 /// <param name="ParallelWorkerCap">Upper bound on the number of parallel workers the runtime spawns;
 /// null uses the built-in default (derived from the host CPU count).</param>
+/// <param name="ObjectPartitions">The number of objects the program module is split into for
+/// parallel optimization and code generation; null derives the count from the program's size
+/// (or the <c>ASHES_LLVM_JOBS</c> environment variable), and 1 keeps a single module.</param>
 public sealed record BackendCompileOptions(
     BackendOptimizationLevel OptimizationLevel,
     bool EmitDebugInfo = false,
     string? TargetCpu = null,
     long? ParallelWorkerStackBytes = null,
-    long? ParallelWorkerCap = null)
+    long? ParallelWorkerCap = null,
+    int? ObjectPartitions = null)
 {
     /// <summary>The default options: <see cref="BackendOptimizationLevel.O2"/> with no debug info and
     /// runtime defaults for every other knob.</summary>

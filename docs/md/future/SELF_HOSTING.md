@@ -547,26 +547,37 @@ same public behavior.
   until it lands, the selfhost rejects `==` on a list of a `deriving {Eq}` record
   (`tests/reuse_specialization_declines_unreachable_helper.ash`, `CoreOperatorTypeMismatch` on
   `List(Live)`), the one shared fixture that needs a derived implementation at run time.
-- [ ] **TRT-16** Stage 0: share one concrete dictionary per trait and type instead of rebuilding
-  it at every use. Every `==`, `show`, `compare`, or `hash` on a derived type rewrites the whole
-  nested dictionary value at the call site, closures for each method of each nested type
-  included, so the emitted program grows linearly with the number of uses of a large derived type
-  rather than with the number of types: a three-level derived type costs about 660 functions,
-  19,000 IR lines, and 1 MB of binary per use (`tmp` probe with one and four `==`/`show`
-  sites: 665 and 2,654 functions, 1.0 MB and 4.1 MB at -O0), and the self-hosted semantics test
-  program (`selfhost/tests/semantics`) is 79,348 functions and 4.06 million IR lines, of which
-  78,713 functions and 3.65 million lines are byte-identical copies of another function after
-  masking numbers; 1.2 million lines carry `Ashes.Trait` source locations and another 1.4
-  million the derived instances of `Types.ash` and `Token.ash`. Its stage-0 compile went from
-  36 s at `--debug` and about 100 s at the default level on 2026-08-26 (12 to 17 MB and 1.4 to
-  2.5 MB binaries) to 4.5 min and 10.6 min on 2026-09-07 (212 MB and 53 MB), with a 14 GB peak
-  resident set, all of it in LLVM's code generation of the duplicated instances; the source grew
-  1.8x in the same period. Hoist each concrete dictionary (its method closures and nested
-  supertrait dictionaries) into one program-level construction per trait and type, reference it
-  from every use, and port the shared form to the self-hosted trait lowering (TRT-13 to TRT-15)
-  rather than the per-use form. Track the stage-0 compile time and peak resident set of the
-  self-hosted packages in the phase benchmark (BOOT-8) so the next drift is caught at a
-  milestone close.
+- [x] **TRT-16** Stage 0: compile a concrete instance's implementation lambdas once instead of
+  rebuilding them at every use. Every `==`, `show`, `compare`, or `hash` on a derived type
+  rewrote the whole nested dictionary value at the call site, closures for each method of each
+  nested type included, so the emitted program grew linearly with the number of uses of a large
+  derived type rather than with the number of types: a three-level derived type cost about 660
+  functions, 19,000 IR lines, and 1 MB of binary per use, and the self-hosted semantics test
+  program (`selfhost/tests/semantics`) was 79,348 functions and 4.06 million IR lines, of which
+  78,713 functions were copies of another function after masking numbers; 1.2 million lines
+  carried `Ashes.Trait` source locations and another 1.4 million the derived instances of
+  `Types.ash` and `Token.ash`. Its stage-0 compile had gone from 36 s at `--debug` and about
+  100 s at the default level on 2026-08-26 to 4.5 min and 10.6 min on 2026-09-07 (212 MB and 53
+  MB binaries, 14 GB peak resident set), while the source grew 1.8x.
+  Done (2026-09-07): `BuildTraitImplementationMethod` offers the implementation lambda it lowers
+  for sharing under the goal's stable key, the method, and the construction context (the
+  enclosing instances' self-ties, the hidden dictionary parameters active at the site, and the
+  coroutine placement), and `LowerLambdaCore` reuses the recorded function when a later
+  construction in the same context computes the same captures, emitting only the environment and
+  the closure object; the self-tie ordinal is assigned once per goal and method so every
+  construction binds the same tie name. Only fully concrete plans share. The repro's four
+  `==`/`show` sites went from 2,654 functions to 193; the semantics test program to 19,619
+  functions and 1.35 million IR lines, its default-level compile to 5.5 min, 13 MB, 7.7 GB.
+  Three more stage-0 levers followed in the same change: the lifetime placement's alias-store
+  scan indexed by slot (5.5 to 4.0 min), hover-type recording skipped outside the language
+  server and resolved layout types memoized (4.0 to 3.4 min), and parallel code generation over
+  partitions of the program module linked as several objects (3.4 to 1.9 min; see
+  [Parallel code generation](../internals/architecture.md#parallel-code-generation)). Compile
+  phases are reported under `ASHES_TIMING`. Stage 1: the self-hosted trait lowering (TRT-13 to
+  TRT-15) must build dictionaries over shared implementation functions from the start, never the
+  per-use form; the other levers are tracked as OPT-53, CG-17, and CLI-11. Track the stage-0
+  compile time and peak resident set of the self-hosted packages in the phase benchmark
+  (BOOT-8) so the next drift is caught at a milestone close.
 
 #### Modules, projects, externals, and whole-program semantics
 
@@ -2222,6 +2233,17 @@ same public behavior.
   2026-09-07). Either the constructor should adopt the normalized parameter as a fresh owned
   child on the reference-counted heap, or the site should request the arena form and the arm
   release the copy.
+- [ ] **OPT-53** Self-hosted mirror of the stage-0 lowering speed-ups of TRT-16's change.
+  `PerceusLifetimePlacement.ash` scans every alias store for every load
+  (`loadSeesAliasStore` over `aliasStores`, with `containsStore` and a per-instruction
+  `blockSpanContaining` walk over the block list), which stage 0's `CollectOwnerAliases`
+  replaced by alias stores indexed by slot with the region's block order computed once; port
+  that shape (an `Ashes.Collection.Map` keyed by slot, and block spans precomputed per
+  instruction) before stage 1 compiles itself, since the pass was 80 s of the semantics test
+  program's compile in stage 0. `HeapLayoutClassification.ash` recomputes a monomorphic
+  declaration's unresolved-type and resource facts at every value; stage 0 memoizes a resolved
+  monomorphic symbol (`_resolvedLayoutTypeSymbols`). The self-hosted lowering records no hover
+  types, so that gate has no counterpart.
 - [ ] **OPT-52** Self-hosted mirror of OPT-49a and OPT-49b. Now that the three shapes compile
   through the self-hosted compiler (OPT-49c), port the perform site adopting a handler arm's
   reference-counted result by its returns bit (with CAP-10's arm-closure normalization and
@@ -2473,8 +2495,28 @@ same public behavior.
   forty-stage chain under such a `let`. `runtime_rc_whole_string_pattern_recursion` now stops at
   SEM-18's comparison default instead.
 
+- [ ] **CG-17** Port parallel code generation: split a large program into partitions of lifted
+  functions (one per 1024 functions, at most 16, derived from the program's size alone so the
+  image stays reproducible), emit each partition as its own module that declares every lifted
+  function, defines its own range and the runtime helpers, and holds the entry function and the
+  shared globals in partition 0 alone (the other partitions declare those globals), optimize and
+  emit the partitions' objects on separate threads, link the vendored bitcode payloads into
+  partition 0, and mark a very large entry function `optnone` so its once-run body is not
+  optimized. Source of truth: `LlvmCodegen.ParallelObjects.cs`, `ProgramPartition` in
+  `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
+  `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's multi-object link.
+  Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
+
 #### Object parsing and executable linking
 
+- [ ] **LNK-14** Link several relocatable objects into one executable, for every target: lay the
+  objects' text sections out one after another behind the entry trampoline, their allocated data
+  sections one after another in the data segment, resolve an undefined symbol in one object
+  through a merged table of every object's global and weak symbols (local symbols stay private to
+  their object), take the entry from the first object, and take the union of the objects' dynamic
+  imports numbered in name order. Source of truth: `LlvmImageLinkerElf.MultiObject.cs` and its
+  siblings for the other image formats. Programs with debug or TLS sections are linked from one
+  object.
 - [ ] **LNK-1** Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in
@@ -2601,6 +2643,10 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   reports to stderr between optimization and code generation. Open: structured diagnostics, the
   `test` command, and the `traits`/`authority`/`concurrency` data the self-hosted lowering does not
   record yet, which render as their empty sections.
+- [ ] **CLI-11** `ASHES_TIMING` on the self-hosted `compile` and `run`: one `timing: <phase>
+  <milliseconds> ms` line per phase on stderr (`lower`, `optimize`, `backend` and its
+  `backend.*` parts, per-partition lines under a split), as stage 0's `CompilePhaseTiming`
+  reports them, so the two compilers' phases can be compared without sampling.
 - [ ] **CLI-10** `--emit-ir <lowered|final>` on the self-hosted `compile` and `run`. The lowering
   already produces stage 0's text (`formatIr`), but the CLI rejects the option, so comparing the
   self-hosted compiler's IR with stage 0's `--emit-ir lowered` for a real program needs a scratch
