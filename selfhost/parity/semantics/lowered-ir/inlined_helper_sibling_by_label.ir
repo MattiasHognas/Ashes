@@ -1,0 +1,369 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
+  resolved requirement=Ashes.Trait.Multiply(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9890)
+  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
+
+function lambda_0  [SourceFunction from base]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (inlined_helper_sibling_by_label.ash:1:21)
+    LoadConstInt          Target=1 Value=2   (inlined_helper_sibling_by_label.ash:1:25)
+    MulInt                Target=2 Left=0 Right=1   (inlined_helper_sibling_by_label.ash:1:21)
+    Return                Source=2
+
+function lambda_1  [SourceFunction from wrap]
+  locals=7 temps=16
+    LoadConstInt          Target=0 Value=0   (inlined_helper_sibling_by_label.ash:3:21)
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=1 Index=0   (inlined_helper_sibling_by_label.ash:3:22)
+    Borrow                Target=2 SourceTemp=1
+    LoadLocal             Target=3 Slot=1   (inlined_helper_sibling_by_label.ash:3:27)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (inlined_helper_sibling_by_label.ash:3:22)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    Alloc                 Target=5 SizeBytes=16 RuntimeManaged=true   (inlined_helper_sibling_by_label.ash:3:21)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=4   (inlined_helper_sibling_by_label.ash:3:21)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=0   (inlined_helper_sibling_by_label.ash:3:21)
+    LoadArgumentOwnership Target=6
+    LoadConstInt          Target=7 Value=1
+    ShrInt                Target=8 Left=6 Right=7
+    JumpIfFalse           CondTemp=8 Target=rc_result_owned_0
+    CopyOutList           DestTemp=9 SrcTemp=5 HeadCopy=Inline Purpose=ArenaResultBoundary
+    StoreLocal            Slot=6 Source=5
+  rcdrop_list_2:
+    LoadLocal             Target=10 Slot=6
+    LoadConstInt          Target=11 Value=0
+    CmpIntNe              Target=12 Left=10 Right=11
+    JumpIfFalse           CondTemp=12 Target=rcdrop_list_end_4
+    RcIsUnique            Target=13 SourceTemp=10
+    JumpIfFalse           CondTemp=13 Target=rcdrop_list_shared_3
+    LoadMemOffset         Target=14 BasePtr=10 OffsetBytes=8
+    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=6 Source=14
+    Jump                  Target=rcdrop_list_2
+  rcdrop_list_shared_3:
+    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_4
+  rcdrop_list_end_4:
+    StoreLocal            Slot=5 Source=9
+    Jump                  Target=rc_result_done_1
+  rc_result_owned_0:
+    StoreLocal            Slot=5 Source=5
+  rc_result_done_1:
+    LoadLocal             Target=15 Slot=5
+    Return                Source=15
+
+function lambda_4  [ClosureHelper from go]
+  locals=22 temps=21
+    LoadEnv               Target=0 Index=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=2 Source=0   (inlined_helper_sibling_by_label.ash:6:6)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=5 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=6 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=7 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+  lambda_4_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadLocal             Target=2 Slot=1   (inlined_helper_sibling_by_label.ash:7:15)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (inlined_helper_sibling_by_label.ash:7:9)
+    CmpIntEq              Target=4 Left=2 Right=3   (inlined_helper_sibling_by_label.ash:7:9)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_8   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadLocal             Target=5 Slot=2   (inlined_helper_sibling_by_label.ash:8:21)
+    StoreLocal            Slot=11 Source=5   (inlined_helper_sibling_by_label.ash:7:9)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_5   (inlined_helper_sibling_by_label.ash:7:9)
+  match_arm_cleanup_8:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_7   (inlined_helper_sibling_by_label.ash:7:9)
+  match_next_7:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (inlined_helper_sibling_by_label.ash:7:9)
+    CmpIntNe              Target=7 Left=2 Right=6   (inlined_helper_sibling_by_label.ash:7:9)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_9   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (inlined_helper_sibling_by_label.ash:7:9)
+    StoreLocal            Slot=18 Source=9   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadLocal             Target=10 Slot=2   (inlined_helper_sibling_by_label.ash:9:31)
+    LoadConstInt          Target=11 Value=1   (inlined_helper_sibling_by_label.ash:9:37)
+    AddInt                Target=12 Left=10 Right=11   (inlined_helper_sibling_by_label.ash:9:31)
+    LoadLocal             Target=13 Slot=18   (inlined_helper_sibling_by_label.ash:9:40)
+    Borrow                Target=14 SourceTemp=13
+    LoadLocal             Target=15 Slot=2   (inlined_helper_sibling_by_label.ash:9:28)
+    LoadLocal             Target=16 Slot=1   (inlined_helper_sibling_by_label.ash:9:28)
+    StoreLocal            Slot=2 Source=12   (inlined_helper_sibling_by_label.ash:9:28)
+    StoreLocal            Slot=1 Source=14   (inlined_helper_sibling_by_label.ash:9:28)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
+    RestoreStackPointer   Slot=10   (inlined_helper_sibling_by_label.ash:9:28)
+    Jump                  Target=lambda_4_body   (inlined_helper_sibling_by_label.ash:9:28)
+    LoadConstInt          Target=17 Value=0   (inlined_helper_sibling_by_label.ash:9:28)
+    StoreLocal            Slot=11 Source=17   (inlined_helper_sibling_by_label.ash:7:9)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    Jump                  Target=match_end_5   (inlined_helper_sibling_by_label.ash:7:9)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_none_6   (inlined_helper_sibling_by_label.ash:7:9)
+  match_none_6:
+    LoadConstInt          Target=19 Value=0   (inlined_helper_sibling_by_label.ash:7:9)
+    StoreLocal            Slot=11 Source=19   (inlined_helper_sibling_by_label.ash:7:9)
+  match_end_5:
+    LoadLocal             Target=20 Slot=11   (inlined_helper_sibling_by_label.ash:7:9)
+    Return                Source=20   (inlined_helper_sibling_by_label.ash:6:6)
+
+function lambda_4$env_normalize  [ClosureEnvironmentNormalizer from go]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadLocal             Target=1 Slot=1   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadConstInt          Target=3 Value=0   (inlined_helper_sibling_by_label.ash:6:6)
+    Return                Source=3   (inlined_helper_sibling_by_label.ash:6:6)
+
+function lambda_3  [SourceFunction from go]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadLocal             Target=1 Slot=1   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+    MakeClosure           Target=4 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=8   (inlined_helper_sibling_by_label.ash:6:6)
+    Return                Source=4   (inlined_helper_sibling_by_label.ash:6:6)
+
+function lambda_2  [SourceFunction from count]
+  locals=6 temps=7
+    LoadConstInt          Target=0 Value=0   (inlined_helper_sibling_by_label.ash:6:6)
+    MakeClosure           Target=1 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=2 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=2 Slot=2   (inlined_helper_sibling_by_label.ash:10:8)
+    LoadConstInt          Target=3 Value=0   (inlined_helper_sibling_by_label.ash:10:11)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (inlined_helper_sibling_by_label.ash:10:8)
+    LoadLocal             Target=5 Slot=1   (inlined_helper_sibling_by_label.ash:10:14)
+    CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (inlined_helper_sibling_by_label.ash:10:8)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Return                Source=6
+
+function lambda_8  [ClosureHelper from go]
+  locals=22 temps=21
+    LoadEnv               Target=0 Index=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=2 Source=0   (inlined_helper_sibling_by_label.ash:6:6)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=5 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=6 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=7 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+  lambda_8_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadLocal             Target=2 Slot=1   (inlined_helper_sibling_by_label.ash:7:15)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (inlined_helper_sibling_by_label.ash:7:9)
+    CmpIntEq              Target=4 Left=2 Right=3   (inlined_helper_sibling_by_label.ash:7:9)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_15   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadLocal             Target=5 Slot=2   (inlined_helper_sibling_by_label.ash:8:21)
+    StoreLocal            Slot=11 Source=5   (inlined_helper_sibling_by_label.ash:7:9)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_12   (inlined_helper_sibling_by_label.ash:7:9)
+  match_arm_cleanup_15:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_14   (inlined_helper_sibling_by_label.ash:7:9)
+  match_next_14:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (inlined_helper_sibling_by_label.ash:7:9)
+    CmpIntNe              Target=7 Left=2 Right=6   (inlined_helper_sibling_by_label.ash:7:9)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_16   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (inlined_helper_sibling_by_label.ash:7:9)
+    StoreLocal            Slot=18 Source=9   (inlined_helper_sibling_by_label.ash:7:9)
+    LoadLocal             Target=10 Slot=2   (inlined_helper_sibling_by_label.ash:9:31)
+    LoadConstInt          Target=11 Value=1   (inlined_helper_sibling_by_label.ash:9:37)
+    AddInt                Target=12 Left=10 Right=11   (inlined_helper_sibling_by_label.ash:9:31)
+    LoadLocal             Target=13 Slot=18   (inlined_helper_sibling_by_label.ash:9:40)
+    Borrow                Target=14 SourceTemp=13
+    LoadLocal             Target=15 Slot=2   (inlined_helper_sibling_by_label.ash:9:28)
+    LoadLocal             Target=16 Slot=1   (inlined_helper_sibling_by_label.ash:9:28)
+    StoreLocal            Slot=2 Source=12   (inlined_helper_sibling_by_label.ash:9:28)
+    StoreLocal            Slot=1 Source=14   (inlined_helper_sibling_by_label.ash:9:28)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
+    RestoreStackPointer   Slot=10   (inlined_helper_sibling_by_label.ash:9:28)
+    Jump                  Target=lambda_8_body   (inlined_helper_sibling_by_label.ash:9:28)
+    LoadConstInt          Target=17 Value=0   (inlined_helper_sibling_by_label.ash:9:28)
+    StoreLocal            Slot=11 Source=17   (inlined_helper_sibling_by_label.ash:7:9)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    Jump                  Target=match_end_12   (inlined_helper_sibling_by_label.ash:7:9)
+  match_arm_cleanup_16:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_none_13   (inlined_helper_sibling_by_label.ash:7:9)
+  match_none_13:
+    LoadConstInt          Target=19 Value=0   (inlined_helper_sibling_by_label.ash:7:9)
+    StoreLocal            Slot=11 Source=19   (inlined_helper_sibling_by_label.ash:7:9)
+  match_end_12:
+    LoadLocal             Target=20 Slot=11   (inlined_helper_sibling_by_label.ash:7:9)
+    Return                Source=20   (inlined_helper_sibling_by_label.ash:6:6)
+
+function lambda_8$env_normalize  [ClosureEnvironmentNormalizer from go]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadLocal             Target=1 Slot=1   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadConstInt          Target=3 Value=0   (inlined_helper_sibling_by_label.ash:6:6)
+    Return                Source=3   (inlined_helper_sibling_by_label.ash:6:6)
+
+function lambda_7  [SourceFunction from go]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (inlined_helper_sibling_by_label.ash:6:6)
+    LoadLocal             Target=1 Slot=1   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (inlined_helper_sibling_by_label.ash:6:6)
+    MakeClosure           Target=4 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=8   (inlined_helper_sibling_by_label.ash:6:6)
+    Return                Source=4   (inlined_helper_sibling_by_label.ash:6:6)
+
+function lambda_6  [ClosureHelper from loop]
+  locals=22 temps=29
+    LoadEnv               Target=0 Index=0   (inlined_helper_sibling_by_label.ash:12:1)
+    StoreLocal            Slot=2 Source=0   (inlined_helper_sibling_by_label.ash:12:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (inlined_helper_sibling_by_label.ash:12:1)
+    StoreLocal            Slot=5 Source=1   (inlined_helper_sibling_by_label.ash:12:1)
+    StoreLocal            Slot=6 Source=1   (inlined_helper_sibling_by_label.ash:12:1)
+    StoreLocal            Slot=7 Source=1   (inlined_helper_sibling_by_label.ash:12:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (inlined_helper_sibling_by_label.ash:12:1)
+    LoadLocal             Target=2 Slot=2   (inlined_helper_sibling_by_label.ash:13:8)
+    LoadConstInt          Target=3 Value=0   (inlined_helper_sibling_by_label.ash:13:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (inlined_helper_sibling_by_label.ash:13:8)
+    JumpIfFalse           CondTemp=4 Target=else_10   (inlined_helper_sibling_by_label.ash:13:5)
+    LoadLocal             Target=5 Slot=1   (inlined_helper_sibling_by_label.ash:14:10)
+    StoreLocal            Slot=11 Source=5   (inlined_helper_sibling_by_label.ash:13:5)
+    Jump                  Target=endif_11   (inlined_helper_sibling_by_label.ash:13:5)
+  else_10:
+    LoadLocal             Target=6 Slot=2   (inlined_helper_sibling_by_label.ash:15:15)
+    LoadConstInt          Target=7 Value=1   (inlined_helper_sibling_by_label.ash:15:19)
+    SubInt                Target=8 Left=6 Right=7   (inlined_helper_sibling_by_label.ash:15:15)
+    LoadLocal             Target=9 Slot=1   (inlined_helper_sibling_by_label.ash:15:22)
+    LoadLocal             Target=10 Slot=2   (inlined_helper_sibling_by_label.ash:15:39)
+    StoreLocal            Slot=12 Source=10   (inlined_helper_sibling_by_label.ash:15:34)
+    LoadConstInt          Target=11 Value=0   (inlined_helper_sibling_by_label.ash:3:21)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=12 Value=0   (inlined_helper_sibling_by_label.ash:3:22)
+    MakeClosure           Target=13 FuncLabel=lambda_0 EnvPtrTemp=12 EnvSizeBytes=0   (inlined_helper_sibling_by_label.ash:3:22)
+    LoadLocal             Target=14 Slot=12   (inlined_helper_sibling_by_label.ash:3:27)
+    CallClosure           Target=15 ClosureTemp=13 ArgTemp=14   (inlined_helper_sibling_by_label.ash:3:22)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Alloc                 Target=16 SizeBytes=16   (inlined_helper_sibling_by_label.ash:3:21)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=15   (inlined_helper_sibling_by_label.ash:3:21)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=11   (inlined_helper_sibling_by_label.ash:3:21)
+    StoreLocal            Slot=16 Source=16   (inlined_helper_sibling_by_label.ash:15:28)
+    LoadConstInt          Target=17 Value=0   (inlined_helper_sibling_by_label.ash:6:6)
+    MakeClosure           Target=18 FuncLabel=lambda_7 EnvPtrTemp=17 EnvSizeBytes=0   (inlined_helper_sibling_by_label.ash:6:6)
+    StoreLocal            Slot=17 Source=18   (inlined_helper_sibling_by_label.ash:6:6)
+    SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
+    LoadLocal             Target=19 Slot=17   (inlined_helper_sibling_by_label.ash:10:8)
+    LoadConstInt          Target=20 Value=0   (inlined_helper_sibling_by_label.ash:10:11)
+    CallClosure           Target=21 ClosureTemp=19 ArgTemp=20   (inlined_helper_sibling_by_label.ash:10:8)
+    LoadLocal             Target=22 Slot=16   (inlined_helper_sibling_by_label.ash:10:14)
+    CallClosure           Target=23 ClosureTemp=21 ArgTemp=22   (inlined_helper_sibling_by_label.ash:10:8)
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=20
+    AddInt                Target=24 Left=9 Right=23   (inlined_helper_sibling_by_label.ash:15:22)
+    LoadLocal             Target=25 Slot=2   (inlined_helper_sibling_by_label.ash:15:10)
+    LoadLocal             Target=26 Slot=1   (inlined_helper_sibling_by_label.ash:15:10)
+    StoreLocal            Slot=2 Source=8   (inlined_helper_sibling_by_label.ash:15:10)
+    StoreLocal            Slot=1 Source=24   (inlined_helper_sibling_by_label.ash:15:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=21
+    RestoreStackPointer   Slot=10   (inlined_helper_sibling_by_label.ash:15:10)
+    Jump                  Target=lambda_6_body   (inlined_helper_sibling_by_label.ash:15:10)
+    LoadConstInt          Target=27 Value=0   (inlined_helper_sibling_by_label.ash:15:10)
+    StoreLocal            Slot=11 Source=27   (inlined_helper_sibling_by_label.ash:13:5)
+  endif_11:
+    LoadLocal             Target=28 Slot=11   (inlined_helper_sibling_by_label.ash:13:5)
+    Return                Source=28   (inlined_helper_sibling_by_label.ash:12:1)
+
+function lambda_6$env_normalize  [ClosureEnvironmentNormalizer from loop]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (inlined_helper_sibling_by_label.ash:12:1)
+    LoadLocal             Target=1 Slot=1   (inlined_helper_sibling_by_label.ash:12:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (inlined_helper_sibling_by_label.ash:12:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (inlined_helper_sibling_by_label.ash:12:1)
+    LoadConstInt          Target=3 Value=0   (inlined_helper_sibling_by_label.ash:12:1)
+    Return                Source=3   (inlined_helper_sibling_by_label.ash:12:1)
+
+function lambda_5  [SourceFunction from loop]
+  locals=2 temps=9
+    Alloc                 Target=0 SizeBytes=8   (inlined_helper_sibling_by_label.ash:12:1)
+    LoadLocal             Target=1 Slot=1   (inlined_helper_sibling_by_label.ash:12:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (inlined_helper_sibling_by_label.ash:12:1)
+    MakeClosure           Target=8 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=8   (inlined_helper_sibling_by_label.ash:12:1)
+    Return                Source=8
+
+function _start_main  [ProgramEntry]
+  locals=19 temps=27
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    AllocStack            Target=2 SizeBytes=8
+    LoadLocal             Target=3 Slot=2
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4
+    MakeClosureStack      Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true
+    StoreLocal            Slot=5 Source=5
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=6 Value=0
+    MakeClosureStack      Target=7 FuncLabel=lambda_2 EnvPtrTemp=6 EnvSizeBytes=0
+    StoreLocal            Slot=8 Source=7
+    Alloc                 Target=8 SizeBytes=16
+    LoadLocal             Target=9 Slot=8
+    Borrow                Target=10 SourceTemp=9
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=10
+    LoadLocal             Target=11 Slot=5
+    Borrow                Target=12 SourceTemp=11
+    StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=12
+    MakeClosure           Target=13 FuncLabel=lambda_5 EnvPtrTemp=8 EnvSizeBytes=16
+    StoreLocal            Slot=9 Source=13
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=14 Slot=9   (inlined_helper_sibling_by_label.ash:17:35)
+    LoadConstInt          Target=15 Value=3   (inlined_helper_sibling_by_label.ash:17:40)
+    CallClosure           Target=16 ClosureTemp=14 ArgTemp=15   (inlined_helper_sibling_by_label.ash:17:35)
+    LoadConstInt          Target=17 Value=0   (inlined_helper_sibling_by_label.ash:17:43)
+    CallClosure           Target=18 ClosureTemp=16 ArgTemp=17   (inlined_helper_sibling_by_label.ash:17:35)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    TextFromInt           Target=19 ValueTemp=18   (inlined_helper_sibling_by_label.ash:17:16)
+    PrintStr              Source=19   (inlined_helper_sibling_by_label.ash:17:1)
+    AllocAdt              Target=20 Tag=0 FieldCount=0   (inlined_helper_sibling_by_label.ash:17:1)
+    StoreLocal            Slot=13 Source=20
+    LoadLocal             Target=21 Slot=8
+    CleanupResource       SourceTemp=21 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=14
+    CopyOutArena          DestTemp=22 SrcTemp=20 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=14
+    StoreLocal            Slot=15 Source=22
+    LoadLocal             Target=23 Slot=5
+    CleanupResource       SourceTemp=23 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=16
+    LoadLocal             Target=24 Slot=15
+    StoreLocal            Slot=17 Source=24
+    LoadLocal             Target=25 Slot=2
+    CleanupResource       SourceTemp=25 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=18
+    LoadLocal             Target=26 Slot=17
+    Return                Source=26
+
