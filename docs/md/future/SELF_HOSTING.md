@@ -2535,9 +2535,19 @@ same public behavior.
   offset rebased, the symbol index remapped, and the addend of a section-symbol reference
   increased by the input section's offset, leaving the relocation type untouched so one merge
   serves x86-64 and AArch64; drop `.llvm_addrsig`, reject debug sections. Source of truth:
-  `ElfRelocatableObjects.cs` (and its `.Merge` and `.Writer` partials); the COFF counterpart
-  (`CoffRelocatableObjects.cs`) is not implemented yet, so the Windows targets compile as one
-  module.
+  `ElfRelocatableObjects.cs` (and its `.Merge` and `.Writer` partials). The COFF counterpart
+  (`CoffRelocatableObjects.cs` and its `.Input` and `.Output` partials) merges the same way for
+  the Windows targets: sections with the same name and flags are concatenated at their
+  alignment (COMDAT and alignment bits aside), a COMDAT several objects carry (the weak helper
+  definitions and LLVM's `__xmm@`/`__real@` constant sections) is kept once by its selection
+  rule and an associative section follows the section it is associated with, a relocation
+  against an input section symbol is redirected to a static marker symbol at that section's
+  offset so the relocated bytes and the relocation types stay untouched, an external symbol
+  several objects define outside a COMDAT keeps the first object's definition external and
+  demotes the later copies to static, weak externals keep their alternate through the remapped
+  auxiliary record, directive and address-significance sections are dropped, DWARF sections are
+  rejected, and a section past 0xFFFF relocations is written (and read by the PE linker) in the
+  `IMAGE_SCN_LNK_NRELOC_OVFL` form.
 - [ ] **LNK-15** Stage 0, win-x64: two corpus programs fail to compile for the Windows target on
   main (found 2026-09-07 running the whole corpus through Wine; both reproduce with the compiler
   before the compile-speed changes). `capability_row_trait_generic_helper_keeps_open_tail.ash`:
