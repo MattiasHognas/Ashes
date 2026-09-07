@@ -71,22 +71,46 @@ internal static class PerceusLifetimePlacement
 
         foreach (int ownerSlot in ownerSlots)
         {
-            var anchors = instructions
-                .Select((instruction, index) => (instruction, index))
-                .Where(pair => pair.instruction is IrInst.RcDrop { OwnerSlot: var slot } && slot == ownerSlot)
-                .ToArray();
-            if (anchors.Length != 1 || anchors[0].instruction is not IrInst.RcDrop anchor)
+            if (!TryFindSoleAnchor(instructions, ownerSlot, out IrInst.RcDrop? anchor, out int anchorIndex))
             {
                 continue;
             }
 
             PlaceOwner(
-                instructions, ownerSlot, anchor, anchors[0].index,
+                instructions, ownerSlot, anchor, anchorIndex,
                 ref tempCount, ref dominators, usedTempsByInstruction,
                 functionLabel, borrowedArgumentCalls, arenaAdtCells);
         }
 
         return new LifetimePlacementResult(instructions, tempCount);
+    }
+
+    // The owner's single lexical release anchor and its index; an owner with no anchor or more
+    // than one keeps its lexical placement.
+    private static bool TryFindSoleAnchor(
+        List<IrInst> instructions,
+        int ownerSlot,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IrInst.RcDrop? anchor,
+        out int anchorIndex)
+    {
+        anchor = null;
+        anchorIndex = -1;
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            if (instructions[index] is IrInst.RcDrop { OwnerSlot: var slot } candidate && slot == ownerSlot)
+            {
+                if (anchor is not null)
+                {
+                    anchor = null;
+                    return false;
+                }
+
+                anchor = candidate;
+                anchorIndex = index;
+            }
+        }
+
+        return anchor is not null;
     }
 
     // The ADT cells that never release the fields stored into them: an arena- or stack-allocated

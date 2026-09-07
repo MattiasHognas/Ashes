@@ -7,13 +7,24 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmCodegen
 {
     /// <summary>
+    /// Names a constant global by its content, so the same constant gets the same name in every
+    /// module of a program (the partitions of a parallel build share one definition of it) and
+    /// different constants never collide.
+    /// </summary>
+    private static string GlobalConstantName(string prefix, IReadOnlyList<byte> bytes)
+    {
+        byte[] content = bytes as byte[] ?? [.. bytes];
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(content);
+        return $".{prefix}_{Convert.ToHexStringLower(hash.AsSpan(0, 16))}";
+    }
+
+    /// <summary>
     /// Creates a module-level global constant byte array and returns a pointer
     /// to its first element. The global is marked internal linkage, constant,
     /// and unnamed_addr so LLVM can merge duplicates and place it in .rodata.
     /// </summary>
     private static LlvmValueHandle CreateGlobalConstantBytes(LlvmCodegenState state, IReadOnlyList<byte> bytes, string prefix)
     {
-        int id = state.Target.NextGlobalConstantId();
         LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)bytes.Count);
 
         // Build constant initializer: [N x i8] c"..."
@@ -26,7 +37,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle constArray = LlvmApi.ConstArray2(state.I8, elements);
 
         // Create a global variable with the constant data
-        LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, arrayType, $".{prefix}_{id}");
+        LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, arrayType, GlobalConstantName(prefix, bytes));
         LlvmApi.SetInitializer(global, constArray);
         LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
         LlvmApi.SetGlobalConstant(global, 1);
@@ -2866,8 +2877,7 @@ internal static partial class LlvmCodegen
             LlvmTypeHandle structType = LlvmApi.StructTypeInContext(
                 state.Target.Context, [state.I64, state.I64, state.I64, arrayType]);
 
-            int id = state.Target.NextGlobalConstantId();
-            LlvmValueHandle created = LlvmApi.AddGlobal(state.Target.Module, structType, $".str_lit_{id}");
+            LlvmValueHandle created = LlvmApi.AddGlobal(state.Target.Module, structType, GlobalConstantName("str_lit", utf8));
             LlvmApi.SetInitializer(created, constStruct);
             LlvmApi.SetLinkage(created, LlvmLinkage.Internal);
             LlvmApi.SetGlobalConstant(created, 1);

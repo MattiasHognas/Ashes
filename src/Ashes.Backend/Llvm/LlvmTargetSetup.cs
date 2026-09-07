@@ -218,8 +218,6 @@ internal sealed record LlvmTargetContext(
     /// </summary>
     public ProgramPartition? Partition { get; init; }
 
-    private int _moduleConstantCounter;
-
     private readonly Dictionary<string, LlvmValueHandle> _stringLiteralGlobals = new(StringComparer.Ordinal);
 
     private readonly Dictionary<string, LlvmValueHandle> _namedGlobals = new(StringComparer.Ordinal);
@@ -245,10 +243,6 @@ internal sealed record LlvmTargetContext(
         _namedGlobals[key] = global;
         return global;
     }
-
-    /// <summary>Returns a module-unique integer for naming global constants.</summary>
-    public int NextGlobalConstantId() =>
-        System.Threading.Interlocked.Increment(ref _moduleConstantCounter);
 
     /// <summary>
     /// Content-addressed interning of string-literal globals. Returns the module-level
