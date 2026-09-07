@@ -466,12 +466,13 @@ internal static class PerceusLifetimePlacement
         // Else the drop lands right after the capture or the call, a use-after-free (benign for a
         // recycled small string, a segfault for an OS-backed >4 KiB string). All only lengthen
         // liveness, so the drop lands after the last real use, never earlier.
-        var aliasStores = new HashSet<AliasStore>();
+        var aliasStores = new Dictionary<int, List<AliasStore>>();
+        int[] orderedRegion = [.. region.OrderBy(index => blocks[index].Start)];
         bool changed = true;
         while (changed)
         {
             changed = false;
-            foreach (int blockIndex in region.OrderBy(index => blocks[index].Start))
+            foreach (int blockIndex in orderedRegion)
             {
                 Block block = blocks[blockIndex];
                 for (int i = block.Start; i < block.End; i++)
@@ -484,6 +485,25 @@ internal static class PerceusLifetimePlacement
         return aliases;
     }
 
+    // Records a store of an alias into a slot; the store's index and block are what a later load
+    // of the slot is checked against.
+    private static bool AddAliasStore(Dictionary<int, List<AliasStore>> aliasStores, AliasStore store)
+    {
+        if (!aliasStores.TryGetValue(store.Slot, out List<AliasStore>? stores))
+        {
+            stores = [];
+            aliasStores[store.Slot] = stores;
+        }
+
+        if (stores.Contains(store))
+        {
+            return false;
+        }
+
+        stores.Add(store);
+        return true;
+    }
+
     // One propagation step over a single instruction; returns whether it discovered a new alias or
     // alias-holding store.
     private static bool PropagateAlias(
@@ -491,7 +511,7 @@ internal static class PerceusLifetimePlacement
         int index,
         Block block,
         HashSet<int> aliases,
-        HashSet<AliasStore> aliasStores,
+        Dictionary<int, List<AliasStore>> aliasStores,
         HashSet<int> arenaAdtCells)
     {
         switch (instruction)
@@ -499,7 +519,7 @@ internal static class PerceusLifetimePlacement
             case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
                 return aliases.Add(borrow.Target);
             case IrInst.StoreLocal store when aliases.Contains(store.Source):
-                return aliasStores.Add(new AliasStore(store.Slot, index, block.Start, block.End));
+                return AddAliasStore(aliasStores, new AliasStore(store.Slot, index, block.Start, block.End));
             case IrInst.LoadLocal load when LoadSeesAliasStore(aliasStores, load.Slot, index, block):
                 return aliases.Add(load.Target);
             case IrInst.StoreMemOffset cellStore when aliases.Contains(cellStore.Source):
@@ -522,15 +542,15 @@ internal static class PerceusLifetimePlacement
     // A load reads an alias out of its slot only past a store of one: a store later in the load's
     // own block is a different value (a loop parameter's successor stored after the old value was
     // read for its release walk), while a store in any other block may reach the load.
-    private static bool LoadSeesAliasStore(HashSet<AliasStore> aliasStores, int slot, int loadIndex, Block block)
+    private static bool LoadSeesAliasStore(Dictionary<int, List<AliasStore>> aliasStores, int slot, int loadIndex, Block block)
     {
-        foreach (AliasStore store in aliasStores)
+        if (!aliasStores.TryGetValue(slot, out List<AliasStore>? stores))
         {
-            if (store.Slot != slot)
-            {
-                continue;
-            }
+            return false;
+        }
 
+        foreach (AliasStore store in stores)
+        {
             bool sameBlock = store.BlockStart == block.Start && store.BlockEnd == block.End;
             if (!sameBlock || store.Index < loadIndex)
             {
