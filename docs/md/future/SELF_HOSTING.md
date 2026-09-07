@@ -2554,10 +2554,11 @@ same public behavior.
   `LLVM COFF text relocation targeted unsupported symbol '__imp_abs.1' in section 0` (LLVM
   emits a call to the C `abs` libcall through an import thunk the PE linker does not provide;
   either lower the integer absolute value without the libcall or add `abs` to the import
-  surface). `external_only_letin_trailing_expr.ash`: `Windows external symbol 'strlen' requires
-  an explicit DLL name` (the test declares a libc external the Windows backend cannot map; the
-  test needs a Windows DLL mapping or a `skip-on-target`). Both are unrelated to the
-  multi-object link.
+  surface). `external_only_letin_trailing_expr.ash` and `type_zero_cost_ffi.ash`: `Windows
+  external symbol 'strlen' requires an explicit DLL name` (the tests declare a libc external the
+  Windows backend cannot map; they need a Windows DLL mapping or a `skip-on-target`). All three
+  are unrelated to the multi-object link; the rest of the corpus (722 programs) passes on
+  win-x64 under Wine with the split forced to four partitions.
 - [ ] **LNK-1** Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in
