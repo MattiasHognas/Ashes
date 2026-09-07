@@ -1,0 +1,16 @@
+// A consumed list of records matched by record patterns, whose loop returns a tuple of its
+// scalar accumulators: the parameters read into the tuple take the identity duplicates the
+// finalize pass leaves in place, and the back-edge arm closes its bracket around the
+// reference-counted synthetic zero of the back edge.
+// expect: 6
+type State =
+    | count: Int
+    | label: Str
+
+let recursive total (items: List(State)) (sum: Int) (labels: Int) =
+    match items with
+        | [] -> (sum, labels)
+        | State { count = c, label = l } :: rest -> total(rest)(sum + c)(labels + Ashes.Text.byteLength(l))
+
+match total([State(count = 1, label = "a"), State(count = 2, label = "bb")])(0)(0) with
+    | (s, l) -> Ashes.IO.print(Ashes.Text.fromInt(s + l))

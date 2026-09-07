@@ -356,6 +356,7 @@ type CoreLoweringState =
     | resourceStates: List((Int, ResourceReleaseKind))
     | letLambdas: List((Str, List(Str), Expr))
     | runtimeTemps: List((Int, RuntimeTempState))
+    | backEdgeDummyTemps: List(Int)
     | runtimeOwners: List((Int, Bool))
     | reuseTransferredNames: List(Str)
     | reuseEnabled: Bool
@@ -689,6 +690,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         resourceStates = [],
         letLambdas = [],
         runtimeTemps = [],
+        backEdgeDummyTemps = [],
         runtimeOwners = [],
         reuseTransferredNames = [],
         reuseEnabled = true,
@@ -2642,7 +2644,7 @@ let resultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) 
 let closeScopeForResult (resultTemp: Int) (resultType: SemanticType) cursorSlot endSlot state =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
-            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated)
+            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(allocated.backEdgeDummyTemps)
             then emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
             else allocated
 
@@ -2721,7 +2723,7 @@ let emitScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSlot state 
 let closeOwnedScopeForResult (resultTemp: Int) (resultType: SemanticType) cursorSlot endSlot state =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
-            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated)
+            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(allocated.backEdgeDummyTemps)
             then (emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated), None)
             else
                 match scopeCopyOutOf(resultType)(allocated) with
@@ -3699,7 +3701,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
@@ -9367,7 +9369,7 @@ let closeGuardedArmBracket cursorSlot endSlot (state: CoreLoweringState) =
 
 // Whether an arm's closing bracket resets the arena, stage 0's `PopOwnershipScope` test: the
 // result survives the reset, or already lives on the reference-counted heap.
-let armResultSurvivesReset (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(resultType)(state) || isRuntimeTemp(resultTemp)(state)
+let armResultSurvivesReset (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(resultType)(state) || isRuntimeTemp(resultTemp)(state) || containsInt(resultTemp)(state.backEdgeDummyTemps)
 
 // Stage 0's `EmitOwnedValueDrop` of a runtime-managed list owner whose heads are scalars: the
 // owner is loaded into a cursor slot and its spine walked iteratively (`rcdrop_list_N`), a
@@ -10872,7 +10874,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
@@ -11176,7 +11178,7 @@ let isOwnSuccessorRead (argument: Expr) (slot: Int) (state: CoreLoweringState) =
 let retainLoopParameterChild (argument: Expr) (originalTemp: Int) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if temp != originalTemp || resultSurvivesReset(semanticType)(state)
+            if temp != originalTemp
             then lowered
             else
                 match loopParameterReadSlot(argument)(state) with
@@ -14282,13 +14284,16 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
         |> (given (scheduled: CoreLoweringState) -> scheduled with pendingTcoResets = reset :: scheduled.pendingTcoResets))
 
 // The back edge cannot reach its expression join; its synthetic zero is the value the join
-// stores (stage 0's `LowerCallTcoBackEdgeDummy`).
+// stores (stage 0's `LowerCallTcoBackEdgeDummy`, which marks it reference-counted but
+// ownership-neutral): recorded so the reachable arms alone decide whether the join carries
+// such a result, the back-edge arm closes its bracket, and the function's own result never
+// counts it.
 let emitBackEdgeDummy (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = dummy } ->
             match freshType(tempState) with
                 | FreshType { state = typedState, semanticType = resultType } ->
-                    typedState
+                    (typedState with backEdgeDummyTemps = dummy :: typedState.backEdgeDummyTemps)
                     |> emit(LoadConstInt(dummy)(0))
                     |> success(dummy)(resultType)
 

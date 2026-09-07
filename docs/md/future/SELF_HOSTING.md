@@ -1256,7 +1256,15 @@ same public behavior.
   finalize pass promoted; and the dropper and copier label cache now survives a lambda body
   (`restoreOuterFrame`), so a type's structural dropper and deep copier are synthesized once
   per program as stage 0 does rather than once per loop.
-  `tco_record_field_read_into_successor` is a whole-program parity fixture.
+  `tco_record_field_read_into_successor` is a whole-program parity fixture. A loop parameter of
+  any type read into a tuple or list cell takes the identity duplicate stage 0's
+  `DuplicateRuntimeManagedTcoParameterForAggregate` emits (the scalar skip is gone; the
+  finalize pass leaves an unplaced parameter's marker as the identity it is), and the back
+  edge's synthetic zero counts as a reference-counted arm result the way stage 0's
+  `LowerCallTcoBackEdgeDummy` marks it, ownership-neutral (recorded in `backEdgeDummyTemps`
+  rather than marked, so the function's own result never counts it), so the reachable arms
+  alone decide the join's representation and the back-edge arm closes its arena bracket;
+  `tco_consumed_record_list_tuple_result` pins both.
   Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
@@ -1435,15 +1443,19 @@ same public behavior.
   `tco_str_parameter_fresh_successor`, `tco_consumed_list_parameter_borrowed_head`,
   `tco_consumed_list_parameter_returned_head`,
   `tco_record_parameter_exit_before_list_accumulator`, `tco_owned_child_record_accumulator`,
-  `tco_record_string_field_into_successor`, `tco_record_field_read_into_successor`); the
-  record-head loops (`find_record_head` 674, `consumed_record_heads_escape` 1037,
-  `record_param_consed_into_sibling_accumulator` 831 masked lines) and
-  `tco_arena_variant_accumulator_plateau` (366) carry the remaining divergences of OPT-25's
-  aggregate tail: a consumed list of records matched by record patterns is admitted by stage 0
-  to the reference-counted heap with the record-head list deep normalization at entry
+  `tco_record_string_field_into_successor`, `tco_record_field_read_into_successor`,
+  `tco_consumed_record_list_tuple_result`); the record-head loops (`find_record_head` 674,
+  `consumed_record_heads_escape` 1037, `record_param_consed_into_sibling_accumulator` 513
+  masked lines) and `tco_arena_variant_accumulator_plateau` (366) carry the remaining
+  divergences of OPT-25's aggregate tail: a list of records grown by cons at every tail
+  self-call (`reversed(rest)(item :: acc)`) is admitted by stage 0 from its static shape and
+  element layout (`EvaluateTcoRcEligibility`: `AffineConsList` with a runtime-manageable
+  element), so its cells are reference-counted from the first cons and both it and the consumed
+  list it is built from take the record-head list deep normalization at entry
   (`rc_normalize_list` over `CopyOutArena` cells, the type's structural dropper and deep
-  copiers synthesized), which the self-hosted lowering does not yet do. Related interim
-  narrowing: the
+  copiers synthesized); the self-hosted admission of a grown cons list waits on every back
+  edge having allocated a reference-counted cell, which the heads' own placement decides only
+  at finalize, so neither parameter is placed. Related interim narrowing: the
   consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per
