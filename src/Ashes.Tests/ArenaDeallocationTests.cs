@@ -1483,6 +1483,55 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void Closure_capturing_entry_normalized_parameter_owns_the_capture_inside_a_runtime_managed_record()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            type Box =
+                | reader: Int -> Str
+
+            let box (s: Str) =
+                Box(reader = given (u: Int) -> s)
+
+            match box("text") with
+                | Box { reader = reader } -> Ashes.IO.print(reader(0))
+            """);
+        IrFunction box = ir.Functions.Single(function => function.Instructions.Any(instruction =>
+            instruction is IrInst.AllocAdt { RuntimeManaged: true, FieldCount: 1 }));
+
+        box.Instructions.Any(instruction => instruction is IrInst.Alloc { RuntimeManaged: true, SizeBytes: 8 })
+            .ShouldBeTrue("The environment holding the owned string lives on the reference-counted heap.");
+        box.Instructions.Any(instruction => instruction is IrInst.MakeClosure { RuntimeManaged: true })
+            .ShouldBeTrue("The closure object itself is reference-counted.");
+        IrInst.LoadFuncAddr dropperAddress = box.Instructions.OfType<IrInst.LoadFuncAddr>()
+            .Single(load => load.FuncLabel.StartsWith("__rc_cdrop_", StringComparison.Ordinal));
+        box.Instructions.Any(instruction => instruction is IrInst.StoreMemOffset { OffsetBytes: 24 } store
+            && store.Source == dropperAddress.Target)
+            .ShouldBeTrue("The closure carries the dropper releasing its captured string.");
+        box.Instructions.Count(instruction => instruction is IrInst.CopyOutArena)
+            .ShouldBe(1, "Only the entry normalization copies the parameter; the capture moves it.");
+
+        IrFunction dropper = ir.Functions.Single(function =>
+            string.Equals(function.Label, dropperAddress.FuncLabel, StringComparison.Ordinal));
+        dropper.Instructions.Count(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "String",
+            RuntimeManaged: true,
+        }).ShouldBe(1, "The dropper releases the captured string exactly once.");
+
+        ir.EntryFunction.Instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Function",
+            RuntimeManaged: true,
+        }).ShouldBeTrue("The record's structural release drops the closure as an owned child.");
+        ir.EntryFunction.Instructions.Any(instruction => instruction is IrInst.RcDrop
+        {
+            TypeName: "Box",
+            RuntimeManaged: true,
+        }).ShouldBeTrue("The caller adopts the record as a reference-counted value.");
+    }
+
+    [Test]
     public void TCO_late_resolved_closure_uses_one_runtime_producer_and_balanced_drops()
     {
         (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(

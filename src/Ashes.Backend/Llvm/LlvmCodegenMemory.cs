@@ -2389,16 +2389,31 @@ internal static partial class LlvmCodegen
         LlvmValueHandle packedEnvironmentSize = LoadMemory(state, srcPtr, 16, "copy_closure_env_size");
         LlvmValueHandle envSize = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
             LlvmApi.ConstInt(state.I64, ClosureEnvironmentSizeMask, 0), "copy_closure_env_size_masked");
-        LlvmValueHandle dropper = LoadMemory(state, srcPtr, 24, "copy_closure_dropper");
+        LlvmValueHandle sourceRuntimeManaged = LlvmApi.BuildAnd(builder, packedEnvironmentSize,
+            LlvmApi.ConstInt(state.I64, ClosureRuntimeManagedBit, 0), "copy_closure_source_runtime_managed");
+        LlvmValueHandle sourceIsArena = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, sourceRuntimeManaged,
+            LlvmApi.ConstInt(state.I64, 0, 0), "copy_closure_source_is_arena");
+        // An arena copy of a reference-counted closure shares the captures the original still owns,
+        // so it carries no dropper; every other copy inherits the source's (or its normalizer's).
+        LlvmValueHandle dropper = runtimeManaged
+            ? LoadMemory(state, srcPtr, 24, "copy_closure_dropper")
+            : LlvmApi.BuildSelect(builder, sourceIsArena,
+                LoadMemory(state, srcPtr, 24, "copy_closure_dropper"),
+                LlvmApi.ConstInt(state.I64, 0, 0), "copy_closure_borrowed_dropper");
         LlvmValueHandle newEnvPtr = EmitCopyOutClosureEnvironment(
             state, code, envPtr, envSize, dropper, runtimeManaged, out LlvmValueHandle newDropper);
         LlvmValueHandle closureSize = LlvmApi.ConstInt(state.I64, ClosureSizeBytes, 0);
         LlvmValueHandle newClosure = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, closureSize, "copy_closure_rc")
             : EmitAllocDynamic(state, closureSize);
+        LlvmValueHandle newPackedEnvironmentSize = runtimeManaged
+            ? LlvmApi.BuildOr(builder, packedEnvironmentSize,
+                LlvmApi.ConstInt(state.I64, ClosureRuntimeManagedBit, 0), "copy_closure_env_size_rc")
+            : LlvmApi.BuildAnd(builder, packedEnvironmentSize,
+                LlvmApi.ConstInt(state.I64, ~ClosureRuntimeManagedBit, 0), "copy_closure_env_size_arena");
         StoreMemory(state, newClosure, 0, code, "copy_closure_store_code");
         StoreMemory(state, newClosure, 8, newEnvPtr, "copy_closure_store_env");
-        StoreMemory(state, newClosure, 16, packedEnvironmentSize, "copy_closure_store_env_size");
+        StoreMemory(state, newClosure, 16, newPackedEnvironmentSize, "copy_closure_store_env_size");
         StoreMemory(state, newClosure, 24, newDropper, "copy_closure_store_dropper");
 
         return newClosure;

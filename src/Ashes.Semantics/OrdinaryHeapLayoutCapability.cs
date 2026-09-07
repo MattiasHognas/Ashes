@@ -19,6 +19,7 @@ internal enum OrdinaryHeapChildDropKind
     List,
     Tuple,
     Adt,
+    Closure,
     Unsupported,
 }
 

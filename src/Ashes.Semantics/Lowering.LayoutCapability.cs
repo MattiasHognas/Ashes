@@ -522,6 +522,9 @@ public sealed partial class Lowering
                     TypeRef.TTuple tuple => tuple.Elements.All(element =>
                         CanDropOwnedTupleElement(element, path)),
                     TypeRef.TNamedType child => CanDropAdtGraph(child, path),
+                    // A reference-counted closure releases its own environment through the dropper
+                    // its construction attached, so a closure field is a self-contained owned child.
+                    TypeRef.TFun => true,
                     _ => false,
                 };
                 if (!supported)
@@ -578,6 +581,7 @@ public sealed partial class Lowering
                 TypeRef.TTuple tuple => tuple.Elements.All(element =>
                     CanDropOwnedTupleElement(element, path)),
                 TypeRef.TNamedType child => IsRuntimeRecordAdtLayout(child, path),
+                TypeRef.TFun => true,
                 _ => false,
             };
             if (!supported)
@@ -627,6 +631,7 @@ public sealed partial class Lowering
                     TypeRef.TNamedType child =>
                         IsRuntimeRecordAdtLayout(child, new HashSet<TypeSymbol>())
                         || IsRuntimeTcoOwnedChildAdtLayout(child, path),
+                    TypeRef.TFun => true,
                     _ => false,
                 };
                 if (!supported)
@@ -852,6 +857,7 @@ public sealed partial class Lowering
             TypeRef.TList => OrdinaryHeapChildDropKind.List,
             TypeRef.TTuple => OrdinaryHeapChildDropKind.Tuple,
             TypeRef.TNamedType => OrdinaryHeapChildDropKind.Adt,
+            TypeRef.TFun => OrdinaryHeapChildDropKind.Closure,
             _ => OrdinaryHeapChildDropKind.Unsupported,
         };
     }
