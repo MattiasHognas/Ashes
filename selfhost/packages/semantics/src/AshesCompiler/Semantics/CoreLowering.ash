@@ -3660,7 +3660,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
             |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements)
             |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = append(bodyState.unresolvedCallResults)(outer.unresolvedCallResults))
-            |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels)
+            |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels, dropperLabels = bodyState.dropperLabels)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -11751,11 +11751,79 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
 // Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: after every argument is lowered, a
 // loop-parameter read (or a heap-typed field read out of one) stored into the cell takes the
 // retain marker, ahead of the owned-child retains of a runtime cell.
+// Whether a loop parameter slot is admitted to the reference-counted heap at this point of the
+// body (stage 0's `IsRuntimeManagedTcoParamSlot`): a copy-ADT slot by its resolved type and
+// shape, a list slot by its shape and element type, a `Str` slot by the affine analysis.
+let tcoSlotAdmittedNow (slot: Int) (state: CoreLoweringState) =
+    match (state.tcoLoopFrame, state.tcoLoop) with
+        | (Some(frame), Some(loop)) ->
+            match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
+                | None -> false
+                | Some(ordinal) ->
+                    let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
+                    in tcoAdtSlotAdmitted(slot)(shape)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+        | _ -> false
+
+// Stage 0's `TryResolveTcoParameterRead` for a constructor argument: a loop parameter read of
+// any type, or a heap-typed field read out of one, that is not a pattern owner.
+let constructorArgumentParameterSlot (argument: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match patternOwnerBinding(name)(state) with
+                | Some(_fact) -> None
+                | None -> loopParameterReadSlot(argument)(state)
+        | ExprQualifiedVar(_owner, _field) ->
+            if resultSurvivesReset(semanticType)(state)
+            then None
+            else loopParameterReadSlot(argument)(state)
+        | _ -> None
+
+// Stage 0's `EmitPendingRuntimeManagedConstructorFieldRetain`: the argument is routed through
+// a slot the retain path overwrites with the duplicate; the flag defaults to one and finalize
+// zeroes it for a root the frame does not admit.
+let emitPendingConstructorFieldRetain (temp: Int) (slot: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = flagState, temp = flagTemp } ->
+            match freshLocal((flagState with pendingRuntimeArgumentFlags = (flagTemp, slot) :: flagState.pendingRuntimeArgumentFlags)) with
+                | FreshLocal { state = allocated, local = resultSlot } ->
+                    match allocated
+                    |> emit(LoadConstInt(flagTemp)(1))
+                    |> emit(StoreLocal(resultSlot)(temp))
+                    |> freshLabel("rc_constructor_field_not_retained") with
+                        | FreshLabel { state = labelled, label = doneLabel } ->
+                            match freshTemp(labelled) with
+                                | FreshTemp { state = dupState, temp = duplicate } ->
+                                    match dupState
+                                    |> emit(JumpIfFalse(flagTemp)(doneLabel))
+                                    |> emit(RcDup(duplicate)(temp)(true)(true))
+                                    |> emit(StoreLocal(resultSlot)(duplicate))
+                                    |> emit(Label(doneLabel))
+                                    |> freshTemp with
+                                        | FreshTemp { state = resultState, temp = resultTemp } ->
+                                            (emit(LoadLocal(resultTemp)(resultSlot))(resultState), resultTemp)
+
+// Stage 0's `RetainRuntimeManagedTcoConstructorArguments` for one argument: a parameter read
+// stored into the cell keeps a second reference to a value the parameter's own release walks at
+// the back edge; a slot admitted by now retains outright, any other through the pending skeleton.
+let retainConstructorLoopParameterArgument (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match constructorArgumentParameterSlot(argument)(semanticType)(state) with
+        | None -> (state, temp)
+        | Some(slot) ->
+            if tcoSlotAdmittedNow(slot)(state)
+            then
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = duplicate } ->
+                        (emit(semanticType
+                        |> resolveType(state)
+                        |> mayBeEmptyList
+                        |> RcDup(duplicate)(temp)(true))(allocated), duplicate)
+            else emitPendingConstructorFieldRetain(temp)(slot)(state)
+
 let recursive retainLoopParameterArguments (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (arguments, temps, semanticTypes) with
         | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
-            match retainLoopParameterChild(argument)(temp)(LoweredCoreValue(state = state, temp = temp, semanticType = semanticType, error = None)) with
-                | LoweredCoreValue { state = marked, temp = markedTemp } -> retainLoopParameterArguments(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
+            match retainConstructorLoopParameterArgument(argument)(temp)(semanticType)(state) with
+                | (marked, markedTemp) -> retainLoopParameterArguments(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
 let retainConstructorLoopParameterArguments arguments lowered =

@@ -397,14 +397,16 @@ let nestedRecordLoopSource = "type State =\n    | label: Str\n    | count: Int\n
 // classification's cycle guard keys on the type's id and name together, so the nested `State`
 // is not taken for a cycle back into `Pair`), its children copy with the cell, and the back edge
 // releases only the references the dying successor holds: the retained `current` read, and the
-// string inside the fresh `previous` literal, never that literal's arena cell.
+// string inside the fresh `previous` literal, never that literal's arena cell. The scalar `n`
+// stored into the literal's `count` takes stage 0's pending constructor-field skeleton, whose
+// guarded duplicate stays behind a flag finalize zeroes for the unadmitted parameter.
 let expectNestedRecordLoopParameterIsRuntimeManaged unit =
     nestedRecordLoopSource
     |> loopFunctionLines("[ClosureHelper from walk]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
-        |> (given (_) -> check("the field read is retained before the successor stores it")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the field read is retained before the successor stores it, beside the skeleton's guarded duplicate of the scalar field")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 2 && countContaining("rc_constructor_field_not_retained")(lines) == 2))
         |> (given (_) -> check("the retained child, the predecessor's, the exit's, and the arena-result boundary's children release as State")(countContainingBoth("RcDrop")("TypeName=State RuntimeManaged=true")(lines) == 7))
         |> (given (_) -> check("the predecessor, exit, and arena-result boundary releases under the pair's name")(countContainingBoth("RcDrop")("TypeName=Pair RuntimeManaged=true")(lines) == 3))
         |> (given (_) -> check("a fresh literal child is never tested for uniqueness")(countContaining("RcIsUnique")(lines) == 10)))
