@@ -27,6 +27,7 @@ import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.CallResultProvenance
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
+import AshesCompiler.Semantics.CoreResultPipeLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.ExternalTyping
@@ -14500,6 +14501,63 @@ let lowerHandle body arms lower state =
     |> consumerRequestOf
     |> branchRequest)(lower)
 
+// Stage 0's `LowerResultPipe`: the left operand is unified with `Result(e, s)` before the mapper
+// is lowered against `s -> r`; a mapper returning `Result(e, s2)` makes the pipe a flat map whose
+// value is stored as it is, any other mapper result is rewrapped in `Ok`. Neither operand inherits
+// the context's request, an operator operand never being in tail position.
+let resultPipeShape (returnType: SemanticType) (errorType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(returnType) with
+        | SemNamed(_symbolId, "Result", nestedError :: nestedSuccess :: []) ->
+            match bindType(errorType)(nestedError)(state) with
+                | (failedState, Some(error)) -> (failedState, true, SemNever, Some(error))
+                | (boundState, None) -> (boundState, true, SemNamed(0)("Result")([errorType, nestedSuccess]), None)
+        | _other -> (state, false, SemNamed(0)("Result")([errorType, returnType]), None)
+
+let emitResultPipe leftTemp funcTemp (okLayout: CoreConstructorLayout) (isFlatMap: Bool) (pipeType: SemanticType) (state: CoreLoweringState) =
+    match freshLabel("result_error")(state) with
+        | FreshLabel { state = errorLabelState, label = errorLabel } ->
+            match freshLabel("result_end")(errorLabelState) with
+                | FreshLabel { state = labelState, label = endLabel } ->
+                    match emitResultPipeBranches(leftTemp)(funcTemp)(okLayout.tag)(okLayout.tagless)(isFlatMap)(errorLabel)(endLabel)(labelState.nextTemp)(labelState.nextLocal) with
+                        | CoreResultPipeEmission { instructions = instructions, nextTemp = nextTemp, nextLocal = nextLocal, resultTemp = resultTemp } ->
+                            labelState
+                            |> emitInstructions(instructions)
+                            |> withNextTemp(nextTemp)
+                            |> withNextLocal(nextLocal)
+                            |> success(resultTemp)(pipeType)
+
+let lowerResultPipeMapper leftTemp funcTemp funcType successType errorType (okLayout: CoreConstructorLayout) state =
+    match freshType(state) with
+        | FreshType { state = returnState, semanticType = returnType } ->
+            match bindType(funcType)(SemFunction(successType)(returnType)(None))(returnState) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (typedState, None) ->
+                    match resultPipeShape(returnType)(errorType)(typedState) with
+                        | (failedState, _isFlatMap, _pipeType, Some(error)) -> failure(failedState)(error)
+                        | (shapedState, isFlatMap, pipeType, None) -> emitResultPipe(leftTemp)(funcTemp)(okLayout)(isFlatMap)(pipeType)(shapedState)
+
+let lowerResultPipe left right lower state =
+    match constructorLayout("Ok")(state) with
+        | None -> failure(state)(UnknownLoweringBinding("Ok"))
+        | Some(okLayout) ->
+            match state
+            |> clearConsumerRequest
+            |> lower(left) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                | LoweredCoreValue { state = leftState, temp = leftTemp, semanticType = leftType, error = None } ->
+                    match freshType(leftState) with
+                        | FreshType { state = errorTypeState, semanticType = errorType } ->
+                            match freshType(errorTypeState) with
+                                | FreshType { state = successTypeState, semanticType = successType } ->
+                                    match bindType(leftType)(SemNamed(0)("Result")([errorType, successType]))(successTypeState) with
+                                        | (failedState, Some(error)) -> failure(failedState)(error)
+                                        | (boundState, None) ->
+                                            match boundState
+                                            |> clearConsumerRequest
+                                            |> lower(right) with
+                                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                                | LoweredCoreValue { state = rightState, temp = funcTemp, semanticType = funcType, error = None } -> lowerResultPipeMapper(leftTemp)(funcTemp)(funcType)(successType)(errorType)(okLayout)(rightState)
+
 let expressionName expression =
     match expression with
         | ExprBigInt(_) -> "BigInt"
@@ -15134,6 +15192,7 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprMatch(value, cases, _position) -> lowerMatch(value)(cases)(lowerCore)(state)
         | ExprPerform(operation) -> lowerPerform(operation)(lowerCore)(state)
         | ExprHandle(body, arms) -> lowerHandle(body)(arms)(lowerCore)(state)
+        | ExprResultPipe(left, right) -> lowerResultPipe(left)(right)(lowerCore)(state)
         | unsupported ->
             failure(state)(unsupported
             |> expressionName

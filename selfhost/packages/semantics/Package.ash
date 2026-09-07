@@ -42,6 +42,7 @@ import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
+import AshesCompiler.Semantics.CoreResultPipeLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.StateMachineTransform
 import AshesCompiler.Semantics.CoroutineFrame
