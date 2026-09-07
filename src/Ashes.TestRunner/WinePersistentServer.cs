@@ -77,8 +77,18 @@ public static class WinePersistentServer
 
         try
         {
-            RunWineCommand(serverPath, [$"-p{IdleTimeoutSeconds}"]);
-            RunWineCommand(winePath, ["cmd", "/c", "exit"]);
+            // A server another program left running for a few seconds makes the start exit
+            // with a status of 2; it is gone shortly, so retry until the persistent one is ours.
+            for (int attempt = 0; attempt < StartAttempts; attempt++)
+            {
+                if (RunWineCommand(serverPath, [$"-p{IdleTimeoutSeconds}"]) == 0)
+                {
+                    RunWineCommand(winePath, ["cmd", "/c", "exit"]);
+                    return;
+                }
+
+                Thread.Sleep(StartRetryDelayMilliseconds);
+            }
         }
         catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
@@ -86,10 +96,12 @@ public static class WinePersistentServer
         }
     }
 
+    private const int StartAttempts = 20;
+    private const int StartRetryDelayMilliseconds = 250;
+
     // Runs a Wine executable to completion without redirecting its output, so nothing it forks
-    // inherits a pipe. A server that is already running exits at once with a message, which
-    // leaves that server in charge.
-    private static void RunWineCommand(string path, string[] arguments)
+    // inherits a pipe, and returns its exit status.
+    private static int RunWineCommand(string path, string[] arguments)
     {
         var psi = new ProcessStartInfo(path) { UseShellExecute = false };
         foreach (string argument in arguments)
@@ -100,6 +112,11 @@ public static class WinePersistentServer
         psi.Environment["WINEDEBUG"] = "-all";
         psi.Environment["WINEDLLOVERRIDES"] = "mscoree,mshtml=d";
         using Process? process = Process.Start(psi);
-        process?.WaitForExit(30000);
+        if (process is null)
+        {
+            return -1;
+        }
+
+        return process.WaitForExit(30000) ? process.ExitCode : -1;
     }
 }
