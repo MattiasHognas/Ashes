@@ -2624,6 +2624,17 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   codes.
 - [ ] **TR-6** Run the full existing `.ash` corpus through both toolchains and classify every difference before
   bootstrap acceptance.
+- [ ] **TR-7** Root-cause the rare miss in stage 0's
+  `Linux_backend_llvm_should_serve_http_concurrently_across_workers` test. Once in a full
+  parallel `Ashes.Tests` run (2026-09-07, integration of #917-#920) 119 of 120 loopback requests
+  against the three-reactor `serveParallel` server carried `200 OK`; the same binary passed the
+  test eleven times in isolation, the whole `LinuxBackendCoverageTests` class, and a second full
+  suite run, and the merged compilers left the server program's IR byte-identical on the
+  exercised path. The C# `HttpGetRawWithRetryAsync` helper retries only when the connection
+  throws, so a connection the server accepts and closes without a response (an accept-backlog
+  or reactor hand-off race under host load) counts as a miss. Decide whether the server drops
+  the connection or the harness misreads it, fix that side, and make the helper distinguish an
+  empty reply from a refused connection.
 
 #### LSP, DAP, editor integration, and fuzzing
 
