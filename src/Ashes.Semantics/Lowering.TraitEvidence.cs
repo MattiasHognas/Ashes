@@ -2429,10 +2429,11 @@ public sealed partial class Lowering
     // whose self-ties a nested construction may reach back to, the hidden dictionary parameters
     // every lambda captures while they are active, and the coroutine placement of the body. A
     // plan that still needs a hidden parameter is never shared: its body reads that site's own
-    // evidence.
+    // evidence. The discovery pass shares too: its elaborations come from top-level bindings,
+    // never from inside an implementation body.
     private string? SharedTraitMethodLambdaKey(TraitEvidencePlan.Instance plan, TraitMethodSymbol method)
     {
-        if (_collectInferredTraitElaboration || !IsFullyConcreteEvidence(plan))
+        if (!IsFullyConcreteEvidence(plan))
         {
             return null;
         }

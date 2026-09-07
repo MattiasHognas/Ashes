@@ -2233,19 +2233,48 @@ same public behavior.
   2026-09-07). Either the constructor should adopt the normalized parameter as a fresh owned
   child on the reference-counted heap, or the site should request the arena form and the arm
   release the copy.
-- [ ] **OPT-54** Stage 0 first, then stage 1: take the top-level bindings out of the entry
-  function. Every top-level `let` of a stitched program is desugared into one nested chain
-  lowered into the single entry function (`DesugarTopLevel`), which is 72,000 IR instructions
-  for the self-hosted semantics test program, and every pass that works per owner or per lambda
-  against its enclosing function's length pays that length again and again there: lifetime
-  placement's per-owner block rebuild and region scans, the IR optimizer's whole-function passes,
-  the reach analysis, and the frame bookkeeping of the thousands of lambdas it creates. With the
-  backend parallel (CG-17) the compile of that program is about 75 s, of which lowering is 44 s
-  and the IR optimizer 12 s, both single-threaded and mostly spent on that one function. Give
-  each top-level binding a global slot (an IR-level global like the capability handler slots)
-  or chunk the entry into per-module initializers called in order, keeping the arena bracket
-  semantics of top-level `let`s and the `optnone` treatment of a large entry, measure with
-  `ASHES_TIMING`, and mirror the shape in the self-hosted lowering.
+- [x] **OPT-54** Measured with per-phase timers before rewriting, and the entry function was not
+  the cost. The self-hosted semantics test program's 72,000-instruction entry is about 5 s of
+  its compile (3.8 s of lifetime placement plus part of entry inference), not the majority:
+  `ASHES_TIMING`'s `lower.*` and `optimize.*` sub-phases put the 44 s of lowering at 14 s for
+  the inferred-trait discovery pass, 8 s for move analysis, 10 s for body lowering, 5 s for
+  placement, and 2 s for entry inference, and the 12 s of optimizing at 7 s for the closure
+  passes, with a profile showing 29% of the main thread waiting on the garbage collector and
+  11% in runtime type checks. The fixes were allocation and rescanning, not a global-slot
+  rewrite: the discovery pass shares trait implementation lambdas like the real pass; the closure
+  passes cache def-use facts by instruction-list identity and skip functions without an indirect
+  call; the deferred TCO reset splice swaps the entry's instruction list and ownership facts
+  instead of copying them per function; free-variable analysis binds and unbinds in place
+  instead of copying the bound set per binder; match exhaustiveness buckets patterns by
+  constructor name once instead of filtering every pattern per constructor; the environment
+  free-variable scan remembers each monomorphic binding's variable nodes; lambda entry reseeds
+  the top-level scope's intrinsic bindings from a list filtered once per scope; and the CLI runs
+  the server garbage collector. Lowering went from 36 s to 26 s, optimizing from 12 s to 7 s, and
+  the whole compile of the semantics test program from 68 s to 52 s wall; the stage-1 CLI package
+  from 65 s to 50 s; peak memory unchanged at about 8 GB. The entry keeps its `optnone`
+  treatment; a global-slot rewrite is not worth its risk while the entry is 5 s.
+- [ ] **OPT-55** Self-hosted mirror of OPT-54's two shapes that stage 1 shares.
+  `IrOptimizer.ash`'s `devirtualizeReturnedClosureCallsInFunction` recomputes a function's
+  single-definition facts on every rewrite round and the known-returned fixpoint recomputes them
+  for every function on every round; stage 0 now computes them once per instruction list and
+  skips a function with no `CallClosure` before computing anything. `TypeSchemes.ash`'s
+  `generalize` walks the whole environment's types at every generalization; stage 0 now
+  remembers each monomorphic binding's variable nodes at first sight and prunes only those.
+  Stage 1's deferred TCO resets already splice per function, and its free-variable walks use
+  persistent lists, so those two need nothing. Time the stage-1 compile of the semantics test
+  program before and after.
+- [ ] **OPT-56** The remaining stage-0 compile-time levers, each 1 s to 4 s of the semantics test
+  program, in profile order: lifetime placement rebuilds the block list and rescans the whole
+  function for every owner (`PlaceOwner`'s `BuildBlocks`, `FindOwnerUses`, and
+  `CollectOwnerAliases`), which is quadratic on the entry and should index uses by slot once per
+  function; move analysis's `CreateParameterMoveSafety` walks call sites per parameter and
+  `BuildOwnershipSummaries` is 3.6 s in all; the IR optimizer's `ElideTrivialOwnershipCopies`
+  and `DevirtualizeKnownClosureCalls` rebuild use counts per function per round; body lowering's
+  `CountNameOccurrences` and `TryFindLocalLetInMatch` rewalk arm bodies; and project stitching's
+  `BuildCompilationLayout` is 3 s before lowering starts. The def-use enumerators
+  (`StateMachineTransform.GetUsedTemps` and `GetDefinedTemps`) allocate an array and a boxed
+  enumerator per instruction per call and were 8% of the compile before the facts cache; a
+  span-based variant would take the rest.
 - [ ] **OPT-53** Self-hosted mirror of the stage-0 lowering speed-ups of TRT-16's change.
   `PerceusLifetimePlacement.ash` scans every alias store for every load
   (`loadSeesAliasStore` over `aliasStores`, with `containsStore` and a per-instruction

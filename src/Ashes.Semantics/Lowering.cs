@@ -919,8 +919,8 @@ public sealed partial class Lowering
         RegisterCapabilityDeclarations(program.Items);
         RegisterExternalFunctions(program.ExternalDecls);
         RegisterProviderDeclarations(program.Items);
-        program = ExpandDerivedImplementations(program);
-        RegisterTraitAndImplementationDeclarations(program.Items);
+        program = Ashes.Frontend.CompilePhaseTiming.Measure("lower.deriving", () => ExpandDerivedImplementations(program));
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.register-traits", () => RegisterTraitAndImplementationDeclarations(program.Items));
         if (_includeTraitValidationBindings)
         {
             program = AddTraitValidationBindings(program, preserveTrailingBody: true);
@@ -944,7 +944,7 @@ public sealed partial class Lowering
             .ToList();
 
         CollectTopLevelBindingNames(valueItems);
-        RegisterInlinableFunctions(valueItems);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.register-inlinable", () => RegisterInlinableFunctions(valueItems));
         RegisterEntryBodyFunctions(program.Body);
         if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
         {
@@ -956,7 +956,7 @@ public sealed partial class Lowering
         // Model-A sequential scoping falls out for free: each binding's body sees the just-bound
         // name and all enclosing ones, never a later sibling.
         var body = DesugarTopLevel(valueItems, program.Body);
-        AnalyzeReuseCopyElision(body);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis", () => AnalyzeReuseCopyElision(body));
         return Lower(body);
     }
 
@@ -1108,13 +1108,13 @@ public sealed partial class Lowering
         AnalyzeDirectCalleeOnlyUses(expr);
         // Entry function lowering (no env/arg params)
         PushTraitConstraintScope();
-        var (resultTemp, resultType) = LowerExpr(expr);
+        var (resultTemp, resultType) = Ashes.Frontend.CompilePhaseTiming.Measure("lower.body", () => LowerExpr(expr));
         LastTraitConstraints = SimplifyAndResolveTraitConstraints(
             PopTraitConstraintScope(),
             GetSpan(expr));
         Emit(new IrInst.Return(resultTemp));
 
-        FinishEntryInference(resultType);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.entry-inference", () => FinishEntryInference(resultType));
 
         var entry = new IrFunction(
             Label: "_start_main",
@@ -2722,16 +2722,15 @@ public sealed partial class Lowering
     // restored afterwards.
     private void ResolveDeferredTcoResetsInFunction(int fi, IrFunction f)
     {
-        var savedInst = new List<IrInst>(_inst);
+        List<IrInst> savedInst = _inst;
         var savedTemp = _nextTempSlot;
         var savedLocal = _nextLocalSlot;
         var savedLocalNames = new Dictionary<int, string>(_localNames);
         var savedLocalTypes = new Dictionary<int, TypeRef>(_localTypes);
-        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts =
-            SnapshotTempOwnershipFacts();
+        Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts = _tempOwnershipFacts;
         IrFunctionOrigin? savedActiveFunctionOrigin = _activeFunctionOrigin;
-        _inst.Clear();
-        _tempOwnershipFacts.Clear();
+        _inst = new List<IrInst>(f.Instructions.Count + 16);
+        _tempOwnershipFacts = [];
         _activeFunctionOrigin = f.Origin;
         _nextTempSlot = f.TempCount;
         _nextLocalSlot = f.LocalCount;
@@ -2741,10 +2740,9 @@ public sealed partial class Lowering
             _inst.Add(inst);
         });
 
-        _funcs[fi] = f with { Instructions = new List<IrInst>(_inst), TempCount = _nextTempSlot, LocalCount = _nextLocalSlot };
-        _inst.Clear();
-        _inst.AddRange(savedInst);
-        RestoreTempOwnershipFacts(savedTempOwnershipFacts);
+        _funcs[fi] = f with { Instructions = _inst, TempCount = _nextTempSlot, LocalCount = _nextLocalSlot };
+        _inst = savedInst;
+        _tempOwnershipFacts = savedTempOwnershipFacts;
         _activeFunctionOrigin = savedActiveFunctionOrigin;
         _nextTempSlot = savedTemp;
         _nextLocalSlot = savedLocal;
@@ -8332,7 +8330,12 @@ public sealed partial class Lowering
     // Lambda bodies are lowered as separate functions with a fresh scope. Slot/env bindings are
     // captured elsewhere, but scope-independent bindings must be re-seeded so direct calls to
     // intrinsics, externals, and prelude values still resolve inside helper functions.
-    private static void LowerLambdaCoreReseedScopeIndependentBindings(
+    // The outermost enclosing scope's intrinsic, external, and prelude bindings, filtered once per
+    // distinct scope instance: every lambda under the same top-level scope reseeds the same subset.
+    private ImmutableSortedDictionary<string, Binding>? _reseedScopeSource;
+    private List<KeyValuePair<string, Binding>> _reseedScopeBindings = [];
+
+    private void LowerLambdaCoreReseedScopeIndependentBindings(
         Dictionary<string, Binding> scope,
         ImmutableSortedDictionary<string, Binding>[] enclosingScopes)
     {
@@ -8341,12 +8344,25 @@ public sealed partial class Lowering
             return;
         }
 
-        foreach (var (bindingName, binding) in enclosingScopes[0])
+        ImmutableSortedDictionary<string, Binding> source = enclosingScopes[0];
+        if (!ReferenceEquals(source, _reseedScopeSource))
         {
-            if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
+            var filtered = new List<KeyValuePair<string, Binding>>();
+            foreach (var (bindingName, binding) in source)
             {
-                scope[bindingName] = binding;
+                if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
+                {
+                    filtered.Add(new KeyValuePair<string, Binding>(bindingName, binding));
+                }
             }
+
+            _reseedScopeSource = source;
+            _reseedScopeBindings = filtered;
+        }
+
+        foreach (var (bindingName, binding) in _reseedScopeBindings)
+        {
+            scope[bindingName] = binding;
         }
     }
 
@@ -14673,22 +14689,80 @@ public sealed partial class Lowering
         }
     }
 
+    // Adds each name to the bound set, recording the ones that were not already bound so the caller
+    // can take them back out afterwards; the bound set is threaded through the visit in place.
+    private static void FreeVarsBind(HashSet<string> bnd, IEnumerable<string> names, List<string> added)
+    {
+        foreach (string name in names)
+        {
+            if (bnd.Add(name))
+            {
+                added.Add(name);
+            }
+        }
+    }
+
+    private static void FreeVarsUnbind(HashSet<string> bnd, List<string> added)
+    {
+        foreach (string name in added)
+        {
+            bnd.Remove(name);
+        }
+    }
+
+    private void FreeVarsVisitUnderName(Expr body, HashSet<string> bnd, HashSet<string> res, string name)
+    {
+        bool added = bnd.Add(name);
+        try
+        {
+            FreeVarsVisit(body, bnd, res);
+        }
+        finally
+        {
+            if (added)
+            {
+                bnd.Remove(name);
+            }
+        }
+    }
+
+    private void FreeVarsVisitLetRecursive(Expr.LetRecursive l, HashSet<string> bnd, HashSet<string> res)
+    {
+        bool added = bnd.Add(l.Name);
+        try
+        {
+            FreeVarsVisit(l.Value, bnd, res);
+            FreeVarsVisit(l.Body, bnd, res);
+        }
+        finally
+        {
+            if (added)
+            {
+                bnd.Remove(l.Name);
+            }
+        }
+    }
+
     private void FreeVarsVisitMatch(Expr.Match m, HashSet<string> bnd, HashSet<string> res)
     {
         FreeVarsVisit(m.Value, bnd, res);
+        var added = new List<string>();
         foreach (var mc in m.Cases)
         {
-            var bndCase = new HashSet<string>(bnd, StringComparer.Ordinal);
-            foreach (var name in PatternBindings(mc.Pattern))
+            FreeVarsBind(bnd, PatternBindings(mc.Pattern), added);
+            try
             {
-                bndCase.Add(name);
+                if (mc.Guard is not null)
+                {
+                    FreeVarsVisit(mc.Guard, bnd, res);
+                }
+                FreeVarsVisit(mc.Body, bnd, res);
             }
-
-            if (mc.Guard is not null)
+            finally
             {
-                FreeVarsVisit(mc.Guard, bndCase, res);
+                FreeVarsUnbind(bnd, added);
+                added.Clear();
             }
-            FreeVarsVisit(mc.Body, bndCase, res);
         }
     }
 
@@ -14698,25 +14772,20 @@ public sealed partial class Lowering
         {
             case Expr.Let l:
                 FreeVarsVisit(l.Value, bnd, res);
-                var boundWithLetVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                FreeVarsVisit(l.Body, boundWithLetVar, res);
+                FreeVarsVisitUnderName(l.Body, bnd, res, l.Name);
                 return;
             case Expr.LetResult l:
                 FreeVarsVisit(l.Value, bnd, res);
-                var boundWithResultVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                FreeVarsVisit(l.Body, boundWithResultVar, res);
+                FreeVarsVisitUnderName(l.Body, bnd, res, l.Name);
                 return;
             case Expr.LetRecursive l:
-                var boundWithRecursiveVar = new HashSet<string>(bnd, StringComparer.Ordinal) { l.Name };
-                FreeVarsVisit(l.Value, boundWithRecursiveVar, res);
-                FreeVarsVisit(l.Body, boundWithRecursiveVar, res);
+                FreeVarsVisitLetRecursive(l, bnd, res);
                 return;
             case RecursiveGroupExpr group:
                 FreeVarsVisitRecursiveGroup(group, bnd, res);
                 return;
             case Expr.Lambda lam:
-                var boundWithParam = new HashSet<string>(bnd, StringComparer.Ordinal) { lam.ParamName };
-                FreeVarsVisit(lam.Body, boundWithParam, res);
+                FreeVarsVisitUnderName(lam.Body, bnd, res, lam.ParamName);
                 return;
             case Expr.Await awaitExpr:
                 FreeVarsVisit(awaitExpr.Task, bnd, res);
@@ -14753,31 +14822,44 @@ public sealed partial class Lowering
 
     private void FreeVarsVisitRecursiveGroup(RecursiveGroupExpr group, HashSet<string> bnd, HashSet<string> res)
     {
-        var boundWithRecursiveGroup = new HashSet<string>(bnd, StringComparer.Ordinal);
-        boundWithRecursiveGroup.UnionWith(group.Bindings.Select(binding => binding.Name));
-        foreach ((_, Expr value) in group.Bindings)
+        var added = new List<string>();
+        FreeVarsBind(bnd, group.Bindings.Select(binding => binding.Name), added);
+        try
         {
-            FreeVarsVisit(value, boundWithRecursiveGroup, res);
-        }
+            foreach ((_, Expr value) in group.Bindings)
+            {
+                FreeVarsVisit(value, bnd, res);
+            }
 
-        FreeVarsVisit(group.Body, boundWithRecursiveGroup, res);
+            FreeVarsVisit(group.Body, bnd, res);
+        }
+        finally
+        {
+            FreeVarsUnbind(bnd, added);
+        }
     }
 
     private void FreeVarsVisitHandle(Expr.Handle handleExpr, HashSet<string> bnd, HashSet<string> res)
     {
         FreeVarsVisit(handleExpr.Body, bnd, res);
+        var added = new List<string>();
         foreach (var arm in handleExpr.Arms)
         {
-            var bndArm = new HashSet<string>(bnd, StringComparer.Ordinal) { "resume" };
+            FreeVarsBind(bnd, ["resume"], added);
             foreach (var armParam in arm.Parameters)
             {
-                foreach (var name in PatternBindings(armParam))
-                {
-                    bndArm.Add(name);
-                }
+                FreeVarsBind(bnd, PatternBindings(armParam), added);
             }
 
-            FreeVarsVisit(arm.Body, bndArm, res);
+            try
+            {
+                FreeVarsVisit(arm.Body, bnd, res);
+            }
+            finally
+            {
+                FreeVarsUnbind(bnd, added);
+                added.Clear();
+            }
         }
     }
 

@@ -238,7 +238,18 @@ lowering with lifetime placement), `optimize` (the IR optimizer), and `backend` 
 `backend.emit-module`, `backend.verify`, `backend.llvm-passes`, `backend.bitcode-link`,
 `backend.object-code`, and `backend.link` parts (a split program reports `backend.parallel-objects`
 with one `backend.partition<N>.llvm-passes` and `backend.partition<N>.object-code` pair per
-partition instead). The generated code is unaffected.
+partition instead). `lower` is itself split into `lower.deriving`, `lower.register-traits`,
+`lower.register-inlinable`, `lower.move-analysis` (with its `calls`, `handlers`, `reach`,
+`provenance`, `inspect-only`, and `summaries` parts), `lower.body`, `lower.entry-inference`,
+`lower.placement.entry`, and `lower.placement.functions`; a program that needs the inferred-trait
+discovery pass reports the first four twice, once for that pass. `optimize` is split into
+`optimize.compile-time-eval`, `optimize.entry`, `optimize.functions`, `optimize.closures` (with its
+`captured`, `returned`, `currying`, `scalarize`, and `returned-again` parts),
+`optimize.non-allocating`, `optimize.brackets`, and `optimize.concat`. The generated code is
+unaffected.
+
+The compiler runs with the server garbage collector, which keeps collection pauses off the
+single-threaded lowering and optimizer phases at the cost of a somewhat larger heap.
 
 A large Linux program (1024 lifted functions or more) is optimized and turned into object code
 in parallel partitions that are merged into one relocatable object before linking; see

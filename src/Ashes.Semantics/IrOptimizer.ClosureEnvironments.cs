@@ -291,7 +291,7 @@ public static partial class IrOptimizer
         IrFunction function,
         Dictionary<(string Label, int Index), string> knownCaptured)
     {
-        if (!function.HasEnvAndArgParams || function.Coroutine is not null)
+        if (!function.HasEnvAndArgParams || function.Coroutine is not null || !ContainsCallClosure(function.Instructions))
         {
             return function;
         }

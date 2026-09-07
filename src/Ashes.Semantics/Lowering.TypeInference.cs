@@ -105,7 +105,7 @@ public sealed partial class Lowering
             }
             else
             {
-                FtvType(binding.Type, result);
+                AddBindingTypeFtv(binding, result);
             }
         }
     }
@@ -118,7 +118,93 @@ public sealed partial class Lowering
             _schemeFreeVariables.Add(scheme, variables);
         }
 
-        result.UnionWith(variables);
+        if (variables.Count > 0)
+        {
+            result.UnionWith(variables);
+        }
+    }
+
+    // The unbound variable nodes of each monomorphic binding's type the first time the environment
+    // scan meets it. Unification only ever binds variables, so the free variables of that type at
+    // any later point are exactly the free variables of those nodes' pruned representatives, and a
+    // binding whose type had none stays variable-free for good.
+    private readonly Dictionary<Binding, TypeRef.TVar[]> _bindingTypeVariables =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void AddBindingTypeFtv(Binding binding, HashSet<int> result)
+    {
+        if (!_bindingTypeVariables.TryGetValue(binding, out TypeRef.TVar[]? variables))
+        {
+            var collected = new List<TypeRef.TVar>();
+            CollectTypeVariables(binding.Type, collected);
+            variables = collected.ToArray();
+            _bindingTypeVariables.Add(binding, variables);
+        }
+
+        foreach (TypeRef.TVar variable in variables)
+        {
+            FtvType(variable, result);
+        }
+    }
+
+    // Collects the unbound variable nodes of t, in the same traversal order as FtvType.
+    private void CollectTypeVariables(TypeRef t, List<TypeRef.TVar> result)
+    {
+        t = Prune(t);
+        switch (t)
+        {
+            case TypeRef.TVar v:
+                result.Add(v);
+                break;
+            case TypeRef.TFun f:
+                CollectTypeVariables(f.Arg, result);
+                CollectTypeVariables(f.Ret, result);
+                if (f.Row is not null)
+                {
+                    CollectTypeVariables(f.Row, result);
+                }
+
+                break;
+            case TypeRef.TRow row:
+                foreach (var capability in row.Capabilities)
+                {
+                    CollectTypeVariables(capability, result);
+                }
+
+                if (row.Tail is not null)
+                {
+                    CollectTypeVariables(row.Tail, result);
+                }
+
+                break;
+            case TypeRef.TCapability capability:
+                foreach (var arg in capability.Args)
+                {
+                    CollectTypeVariables(arg, result);
+                }
+
+                break;
+            case TypeRef.TPtr p:
+                CollectTypeVariables(p.Pointee, result);
+                break;
+            case TypeRef.TList l:
+                CollectTypeVariables(l.Element, result);
+                break;
+            case TypeRef.TTuple tuple:
+                foreach (var e in tuple.Elements)
+                {
+                    CollectTypeVariables(e, result);
+                }
+
+                break;
+            case TypeRef.TNamedType n:
+                foreach (var a in n.TypeArgs)
+                {
+                    CollectTypeVariables(a, result);
+                }
+
+                break;
+        }
     }
 
     // Generalize t over free type variables not fixed by the current environment.
