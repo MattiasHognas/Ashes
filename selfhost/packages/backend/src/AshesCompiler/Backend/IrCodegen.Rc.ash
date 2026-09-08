@@ -25,6 +25,7 @@ export (
     value emitRuntimeRcDup,
     value emitRuntimeRcIsUnique,
     value emitRuntimeRcDrop,
+    value emitClosureDropperCall,
     value emitRuntimeRcClosureDrop,
     value emitRuntimeDropReuse,
     value emitAllocReusing,
@@ -37,10 +38,6 @@ export (
 // and from any real count, and deliberately not `-1`, which is what an accidental underflow of a
 // real count would also produce.
 let rcImmortalSentinel = Ashes.Number.UInt.fromInt64(1 << 62)
-
-// `(1 << 62) - 1`: the environment-size bits of a closure's packed size word, below the two
-// ownership bits `packClosureEnvironmentSize` sets.
-let closureEnvironmentSizeMask = Ashes.Number.UInt.fromInt64((1 << 62) - 1)
 
 let rcHeaderSizeBytes = 16
 
@@ -139,31 +136,86 @@ let emitRuntimeRcDrop context function_ i64 i8 ptrType builder freeFn freeType v
                                 emitRcArm(builder)(releaseBlock)(continueBlock)(given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)("")))
                             |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock)))
 
-// `RcDrop` of a runtime-managed closure object: releases the environment block first when the
-// closure has one (a non-zero environment size in its packed size word), then the closure
-// itself. Both are ordinary RC cells, so each release is `emitRuntimeRcDrop`.
-let emitRuntimeRcClosureDrop context function_ i64 i8 ptrType builder freeFn freeType closureRef =
-    (let closurePtr = buildIntToPtr(builder)(closureRef)(ptrType)("rc_closure_ptr")
+// Invokes the dropper stored at closure+24, as `dropper(0, env, 0)`, when it is non-zero: the
+// resource-cleanup hook of an arena closure that captured-and-escaped a resource, or the
+// environment's owned-capture release of a reference-counted one (stage 0's
+// `EmitClosureDropperCall`).
+let emitClosureDropperCall context function_ i64 i8 ptrType builder closureFnType closurePtr prefix =
+    (let dropperSlot = gepBytes(builder)(i64)(i8)(closurePtr)(24)(prefix + "_dropper_slot")
     in
-        let dropEnvBlock = appendBasicBlock(context)(function_)("rc_closure_drop_env")
+        let dropperCode = buildLoad(builder)(i64)(dropperSlot)(prefix + "_dropper")
         in
-            let dropClosureBlock = appendBasicBlock(context)(function_)("rc_closure_drop_value")
+            let isNull =
+                buildICmp(builder)(intPredicateEq)(dropperCode)(rcConst(i64)(0))(prefix + "_dropper_is_null")
             in
-                "rc_closure_env_size_slot"
-                |> gepBytes(builder)(i64)(i8)(closurePtr)(16)
-                |> (given (sizeSlot) -> buildLoad(builder)(i64)(sizeSlot)("rc_closure_env_size"))
-                |> (given (packedSize) ->
-                    buildAnd(builder)(packedSize)(constInt(i64)(closureEnvironmentSizeMask)(false))("rc_closure_env_size_masked"))
-                |> (given (envSize) -> rcIsPresent(builder)(i64)(envSize)("rc_closure_env"))
-                |> (given (hasEnv) -> buildCondBr(builder)(hasEnv)(dropEnvBlock)(dropClosureBlock))
-                |> (given (_) ->
-                    emitRcArm(builder)(dropEnvBlock)(dropClosureBlock)(given (_) ->
-                        "rc_closure_env_slot"
-                        |> gepBytes(builder)(i64)(i8)(closurePtr)(8)
-                        |> (given (envSlot) -> buildLoad(builder)(i64)(envSlot)("rc_closure_env"))
-                        |> emitRuntimeRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)))
-                |> (given (_) -> positionBuilderAtEnd(builder)(dropClosureBlock))
-                |> (given (_) -> emitRuntimeRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(closureRef)))
+                let callBlock = appendBasicBlock(context)(function_)(prefix + "_dropper_call")
+                in
+                    let endBlock = appendBasicBlock(context)(function_)(prefix + "_dropper_end")
+                    in
+                        let _ = buildCondBr(builder)(isNull)(endBlock)(callBlock)
+                        in
+                            let _ = positionBuilderAtEnd(builder)(callBlock)
+                            in
+                                let envSlot = gepBytes(builder)(i64)(i8)(closurePtr)(8)(prefix + "_dropper_env_slot")
+                                in
+                                    let env = buildLoad(builder)(i64)(envSlot)(prefix + "_dropper_env")
+                                    in
+                                        let dropperPtr = buildIntToPtr(builder)(dropperCode)(ptrType)(prefix + "_dropper_ptr")
+                                        in
+                                            let _ = buildCall(builder)(closureFnType)(dropperPtr)([rcConst(i64)(0), env, rcConst(i64)(0)])(3u32)(prefix + "_dropper_invoke")
+                                            in
+                                                let _ = buildBr(builder)(endBlock)
+                                                in positionBuilderAtEnd(builder)(endBlock))
+
+// `RcDrop` of a runtime-managed closure object: only when its own count is about to reach zero
+// does it call the dropper (the environment's owned captures) and release the environment block
+// (a non-zero environment size in its packed size word); a shared closure gives up only its own
+// count, the environment untouched. Either way the closure cell's own release is
+// `emitRuntimeRcDrop`, which re-derives the same last-reference check to decide free vs decrement.
+let emitRuntimeRcClosureDrop context function_ i64 i8 ptrType builder freeFn freeType closureFnType closureRef =
+    (let headerPtr = rcHeaderPtr(builder)(i64)(i8)(ptrType)(closureRef)("rc_closure")
+    in
+        let count = rcLoadCount(builder)(i64)(headerPtr)("rc_closure")
+        in
+            let isLast = rcIsCountOne(builder)(i64)(count)("rc_closure_last")
+            in
+                let releaseOwnedBlock = appendBasicBlock(context)(function_)("rc_closure_release_owned")
+                in
+                    let dropClosureBlock = appendBasicBlock(context)(function_)("rc_closure_drop_value")
+                    in
+                        let _ = buildCondBr(builder)(isLast)(releaseOwnedBlock)(dropClosureBlock)
+                        in
+                            let _ = positionBuilderAtEnd(builder)(releaseOwnedBlock)
+                            in
+                                let closurePtr = buildIntToPtr(builder)(closureRef)(ptrType)("rc_closure_ptr")
+                                in
+                                    let _ = emitClosureDropperCall(context)(function_)(i64)(i8)(ptrType)(builder)(closureFnType)(closurePtr)("rc_closure")
+                                    in
+                                        let sizeSlot = gepBytes(builder)(i64)(i8)(closurePtr)(16)("rc_closure_env_size_slot")
+                                        in
+                                            let packedSize = buildLoad(builder)(i64)(sizeSlot)("rc_closure_env_size")
+                                            in
+                                                let envSize =
+                                                    buildAnd(builder)(packedSize)(constInt(i64)(closureEnvironmentSizeMask)(false))("rc_closure_env_size_masked")
+                                                in
+                                                    let hasEnv = rcIsPresent(builder)(i64)(envSize)("rc_closure_env")
+                                                    in
+                                                        let dropEnvBlock = appendBasicBlock(context)(function_)("rc_closure_drop_env")
+                                                        in
+                                                            let _ = buildCondBr(builder)(hasEnv)(dropEnvBlock)(dropClosureBlock)
+                                                            in
+                                                                let _ = positionBuilderAtEnd(builder)(dropEnvBlock)
+                                                                in
+                                                                    let envSlot = gepBytes(builder)(i64)(i8)(closurePtr)(8)("rc_closure_env_slot")
+                                                                    in
+                                                                        let env = buildLoad(builder)(i64)(envSlot)("rc_closure_env")
+                                                                        in
+                                                                            let _ = emitRuntimeRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(env)
+                                                                            in
+                                                                                let _ = buildBr(builder)(dropClosureBlock)
+                                                                                in
+                                                                                    let _ = positionBuilderAtEnd(builder)(dropClosureBlock)
+                                                                                    in emitRuntimeRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(closureRef))
 
 // `DropReuse` on a runtime-managed value: consumes the source ownership and yields the cell
 // itself as the reuse token when its count is `1`, otherwise decrements the count and yields the
@@ -292,7 +344,7 @@ let emitDropCountedValue context function_ i64 i8 ptrType builder freeFn freeTyp
             in Unit
         | None ->
             if isClosure
-            then emitRuntimeRcClosureDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(valueRef)
+            then emitRuntimeRcClosureDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(closureFnType)(valueRef)
             else emitRuntimeRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(valueRef)
 
 // The runtime-managed `RcDrop` instruction: a value that may be the empty list is released only
