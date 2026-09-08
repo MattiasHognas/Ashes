@@ -4530,6 +4530,88 @@ let testRcAllocReusing unit = assertProgramPrintsLines(buildRcAllocReusingModule
 
 let testRcClosureDrop unit = assertProgramPrintsLines(buildRcClosureDropModule)("selfhostBackendRcClosureDrop")("selfhost_backend_rc_closure_drop_e2e")(["42", "7"])
 
+// A reference-counted closure's `RcDrop` is count-aware and calls its dropper (OPT-52): a shared
+// reference (a second live `RcDup` of the same closure) decrements only the closure's own count
+// and calls no dropper; only the drop of the last reference does both, exactly once. The wired
+// dropper (stored at closure+24 via a plain `StoreMemOffset`, exactly as lowering does) prints 99
+// when invoked, so its absence after the shared drop and its single appearance after the real
+// last drop are both directly observable — unlike probing freed memory, this does not depend on
+// the allocator's own reuse timing. Prints 42 (the call result, proving the closure and its
+// environment survive the shared drop), 99 (the dropper, invoked exactly once), then 7.
+let buildRcClosureSharedDropModule name context =
+    (let closureFunction =
+        ((given (instructions) -> handBuiltLiftedFunction("rc_shared_add_env")(instructions)(2)(3)))([
+            0
+            |> LoadEnv(0)
+            |> irOf,
+            1
+            |> LoadLocal(1)
+            |> irOf,
+            1
+            |> AddInt(2)(0)
+            |> irOf,
+            irOf(Return(2))
+        ])
+    in
+        let dropperFunction =
+            ((given (instructions) -> handBuiltLiftedFunction("rc_shared_dropper")(instructions)(2)(2)))([
+                99
+                |> LoadConstInt(0)
+                |> irOf,
+                irOf(PrintInt(0)),
+                0
+                |> LoadConstInt(1)
+                |> irOf,
+                irOf(Return(1))
+            ])
+        in
+            [
+                true
+                |> Alloc(0)(8)
+                |> irOf,
+                40
+                |> LoadConstInt(1)
+                |> irOf,
+                1
+                |> StoreMemOffset(0)(0)
+                |> irOf,
+                false
+                |> MakeClosure(2)("rc_shared_add_env")(0)(8)(true)(false)
+                |> irOf,
+                "rc_shared_dropper"
+                |> LoadFuncAddr(3)
+                |> irOf,
+                3
+                |> StoreMemOffset(2)(24)
+                |> irOf,
+                false
+                |> RcDup(4)(2)(true)
+                |> irOf,
+                None
+                |> RcDrop(4)("Function")(0)(true)(false)
+                |> irOf,
+                2
+                |> LoadConstInt(5)
+                |> irOf,
+                -1
+                |> CallClosure(6)(2)(5)
+                |> irOf,
+                irOf(PrintInt(6)),
+                None
+                |> RcDrop(2)("Function")(0)(true)(false)
+                |> irOf,
+                7
+                |> LoadConstInt(7)
+                |> irOf,
+                irOf(PrintInt(7)),
+                irOf(Return(7))
+            ]
+            |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
+            |> (given (entryFunction) -> handBuiltProgram(entryFunction)([closureFunction, dropperFunction]))
+            |> codegenProgram(name)(context))
+
+let testRcClosureSharedDrop unit = assertProgramPrintsLines(buildRcClosureSharedDropModule)("selfhostBackendRcClosureSharedDrop")("selfhost_backend_rc_closure_shared_drop_e2e")(["42", "99", "7"])
+
 // A string copied into the arena above a scope watermark (in a chunk of its own), copied to an RC
 // string before the reset and to an arena string below the watermark after it; both are printed
 // once the source chunk is unmapped. The RC copy's real header makes it unique. Prints
@@ -5111,6 +5193,7 @@ let run shipped =
     |> testRcDropReuse
     |> testRcAllocReusing
     |> testRcClosureDrop
+    |> testRcClosureSharedDrop
     |> testCopyOutArenaStringAfterReset
     |> testCopyOutListRcStringHeads
     |> testCopyOutClosureArena

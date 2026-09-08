@@ -53,6 +53,9 @@ export (
     value emitAllocAdtRuntimeManaged,
     value emitStackAlloc,
     value closureSizeBytes,
+    value closureRuntimeManagedBit,
+    value closureRuntimeManagedBitClearMask,
+    value closureEnvironmentSizeMask,
     value packClosureEnvironmentSize,
     value emitStoreClosureWords,
     value emitCallClosure,
@@ -610,16 +613,32 @@ let emitStackAlloc builder i64 sizeBytes name =
 // out: four `i64` words `{code, env, packedEnvironmentSize, dropper}`. `code` is the lifted
 // function's own address (`CallClosure` loads it back and calls through it), `env` the
 // environment word the function receives as its first parameter, the packed word the environment
-// byte size with the two ownership bits `LlvmCodegenExpressions.cs` defines (`1 << 63` = the
-// result is runtime-managed, `1 << 62` = the argument is), and `dropper` the resource-cleanup
-// hook (always `0` for an ordinary closure).
+// byte size with the three ownership bits `LlvmCodegenExpressions.cs` defines (`1 << 63` = the
+// result is runtime-managed, `1 << 62` = the argument is, `1 << 61` = the closure object and its
+// environment are themselves reference-counted), and `dropper` the resource-cleanup hook (always
+// `0` for an ordinary closure, the environment's owned captures for a reference-counted one).
 let closureSizeBytes = 32
 
-let packClosureEnvironmentSize envSizeBytes returnsRuntimeManaged acceptsRuntimeManagedArgument =
+// `1 << 61`, `packClosureEnvironmentSize`'s third bit; `emitRuntimeRcClosureDrop`/`emitCopyOutClosure`
+// read it back to tell a reference-counted closure from an arena one.
+let closureRuntimeManagedBit = Ashes.Number.UInt.fromInt64(1 << 61)
+
+// The bit-complement of `closureRuntimeManagedBit`, computed on the signed literal (`~` flips
+// every one of the 64 bits, including the sign) and bit-reinterpreted the same way: an `AND` with
+// this clears bit 61 alone, used when `emitCopyOutClosure` copies into an arena destination.
+let closureRuntimeManagedBitClearMask = Ashes.Number.UInt.fromInt64(~(1 << 61))
+
+// `(1 << 61) - 1`: the environment-size bits of a closure's packed size word, below the three
+// ownership bits `packClosureEnvironmentSize` sets.
+let closureEnvironmentSizeMask = Ashes.Number.UInt.fromInt64((1 << 61) - 1)
+
+let packClosureEnvironmentSize envSizeBytes returnsRuntimeManaged acceptsRuntimeManagedArgument runtimeManaged =
     envSizeBytes + (if returnsRuntimeManaged
     then 1 << 63
     else 0) + (if acceptsRuntimeManagedArgument
     then 1 << 62
+    else 0) + (if runtimeManaged
+    then 1 << 61
     else 0)
 
 let emitStoreClosureWords builder i64 i8 closurePtr codeFn envRef packedSize resultName =

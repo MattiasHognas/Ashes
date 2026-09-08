@@ -57,8 +57,6 @@ let rcHeaderBytes = 16
 
 let listCellBytes = 16
 
-let closureEnvironmentSizeMask = Ashes.Number.UInt.fromInt64((1 << 62) - 1)
-
 let closureNormalizerSuffix = "$env_normalize"
 
 let regionCursorGlobalOf (region: PersistentRegion) = region.regionCursorGlobal
@@ -359,23 +357,39 @@ type ClosureCopyState =
     | newEnvSlot: LLVMValueRef
     | newDropperSlot: LLVMValueRef
 
-let loadClosureCopyState builder i64 i8 ptrType srcRef =
+// An arena copy of a reference-counted closure shares the captures the original still owns, so it
+// carries no dropper; every other copy inherits the source's own (or, once
+// `emitNormalizeOrCopyClosureEnvironment` runs, its normalizer's).
+let loadClosureCopyState builder i64 i8 ptrType runtimeManaged srcRef =
     match (buildEntryAlloca(builder)(i64)("copy_closure_new_env_slot"), buildEntryAlloca(builder)(i64)("copy_closure_new_dropper_slot"), loadWordAt(builder)(i64)(i8)(ptrType)(srcRef)(16)("copy_closure_env_size")) with
         | (envSlot, dropperSlot, packedSize) ->
-            Unit
-            |> (given (_) ->
-                buildStore(builder)(arenaConst(i64)(0))(envSlot))
-            |> (given (_) ->
-                buildStore(builder)(loadWordAt(builder)(i64)(i8)(ptrType)(srcRef)(24)("copy_closure_dropper"))(dropperSlot))
-            |> (given (_) ->
-                ClosureCopyState(
-                    closureCode = loadWordAt(builder)(i64)(i8)(ptrType)(srcRef)(0)("copy_closure_code"),
-                    closureEnv = loadWordAt(builder)(i64)(i8)(ptrType)(srcRef)(8)("copy_closure_env"),
-                    closurePackedSize = packedSize,
-                    closureEnvSize = buildAnd(builder)(packedSize)(constInt(i64)(closureEnvironmentSizeMask)(false))("copy_closure_env_size_masked"),
-                    newEnvSlot = envSlot,
-                    newDropperSlot = dropperSlot
-                ))
+            let sourceDropper = loadWordAt(builder)(i64)(i8)(ptrType)(srcRef)(24)("copy_closure_dropper")
+            in
+                let initialDropper =
+                    if runtimeManaged
+                    then sourceDropper
+                    else
+                        let sourceRuntimeManaged =
+                            buildAnd(builder)(packedSize)(constInt(i64)(closureRuntimeManagedBit)(false))("copy_closure_source_runtime_managed")
+                        in
+                            let sourceIsArena =
+                                buildICmp(builder)(intPredicateEq)(sourceRuntimeManaged)(constInt(i64)(0u64)(false))("copy_closure_source_is_arena")
+                            in
+                                buildSelect(builder)(sourceIsArena)(sourceDropper)(constInt(i64)(0u64)(false))("copy_closure_borrowed_dropper")
+                in
+                    Unit
+                    |> (given (_) ->
+                        buildStore(builder)(arenaConst(i64)(0))(envSlot))
+                    |> (given (_) -> buildStore(builder)(initialDropper)(dropperSlot))
+                    |> (given (_) ->
+                        ClosureCopyState(
+                            closureCode = loadWordAt(builder)(i64)(i8)(ptrType)(srcRef)(0)("copy_closure_code"),
+                            closureEnv = loadWordAt(builder)(i64)(i8)(ptrType)(srcRef)(8)("copy_closure_env"),
+                            closurePackedSize = packedSize,
+                            closureEnvSize = buildAnd(builder)(packedSize)(constInt(i64)(closureEnvironmentSizeMask)(false))("copy_closure_env_size_masked"),
+                            newEnvSlot = envSlot,
+                            newDropperSlot = dropperSlot
+                        ))
 
 // A nil environment (no captures) is kept as nil; otherwise a fresh block of the environment's
 // size is filled by `emitNormalizeOrCopyClosureEnvironment` and its address stored in the slot.
@@ -398,21 +412,28 @@ let emitCopyOutClosureEnvironment context function_ builder i64 i8 ptrType (aren
 // the same code word and packed size, the new environment, and the possibly normalized dropper.
 let emitCopyOutClosure context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (copyOut: CopyOutRuntime) mallocFn mallocType closureFnType liftedFunctions runtimeManaged srcRef name =
     srcRef
-    |> loadClosureCopyState(builder)(i64)(i8)(ptrType)
+    |> loadClosureCopyState(builder)(i64)(i8)(ptrType)(runtimeManaged)
     |> (given (state) ->
         Unit
         |> (given (_) -> emitCopyOutClosureEnvironment(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOut)(mallocFn)(mallocType)(closureFnType)(liftedFunctions)(runtimeManaged)(state))
         |> (given (_) ->
             emitClosureCopyBlock(context)(function_)(builder)(i64)(i8)(arena)(mallocFn)(mallocType)(runtimeManaged)(arenaConst(i64)(closureSizeBytes))(name))
         |> (given (newClosure) ->
-            Unit
-            |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(0)(state.closureCode)("copy_closure_store_code"))
-            |> (given (_) ->
-                storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(8)(buildLoad(builder)(i64)(state.newEnvSlot)("copy_closure_new_env"))("copy_closure_store_env"))
-            |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(16)(state.closurePackedSize)("copy_closure_store_env_size"))
-            |> (given (_) ->
-                storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(24)(buildLoad(builder)(i64)(state.newDropperSlot)("copy_closure_new_dropper"))("copy_closure_store_dropper"))
-            |> (given (_) -> newClosure)))
+            let newPackedSize =
+                if runtimeManaged
+                then
+                    buildOr(builder)(state.closurePackedSize)(constInt(i64)(closureRuntimeManagedBit)(false))("copy_closure_env_size_rc")
+                else
+                    buildAnd(builder)(state.closurePackedSize)(constInt(i64)(closureRuntimeManagedBitClearMask)(false))("copy_closure_env_size_arena")
+            in
+                Unit
+                |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(0)(state.closureCode)("copy_closure_store_code"))
+                |> (given (_) ->
+                    storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(8)(buildLoad(builder)(i64)(state.newEnvSlot)("copy_closure_new_env"))("copy_closure_store_env"))
+                |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(16)(newPackedSize)("copy_closure_store_env_size"))
+                |> (given (_) ->
+                    storeWordAt(builder)(i64)(i8)(ptrType)(newClosure)(24)(buildLoad(builder)(i64)(state.newDropperSlot)("copy_closure_new_dropper"))("copy_closure_store_dropper"))
+                |> (given (_) -> newClosure)))
 
 // The head copy of a TCO cell: a string through `__ashes_copy_out_string`, an inner list of
 // inline elements through `__ashes_copy_out_list`, both into the arena. An inline head never

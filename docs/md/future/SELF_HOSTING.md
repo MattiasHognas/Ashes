@@ -2414,17 +2414,51 @@ same public behavior.
   declaration's unresolved-type and resource facts at every value; stage 0 memoizes a resolved
   monomorphic symbol (`_resolvedLayoutTypeSymbols`). The self-hosted lowering records no hover
   types, so that gate has no counterpart.
-- [ ] **OPT-52** Self-hosted mirror of OPT-49a and OPT-49b. Now that the three shapes compile
+- [~] **OPT-52** Self-hosted mirror of OPT-49a and OPT-49b. Now that the three shapes compile
   through the self-hosted compiler (OPT-49c), port the perform site adopting a handler arm's
   reference-counted result by its returns bit (with CAP-10's arm-closure normalization and
   returns-bit epilogue), and the closure child rule: `HeapLayoutClassification.ash` still
   classifies a function child as `UnsupportedChildDrop`/`NoStructuralCopy`, stage 0's rule before
   OPT-49b, so a record holding a closure over an entry-normalized parameter stays in the arena
   and `tests/consumed_argument_captured_by_lambda.ash` leaks through the self-hosted compiler
-  (38.9 MB at 40000 iterations against stage 0's 8.2 MB plateau). The backend needs the
-  count-aware `RcDrop Function`, the runtime-managed bit 61 in the packed closure word, the
-  `CleanupResource` no-op on a reference-counted closure, and the dropper-free arena
-  `CopyOutClosure` of a reference-counted closure. Pin both fixtures as plateau programs through
+  (38.9 MB at 40000 iterations against stage 0's 8.2 MB plateau).
+  Done (2026-09-08), the backend half of the closure child rule: `IrCodegen.Support.ash`'s
+  `packClosureEnvironmentSize` packs a fourth bit, `closureRuntimeManagedBit` (`1 << 61`, stage
+  0's `ClosureRuntimeManagedBit`), and `closureEnvironmentSizeMask` no longer folds it into the
+  environment-size bits. `IrCodegen.Rc.ash`'s `emitRuntimeRcClosureDrop` is now count-aware: it
+  checks the closure's own reference count first and calls the dropper (the new
+  `emitClosureDropperCall`, `dropper(0, env, 0)` exactly as stage 0's
+  `EmitClosureDropperCall`) and releases the environment only on the last reference, a shared
+  `RcDrop` giving up nothing but its own count — the previous version dropped the environment
+  unconditionally on every closure `RcDrop`, over-releasing it once a closure had more than one
+  live reference. `IrCodegen.ash`'s `CleanupResource "Function"` is a no-op only when the closure
+  is reference-counted (its dropper runs on the last `RcDrop` instead); an arena closure calls the
+  dropper directly, for a resource it captured-and-escaped (no self-hosted lowering produces one
+  yet, so this path stays untested but is no longer silently wrong). `IrCodegen.Copy.ash`'s
+  `emitCopyOutClosure` carries no dropper when copying a reference-counted source into an arena
+  destination (the arena copy shares the captures the original still owns) and now recomputes the
+  destination's own runtime-managed bit instead of copying the source's bit unchanged, so a
+  closure copied between representations gets the right one either way. New backend test
+  `expectRcClosureSharedDrop`/`testRcClosureSharedDrop` in `selfhost/tests/backend/Main.ash`
+  (`selfhost_backend_rc_closure_shared_drop_e2e`): a closure with a wired dropper (stored at
+  closure+24 by a plain `StoreMemOffset`, exactly as lowering does) is duplicated, the duplicate
+  dropped (expect no dropper call, and the environment still readable through the original
+  reference), then the original dropped (expect exactly one dropper call) — confirmed to fail on
+  the pre-fix code (the dropper never runs at all, since the mechanism did not exist) and pass
+  after. All ten selfhost suites, the full C# suite (2553/2553), the LSP suite (72/72), and the
+  e2e suite are green.
+  Still open: the semantics-side half of the closure child rule.
+  `HeapLayoutClassification.ash`'s `heapDroppableLeafField` — shared by the record, owned-child,
+  recursive-copy, and TCO layout rules alike via its `namedRule` parameter — falls through to
+  `false` for `SemFunction` by design ("anything else (a closure, an opaque handle) is not"
+  acceptable, its own doc comment), so admitting a function field needs a narrower change than
+  flipping that fallthrough: stage 0's fix was scoped to the owned-child ADT layout alone
+  (`OrdinaryHeapChildDropKind.Closure`, admitted only when the closure itself is
+  `IsRuntimeRcOwningClosureExpression`), not a blanket admission through every layout kind this
+  function feeds — the same "narrow, not blanket" lesson OPT-51 already paid for twice. Also
+  still open: CAP-10 (the handler-arm mirror this item's other half depends on) and the
+  self-hosted `IsRuntimeRcOwningClosureExpression` equivalent deciding when a closure literal
+  itself is placed on the reference-counted heap. Pin both fixtures as plateau programs through
   the self-hosted compiler once they match.
 
 #### LLVM code generation and runtime integration

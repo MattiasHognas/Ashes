@@ -682,13 +682,41 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(sourceTemp)
                                             |> emitRuntimeRcIsUnique(builder)(i64)(i8)(ptrType)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                        // A closure's `CleanupResource` releases nothing, as in stage 0; a
-                        // `FileHandle` closes its fd and a `Process` closes its pipes and reaps
-                        // the child (`EmitResourceCleanup`). Sockets and declared external
-                        // resources still need their destructors ported.
+                        // A closure's `CleanupResource` is a no-op for a reference-counted one
+                        // (its dropper runs on the last `RcDrop` instead); an arena closure may
+                        // carry a dropper (closure+24) for a resource it captured-and-escaped,
+                        // invoked here (`EmitClosureDrop`). A `FileHandle` closes its fd and a
+                        // `Process` closes its pipes and reaps the child (`EmitResourceCleanup`).
+                        // Sockets and declared external resources still need their destructors
+                        // ported.
                                         | CleanupResource(sourceTemp, typeName, _destructor) ->
                                             if typeName == "Function"
-                                            then (tempEnv, terminated)
+                                            then
+                                                let closurePtr =
+                                                    buildIntToPtr(builder)(lookupIndexed(sourceTemp)(tempEnv))(ptrType)("cleanup_closure_ptr")
+                                                in
+                                                    let packedSize = loadWordAt(builder)(i64)(i8)(ptrType)(closurePtr)(16)("cleanup_closure_env_size")
+                                                    in
+                                                        let runtimeManagedBit =
+                                                            buildAnd(builder)(packedSize)(constInt(i64)(closureRuntimeManagedBit)(false))("cleanup_closure_runtime_managed")
+                                                        in
+                                                            let isArena =
+                                                                buildICmp(builder)(intPredicateEq)(runtimeManagedBit)(constInt(i64)(0u64)(false))("cleanup_closure_is_arena")
+                                                            in
+                                                                let arenaBlock = appendBasicBlock(context)(function_)("cleanup_closure_arena")
+                                                                in
+                                                                    let endBlock = appendBasicBlock(context)(function_)("cleanup_closure_end")
+                                                                    in
+                                                                        let _ = buildCondBr(builder)(isArena)(arenaBlock)(endBlock)
+                                                                        in
+                                                                            let _ = positionBuilderAtEnd(builder)(arenaBlock)
+                                                                            in
+                                                                                let _ = emitClosureDropperCall(context)(function_)(i64)(i8)(ptrType)(builder)(closureFunctionType)(closurePtr)("cleanup_closure")
+                                                                                in
+                                                                                    let _ = buildBr(builder)(endBlock)
+                                                                                    in
+                                                                                        let _ = positionBuilderAtEnd(builder)(endBlock)
+                                                                                        in (tempEnv, terminated)
                                             else
                                                 if typeName == "FileHandle"
                                                 then
@@ -963,7 +991,7 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 let result =
                                                     emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupIndexed(envPtrTemp)(tempEnv))(
-                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)
+                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(runtimeManaged)
                                                     )("t" + Ashes.Text.fromInt(target))
                                                 in ((target, result) :: tempEnv, terminated)
                                         | MakeClosureStack(target, funcLabel, envPtrTemp, envSizeBytes, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
@@ -971,7 +999,7 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 let result =
                                                     emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupIndexed(envPtrTemp)(tempEnv))(
-                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)
+                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(false)
                                                     )("t" + Ashes.Text.fromInt(target))
                                                 in ((target, result) :: tempEnv, terminated)
                                         | LoadFuncAddr(target, funcLabel) ->
@@ -1567,13 +1595,13 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                         let _ =
                                             localSlots
                                             |> lookupIndexed(0)
                                             |> buildStore(builder)(getParam(functionValue)(0u32))
                                         in
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
                                             let _ =
                                                 localSlots
                                                 |> lookupIndexed(1)
