@@ -1766,7 +1766,7 @@ same public behavior.
   to-space and blob forms from hand-built IR only (see CG-4), and the lowering produces none
   until OPT-42 reaches the reuse specialization; and the task and capability regions, which
   belong to milestone 4 (CG-12, OPT-43) and are not started.
-- [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
+- [x] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
   them. Done (2026-09-06): a generic callee's deep-copied list result shares nothing with the
   call's consumed arguments, so stage 0 releases them with their elements after the copy instead
   of spine-only (`resultDeepCopied` through `LowerCallRestoreArena` to
@@ -1925,14 +1925,55 @@ same public behavior.
   inlined `List.length` entry helper (not ported), and `CallWindowLoweringTests` pins the entry
   function of parity fixture `generic_list_result_deep_copy` line for line (the whole program
   stays out of the runner until the synthesized copier and epilogue carry stage 0's locations).
-  Open before that: a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or pattern binding stored into
-  an aggregate is never retained at the store. For a runtime-RC aggregate that retain would be
-  balanced by its dropper and is the Perceus-correct rule; for an arena aggregate (the self-hosted
-  lowering's emitted instruction records, say) there is no dropper to balance it, so the arena
-  consumer relies on the borrowed value's owner outliving the region instead — which is what the
-  release-side rule under OPT-32 preserves for a generic callee's deep-copied result. Closing this
-  needs the store-site retain for runtime-RC aggregates, mirrored in `CoreLowering.ash` with the
-  affected parity oracles regenerated.
+  Closed (2026-09-08): the theorized gap — a borrowed `Str`/`Bytes`/`BigInt` part of a parameter or
+  pattern binding stored into a constructor argument with no compensating retain — does not
+  reproduce in stage 0: every admission rule that lets a constructor result count as a fresh
+  runtime-RC value (`CanRuntimeManageFreshHeapChildAdtConstructorApplication`,
+  `CanRuntimeManageFreshOwnedChildExpression`, `IsRuntimeManageableFreshGenericPayload`) requires
+  the field to be a proven producer (`IsRuntimeRcStringProducer`/`IsRuntimeRcBigIntProducer`/
+  `CanMaterializeOwnedBytes`) or the narrow `IsNormalizedAlwaysReturnedStringParameterRead` case; a
+  bare borrow never passes, so it never reaches a store site that needs a retain — confirmed with
+  targeted probes (an ordinary function's field projection, a TCO loop's dot-field read, and a TCO
+  loop's pattern-match-destructured field, all storing a non-literal string into a sibling
+  constructor and consed across 300000 iterations) that stayed either correctly arena-classified or
+  already retained through `RetainRuntimeManagedTcoConstructorArguments`/the pattern-binding
+  bind-time retain, in both compilers.
+
+  The self-hosted mirror's actual, verified divergence was one level down, in
+  `PerceusLifetimePlacement.ash`'s general Perceus dup/alias pass (the same machinery OPT-25
+  covers): stage 0's `PerceusLifetimePlacement.cs` collects every arena- or stack-allocated ADT
+  cell once per function (`CollectArenaAdtCells`) and uses it in three places — `AddCallDups` skips
+  the compensating `RcDup` for a tracked owner's field store into such a cell (an arena cell embeds
+  the owner's reference without a reference of its own, so the owner's own release is the only one
+  that ever fires), `PropagateAlias`'s `SetAdtField` case extends the owner's tracked aliases
+  through such a cell (so a later read of the cell keeps the owner artificially live, the same
+  "relies on the borrowed value's owner outliving the region" rule OPT-32's release side already
+  leans on), and `PlaceOwner` empties that exemption when a `CopyOutArena`/`RcNormalization` alias
+  carries the cell across a tail-call back edge (a by-name arena successor's copy releases its
+  children as owned references, so that store needs the retain after all). The self-hosted
+  `PerceusLifetimePlacement.ash` had none of the three: `arenaAdtCells` did not exist, so its
+  `callDupsAfterLoad`'s `SetAdtField` case (and `propagateAlias`'s, which had no `SetAdtField` case
+  at all) treated every field store alike regardless of the target cell's own placement. The
+  observable effect is a permanently unbalanced `RcDup` lifetime marker (currently a no-op at
+  codegen for a non-runtime-managed value, since only a `RuntimeManaged` `RcDup`/`RcDrop` pair does
+  real reference counting — a full-cost divergence once arena values gain their own runtime
+  bookkeeping) every time an owner-tracked value's field is stored into an arena cell, which is a
+  common shape (any record- or tuple-update building a fresh arena aggregate out of a still-live
+  local). Ported `arenaAdtCellTarget`/`collectArenaAdtCells`, the `arenaAdtCells`-gated skip in
+  `callDupsAfterLoad`, the `SetAdtField` case in `propagateAlias`, and the
+  `arenaCellCopyOutReleasesOwner`/`borrowingArenaCells` back-edge exception, threading
+  `arenaAdtCells` through the whole owner-placement call chain
+  (`placeInstructionLifetimesIn`→`placeOwnerSlots`→`placeOwner`→`placeOwnerRegion`→
+  `placeOwnerBetween`→`placeOwnerInRegion`→`collectOwnerAliases`/`collectInsertions`→`callDups`).
+  `PerceusLifetimePlacementTests.ash` gained
+  `expectRecordFieldStoreIntoArenaCellIsNotDuplicated` (fails on the pre-fix code: an unwanted
+  `RcDup` appears before the `SetAdtField`) and
+  `expectRecordFieldStoreIntoRuntimeManagedCellIsDuplicated` (the contrasting case, unchanged by
+  the fix) built directly on synthetic IR, the same idiom as
+  `expectBorrowedCallArgumentIsDuplicated`. The whole-program parity fixture
+  `reuse_shared_falls_back` exercised the case end to end and needed its checked-in `.ir`
+  regenerated (one fewer `RcDup`, `temps=36` → `35`). All ten selfhost test suites, the full C#
+  suite (2553/2553), the LSP suite (72/72), and the e2e suite are green.
 - [~] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
   allocation reuse for tuples, ADTs, closures, and tail-recursive paths. Done: a first consumer of
   `HeapLayoutClassification.ash`'s reuse-eligibility flags for the ORDINARY (non-TCO,
