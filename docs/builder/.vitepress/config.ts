@@ -183,6 +183,9 @@ export default defineConfig({
         text: "Future Designs",
         items: [
           page("Future Features", "/future/FUTURE_FEATURES"),
+          page("Compiler Parity Fuzzing", "/future/COMPILER_PARITY_FUZZING"),
+          page("Inferred Borrow Lifetimes", "/future/INFERRED_BORROW_LIFETIMES"),
+          page("Optimizer Pass Observability", "/future/OPTIMIZER_PASS_OBSERVABILITY"),
           page("Package Registry Website", "/future/REGISTRY_WEBSITE"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
           page("WebAssembly Target", "/future/WASM_TARGET"),
