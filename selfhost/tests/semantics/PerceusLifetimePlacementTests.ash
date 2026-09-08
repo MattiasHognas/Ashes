@@ -193,6 +193,111 @@ let expectBorrowedCallArgumentIsDuplicated unit =
         ])
         |> (given (_) -> test.assertEqual(13)(placed.placedTempCount)))
 
+// A record-field store of an alias into an arena-allocated cell borrows the owner's reference
+// instead of taking a compensating duplicate: the cell never releases what is stored into it, so
+// the owner's own drop (after its later read) is the only release. Contrast with
+// expectBorrowedCallArgumentIsDuplicated, whose CallClosure gets a duplicate because it is not an
+// arena cell.
+let expectRecordFieldStoreIntoArenaCellIsNotDuplicated unit =
+    [
+        1
+        |> StoreLocal(2)
+        |> instruction,
+        2
+        |> LoadLocal(2)
+        |> instruction,
+        2
+        |> Borrow(3)
+        |> instruction,
+        true
+        |> AllocAdt(8)(0)(1)(false)
+        |> instruction,
+        true
+        |> SetAdtField(8)(0)(3)
+        |> instruction,
+        2
+        |> LoadLocal(4)
+        |> instruction,
+        4
+        |> GetAdtTag(11)
+        |> instruction,
+        2
+        |> LoadLocal(5)
+        |> instruction,
+        anchor(2),
+        0
+        |> LoadConstInt(6)
+        |> instruction,
+        instruction(Return(6))
+    ]
+    |> (given (instructions) -> placeInstructionLifetimes(instructions)(12))
+    |> formatted
+    |> test.assertEqual([
+        "    StoreLocal            Slot=2 Source=1",
+        "    LoadLocal             Target=2 Slot=2",
+        "    Borrow                Target=3 SourceTemp=2",
+        "    AllocAdt              Target=8 Tag=0 FieldCount=1 Tagless=true",
+        "    SetAdtField           Ptr=8 FieldIndex=0 Source=3 Tagless=true",
+        "    LoadLocal             Target=4 Slot=2",
+        "    GetAdtTag             Target=11 Ptr=4",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
+        "    LoadConstInt          Target=6 Value=0",
+        "    Return                Source=6"
+    ])
+
+// The same store into a runtime-managed cell DOES take a compensating duplicate: the cell's own
+// structural dropper will release the field independently of the owner's own release.
+let expectRecordFieldStoreIntoRuntimeManagedCellIsDuplicated unit =
+    [
+        1
+        |> StoreLocal(2)
+        |> instruction,
+        2
+        |> LoadLocal(2)
+        |> instruction,
+        2
+        |> Borrow(3)
+        |> instruction,
+        true
+        |> AllocAdt(8)(0)(1)(true)
+        |> instruction,
+        true
+        |> SetAdtField(8)(0)(3)
+        |> instruction,
+        2
+        |> LoadLocal(4)
+        |> instruction,
+        4
+        |> GetAdtTag(11)
+        |> instruction,
+        2
+        |> LoadLocal(5)
+        |> instruction,
+        anchor(2),
+        0
+        |> LoadConstInt(6)
+        |> instruction,
+        instruction(Return(6))
+    ]
+    |> (given (instructions) -> placeInstructionLifetimes(instructions)(12))
+    |> (given (placed) ->
+        placed
+        |> formatted
+        |> test.assertEqual([
+            "    StoreLocal            Slot=2 Source=1",
+            "    LoadLocal             Target=2 Slot=2",
+            "    Borrow                Target=3 SourceTemp=2",
+            "    AllocAdt              Target=8 Tag=0 FieldCount=1 RuntimeManaged=true Tagless=true",
+            "    RcDup                 Target=12 SourceTemp=3",
+            "    SetAdtField           Ptr=8 FieldIndex=0 Source=3 Tagless=true",
+            "    LoadLocal             Target=4 Slot=2",
+            "    GetAdtTag             Target=11 Ptr=4",
+            "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
+            "    LoadConstInt          Target=6 Value=0",
+            "    Return                Source=6"
+        ])
+        |> (given (_) -> test.assertEqual(13)(placed.placedTempCount)))
+
 // A slot with two anchors is left alone: the pass only moves a single lexical anchor.
 let expectTwoAnchorsLeaveInstructionsUnchanged unit =
     ((given (instructions) ->
@@ -323,6 +428,8 @@ let runPerceusLifetimePlacementTests unit =
     |> expectLiveBranchPredecessorGetsEntryDrop
     |> expectLiveBranchIntoDroppedJoinGetsEdgeBlock
     |> expectBorrowedCallArgumentIsDuplicated
+    |> expectRecordFieldStoreIntoArenaCellIsNotDuplicated
+    |> expectRecordFieldStoreIntoRuntimeManagedCellIsDuplicated
     |> expectTwoAnchorsLeaveInstructionsUnchanged
     |> expectPlacedFunctionIsNotPlacedAgain
     |> expectFunctionPlacementMarksTheFunction
