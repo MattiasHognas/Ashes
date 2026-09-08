@@ -2447,18 +2447,39 @@ same public behavior.
   the pre-fix code (the dropper never runs at all, since the mechanism did not exist) and pass
   after. All ten selfhost suites, the full C# suite (2553/2553), the LSP suite (72/72), and the
   e2e suite are green.
-  Still open: the semantics-side half of the closure child rule.
-  `HeapLayoutClassification.ash`'s `heapDroppableLeafField` — shared by the record, owned-child,
-  recursive-copy, and TCO layout rules alike via its `namedRule` parameter — falls through to
-  `false` for `SemFunction` by design ("anything else (a closure, an opaque handle) is not"
-  acceptable, its own doc comment), so admitting a function field needs a narrower change than
-  flipping that fallthrough: stage 0's fix was scoped to the owned-child ADT layout alone
-  (`OrdinaryHeapChildDropKind.Closure`, admitted only when the closure itself is
-  `IsRuntimeRcOwningClosureExpression`), not a blanket admission through every layout kind this
-  function feeds — the same "narrow, not blanket" lesson OPT-51 already paid for twice. Also
-  still open: CAP-10 (the handler-arm mirror this item's other half depends on) and the
-  self-hosted `IsRuntimeRcOwningClosureExpression` equivalent deciding when a closure literal
-  itself is placed on the reference-counted heap. Pin both fixtures as plateau programs through
+  Done (2026-09-08), the classification half of the closure child rule: checked stage 0's actual
+  `CanDropAdtGraph`/`DropKindForType`/`IsRuntimeOwnedChildAdtLayout` before assuming the narrow
+  scoping OPT-51's own lesson would suggest — stage 0's admission is in fact a blanket
+  `TypeRef.TFun => true`/`OrdinaryHeapChildDropKind.Closure` inside the SAME shared field-rule
+  functions every layout kind consults, safe unconditionally because a closure's own release
+  (reference-counted or arena) is self-contained regardless of what placed it; the actual gate on
+  whether a SPECIFIC closure literal ever reaches such a field is a separate, later decision
+  (`IsRuntimeRcOwningClosureExpression`, still open below), not this classification. Mirrored
+  exactly: `heapDroppableLeafField` gained a `SemFunction -> true` case, `heapDropKind` a new
+  `DropClosure` variant (`HeapChildDropKind` in `HeapLayoutClassification.ash`), and
+  `StructuralDroppers.ash`'s `emitChildDrop` — the actual per-field release emission a synthesized
+  dropper function walks, previously silently falling through to a no-op for `SemFunction`, which
+  would have been a second, independent leak even after the drop-kind reported the field as owned
+  — a `SemFunction` case emitting a plain `RcDrop("Function")` exactly like the String/Bytes/BigInt
+  leaves beside it. Verified the ripple stays inert for the OPT-49b shape specifically:
+  `IsRuntimeOwnedChildAdtLayout`/`heapRuntimeOwnedChildAdtLayout` both gate on at least two
+  constructors before the field-type switch is ever reached, and the single-constructor TCO
+  owned-child layout wants a list of scalars, not a closure, so a single-constructor
+  closure-holding record (the `Box(reader = ...)` shape) does not newly qualify for outer-cell
+  reuse — confirmed by updating `HeapLayoutClassificationTests.ash`'s
+  `testAdtContainingFunctionHasUnsupportedChild` (now
+  `testAdtContainingFunctionHasDroppableClosureChild`) and rerunning the full self-hosted
+  semantics suite, including the reuse-specialization and structural-dropper suites, which all
+  stayed green. Still open: CAP-10 (the handler-arm mirror this item's other half depends on) and
+  the self-hosted `IsRuntimeRcOwningClosureExpression` equivalent deciding when a closure literal
+  itself is placed on the reference-counted heap in the first place — until that lands, no
+  self-hosted `MakeClosure` ever requests the reference-counted form (every emission site in
+  `CoreLowering.ash` still passes a literal `false`), so this classification half stays exactly as
+  dormant as the backend half was before it. Also needed once that lands: the runtime-managed
+  deep-copier support for a record/ADT holding a closure field (stage 0's
+  `EmitRuntimeManagedTcoConstructorDeepCopy`-family `CopyOutClosure RuntimeManaged` handling),
+  which the self-hosted deep-copy-plan machinery (`argumentCopyPlanOf`/`constructorCopyPlansOf` in
+  `CoreLowering.ash`) does not yet cover for a `SemFunction` field. Pin both fixtures as plateau programs through
   the self-hosted compiler once they match.
 
 #### LLVM code generation and runtime integration
