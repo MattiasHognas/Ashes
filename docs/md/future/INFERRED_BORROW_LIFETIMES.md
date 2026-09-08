@@ -23,9 +23,10 @@ ordinary-value use-after-move errors. Keep affine resource cleanup separate.
 ## Research source and evidence limits
 
 William Brandon, Benjamin Driscoll, Frank Dai, Jonathan Ragan-Kelley, Mae Milano and Alex Aiken,
-*Fully-Automatic Type Inference for Borrows with Lifetimes*, PACMPL OOPSLA1, published 2026-04-10. The
-Morphic project overview describes automatically inferred borrows/lifetimes with reference-count
-operations inserted where needed for typing and safety.
+[*Fully-Automatic Type Inference for Borrows with Lifetimes*](https://doi.org/10.1145/3798221), PACMPL
+OOPSLA1, published 2026-04-10. [The Morphic project overview](https://morphic-lang.org/publications.html)
+describes automatically inferred borrows/lifetimes with reference-count operations inserted where
+needed for typing and safety.
 
 The reported benchmark comparison against Perceus makes this a relevant research lead. It does not
 establish a speedup for Ashes or prove that Morphic's inference can be inserted into Ashes unchanged.
@@ -36,7 +37,7 @@ details are assumed here.
 
 ## What Ashes already does
 
-Inspected repository snapshot.
+[Inspected repository snapshot](https://github.com/MattiasHognas/Ashes/tree/0a66bb54cb7b9720fc4b8fdf61980f4281b9d5e9).
 
 | Area | Existing implementation | Consequence for this proposal |
 |---|---|---|
