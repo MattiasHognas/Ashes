@@ -32,9 +32,13 @@ export (
     value placeInstructionLifetimesIn,
 )
 
+// placedDominators carries the function's immediate dominators from the first owner that needed
+// them to every later owner: an owner's edits move instruction indices but never change the
+// block graph, so the table is computed once per function, as stage 0's PlaceOwner does.
 type PlacedInstructions =
     | placedInstructions: List(IrInstruction)
     | placedTempCount: Int
+    | placedDominators: List(Int)
 
 type OwnerRegion =
     | regionDefinitionIndex: Int
@@ -134,31 +138,32 @@ let recursive ownerDefinition (instructions: List(IrInstruction)) (slot: Int) (i
             else ownerDefinition(rest)(slot)(index + 1)
         | _ :: rest -> ownerDefinition(rest)(slot)(index + 1)
 
-let recursive reachableBeforeBoundary (blocks: List(IrCfgBlock)) (dominators: List(List(Int))) (start: Int) (boundary: Int) (pending: List(Int)) (reachable: List(Int)) =
+// The blocks reachable from `start` that it dominates and that lie before the boundary, gathered
+// in visit order with one cell per block; `sortedBlocks` turns the result into the sorted set the
+// region consumers expect.
+let recursive reachableBeforeBoundary (blocks: List(IrCfgBlock)) (dominators: List(Int)) (start: Int) (boundary: Int) (pending: List(Int)) (reachable: List(Int)) =
     match pending with
         | [] -> reachable
         | current :: rest ->
-            ((given (dominated) ->
-                if current > boundary || dominated == false || sortedSetContains(current)(reachable)
-                then reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)(reachable)
+            if current > boundary || dominates(dominators)(start)(current) == false || containsInt(current)(reachable)
+            then reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)(reachable)
+            else
+                if current == boundary
+                then reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
                 else
-                    if current == boundary
-                    then
-                        reachable
-                        |> sortedSetInsert(current)
-                        |> reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)
-                    else
-                        match listAt(blocks)(current) with
-                            | Some(IrCfgBlock { blockSuccessors = successors }) ->
-                                reachable
-                                |> sortedSetInsert(current)
-                                |> reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(append(successors)(rest))
-                            | None ->
-                                reachable
-                                |> sortedSetInsert(current)
-                                |> reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)))(match listAt(dominators)(current) with
-                | Some(set) -> sortedSetContains(start)(set)
-                | None -> false)
+                    match listAt(blocks)(current) with
+                        | Some(IrCfgBlock { blockSuccessors = successors }) ->
+                            reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(append(successors)(rest))(current :: reachable)
+                        | None -> reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
+
+// The members of `visited` among the block indices below `count`, ascending.
+let recursive sortedBlocks (visited: List(Int)) (index: Int) (acc: List(Int)) =
+    if index < 0
+    then acc
+    else
+        if containsInt(index)(visited)
+        then sortedBlocks(visited)(index - 1)(index :: acc)
+        else sortedBlocks(visited)(index - 1)(acc)
 
 let blockSpan (blocks: List(IrCfgBlock)) (index: Int) =
     match listAt(blocks)(index) with
@@ -632,7 +637,7 @@ let recursive applyRetargets (retargets: List((Int, IrInstruction))) (instructio
             |> replaceAt(instructions)(index)
             |> applyRetargets(rest)
 
-let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (definitionBlock: Int) (region: List(Int)) =
+let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (region: List(Int)) =
     slot
     |> collectOwnerAliases(blocks)(regionInstructions(instructions)(blocks)(region))
     |> blockFactsFor(instructions)(blocks)(region)(slot)
@@ -644,17 +649,18 @@ let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: O
             | (insertions, retargets, nextTempCount) ->
                 PlacedInstructions(placedInstructions = instructions
                 |> applyRetargets(retargets)
-                |> applyInsertions(distinctIndicesDescending(insertions)([]))(insertions), placedTempCount = nextTempCount))
+                |> applyInsertions(distinctIndicesDescending(insertions)([]))(insertions), placedTempCount = nextTempCount, placedDominators = dominators))
 
-let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (definitionBlock: Int) (boundaryBlock: Int) =
+let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (boundaryBlock: Int) =
     []
-    |> reachableBeforeBoundary(blocks)(computeDominators(blocks))(definitionBlock)(boundaryBlock)([definitionBlock])
+    |> reachableBeforeBoundary(blocks)(dominators)(definitionBlock)(boundaryBlock)([definitionBlock])
+    |> (given (visited) -> sortedBlocks(visited)(length(blocks) - 1)([]))
     |> (given (region) ->
         if length(region) == 0
-        then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount)
-        else placeOwnerInRegion(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(definitionBlock)(region))
+        then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = dominators)
+        else placeOwnerInRegion(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(region))
 
-let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) =
+let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (knownDominators: List(Int)) =
     instructions
     |> buildCfgBlocks
     |> (given (blocks) ->
@@ -663,13 +669,18 @@ let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: Own
         |> findCfgBlock(blocks)) with
             | (definitionBlock, boundaryBlock) ->
                 if definitionBlock < 0 || boundaryBlock < 0
-                then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount)
-                else placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(definitionBlock)(boundaryBlock))
+                then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators)
+                else
+                    let dominators =
+                        match knownDominators with
+                            | [] -> computeImmediateDominators(blocks)
+                            | _ -> knownDominators
+                    in placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(boundaryBlock))
 
 // Removes the lexical anchor (and the owner load feeding it) and places the owner's drop.
 let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (placed: PlacedInstructions) =
     match placed with
-        | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount } ->
+        | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators } ->
             match (listAt(instructions)(anchorIndex), ownerDefinition(instructions)(slot)(0)) with
                 | (Some(IrInstruction { instruction = RcDrop(source, typeName, _slot, runtimeManaged, mayBeEmpty, dropper), location = location }), Some((definitionIndex, definitionTemp))) ->
                     anchorIndex
@@ -683,7 +694,7 @@ let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (placed: PlacedInstru
                             | _ -> (withoutAnchor, anchorIndex))
                     |> (given (removed) ->
                         match removed with
-                            | (remaining, boundary) -> placeOwnerRegion(remaining)(slot)(OwnerRegion(regionDefinitionIndex = definitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = definitionTemp))(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location))(label)(tempCount))
+                            | (remaining, boundary) -> placeOwnerRegion(remaining)(slot)(OwnerRegion(regionDefinitionIndex = definitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = definitionTemp))(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location))(label)(tempCount)(knownDominators))
                 | _ -> placed
 
 let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (placed: PlacedInstructions) =
@@ -697,7 +708,7 @@ let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (placed: PlacedIns
 // Places the lifetimes of one function body; `label` names the function, prefixing the labels of
 // the drop blocks that split a live branch edge.
 let placeInstructionLifetimesIn (label: Str) (instructions: List(IrInstruction)) (tempCount: Int) =
-    placeOwnerSlots(label)(ownerSlots(instructions)([]))(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount))
+    placeOwnerSlots(label)(ownerSlots(instructions)([]))(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = []))
 
 let placeInstructionLifetimes (instructions: List(IrInstruction)) (tempCount: Int) = placeInstructionLifetimesIn("")(instructions)(tempCount)
 
