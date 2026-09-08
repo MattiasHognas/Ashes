@@ -4,14 +4,14 @@
 // instruction: a jump to its label, a conditional jump to its label and then the fall-through
 // block, a switch to every case label and then the default, a return nowhere, and anything else
 // the fall-through. Successor and predecessor lists keep edge discovery order with one entry per
-// edge. A set of block indices is a sorted list without duplicates; a dominator set is one such
-// set per block, indexed by block, computed as the maximal fixpoint over the blocks reachable
-// from block 0 (an unreachable block is dominated only by itself).
+// edge. A set of block indices is a sorted list without duplicates. Dominance is kept as the
+// immediate dominator of every block, indexed by block and refined over the reverse postorder of
+// the blocks reachable from block 0 until it settles (an unreachable block has none and is
+// dominated only by itself), and answered by walking that tree.
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
-import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.IrInstructions
 export (
     type IrCfgBlock(..),
@@ -19,10 +19,10 @@ export (
     value containsInt,
     value sortedSetContains,
     value sortedSetInsert,
-    value sortedSetIntersect,
     value buildCfgBlocks,
     value findCfgBlock,
-    value computeDominators,
+    value computeImmediateDominators,
+    value dominates,
 )
 
 type IrCfgBlock =
@@ -68,23 +68,6 @@ let recursive sortedSetInsert (item: Int) (set: List(Int)) =
                 if head > item
                 then item :: set
                 else head :: sortedSetInsert(item)(rest)
-
-// The common elements of two sorted sets, gathered in reverse through a tail call per element
-// so the walk's depth does not grow with the sets (a dominator set of a deep block holds every
-// block above it).
-let recursive sortedSetIntersectInto (left: List(Int)) (right: List(Int)) (reversed: List(Int)) =
-    match (left, right) with
-        | ([], _) -> reverse(reversed)
-        | (_, []) -> reverse(reversed)
-        | (l :: leftRest, r :: rightRest) ->
-            if l == r
-            then sortedSetIntersectInto(leftRest)(rightRest)(l :: reversed)
-            else
-                if l < r
-                then sortedSetIntersectInto(leftRest)(right)(reversed)
-                else sortedSetIntersectInto(left)(rightRest)(reversed)
-
-let sortedSetIntersect (left: List(Int)) (right: List(Int)) = sortedSetIntersectInto(left)(right)([])
 
 let appendUnique (item: Int) (items: List(Int)) =
     if containsInt(item)(items)
@@ -177,23 +160,30 @@ let recursive indexedSuccessors (instructions: List(IrInstruction)) (labels: Lis
         | [] -> []
         | span :: rest -> (index, blockSuccessorsOf(instructions)(labels)(blockCount)(index)(span)) :: indexedSuccessors(instructions)(labels)(blockCount)(rest)(index + 1)
 
-let predecessorsOf (index: Int) (successors: List((Int, List(Int)))) =
-    successors
-    |> filter(given (entry) ->
-        match entry with
-            | (_from, targets) -> containsInt(index)(targets))
-    |> map(given (entry) ->
-        match entry with
-            | (from, _targets) -> from)
+// Every edge as a (target, source) pair, gathered once so a block's predecessors come from a scan
+// over plain integers rather than from a membership test against each block's successor list.
+// One flat self-recursive walk over both the remaining groups and the current group's remaining
+// targets (rather than one recursive function calling another to extend the same accumulator)
+// avoids a stage-0 codegen bug on that shape when the accumulator is a List of tuples.
+let recursive edgesOf (groups: List((Int, List(Int)))) (currentFrom: Int) (currentTargets: List(Int)) (acc: List((Int, Int))) =
+    match currentTargets with
+        | target :: rest -> edgesOf(groups)(currentFrom)(rest)((target, currentFrom) :: acc)
+        | [] ->
+            match groups with
+                | [] -> acc
+                | (from, targets) :: rest -> edgesOf(rest)(from)(targets)(acc)
 
-let recursive assembleBlocks (spans: List((Int, Int))) (successors: List((Int, List(Int)))) (index: Int) =
-    match (spans, successors) with
-        | ((start, end) :: spanRest, (_index, targets) :: successorRest) -> IrCfgBlock(blockStart = start, blockEnd = end, blockSuccessors = targets, blockPredecessors = predecessorsOf(index)(successors)) :: assembleBlocks(spanRest)(successorRest)(index + 1)
-        | _ -> []
+let recursive predecessorsFromEdges (index: Int) (edges: List((Int, Int))) (acc: List(Int)) =
+    match edges with
+        | [] -> acc
+        | (target, from) :: rest ->
+            if target == index
+            then predecessorsFromEdges(index)(rest)(from :: acc)
+            else predecessorsFromEdges(index)(rest)(acc)
 
-let recursive assembleAllBlocks (spans: List((Int, Int))) (successors: List((Int, List(Int)))) (remaining: List((Int, List(Int)))) (index: Int) =
+let recursive assembleAllBlocks (spans: List((Int, Int))) (edges: List((Int, Int))) (remaining: List((Int, List(Int)))) (index: Int) =
     match (spans, remaining) with
-        | ((start, end) :: spanRest, (_index, targets) :: successorRest) -> IrCfgBlock(blockStart = start, blockEnd = end, blockSuccessors = targets, blockPredecessors = predecessorsOf(index)(successors)) :: assembleAllBlocks(spanRest)(successors)(successorRest)(index + 1)
+        | ((start, end) :: spanRest, (_index, targets) :: successorRest) -> IrCfgBlock(blockStart = start, blockEnd = end, blockSuccessors = targets, blockPredecessors = predecessorsFromEdges(index)(edges)([])) :: assembleAllBlocks(spanRest)(edges)(successorRest)(index + 1)
         | _ -> []
 
 let buildCfgBlocks (instructions: List(IrInstruction)) =
@@ -205,7 +195,8 @@ let buildCfgBlocks (instructions: List(IrInstruction)) =
         |> (given (spans) ->
             0
             |> indexedSuccessors(instructions)(labelBlocks(instructions)(spans)(0))(length(spans))(spans)
-            |> (given (successors) -> assembleAllBlocks(spans)(successors)(successors)(0))))
+            |> (given (successors) ->
+                assembleAllBlocks(spans)(edgesOf(successors)(0)([])([]))(successors)(0))))
 
 let recursive findCfgBlockFrom (blocks: List(IrCfgBlock)) (instructionIndex: Int) (index: Int) =
     match blocks with
@@ -217,77 +208,138 @@ let recursive findCfgBlockFrom (blocks: List(IrCfgBlock)) (instructionIndex: Int
 
 let findCfgBlock (blocks: List(IrCfgBlock)) (instructionIndex: Int) = findCfgBlockFrom(blocks)(instructionIndex)(0)
 
-let recursive reachableBlocks (blocks: List(IrCfgBlock)) (pending: List(Int)) (visited: List(Int)) =
-    match pending with
-        | [] -> visited
-        | current :: rest ->
-            if sortedSetContains(current)(visited)
-            then reachableBlocks(blocks)(rest)(visited)
-            else
-                match listAt(blocks)(current) with
-                    | Some(IrCfgBlock { blockSuccessors = successors }) ->
-                        visited
-                        |> sortedSetInsert(current)
-                        |> reachableBlocks(blocks)(append(successors)(rest))
-                    | None -> reachableBlocks(blocks)(rest)(visited)
+let blockSuccessorsOfIndex (blocks: List(IrCfgBlock)) (index: Int) =
+    match listAt(blocks)(index) with
+        | Some(IrCfgBlock { blockSuccessors = successors }) -> successors
+        | None -> []
 
-let recursive intersectDominators (dominators: List(List(Int))) (predecessors: List(Int)) (acc: Maybe(List(Int))) =
+let blockPredecessorsOfIndex (blocks: List(IrCfgBlock)) (index: Int) =
+    match listAt(blocks)(index) with
+        | Some(IrCfgBlock { blockPredecessors = predecessors }) -> predecessors
+        | None -> []
+
+// The reverse postorder of the blocks reachable from the entry: a depth-first walk over an
+// explicit stack, kept as two parallel lists (the open blocks and, for each, the successors still
+// to visit), that conses a block onto the order once every successor is finished, so the entry
+// ends up first and every block follows the block the walk reached it through.
+let recursive reversePostorder (blocks: List(IrCfgBlock)) (open: List(Int)) (pending: List(List(Int))) (visited: List(Int)) (order: List(Int)) =
+    match (open, pending) with
+        | (block :: openRest, [] :: pendingRest) -> reversePostorder(blocks)(openRest)(pendingRest)(visited)(block :: order)
+        | (block :: openRest, (successor :: more) :: pendingRest) ->
+            if sortedSetContains(successor)(visited)
+            then reversePostorder(blocks)(block :: openRest)(more :: pendingRest)(visited)(order)
+            else
+                reversePostorder(blocks)(successor :: block :: openRest)(blockSuccessorsOfIndex(blocks)(successor) :: more :: pendingRest)(sortedSetInsert(successor)(visited))(order)
+        | _ -> order
+
+let recursive orderPositions (order: List(Int)) (position: Int) (acc: List((Int, Int))) =
+    match order with
+        | [] -> acc
+        | block :: rest -> orderPositions(rest)(position + 1)((block, position) :: acc)
+
+let recursive orderPosition (positions: List((Int, Int))) (block: Int) =
+    match positions with
+        | [] -> -1
+        | (candidate, position) :: rest ->
+            if candidate == block
+            then position
+            else orderPosition(rest)(block)
+
+let idomAt (idoms: List(Int)) (block: Int) =
+    match listAt(idoms)(block) with
+        | Some(idom) -> idom
+        | None -> -1
+
+let recursive replaceIntAt (items: List(Int)) (index: Int) (replacement: Int) =
+    match items with
+        | [] -> []
+        | head :: rest ->
+            if index == 0
+            then replacement :: rest
+            else head :: replaceIntAt(rest)(index - 1)(replacement)
+
+let recursive noIdoms (count: Int) (acc: List(Int)) =
+    if count <= 0
+    then acc
+    else noIdoms(count - 1)(-1 :: acc)
+
+// The nearest common ancestor of two blocks in the immediate-dominator tree so far, found by
+// walking whichever finger sits later in the reverse postorder up to its immediate dominator
+// until the fingers meet.
+let recursive intersectIdoms (positions: List((Int, Int))) (idoms: List(Int)) (left: Int) (right: Int) =
+    if left == right
+    then left
+    else
+        if orderPosition(positions)(left) > orderPosition(positions)(right)
+        then
+            intersectIdoms(positions)(idoms)(idomAt(idoms)(left))(right)
+        else
+            right
+            |> idomAt(idoms)
+            |> intersectIdoms(positions)(idoms)(left)
+
+// The immediate dominator a block's predecessors agree on this round: every predecessor that
+// already has one (a reachable block processed earlier in the order, or its own earlier value)
+// takes part, and an unreachable or not yet processed predecessor is skipped.
+let recursive idomCandidate (positions: List((Int, Int))) (idoms: List(Int)) (predecessors: List(Int)) (current: Int) =
     match predecessors with
-        | [] ->
-            match acc with
-                | Some(set) -> set
-                | None -> []
+        | [] -> current
         | predecessor :: rest ->
-            match listAt(dominators)(predecessor) with
-                | Some(set) ->
-                    match acc with
-                        | Some(current) ->
-                            set
-                            |> sortedSetIntersect(current)
-                            |> Some
-                            |> intersectDominators(dominators)(rest)
-                        | None -> intersectDominators(dominators)(rest)(Some(set))
-                | None -> intersectDominators(dominators)(rest)(acc)
-
-// The per-block sets are gathered in reverse through a tail call per block, so neither walk's
-// depth grows with the function's block count.
-let recursive initialDominators (blocks: List(IrCfgBlock)) (reachable: List(Int)) (index: Int) (reversed: List(List(Int))) =
-    match blocks with
-        | [] -> reverse(reversed)
-        | _block :: rest ->
-            ((given (set) -> initialDominators(rest)(reachable)(index + 1)(set :: reversed)))(if index == 0
-            then [0]
+            if idomAt(idoms)(predecessor) < 0
+            then idomCandidate(positions)(idoms)(rest)(current)
             else
-                if sortedSetContains(index)(reachable)
-                then reachable
-                else [index])
+                if current < 0
+                then idomCandidate(positions)(idoms)(rest)(predecessor)
+                else
+                    current
+                    |> intersectIdoms(positions)(idoms)(predecessor)
+                    |> idomCandidate(positions)(idoms)(rest)
 
-let recursive dominatorStep (blocks: List(IrCfgBlock)) (reachable: List(Int)) (dominators: List(List(Int))) (index: Int) (reversed: List(List(Int))) =
-    match blocks with
-        | [] -> reverse(reversed)
-        | IrCfgBlock { blockPredecessors = predecessors } :: rest ->
-            ((given (set) -> dominatorStep(rest)(reachable)(dominators)(index + 1)(set :: reversed)))(if index == 0
-            then [0]
+let recursive idomRound (blocks: List(IrCfgBlock)) (order: List(Int)) (positions: List((Int, Int))) (idoms: List(Int)) =
+    match order with
+        | [] -> idoms
+        | block :: rest ->
+            if block == 0
+            then idomRound(blocks)(rest)(positions)(idoms)
             else
-                if sortedSetContains(index)(reachable)
-                then
-                    None
-                    |> intersectDominators(dominators)(filter(given (predecessor) -> sortedSetContains(predecessor)(reachable))(predecessors))
-                    |> sortedSetInsert(index)
-                else [index])
+                let candidate =
+                    idomCandidate(positions)(idoms)(blockPredecessorsOfIndex(blocks)(block))(-1)
+                in
+                    if candidate < 0 || candidate == idomAt(idoms)(block)
+                    then idomRound(blocks)(rest)(positions)(idoms)
+                    else
+                        candidate
+                        |> replaceIntAt(idoms)(block)
+                        |> idomRound(blocks)(rest)(positions)
 
-let recursive dominatorFixpoint (blocks: List(IrCfgBlock)) (reachable: List(Int)) (dominators: List(List(Int))) =
-    []
-    |> dominatorStep(blocks)(reachable)(dominators)(0)
-    |> (given (next) ->
-        if next == dominators
+let recursive idomFixpoint (blocks: List(IrCfgBlock)) (order: List(Int)) (positions: List((Int, Int))) (idoms: List(Int)) =
+    (let next = idomRound(blocks)(order)(positions)(idoms)
+    in
+        if next == idoms
         then next
-        else dominatorFixpoint(blocks)(reachable)(next))
+        else idomFixpoint(blocks)(order)(positions)(next))
 
-let computeDominators (blocks: List(IrCfgBlock)) =
-    []
-    |> reachableBlocks(blocks)([0])
-    |> (given (reachable) ->
-        []
-        |> initialDominators(blocks)(reachable)(0)
-        |> dominatorFixpoint(blocks)(reachable))
+// The immediate dominator of every block, indexed by block: the entry is its own, an unreachable
+// block has none (-1), and every other block's is refined over the reverse postorder until no
+// block changes. Dominance itself is then the walk up this tree (`dominates`), so the whole table
+// is one Int per block rather than a set per block.
+let computeImmediateDominators (blocks: List(IrCfgBlock)) =
+    (let order = reversePostorder(blocks)([0])([blockSuccessorsOfIndex(blocks)(0)])([0])([])
+    in
+        let positions = orderPositions(order)(0)([])
+        in
+            0
+            |> replaceIntAt(noIdoms(length(blocks))([]))(0)
+            |> idomFixpoint(blocks)(order)(positions))
+
+// Whether `dominator` dominates `block`: the block itself, or a block on its immediate-dominator
+// chain up to the entry. An unreachable block is dominated only by itself, as its empty chain says.
+let recursive dominates (idoms: List(Int)) (dominator: Int) (block: Int) =
+    if block == dominator
+    then true
+    else
+        let parent = idomAt(idoms)(block)
+        in
+            if parent < 0 || parent == block
+            then false
+            else dominates(idoms)(dominator)(parent)

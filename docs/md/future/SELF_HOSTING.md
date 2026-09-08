@@ -2263,9 +2263,9 @@ same public behavior.
   variable-free type. Stage 1's deferred TCO resets already splice per function, and its
   free-variable walks use persistent lists, so those two needed nothing. Not measurable on the
   one program shape stage 1 compiles today: the stage-1 CLI takes a single file, and the largest
-  single-file test (`tests/text_json_parser_smoke.ash`, 22 KB) compiles in 1.45 s of user time
-  before and after, with 17.5 GB of peak RSS and as much system time as user time, so its cost is
-  the leaking arena and RC stand-ins milestone 2 retires, not these passes; re-measure once
+  single-file test (`tests/text_json_parser_smoke.ash`, 22 KB) compiled in 1.45 s of user time
+  before and after, with 17.5 GB of peak RSS and as much system time as user time: that cost was
+  lifetime placement's per-owner dominator sets (OPT-57), not these passes; re-measure once
   stage 1 compiles a package (CLI-4). Stage 1's `countDefinitions`, `countUses`, and
   `collectSingleDefiningInstructions` remain association lists with a linear lookup per temp,
   quadratic per function; `Ashes.Collection.Map` (unused in the semantics package so far) is the
@@ -2282,6 +2282,39 @@ same public behavior.
   (`StateMachineTransform.GetUsedTemps` and `GetDefinedTemps`) allocate an array and a boxed
   enumerator per instruction per call and were 8% of the compile before the facts cache; a
   span-based variant would take the rest.
+- [x] **OPT-57** Stage-1 memory under compilation. The stage-1 compiler peaked at 17.5 GB on the
+  22 KB JSON parser test, growing roughly with the cube of an if-chain's depth once its arms held
+  a `match`. Narrowed by reading the process RSS at phase boundaries under gdb (perf callchains
+  and mmap backtraces on these binaries pointed at the linker and the formatter, both wrong):
+  lowering proper ended at 73 MB, and lifetime placement took it to 4 GB across twelve owners of
+  one function, about 370 MB each, all in `computeDominators`, called once per owner and keeping
+  one sorted-list set per block that every fixpoint round rebuilt and nothing reclaimed, plus a
+  second, independent O(blocks) `predecessorsOf` filter-scan run once per block (so O(blocks²)
+  overall) inside every one of those per-owner `buildCfgBlocks` calls. Stage 0 computes dominators once per function and
+  reuses them across owners, since an owner's edits move instruction indices but never change the
+  block graph. Stage 1 now does the same through `PlacedInstructions.placedDominators`, and holds
+  dominance as the immediate dominator of each block (`computeImmediateDominators`: a reverse
+  postorder of the reachable blocks, then the Cooper-Harvey-Kennedy refinement, with `dominates`
+  walking the tree), one `Int` per block instead of a set; block predecessors are now built once
+  per `buildCfgBlocks` call from a flat edge list (`edgesOf`/`predecessorsFromEdges`) instead of a
+  filter over every block's successors for every other block. JSON parser test: 17.5 GB to 2.8 GB
+  (0.44 s), with the residual now flat per owner (about 33 MB, independent of the owner's index
+  within its function) rather than growing — proportional to program size, not owner count
+  squared. The IR parity suite pins the placement output unchanged.
+
+  Found and worked around a stage-0 codegen bug on the way: a `List((Int, Int))` (tuple list)
+  accumulator threaded through a self-recursive function that calls a SECOND self-recursive
+  function to extend that accumulator before its own next tail call segfaults at runtime — mininal
+  repro is two five-line functions, reproduces from stage 0 directly (`ashes run`), unrelated to
+  self-hosting. Bisected with a size-3 input list (`[(1,[2,3]),(2,[3]),(3,[1])]` through
+  `edgesOf`/`edgesFrom`); the emitted IR shows a spurious deep-copy-then-drop of the tuple list on
+  the "borrowed argument" exit path (`__deepcopy_list_N` immediately followed by an `RcDrop` of
+  the same temp it just copied from). Plain `List(Int)` accumulators through the identical shape
+  do not trigger it. Worked around here by flattening the two functions into one self-recursive
+  walk over both the remaining groups and the current group's remaining targets (`edgesOf`'s
+  current shape) rather than fixing the underlying stage-0 bug, which needs its own narrowing pass
+  in `Lowering.Ownership.cs`/`IrOptimizer`'s deep-copy insertion for a borrowed `List` of a
+  runtime-managed aggregate element type.
 - [ ] **OPT-53** Self-hosted mirror of the stage-0 lowering speed-ups of TRT-16's change.
   `PerceusLifetimePlacement.ash` scans every alias store for every load
   (`loadSeesAliasStore` over `aliasStores`, with `containsStore` and a per-instruction
