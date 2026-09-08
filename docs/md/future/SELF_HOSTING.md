@@ -2765,8 +2765,8 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   reports to stderr between optimization and code generation. Open: structured diagnostics, the
   `test` command, and the `traits`/`authority`/`concurrency` data the self-hosted lowering does not
   record yet, which render as their empty sections.
-- [ ] **CLI-11** `ASHES_TIMING` on the self-hosted `compile` and `run`: one `timing: <phase>
-  <milliseconds> ms` line per phase on stderr (`lower`, `optimize`, `backend` and its
+- [ ] **CLI-11** `ASHES_TIMING` on the self-hosted `compile` and `run`: one
+  `timing: <phase> <milliseconds> ms` line per phase on stderr (`lower`, `optimize`, `backend` and its
   `backend.*` parts, per-partition lines under a split), as stage 0's `CompilePhaseTiming`
   reports them, so the two compilers' phases can be compared without sampling.
 - [ ] **CLI-10** `--emit-ir <lowered|final>` on the self-hosted `compile` and `run`. The lowering
