@@ -1118,7 +1118,15 @@ public sealed partial class Lowering
         }
         else
         {
-            ownership = RequestsArenaResult(resultType)
+            // A CopyOutKind.None result (a pointer-bearing ADT/tuple/record, not safely a flat
+            // memcpy) can still be genuinely RC-managed when the arm's own construction placed it
+            // there (OPT-51) — but unlike Shallow/List there is no defined "copy this shape out of
+            // the arena" fallback to Adopt through, so request the arena form instead: the arm's own
+            // epilogue (LowerLambdaCoreNormalizeRequestedArenaResult) is a no-op whenever the result
+            // was never RC to begin with (including every closure/resource CopyOutKind.None already
+            // routed here), and a real deep-copy-and-release otherwise, so this is safe regardless of
+            // what the specific arm actually produced.
+            ownership = RequestsArenaResult(resultType) || AllowsAsyncIndependentRcPlacement
                 ? PerformResultOwnership.ArenaResult
                 : PerformResultOwnership.Unchanged;
         }
@@ -1437,9 +1445,17 @@ public sealed partial class Lowering
                 capability,
                 opName,
                 capabilityInstances[capability.Name]));
+            // The arm's own escaping result (OPT-51) may reach the RC heap even though
+            // MayExecuteUnderLiveHandlerPost applies here: unlike an ordinary call, EmitPerform's own
+            // dispatch of this exact closure now always requests and releases the arena form of
+            // whatever it returns (PlanPerformResultOwnership), so nothing downstream needs to be
+            // conservative about it the way AllowsOrdinaryRcPlacement otherwise requires.
+            bool savedLoweringHandlerArmOwnResult = _loweringHandlerArmOwnResult;
+            _loweringHandlerArmOwnResult = true;
             var (closureTemp, closureType) = LowerExpr(
                 armLambda,
                 LoweredValueRequest.None.WithExpectedType(expectedArmType));
+            _loweringHandlerArmOwnResult = savedLoweringHandlerArmOwnResult;
             UnifyArmWithOperation(capability, opName, capabilityInstances[capability.Name], closureType, arm.Parameters.Count);
             SubsumeCalleeRow(InnermostArrowRow(closureType, arm.Parameters.Count), GetSpan(handle));
             armClosures.Add((capability, OperationDeclIndex(capability, opName), closureTemp));
