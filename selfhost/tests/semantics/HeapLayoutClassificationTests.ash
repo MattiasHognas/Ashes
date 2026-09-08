@@ -398,7 +398,15 @@ let testResourceBearingAdtIsRejectedWithResourceFlag unit =
             )
         )(facts))
 
-let testAdtContainingFunctionHasUnsupportedChild unit =
+// A reference-counted closure releases its own environment through the dropper its own
+// construction attached, so a closure field is a self-contained owned child regardless of what
+// places it there (OPT-52, stage 0's `CanDropAdtGraph`/`DropKindForType`'s `TypeRef.TFun` cases) —
+// droppable, with its own `DropClosure` kind, unlike an opaque handle (see
+// `testAdtContainingOpaqueTypeHasUnsupportedChild` just above). This single-constructor type still
+// does not qualify as an owned-child ADT (that layout needs at least two constructors) or a TCO
+// owned-child ADT (that layout's single-constructor field rule wants a list of scalars, not a
+// closure), so the outer-cell reuse and TCO flags are unaffected.
+let testAdtContainingFunctionHasDroppableClosureChild unit =
     match classifyNamed("Call")([]) with
         | HeapLayoutFacts { containsResource = containsResource, containsUnresolvedType = containsUnresolvedType, containsOwnedChild = containsOwnedChild, structuralCopy = structuralCopy, arenaDeepCopySupported = arenaDeepCopySupported, ownedChildrenDroppable = ownedChildrenDroppable, runtimeOuterCellReuseSupported = runtimeOuterCellReuseSupported, runtimeTcoOwnedChildAdtSupported = runtimeTcoOwnedChildAdtSupported, runtimeTcoListElementSupported = runtimeTcoListElementSupported, children = children, rejections = rejections } ->
             Unit
@@ -407,7 +415,7 @@ let testAdtContainingFunctionHasUnsupportedChild unit =
             |> (given (_) -> test.assertEqual(true)(containsOwnedChild))
             |> (given (_) -> test.assertEqual(NoStructuralCopy)(structuralCopy))
             |> (given (_) -> test.assertEqual(false)(arenaDeepCopySupported))
-            |> (given (_) -> test.assertEqual(false)(ownedChildrenDroppable))
+            |> (given (_) -> test.assertEqual(true)(ownedChildrenDroppable))
             |> (given (_) -> test.assertEqual(false)(runtimeOuterCellReuseSupported))
             |> (given (_) -> test.assertEqual(false)(runtimeTcoOwnedChildAdtSupported))
             |> (given (_) -> test.assertEqual(false)(runtimeTcoListElementSupported))
@@ -418,12 +426,12 @@ let testAdtContainingFunctionHasUnsupportedChild unit =
             |> (given (_) ->
                 children
                 |> Ashes.Collection.List.map(childDropKind)
-                |> test.assertEqual([UnsupportedChildDrop]))
+                |> test.assertEqual([DropClosure]))
             |> (given (_) ->
                 children
                 |> Ashes.Collection.List.map(childCopyKind)
                 |> test.assertEqual([NoStructuralCopy]))
-            |> (given (_) -> test.assertEqual(HeapLayoutRejections(resourceOrBorrowedViewContainment = false, unsupportedChildDropLayout = true, unresolvedType = false, unsupportedOuterCellReuse = true))(rejections))
+            |> (given (_) -> test.assertEqual(HeapLayoutRejections(resourceOrBorrowedViewContainment = false, unsupportedChildDropLayout = false, unresolvedType = false, unsupportedOuterCellReuse = true))(rejections))
 
 let testRecursiveAdtIsRecursiveCopyReusable unit =
     (let facts = classifyNamed("Cons")([])
@@ -623,7 +631,7 @@ let runHeapLayoutClassificationTests unit =
     |> testCopyableFlatRecordIsShallowCopyAndRecordReusable
     |> testAdtWithStringFieldIsOwnedChildReusable
     |> testResourceBearingAdtIsRejectedWithResourceFlag
-    |> testAdtContainingFunctionHasUnsupportedChild
+    |> testAdtContainingFunctionHasDroppableClosureChild
     |> testRecursiveAdtIsRecursiveCopyReusable
     |> testDirectResourceTypeIsResourceBearing
     |> testOpaqueTypeWithoutDestructorIsNotResourceBearing

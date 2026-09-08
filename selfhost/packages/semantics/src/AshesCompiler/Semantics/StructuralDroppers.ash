@@ -445,6 +445,11 @@ let recursive emitChildDrop (valueTemp: Int) (childType: SemanticType) (body: Dr
         | SemString -> emitRcDrop(valueTemp)("String")(body)
         | SemBytes -> emitRcDrop(valueTemp)("Bytes")(body)
         | SemBigInt -> emitRcDrop(valueTemp)("BigInt")(body)
+        // A closure is a self-contained owned child: its own `RcDrop` handles both the
+        // reference-counted and arena forms (the backend's `emitRuntimeRcClosureDrop`/
+        // `CleanupResource("Function")`), so the structural dropper just releases it directly,
+        // exactly like a string, bytes, or BigInt leaf.
+        | SemFunction(_argument, _result, _capabilityRow) -> emitRcDrop(valueTemp)("Function")(body)
         | _ -> body
 and emitListDrop (listTemp: Int) (elementType: SemanticType) (body: DropperBody) =
     match freshDropperLocal(body) with

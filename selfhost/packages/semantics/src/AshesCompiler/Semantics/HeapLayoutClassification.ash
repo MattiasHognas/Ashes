@@ -47,6 +47,7 @@ type HeapChildDropKind =
     | DropList
     | DropTuple
     | DropAdt
+    | DropClosure
     | UnsupportedChildDrop
     deriving {Eq, Show}
 
@@ -419,8 +420,11 @@ let heapStructuralCopyKind (semanticType: SemanticType) (environment: TypeEnviro
                 | _ -> NoStructuralCopy)
 
 // The field rule shared by every drop and reuse layout: a scalar, a string-like leaf, a list of
-// scalars, or a tuple of such leaves is always acceptable, a named field is decided by the caller's
-// own rule, and anything else (a closure, an opaque handle) is not.
+// scalars, a tuple of such leaves, or a closure is always acceptable (a reference-counted closure
+// releases its own environment through the dropper its construction attached, so it is a
+// self-contained owned child regardless of what placed it there; an arena one needs no release at
+// all), a named field is decided by the caller's own rule, and anything else (an opaque handle) is
+// not.
 let recursive heapDroppableLeafField (semanticType: SemanticType) (environment: TypeEnvironment) namedRule =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
@@ -434,6 +438,7 @@ let recursive heapDroppableLeafField (semanticType: SemanticType) (environment: 
                 | SemList(element) -> heapCanReset(element)(environment)
                 | SemTuple(elements) ->
                     heapAllTypes(given (element) -> heapDroppableTupleElement(element)(environment))(elements)
+                | SemFunction(_argument, _result, _capabilityRow) -> true
                 | SemNamed(_symbolId, _name, _arguments) -> namedRule(resolved)
                 | _ -> false)
 and heapDroppableTupleElement (semanticType: SemanticType) (environment: TypeEnvironment) =
@@ -581,6 +586,7 @@ let heapDropKind (semanticType: SemanticType) (environment: TypeEnvironment) =
                 | SemList(_element) -> DropList
                 | SemTuple(_elements) -> DropTuple
                 | SemNamed(_symbolId, _name, _arguments) -> DropAdt
+                | SemFunction(_argument, _result, _capabilityRow) -> DropClosure
                 | _ -> UnsupportedChildDrop)
 
 let recursive heapChildrenOf (fields: List((Maybe(Str), SemanticType))) (index: Int) (environment: TypeEnvironment) =
