@@ -24,17 +24,18 @@ example.
 
 ## Research motivation
 
-*Fuzzing the Gleam Compiler*, published 2026-08-25, describes generation of typed programs and
-differential execution through Gleam's Erlang and JavaScript backends. The sections "The echo
-Problem" and "Duplicate Findings And Blocking Issues" are especially relevant: output representation
-and overly broad failure suppression can undermine an otherwise useful oracle.
+[*Fuzzing the Gleam Compiler*](https://www.kurz.net/posts/fuzzing-gleam-compiler), published
+2026-08-25, describes generation of typed programs and differential execution through Gleam's Erlang
+and JavaScript backends. The sections "The echo Problem" and "Duplicate Findings And Blocking Issues"
+are especially relevant: output representation and overly broad failure suppression can undermine an
+otherwise useful oracle.
 
 This proposal adapts that experience to two Ashes compiler implementations. It does not reproduce
 Gleam's harness or assume that its target-specific behavior applies to Ashes.
 
 ## Existing implementation and concrete gaps
 
-Paths in this table are repository-relative. Browse the inspected snapshot.
+Paths in this table are repository-relative. [Browse the inspected snapshot](https://github.com/MattiasHognas/Ashes/tree/0a66bb54cb7b9720fc4b8fdf61980f4281b9d5e9).
 
 | Existing component | Observed behavior | Proposed extension |
 |---|---|---|

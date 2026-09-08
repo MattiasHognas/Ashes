@@ -22,9 +22,10 @@ MLIR, change pass order, add GPU extraction, or introduce a second optimization 
 
 ## Research motivation
 
-*JLIR: A Julia-Native MLIR-Inspired Intermediate Representation with Automatic JACC Kernel
-Extraction*, submitted 2026-09-04, is a preprint. Its full-text §3.7 describes an ordered pass
-manager; §6.6 demonstrates extensible operations, printing and resource estimation.
+[*JLIR: A Julia-Native MLIR-Inspired Intermediate Representation with Automatic JACC Kernel
+Extraction*](https://arxiv.org/abs/2609.04585), submitted 2026-09-04, is a preprint. Its
+[full-text §3.7](https://arxiv.org/html/2609.04585v1) describes an ordered pass manager; §6.6
+demonstrates extensible operations, printing and resource estimation.
 
 The relevant idea is to make transformations and their structural effects inspectable within the
 compiler's existing implementation language. Per-pass RC/allocation observations are an
@@ -34,7 +35,7 @@ parallelization rule.
 
 ## Existing baseline
 
-Browse inspected source.
+[Browse inspected source](https://github.com/MattiasHognas/Ashes/tree/0a66bb54cb7b9720fc4b8fdf61980f4281b9d5e9).
 
 | Component | Existing behavior | Integration role |
 |---|---|---|
