@@ -2216,15 +2216,23 @@ same public behavior.
   and `posts_fold_N`) also differ, so no parity fixture was pinned.
   `CapabilityProgramLoweringTests.ash` covers the registration, numbering, global count, and the
   three rejections.
-- [ ] **OPT-50** Stage 0: a function that may execute under a live handler post ignores an
+- [x] **OPT-50** Stage 0: a function that may execute under a live handler post ignored an
   unknown callee's returns bit. `apply (f: Str -> Str) (s: Str) = handle f(s) with ...` applied
-  to `identity` (whose entry normalizes and returns its parameter) leaks the returned string:
-  the caller's placement context turns off `needsResultOwnership`, so the result is copied at
-  `ArenaCallBoundary` and the callee's reference-counted original is never released (measured
+  to `identity` (whose entry normalizes and returns its parameter) leaked the returned string:
+  the caller's placement context turned off `needsResultOwnership`, so the result was copied at
+  `ArenaCallBoundary` and the callee's reference-counted original was never released (measured
   2026-09-07: 28.7 MB peak at 40000 iterations, 110.6 MB at 200000, about 520 bytes per call).
-  Model the call as the perform site does since OPT-49a: read the returns bit, adopt or
-  normalize the result, release the consumed arguments once the result cannot reach them, and
-  request the arena form only where the caller cannot own the value.
+  `needsResultOwnership`'s gate on `AllowsOrdinaryRcPlacement` was the only difference from
+  `PlanPerformResultOwnership`'s parallel condition (OPT-49a), which never checks it: adopting a
+  value the callee already reports as freshly reference-counted needs no scope-based placement
+  decision by the caller, so it stays safe under a live handler post the same way the perform
+  site's adoption already does, even though this call site is an ordinary application rather than
+  a `perform`. Dropping that one condition re-enables the existing adopt/normalize machinery
+  (`ResolveCallResultOwnershipFlag`/`EmitClosureReturnsRuntimeManagedFlag`) unchanged; the result
+  is unrelated to `RequestsArenaResult`, which was already computed unconditionally and correctly
+  requests the arena form for an unresolved result layout regardless of handler-post status.
+  `tests/handler_post_unknown_callee_result_plateau.ash` plateaus at 8.2 MB for both iteration
+  counts after (was 28.7 MB / 110.6 MB before), output unchanged.
 - [ ] **OPT-51** Stage 0: an arm result whose type has no complete copy-out layout keeps the
   arm's reference-counted child alive. With `capability Tag = | tag : Str -> Wrapped` and
   `Tag.tag(text) -> resume(Just(text))` the arm builds the constructor in the arena over its

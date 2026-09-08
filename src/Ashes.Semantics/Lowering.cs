@@ -11902,8 +11902,15 @@ public sealed partial class Lowering
 
         currentTemp = LowerAppliedClosureCall(
             rootExpr, collectedArgs[i], i,
+            // A resolved (Shallow/List) result is adopted by its own returns bit regardless of
+            // AllowsOrdinaryRcPlacement, the same way EmitPerform's PlanPerformResultOwnership
+            // does for a handler arm's result (OPT-49a): adopting a value the callee already
+            // reports as freshly reference-counted needs no scope-based placement decision by
+            // this function, so it stays safe even when this function may execute under a live
+            // handler post (where ordinary, scope-tied placement is not). Excluding it here left
+            // the callee's genuinely reference-counted result copied at ArenaCallBoundary instead
+            // of adopted, leaking the original once nothing released it (OPT-50).
             AllowsAsyncIndependentRcPlacement
-                && AllowsOrdinaryRcPlacement
                 && i == collectedArgs.Count - 1
                 && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
                 && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
