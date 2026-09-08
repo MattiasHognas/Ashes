@@ -71,6 +71,14 @@ public sealed partial class Lowering
     // `await` still lowers to a blocking RunTask, preserving today's eager semantics.
     private bool _inCoroutineBody;
 
+    // True only while lowering an operation arm closure's OWN top-level body (LowerHandleLowerArmClosures'
+    // LowerExpr(armLambda, ...) call) — NOT while lowering any other function merely reachable from a
+    // live handler post (OPT-51). AllowsOrdinaryRcPlacement stays conservative for the latter (an
+    // ordinary call has no adopt/release safety net at its result); this narrower flag lets ONLY the
+    // arm's own escaping result reach the RC heap, because PlanPerformResultOwnership's perform-site
+    // fix now unconditionally requests and releases the arena form of whatever the arm returns.
+    private bool _loweringHandlerArmOwnResult;
+
     // The `async` intrinsic binding, created once at root-scope setup and re-seeded into every lambda
     // scope so a function body can itself build a task with `async(E)`.
     private Binding.Intrinsic? _asyncBinding;
@@ -3586,12 +3594,13 @@ public sealed partial class Lowering
             return builtinResult;
         }
 
-        // Every representation decision here answers the same question as the closure one below it,
-        // and must respect the same placement context. Deciding from expression shape alone gave a
-        // coroutine body a reference-counted escaping result while everything around it stayed
-        // region-backed, so the enclosing region reset could not reclaim it and no owner released it.
+        // Every representation decision here answers the same question as the closure one below it.
+        // A coroutine body given an RC escaping result while region-backed leaked it (#371) —
+        // AllowsAsyncIndependentRcPlacement still guards that. AllowsOrdinaryRcPlacement stays
+        // required except for the arm closure's own body (_loweringHandlerArmOwnResult, OPT-51),
+        // which alone has a perform-site adopt/release net an ordinary reachable call lacks.
         bool placementAllowsRuntimeRc = AllowsAsyncIndependentRcPlacement
-            && AllowsOrdinaryRcPlacement;
+            && (AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult);
         bool runtimeManagedString = placementAllowsRuntimeRc
             && (IsRuntimeRcStringProducer(body) || IsReconcilableFreshStringJoin(body));
         bool runtimeManagedAdt = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableAdt(body);
@@ -8953,7 +8962,13 @@ public sealed partial class Lowering
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
-        var (bodyTemp, bodyType) = AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
+        // Mirrors LowerEscapingResult's own gate (OPT-51): only the operation arm closure's own body
+        // (_loweringHandlerArmOwnResult) may route through LowerEscapingResult without
+        // AllowsOrdinaryRcPlacement — every other function reachable from a live handler post keeps
+        // the plain LowerExpr fallback it always had, since LowerEscapingResult's WithEscapingConsumerOwnership
+        // treatment is not just an RC-placement question.
+        var (bodyTemp, bodyType) = AllowsAsyncIndependentRcPlacement
+            && (AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult)
             ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
             : LowerExpr(lam.Body).AsPair();
         _ambientRow = savedAmbientRow;

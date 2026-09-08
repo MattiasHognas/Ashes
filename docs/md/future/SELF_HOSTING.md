@@ -2233,14 +2233,53 @@ same public behavior.
   requests the arena form for an unresolved result layout regardless of handler-post status.
   `tests/handler_post_unknown_callee_result_plateau.ash` plateaus at 8.2 MB for both iteration
   counts after (was 28.7 MB / 110.6 MB before), output unchanged.
-- [ ] **OPT-51** Stage 0: an arm result whose type has no complete copy-out layout keeps the
+- [x] **OPT-51** Stage 0: an arm result whose type has no complete copy-out layout kept the
   arm's reference-counted child alive. With `capability Tag = | tag : Str -> Wrapped` and
-  `Tag.tag(text) -> resume(Just(text))` the arm builds the constructor in the arena over its
-  entry-normalized copy of `text`; the perform site leaves such a result unchanged
-  (`PerformResultOwnership.Unchanged`) and the copy leaks at the same rate as OPT-50 (measured
-  2026-09-07). Either the constructor should adopt the normalized parameter as a fresh owned
-  child on the reference-counted heap, or the site should request the arena form and the arm
-  release the copy.
+  `Tag.tag(text) -> resume(Just(text))` the arm built the constructor in the arena over its
+  entry-normalized copy of `text`; the perform site left such a result unchanged
+  (`PerformResultOwnership.Unchanged`) and the copy leaked at the same rate as OPT-50 (measured
+  2026-09-07: 28.7 MB / 110.6 MB at 40000/200000 iterations, same as OPT-50's baseline). Two
+  coordinated fixes, both needed:
+  1. Placement, scoped narrowly: `CanRuntimeManageFreshHeapChildAdtConstructorApplication`'s `Str`
+     field case gained an alternative — `IsNormalizedAlwaysReturnedStringParameterRead`, the same
+     fact `LowerLambdaCoreLowerBody`'s own entry preamble already uses to decide whether a
+     parameter is unconditionally RC after normalization — so `Just(text)` is recognized as a fresh
+     owned child when `text` is exactly the arm's own always-returned parameter. Reaching this
+     branch at all also needed the arm closure's OWN escaping-result gate relaxed past
+     `AllowsOrdinaryRcPlacement`, but ONLY for the arm's own body: a new ambient flag,
+     `_loweringHandlerArmOwnResult`, set for the duration of `LowerHandleLowerArmClosures`' own
+     `LowerExpr(armLambda, ...)` call and ORed into `LowerEscapingResult`'s/
+     `LowerLambdaCoreLowerBody`'s existing `AllowsOrdinaryRcPlacement` check — never a blanket
+     removal of that check. A first attempt that dropped `AllowsOrdinaryRcPlacement` for every
+     function reachable from a live handler post (not just the arm's own body) broke
+     `Helper_reachable_from_a_handle_stays_on_the_guarded_arena_path`/
+     `Higher_order_target_reachable_from_a_handle_falls_back_to_the_safe_arena_path`: an ordinary
+     function merely CALLED from inside an arm has no adopt/release net at its own result the way
+     the arm's own perform site now does, so it must stay conservative. A second attempt reused the
+     positional single-constructor accumulator shape (`CanRuntimeManageTcoOwnedChildAdt`,
+     `IsRuntimeManagedConstructorCandidate`'s own branch) instead, but that shape's `List` field
+     case accepts ANY `Var` argument (not just a fresh construction or an enclosing TCO loop's own
+     parameter) — safe in the narrower contexts that already reach it, unsafe once
+     `IsFreshRuntimeManageableAdtExpressionCore` could reach it unconditionally too; broke
+     `Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed`
+     (`Payload(values)` over a plain outer-scope `let values = [40, 2]`, which nothing retains).
+  2. Perform site: even with the arm genuinely placing `Just(text)` on the RC heap,
+     `PlanPerformResultOwnership`'s `CopyOutKind.None` branch only requested the arena form when
+     `RequestsArenaResult` (a generic/unresolved-layout check) applied — never for a concretely
+     resolved, pointer-bearing type like `Wrapped`. Widened to also request the arena form whenever
+     `AllowsAsyncIndependentRcPlacement` holds, the same condition already gating `Adopt` for a
+     `Shallow`/`List` result: the arm's own epilogue
+     (`LowerLambdaCoreNormalizeRequestedArenaResult`) is a no-op whenever the result was never RC to
+     begin with (every closure/resource result already routed through this branch included), and a
+     real deep-copy-and-release otherwise, so requesting it unconditionally under that placement
+     flag is safe regardless of what a specific arm produces. `Adopt` itself was not extended to
+     `CopyOutKind.None`, since there is no defined "copy this shape out of the arena" fallback for
+     `EmitPerformAdoptResult` to fall back to. With this fix, `decorate`'s own compiled result stays
+     arena (the arm's RC construction is deep-copied out and released before the perform site ever
+     returns), so no caller-side change was needed for a plain external `match decorate(x) with ...`.
+  `tests/handler_arm_constructed_reference_counted_result_plateau.ash` plateaus at 8.2 MB for both
+  iteration counts after (was 28.7 MB / 110.6 MB before), output unchanged. Full C# suite
+  (2553/2553), LSP suite (72/72), and e2e suite (748/0/55 skipped) all green.
 - [x] **OPT-54** Measured with per-phase timers before rewriting, and the entry function was not
   the cost. The self-hosted semantics test program's 72,000-instruction entry is about 5 s of
   its compile (3.8 s of lifetime placement plus part of entry inference), not the majority:
