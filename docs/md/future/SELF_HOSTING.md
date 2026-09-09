@@ -2125,26 +2125,34 @@ same public behavior.
   self-hosted CLI compiling and running the same programs to stage 0's answers, with peak RSS
   matching its own `--debug-disable-reuse` build to within the reused cells. Still open: sharing
   one specialization across call sites (stage 0 caches per concrete instantiation; each qualifying
-  site generates its own here), the direct-unique call path over a loop accumulator, the
-  reset-safety verdict's consumers (`_fullyReusingLabels`/`_resetSafeAccumulators`), and to-space
-  materialization itself. Those last three are one coupled unit, not three independent slices, and
-  the ordering matters: stage 0's fresh-result path rejects any accumulator that is not a `TList`
-  outright (`QualifyFreshResultReuseSpecialization`'s `NthCurriedArgType ... is not TypeRef.TList`,
-  reproduced by running a `Tree -> Tree` rewriter through stage 0's `--explain reuse`, which reports
-  `fresh accumulator layout unsupported`), so a named-ADT accumulator can only ever reach a
-  specialization through `QualifyVariableReuseSpecialization`, which reads
-  `_linearSpecializationAccumulators` — a set only the TCO loop scan
-  (`LowerLambdaCoreScanSpecializationReuse`, `CollectSpecializableCallArgs`, and the reuse entry
-  copies that make the accumulator unique) ever fills, and which the self-hosted lowering has no
-  counterpart for. To-space materialization is likewise reachable only from a named-ADT
-  accumulator's fresh heap leaf fields. Whoever picks this up should port the loop scan first
-  (single-parameter candidates only — stage 0's `_freshCompositionOnlySpecializable` excludes the
-  multi-parameter ones from it), then the named-ADT half of `accumulatorIsFullyPersistent` for the
-  self-or-copy-field shape that needs no materialization at all, and only then to-space; the
-  self-hosted entry-copy machinery `scanDirectReuseAccumulators`/`finalizeDirectReuse` already
-  provides the copier synthesis and the move-safety elision, but its "worth its cost" gate looks
-  for an `AllocReusing` in the loop body and a specialization's reuse happens in the generated
-  function instead, so that gate needs widening in the same change.
+  site generates its own here), the reset-safety verdict's consumers
+  (`_fullyReusingLabels`/`_resetSafeAccumulators`), and to-space materialization itself.
+  The direct-unique call path over a loop accumulator is ported (2026-09-09), together with the
+  named-ADT accumulator shape it is the only route to: stage 0's fresh-result path rejects any
+  accumulator that is not a `TList` outright
+  (`QualifyFreshResultReuseSpecialization`'s `NthCurriedArgType ... is not TypeRef.TList`, confirmed
+  by running a `Tree -> Tree` rewriter through stage 0's `--explain reuse`, which answers
+  `fresh accumulator layout unsupported`), so `specializationAccumulatorIsUnique` now applies that
+  list requirement to the fresh path alone and lets a loop accumulator through on the strength of
+  its entry copy instead. `collectSpecializableCallArgs` (`ReuseFunctionSpecialization.ash`, stage
+  0's own walk) finds every loop parameter handed straight to a single-parameter candidate — stage
+  0's `_freshCompositionOnlySpecializable` excludes multi-parameter ones from this scan and so does
+  this — `CoreTcoLoop.specializationAccumulators` carries them to `scanSpecializationAccumulators`,
+  which admits one whose slot is not provisionally runtime-managed and whose type the entry copier
+  can clone, records it in `linearSpecializationAccumulators`, and adds the entry-copy candidate
+  the existing `finalizeDirectReuse` machinery emits or elides by move safety. That "worth its
+  cost" gate now governs only the direct-in-place candidates: a specialization's reuse fires in the
+  generated function, which the loop body's own instructions never contain, so a specialization
+  candidate keeps its copy either way (stage 0's `LowerLambdaCoreSpliceReuseCopies` makes the same
+  exemption). The named-ADT accumulator is admitted in the shape needing no materialization at all —
+  every constructor field the accumulator itself or a copy type
+  (`namedAccumulatorFieldsPersistent`) — and the copier-synthesis gate is deliberately not
+  `arenaDeepCopySupported`, whose cycle guard reports every recursive ADT as not deep-copyable:
+  that flag answers whether an inline walk terminates, while `StructuralCopiers.ash`'s
+  `emitCopierField` synthesizes a recursive copier by construction, which is the question stage 0's
+  `TrySynthesizeAdtCopier` asks. Measured on a 4095-node tree rewritten 200 times: 5.6 MB peak
+  resident against 34.3 MB for the same program built `--debug-disable-reuse` and 4.1 MB through
+  stage 0, output identical.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
