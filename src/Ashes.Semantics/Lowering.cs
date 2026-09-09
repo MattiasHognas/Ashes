@@ -6542,6 +6542,7 @@ public sealed partial class Lowering
         // same already-compiled function from a different scope later.
         bool bodyRuntimeManaged = LambdaBodyResultRuntimeManaged(label, argSlot, bodyTemp, savedTcoCtx is null && !isChainLambda);
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
+        BackfillSelfClosureResultOwnership(label, bodyRuntimeManaged);
         RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(LowerLambdaCoreNormalizeRequestedArenaResult(bodyTemp, bodyType, bodyRuntimeManaged)));
@@ -9377,6 +9378,33 @@ public sealed partial class Lowering
             if (TailLeavesStable(lam.Body, accName, foldSpan, paramCount, new HashSet<string>(StringComparer.Ordinal)))
             {
                 _accStableFolds[foldSpan] = paramCount;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A recursive function's own call sites build their callee closure from <see cref="Binding.Self"/>
+    /// while the body is still being lowered, so <see cref="_bodyRuntimeManagedByLabel"/> has no entry
+    /// for the label yet and every self-closure is emitted with <c>ReturnsRuntimeManaged: false</c>.
+    /// The call site then reads that bit at run time and takes the copy-out branch of
+    /// <see cref="LowerCallConditionalCopyOutResult"/> — for a non-tail recursive producer, one copy of
+    /// the whole result per recursion level. The bit is a compile-time constant in an instruction this
+    /// function already owns, so once the verdict is known it is written back rather than re-lowered.
+    /// Callers-side only: the callee reads the caller's intent from LoadArgumentOwnership, not from here.
+    /// </summary>
+    private void BackfillSelfClosureResultOwnership(string label, bool bodyRuntimeManaged)
+    {
+        if (!bodyRuntimeManaged || _collectInferredTraitElaboration)
+        {
+            return;
+        }
+
+        for (int i = 0; i < _inst.Count; i++)
+        {
+            if (_inst[i] is IrInst.MakeClosure { ReturnsRuntimeManaged: false } closure
+                && string.Equals(closure.FuncLabel, label, StringComparison.Ordinal))
+            {
+                _inst[i] = closure with { ReturnsRuntimeManaged = true };
             }
         }
     }

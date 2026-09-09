@@ -95,14 +95,26 @@ should gate any future attempt so it is not re-derived:
   below the returned cells, so the cons cell the caller allocates next lands on top of them.
   Confirmed by deleting the copy and the teardown together, which takes N=8000 from 1010 MB to
   4.4 MB with the answer unchanged.
-  Do not attempt the obvious fix without a repro harness wider than the test suites. Skipping the
-  window for a call to a member of the enclosing recursive group was tried four ways — leaving the
-  window open, suppressing the `SaveArenaState` entirely, restricting to list results, restricting to
-  a call outside any TCO context, and restricting to the lexically enclosing function's own label —
-  and every one of them passes the whole stage-0 gate (2553 unit, 72 LSP, 748 end-to-end tests) while
-  segfaulting the self-hosted semantics test binary at the same point, jumping through an overwritten
-  code pointer. Treating the un-copied result like a stable reuse result in
-  `resultCopySeversArgumentReferences` and `resultCopyCopiesElements` does not change that. The real
-  fix has to keep the window and promote the result out of the reclaimed range rather than copy it,
-  and the shape that breaks the naive version has to be minimized first — `selfhost/tests/semantics`
-  is currently the only thing that catches it, which is itself a coverage gap worth closing.
+  **Do not fix this by removing the window.** That was tried five ways — leaving it open, suppressing
+  the `SaveArenaState` entirely, restricting to list results, to calls outside any TCO context, and to
+  the lexically enclosing function's own label — and every one passes the whole stage-0 gate (2553
+  unit, 72 LSP, 748 end-to-end tests) while breaking real code. The reason, minimized to a ~60-line
+  program (`freeTypeVariables` over a `Ty` ADT, the shape `TypeSchemes.ash` has): the per-call window
+  is not just a reclamation boundary, it is **where an arena-placed call result is normalized to
+  reference-counted**, and every enclosing bracket is emitted assuming that already happened. Suppress
+  it in a `match` arm and the arm's own `SaveArenaState`/`ReclaimArenaChunks` — taken *before* the call
+  — frees the result the arm just stored, because the temp's recorded ownership still claims it was
+  normalized. Two suppressed sites in one function are enough; either alone is harmless.
+  The fix is to remove the *need* for the copy instead. The call site's copy-out is already
+  runtime-conditional on the callee's `ReturnsRuntimeManaged` bit, so a producer whose cells are
+  reference-counted from the start pays no copy at all and every enclosing bracket stays correct.
+  Two things stand between here and that. The first is fixed: a recursive function's own call sites
+  built their callee closure from `Binding.Self` before the body's verdict existed, so a self-closure
+  always claimed an arena result and always took the copy branch — `BackfillSelfClosureResultOwnership`
+  now writes the verdict back into the instruction (605 self-call sites in one selfhost compile;
+  453 MB to 425 MB peak RSS on the self-hosted semantics binary). The second is open: **placing a
+  non-tail recursive producer's own cells on the reference-counted heap**, which `LowerConsCell` does
+  only when the consumer request carries `runtimeList`, and `LowerCons` deliberately lowers the tail
+  under `LoweredValueRequest.None`. Forcing both together takes `makeList(8000)` from 1010 MB to
+  **9.6 MB** with the answer unchanged and the arena windows untouched — that is the prize, and the
+  remaining work is deciding *which* producers earn the placement rather than forcing it globally.
