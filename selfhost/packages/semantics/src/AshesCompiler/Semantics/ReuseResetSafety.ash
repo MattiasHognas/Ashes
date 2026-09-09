@@ -13,11 +13,11 @@
 //   a specialization's own body is judged by what it allocates, not by what generated it.
 // - Recursion through borrows and single-store local slots is bounded at four levels, stage 0's
 //   own depth limit: a longer chain is rejected rather than followed.
-// - A named-type accumulator is never persistent here. Its fresh heap leaf fields would have to be
-//   materialized into the never-reset to-space, which self-hosted lowering emits nowhere yet
-//   (`AllocAdtToSpace`, `CopyOutArenaToSpace`, `CopyFixedInto` exist in the IR and the backend, and
-//   in no lowering site), so admitting one would leave those fields pointing into reclaimed
-//   scratch.
+// - A named-type accumulator is persistent when every constructor field is either the accumulator
+//   itself or a leaf the lowering's constructor-site materialization relocates into the never-reset
+//   to-space (`namedAccumulatorFieldsPersistent`). A field the materialization has no case for —
+//   a list, a closure, a foreign ADT — would be left pointing into reclaimed scratch, so it
+//   declines the accumulator instead.
 
 import Ashes.Collection.List.map
 import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
@@ -264,24 +264,41 @@ let specializationRebuildsAccumulator (functionType: SemanticType) (argumentCoun
         | _ -> false
 
 // Whether a rebuilt accumulator references only memory the back edge never reclaims. A list of a
-// copy-type element carries no heap leaf at all, so its cells are the whole graph; every other
-// shape, named types included, is left to the to-space materialization that self-hosted lowering
-// does not emit yet. The argument must already be resolved against the current substitution.
+// copy-type element carries no heap leaf at all, so its cells are the whole graph; a list over a
+// heap element declines, since the cells are then not the whole graph. A named type goes through
+// `namedAccumulatorFieldsPersistent` instead. The argument must already be resolved against the
+// current substitution.
 let accumulatorIsFullyPersistent (accumulatorType: SemanticType) =
     match accumulatorType with
         | SemList(element) -> canArenaResetLayout(element)
         | _ -> false
 
-// The named-ADT half of stage 0's `AccumulatorIsFullyPersistent`, restricted to the shape that
-// needs no to-space materialization at all: every constructor field is either the accumulator type
-// itself (a recursive child, rewritten in place) or a copy type (inline, nothing to relocate). A
-// field of any other shape — a string, a list, a foreign ADT — could point into per-iteration
-// scratch and is what to-space materialization exists for. `fieldTypes` is every constructor's
-// fields of the named type, already resolved.
-let recursive everyAccumulatorFieldSelfOrCopy (accumulatorName: Str) (fieldTypes: List(SemanticType)) =
+// The leaf half of stage 0's `IsReuseMaterializableFieldType`: a constructor field the lowering's
+// materialization can relocate into to-space, where the loop's per-iteration reset never reaches.
+// A copy type is inline and needs nothing; a string or bytes value is copied by its length; a tuple
+// of copy types is a fixed-size shallow copy. Stage 0 also relocates a list of strings and a
+// to-space-copyable ADT through copiers synthesized for the purpose, which self-hosted lowering does
+// not emit yet, so a field of either shape still declines its accumulator.
+let recursive reuseMaterializableFieldType (fieldType: SemanticType) =
+    match fieldType with
+        | SemString -> true
+        | SemBytes -> true
+        | SemTuple(elements) -> everyCopyTypeElement(elements)
+        | other -> canArenaResetLayout(other)
+and everyCopyTypeElement (elements: List(SemanticType)) =
+    match elements with
+        | [] -> true
+        | element :: rest -> canArenaResetLayout(element) && everyCopyTypeElement(rest)
+
+// The named-ADT half of stage 0's `AccumulatorIsFullyPersistent`: every constructor field is either
+// the accumulator type itself (a recursive child, rewritten in place) or a leaf the materialization
+// makes persistent. A field of any other shape — a list, a closure, a foreign ADT — could point into
+// per-iteration scratch with nothing to relocate it. `fieldTypes` is every constructor's fields of
+// the named type, already resolved.
+let recursive everyAccumulatorFieldPersistable (accumulatorName: Str) (fieldTypes: List(SemanticType)) =
     match fieldTypes with
         | [] -> true
-        | SemNamed(_symbol, fieldName, _arguments) :: rest -> fieldName == accumulatorName && everyAccumulatorFieldSelfOrCopy(accumulatorName)(rest)
-        | fieldType :: rest -> canArenaResetLayout(fieldType) && everyAccumulatorFieldSelfOrCopy(accumulatorName)(rest)
+        | SemNamed(_symbol, fieldName, _arguments) :: rest -> fieldName == accumulatorName && everyAccumulatorFieldPersistable(accumulatorName)(rest)
+        | fieldType :: rest -> reuseMaterializableFieldType(fieldType) && everyAccumulatorFieldPersistable(accumulatorName)(rest)
 
-let namedAccumulatorFieldsPersistent (accumulatorName: Str) (fieldTypes: List(SemanticType)) = everyAccumulatorFieldSelfOrCopy(accumulatorName)(fieldTypes)
+let namedAccumulatorFieldsPersistent (accumulatorName: Str) (fieldTypes: List(SemanticType)) = everyAccumulatorFieldPersistable(accumulatorName)(fieldTypes)

@@ -2089,8 +2089,9 @@ same public behavior.
   call-target walk that rejects a closure passed as an argument — plus
   `specializationRebuildsAccumulator` (a rewriter's result type is the same list or named type as
   its last parameter; a reader is declined) and `accumulatorIsFullyPersistent`, which admits a
-  copy-type-element list and nothing else, since a named type's fresh heap leaf fields would need
-  the to-space materialization no self-hosted lowering site emits. Verified by 30 unit tests in
+  copy-type-element list and nothing else, since a named type's fresh heap leaf fields needed a
+  to-space materialization no self-hosted lowering site emitted at that point. Verified by 30 unit
+  tests in
   `ReuseResetSafetyTests.ash` over hand-built instruction lists. Ported next (2026-09-09), the
   generation and call-site half, narrowed to the fresh-result path over one copy-element list
   accumulator: `ReuseFunctionSpecialization.ash` scans the parsed program for its self-recursive
@@ -2100,7 +2101,8 @@ same public behavior.
   rebuilds its accumulator (`specializationRebuildsAccumulator`), carries a layout the
   specialization can keep persistent (`accumulatorLayoutIsPersistable`: a list always does, since
   its cells are rebuilt in the ordinary heap and carry whatever their elements already were, while
-  a named ADT would need the to-space materialization no lowering site emits), is handed a value
+  a named ADT needed the to-space materialization no lowering site emitted at that point), is handed
+  a value
   the callee's whole-program result reach proves fresh (stage 0's `IsFreshOwnershipResultCall`),
   and mentions only names a body lowered here can bind; and
   `lowerReuseSpecializedCall` lowers the candidate's own lambda as a one-member recursive group
@@ -2123,9 +2125,9 @@ same public behavior.
   `--explain reuse` output — and the two declines, a threaded rather than fresh argument and a
   reader); all four self-hosted suites and the whole-program IR parity fixtures green; and the
   self-hosted CLI compiling and running the same programs to stage 0's answers, with peak RSS
-  matching its own `--debug-disable-reuse` build to within the reused cells. Still open: to-space
-  materialization itself. A specialization is now generated once per concrete instantiation
-  (2026-09-09), stage 0's own cache: `reuseSpecializationCacheKey` keys `reuseSpecializations` on
+  matching its own `--debug-disable-reuse` build to within the reused cells. A specialization is now
+  generated once per concrete instantiation (2026-09-09), stage 0's own cache:
+  `reuseSpecializationCacheKey` keys `reuseSpecializations` on
   the callee and its resolved function type, and a later call at the same type takes a closure over
   the label already emitted (`lowerCachedReuseSpecializedCall`) instead of lowering the candidate's
   body again — the closure goes in a local and the ordinary call path applies the arguments to it,
@@ -2172,6 +2174,36 @@ same public behavior.
   `TrySynthesizeAdtCopier` asks. Measured on a 4095-node tree rewritten 200 times: 5.6 MB peak
   resident against 34.3 MB for the same program built `--debug-disable-reuse` and 4.1 MB through
   stage 0, output identical.
+  To-space materialization of a rebuilt cell's leaf fields is emitted (2026-09-09), stage 0's
+  `MaterializeSpecializationField` called from `LowerConstructorApplication`: a constructor field
+  built from one of the specialization's fresh inputs points into the arena scratch the loop's reset
+  reclaims, so it is relocated into to-space before the store. Fresh-input tracking is stage 0's
+  `_specFreshInputNames` — `specializationFreshInputs` holds the specialization's own parameter names
+  while its body is lowered, and `extendedSpecializationFreshInputs` propagates the status through an
+  inlined helper whose argument names a fresh input or is any expression the arm computed (a value in
+  per-iteration scratch); a field argument that is a bare name the specialization did NOT bring in was
+  matched out of the accumulator, is already persistent, and passes through. `materializeSpecializationField`
+  covers the two leaf shapes needing no copier synthesis: a string or bytes value (a length-prefixed
+  blob copy) and a tuple of copy types (a fixed-size cell copy). The materialization runs after the
+  cell is claimed and before the field stores, stage 0's own order, so the reused cell's old field is
+  still readable: an unbound field slot takes the in-place `CopyStringIntoOrFresh`/`CopyFixedIntoOrFresh`
+  update path, which bounds blob growth to the largest value a cell ever held, and every other field
+  the conservative fresh `CopyOutArenaToSpace`. That is narrower than stage 0's
+  `ReuseTokenFieldIsDead`, which also clears a field whose bound name has had every arm reference
+  lowered — it keeps a per-binding reference tally this lowering does not; the difference costs a blob
+  per rewrite and never correctness. `ReuseResetSafety.ash`'s named-ADT gate widens to match
+  (`reuseMaterializableFieldType`), so an accumulator carrying a string, bytes or copy-tuple leaf is
+  now fully persistent and its loop's back edge reclaims its arena. Verified: five new tests in
+  `ReuseFunctionSpecializationTests.ash` (a `Tree` with a `Str` label generates its specialization,
+  overwrites the dead blob in place, and reclaims its arena on the back edge; a still-bound label takes
+  the fresh cell; an ordinary constructor outside a specialization emits neither), all four self-hosted
+  suites plus both parity runners green, and stage 0's own `--explain reuse`/`--emit-ir` on the same
+  `Tree` program confirming it accepts reset safety and emits `CopyStringIntoOrFresh` there too.
+  Still open, the last of OPT-42: the two field shapes needing synthesized to-space copiers —
+  a list of strings (`SynthesizeListToSpaceCopier`) and a non-self to-space-copyable ADT
+  (`TrySynthesizeAdtToSpaceCopier`, with `IsToSpaceCopySafeType` gating it). Both build the cell as
+  ordinary arena scratch with its fields already relocated and then flat-copy the finished cell into
+  the blob, a shape `StructuralCopiers.ash`'s existing arena copiers already have the plumbing for.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization

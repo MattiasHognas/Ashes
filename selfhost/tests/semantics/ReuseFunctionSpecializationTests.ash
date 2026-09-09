@@ -84,6 +84,15 @@ let multiParameterSource unit = "let recursive makeList (count: Int) =\n" + "   
 // `QualifyVariableReuseSpecialization` after its loop-entry copy makes the parameter unique.
 let loopAccumulatorSource unit = "type Tree =\n" + "    | Leaf\n" + "    | Node(Tree, Int, Tree)\n" + "\n" + "let recursive bump (tree: Tree) =\n" + "    match tree with\n" + "        | Leaf -> Leaf\n" + "        | Node(left, value, right) -> Node(bump(left), value + 1, bump(right))\n" + "\n" + "let recursive makeTree (depth: Int) =\n" + "    if depth == 0\n" + "    then Leaf\n" + "    else Node(makeTree(depth - 1), depth, makeTree(depth - 1))\n" + "\n" + "let recursive rounds (count: Int) (acc: Tree) =\n" + "    if count == 0\n" + "    then acc\n" + "    else rounds(count - 1)(bump(acc))\n" + "\n" + "rounds(3)(makeTree(3))\n"
 
+// The same loop over an accumulator carrying a string leaf. The rebuilt label is a value the arm
+// computed, so it lives in the scratch the loop's reset reclaims and has to be relocated; the
+// matched field binds no name, so the reused cell's old blob is free to take it in place.
+let stringFieldLoopSource unit = "type Tree =\n" + "    | Leaf\n" + "    | Node(Tree, Str, Tree)\n" + "\n" + "let recursive relabel (tree: Tree) =\n" + "    match tree with\n" + "        | Leaf -> Leaf\n" + "        | Node(left, _, right) -> Node(relabel(left), \"z\", relabel(right))\n" + "\n" + "let recursive makeTree (depth: Int) =\n" + "    if depth == 0\n" + "    then Leaf\n" + "    else Node(makeTree(depth - 1), \"x\", makeTree(depth - 1))\n" + "\n" + "let recursive rounds (count: Int) (acc: Tree) =\n" + "    if count == 0\n" + "    then acc\n" + "    else rounds(count - 1)(relabel(acc))\n" + "\n" + "rounds(3)(makeTree(3))\n"
+
+// The same shape with the matched label still bound: the arm may read the name again, so the old
+// blob is not free and the new label is materialized into a fresh to-space cell instead.
+let boundStringFieldLoopSource unit = "type Tree =\n" + "    | Leaf\n" + "    | Node(Tree, Str, Tree)\n" + "\n" + "let recursive relabel (tree: Tree) =\n" + "    match tree with\n" + "        | Leaf -> Leaf\n" + "        | Node(left, label, right) -> Node(relabel(left), label + \"z\", relabel(right))\n" + "\n" + "let recursive makeTree (depth: Int) =\n" + "    if depth == 0\n" + "    then Leaf\n" + "    else Node(makeTree(depth - 1), \"x\", makeTree(depth - 1))\n" + "\n" + "let recursive rounds (count: Int) (acc: Tree) =\n" + "    if count == 0\n" + "    then acc\n" + "    else rounds(count - 1)(relabel(acc))\n" + "\n" + "rounds(3)(makeTree(3))\n"
+
 // A reader rather than a rewriter: its result is not the accumulator's type, so routing it
 // through a specialization would allocate its result where nothing reclaims it.
 let readerSource unit = "let recursive makeList (count: Int) =\n" + "    if count == 0\n" + "    then []\n" + "    else 7 :: makeList(count - 1)\n" + "\n" + "let recursive countAll (values: List(Int)) =\n" + "    match values with\n" + "        | [] -> 0\n" + "        | _value :: rest -> 1 + countAll(rest)\n" + "\n" + "countAll(makeList(4))\n"
@@ -237,6 +246,49 @@ let testLoopAccumulatorSpecializationReusesCells unit =
     |> containsText("AllocReusing")
     |> test.assertEqual(true)
 
+// A string leaf no longer declines the accumulator: the field is relocated at the rebuild, so the
+// whole graph survives the reset and the specialization is generated.
+let testStringFieldLoopGeneratesSpecialization unit =
+    Unit
+    |> stringFieldLoopSource
+    |> dumped
+    |> containsText("function relabel__reuse")
+    |> test.assertEqual(true)
+
+let testStringFieldOverwritesTheDeadBlob unit =
+    Unit
+    |> stringFieldLoopSource
+    |> dumped
+    |> containsText("CopyStringIntoOrFresh")
+    |> test.assertEqual(true)
+
+// With the relocation in place the accumulator counts as fully persistent, which is what licenses
+// the loop's back edge to reclaim its arena.
+let testStringFieldLoopBackEdgeReclaimsItsArena unit =
+    Unit
+    |> stringFieldLoopSource
+    |> dumpedLines
+    |> linesHaveAdjacent("ReclaimArenaChunks")("RestoreStackPointer")
+    |> test.assertEqual(true)
+
+// Stage 0 tallies each binding's arm references and reaches the in-place path here too; without
+// that tally a still-bound field takes the fresh to-space cell, which costs a blob per rewrite and
+// never correctness.
+let testBoundStringFieldMaterializesFresh unit =
+    Unit
+    |> boundStringFieldLoopSource
+    |> dumped
+    |> containsText("CopyOutArenaToSpace")
+    |> test.assertEqual(true)
+
+// Nothing outside a specialization pays for the relocation.
+let testOrdinaryConstructorSkipsMaterialization unit =
+    Unit
+    |> readerSource
+    |> dumped
+    |> containsText("CopyOutArenaToSpace")
+    |> test.assertEqual(false)
+
 let testReaderKeepsOrdinaryCall unit =
     Unit
     |> readerSource
@@ -265,5 +317,10 @@ let runReuseFunctionSpecializationTests unit =
     |> testLoopAccumulatorGeneratesSpecialization
     |> testLoopAccumulatorSpecializationReusesCells
     |> testLoopBackEdgeReclaimsItsArena
+    |> testStringFieldLoopGeneratesSpecialization
+    |> testStringFieldOverwritesTheDeadBlob
+    |> testStringFieldLoopBackEdgeReclaimsItsArena
+    |> testBoundStringFieldMaterializesFresh
+    |> testOrdinaryConstructorSkipsMaterialization
     |> testReaderKeepsOrdinaryCall
     |> reportSuccess
