@@ -168,6 +168,7 @@ type CoreLoweringResult =
     | semanticType: SemanticType
     | error: Maybe(CoreLoweringError)
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))
+    | joinRepresentations: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))
 
 type CoreConstructorLayout =
     | name: Str
@@ -457,6 +458,12 @@ type CoreLoweringState =
     // environment.
     | topLevelFunctionRefs: List((Str, Str, TypeScheme))
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
+    // The representation the lowering itself decided for a control-flow join's result, by the
+    // function it belongs to and the temp the join reloads. The `memory` report's post-hoc walk
+    // over the emitted instructions cannot recover this: every arm of a match stores into one
+    // result slot, and the unreachable no-match default stores into it last, so the reload's
+    // representation read back off the slot is the default's rather than the arms'.
+    | joinRepresentations: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))
     // The result types of the calls lowered so far in the current function body whose layout was
     // still unresolved at the call (an arena result was requested in place of a placement
     // decision), in the current function body and the closures lowered inside it. Stage 0 infers
@@ -771,6 +778,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         specializingInProgress = [],
         topLevelFunctionRefs = [],
         valuePlacements = [],
+        joinRepresentations = [],
         unresolvedCallResults = [],
         runtimeOwnerAliases = [],
         pendingRuntimeArgumentFlags = [],
@@ -1158,6 +1166,12 @@ let recordValuePlacement (temp: Int) (semanticType: SemanticType) (state: CoreLo
         | (true, _) -> state
         | (false, None) -> state
         | (false, Some(_origin)) -> state with valuePlacements = (temp, state.activeFunctionOrigin, semanticType) :: state.valuePlacements
+
+// The representation of a value the lowering knows and the `memory` report's post-hoc walk over
+// the emitted instructions cannot recover, because the value is reloaded from a slot more than one
+// branch wrote. `(false, false)` is the walk's own conservative-unknown, recorded here when the
+// answer genuinely depends on which branch ran.
+let recordDecidedRepresentation (temp: Int) (isArena: Bool) (isRc: Bool) (state: CoreLoweringState) = state with joinRepresentations = (state.activeFunctionOrigin, temp, isArena, isRc) :: state.joinRepresentations
 
 let recursive containsTempOrigin (temp: Int) (origin: Maybe(IrFunctionOrigin)) (seen: List((Int, Maybe(IrFunctionOrigin)))) =
     match seen with
@@ -3720,7 +3734,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with pendingClosureNormalizers = bodyState.pendingClosureNormalizers)
             |> (given (current: CoreLoweringState) -> current with bodyRuntimeManagedByLabel = bodyState.bodyRuntimeManagedByLabel)
             |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
-            |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements)
+            |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements, joinRepresentations = bodyState.joinRepresentations)
             |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = append(bodyState.unresolvedCallResults)(outer.unresolvedCallResults))
             |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels, dropperLabels = bodyState.dropperLabels)
 
@@ -8963,13 +8977,27 @@ let transferBranchOwnerResult (branch: Expr) (temp: Int) (state: CoreLoweringSta
 // releases it as it would have released each branch's value without the join. One borrowed or
 // unknown branch makes the join a transferred value: the merged value may then be a live
 // binding's, and releasing it would free memory still in use.
+// A join whose every arm left a reference-counted value carries that representation itself; the
+// walk would instead read the shared result slot, which the unreachable no-match default wrote
+// last.
+let recordJoinRepresentation (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    if joinIsRuntimeManaged(arms)
+    then recordDecidedRepresentation(resultTemp)(false)(true)(state)
+    else state
+
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     ((given (marked: CoreLoweringState) ->
         if joinIsRetainedOwner(arms)
         then marked with patternOwnerResultTemps = resultTemp :: marked.patternOwnerResultTemps
         else marked))(match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
-        | (true, true) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
-        | (true, false) -> markRuntimeTemp(resultTemp)(RuntimeTransferred)(state)
+        | (true, true) ->
+            state
+            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+            |> recordJoinRepresentation(resultTemp)(arms)
+        | (true, false) ->
+            state
+            |> markRuntimeTemp(resultTemp)(RuntimeTransferred)
+            |> recordJoinRepresentation(resultTemp)(arms)
         | (false, _) -> state)
 
 // Stage 0's `TryLowerStaticStringNormalizedBranch` for a literal string: the constant loaded and
@@ -15516,7 +15544,8 @@ let failedCoreLowering error =
         program = None,
         semanticType = SemNever,
         error = Some(error),
-        valuePlacements = []
+        valuePlacements = [],
+        joinRepresentations = []
     )
 
 type CoreProgramUses =
@@ -16540,7 +16569,8 @@ let buildProgram lowered =
                                                     error = None,
                                                     valuePlacements = state.valuePlacements
                                                     |> dedupeValuePlacements([])
-                                                    |> finalizeValuePlacements(state)
+                                                    |> finalizeValuePlacements(state),
+                                                    joinRepresentations = state.joinRepresentations
                                                 )
 
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered

@@ -2139,14 +2139,26 @@ same public behavior.
   `CoreLowering.ash` and finalized once against the final substitution), rendering byte-identical
   `ownership`, `rc`, `reuse`, and `memory` reports for the shared parity fixtures against stage 0's
   text under `selfhost/parity/semantics/explain/` across all 24 fixtures (`ExplainReportTests.ash`).
-  Open: the `memory` report's `representation` counts are classified by a post-hoc, flow-insensitive
-  walk over the lowered IR (`DecisionSnapshot.ash`'s `classifyInstructionRepr`) rather than the
-  per-value ownership facts stage 0 records during lowering, so a value whose slot is written by more
-  than one branch — a TCO loop's own result-slot join, a closure builder's environment copy, or a
-  match/if result join — is classified from whichever branch wrote it last in program order instead
-  of the branch that actually produced it; pinned as a known difference for `consumed_list_argument`,
-  `match_rc_scrutinee`, `tco_scalar_loop`, `tco_scalar_owned_let`, `tco_unused_chain_parameter`,
-  `aggregate_children_retain`, and `closure_capture`. The `mutual_recursion` RC counts and its
+  The match/if result join is fixed (2026-09-09): the lowering records the representation it
+  decided for a join whose every arm left a reference-counted value (`recordDecidedRepresentation`
+  and `recordJoinRepresentation` beside `markControlFlowJoin`, carried out of lowering as
+  `CoreLoweringResult.joinRepresentations`), and `captureDecisionSnapshot` keeps those facts at the
+  head of each function's temp map for the whole walk, so neither the reload of the shared result
+  slot nor anything reading it can pick up the unreachable no-match default's store. On
+  `match_rc_scrutinee` that turns `conservative unknown: 2, runtime rc: 2` into stage 0's own
+  `runtime rc: 3`; only a count difference is left there (the self-hosted lowering records a value
+  placement for one more value in that function than stage 0 records at all, and the walk cannot
+  place it). A per-read-site fact was also tried for the RC argument-normalization prologue's
+  reload and reverted: marking that reload conservative-unknown propagates through the parameter
+  slot and costs `consumed_list_argument` the one runtime-rc value stage 0 does report, so that
+  shape needs the representation resolved per read rather than per reload. Open: that prologue, a
+  TCO loop's own result-slot join, and a closure builder's environment copy are still classified by
+  the post-hoc, flow-insensitive walk over the lowered IR (`DecisionSnapshot.ash`'s
+  `classifyInstructionRepr`) rather than the per-value ownership facts stage 0 records during
+  lowering, so such a value is classified from whichever branch wrote its slot last in program order
+  instead of the branch that actually produced it; pinned as a known difference for
+  `consumed_list_argument`, `match_rc_scrutinee`, `tco_scalar_loop`, `tco_scalar_owned_let`,
+  `tco_unused_chain_parameter`, `aggregate_children_retain`, and `closure_capture`. The `mutual_recursion` RC counts and its
   memory report's dispatch-wrapper representation block also wait on recursive-group lowering
   parity. Separately, `closure_capture`'s ownership report does not trace a top-level binding
   aliasing a curried partial application back to the outer function's own second parameter, so its
