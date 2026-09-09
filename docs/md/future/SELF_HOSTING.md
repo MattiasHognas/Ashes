@@ -1027,10 +1027,18 @@ same public behavior.
   accumulator into the arena, no back-edge reset) to 47 MB and 0.01 s. A single-parameter loop
   (`let recursive loop n = ...`) now runs the same placement finalization as a curried one (its
   body is entered straight from the recursive binding, which used to finish without it, leaving
-  every active flag unretired and unnormalized). Open here: the `let`-bound append form
-  (`let acc2 = acc + rhs in loop(n - 1)(acc2)`, OPT-13's arming; the successor is copied out at
-  the back edge instead) and an append whose operand types are still unresolved when it is
-  lowered (the deferred add seals to a copying `ConcatStr`). A `List`-typed
+  every active flag unretired and unnormalized). Verified (2026-09-09): the `let`-bound append
+  form (`let acc2 = acc + rhs in loop(n - 1)(acc2)`) already takes the in-place `ConcatStrTip`
+  path, not the arena back-edge copy-out this note once flagged as open — stale by the time it was
+  read again, per `TcoRuntimeManagedParams.ash`'s own header (a later port, `inlinePlainVarAliases`
+  over `TcoAffineAppend.ash`'s existing walk). `tests/tco_affine_string_append_let_bound.ash`
+  (`// expect: 200000 09876543210987654321 30`) already pins exactly this shape and passes
+  byte-for-byte through the self-hosted compiler; a hand-built 200000-iteration probe of the same
+  shape plateaus at 6.2 MB through the self-hosted CLI (stage 0: 8.4 MB), confirming the affine
+  reservation, not a growing arena copy, is what runs. Still open: an append whose operand types
+  are still unresolved when it is lowered (the deferred add seals to a copying `ConcatStr`) — not
+  reproduced or ruled out this pass; needs a self-referential or otherwise late-resolved-type
+  accumulator shape to test, which this session did not construct. A `List`-typed
   parameter is placed the same way in two self-call shapes (`TcoRuntimeManagedParams.ash`'s
   `tcoSelfCallShapes`, stage 0's `TcoSelfCallArgumentShape` walk over the loop body's `if`
   branches, `match` arms, and `let` bodies): grown by one cons cell per iteration onto the
