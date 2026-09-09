@@ -2096,11 +2096,13 @@ same public behavior.
   accumulator: `ReuseFunctionSpecialization.ash` scans the parsed program for its self-recursive
   top-level functions (stage 0's `RegisterRecursiveReuseCandidate`) and names their specializations
   the way stage 0 does (`f__reuse`, then `f__reuse$N`); `CoreLowering.ash`'s `reuseSpecializedCallOf`
-  qualifies a call whose callee is one of them, takes its one argument, rebuilds its accumulator
-  (`specializationRebuildsAccumulator`), carries a list of a copy-type element
-  (`accumulatorIsFullyPersistent`, so nothing in it needs the to-space materialization no lowering
-  site emits), is handed a value the callee's whole-program result reach proves fresh (stage 0's
-  `IsFreshOwnershipResultCall`), and mentions only names a body lowered here can bind; and
+  qualifies a call whose callee is one of them, takes exactly its own parameter count of arguments,
+  rebuilds its accumulator (`specializationRebuildsAccumulator`), carries a layout the
+  specialization can keep persistent (`accumulatorLayoutIsPersistable`: a list always does, since
+  its cells are rebuilt in the ordinary heap and carry whatever their elements already were, while
+  a named ADT would need the to-space materialization no lowering site emits), is handed a value
+  the callee's whole-program result reach proves fresh (stage 0's `IsFreshOwnershipResultCall`),
+  and mentions only names a body lowered here can bind; and
   `lowerReuseSpecializedCall` lowers the candidate's own lambda as a one-member recursive group
   under that label, with `armSpecializationLinearParameter` making the accumulator a linear reuse
   root and the group's self binding redirecting the recursion into the specialization, the call
@@ -2109,17 +2111,25 @@ same public behavior.
   token (`listCellReuseToken`), and `allocateListCell` consumes it as an
   `AllocReusing`/`ListCell` rebuild instead of a fresh `Alloc` — a reference-counted cell still
   takes neither, since its transferred children would need the runtime nullness guard only the
-  constructor path emits. Verified: nine unit tests in `ReuseFunctionSpecializationTests.ash`
-  (the candidate scan, the label scheme, `doubleAll__reuse` generated with `DropReuse`/`AllocReusing`
-  for the shape stage 0 specializes, a second call site taking `doubleAll__reuse$1`, and the three
-  declines — a threaded rather than fresh argument, a heap element, a reader); all four self-hosted
-  suites and the whole-program IR parity fixtures green; and the self-hosted CLI compiling and
-  running the same programs to stage 0's answers, with peak RSS matching its own
-  `--debug-disable-reuse` build to within the reused cells. Still open: sharing one specialization
-  across call sites (stage 0 caches per concrete instantiation; each qualifying site generates its
-  own here), multi-parameter candidates, the reset-safety verdict's consumers
-  (`_fullyReusingLabels`/`_resetSafeAccumulators`), the general named-type and nested-ADT
-  accumulator cases, and to-space materialization itself.
+  constructor path emits. The accumulator may be the last of several parameters, the earlier ones
+  being configuration the specialization carries unchanged (stage 0's own `moveBodies` shape):
+  `armSpecializationLinearParameter` runs at both the recursive member's own parameter and every
+  nested lambda's, so whichever binds the accumulator claims the request, and the call is rebuilt
+  over the whole argument list. Verified: eleven unit tests in
+  `ReuseFunctionSpecializationTests.ash` (the candidate scan, the label scheme, `doubleAll__reuse`
+  generated with `DropReuse`/`AllocReusing` for the shape stage 0 specializes, the same call under
+  a tail-recursive driver, a second call site taking `doubleAll__reuse$1`, a heap-element list and
+  a two-parameter candidate — both of which stage 0 specializes too, confirmed against its own
+  `--explain reuse` output — and the two declines, a threaded rather than fresh argument and a
+  reader); all four self-hosted suites and the whole-program IR parity fixtures green; and the
+  self-hosted CLI compiling and running the same programs to stage 0's answers, with peak RSS
+  matching its own `--debug-disable-reuse` build to within the reused cells. Still open: sharing
+  one specialization across call sites (stage 0 caches per concrete instantiation; each qualifying
+  site generates its own here), the direct-unique call path over a loop accumulator (stage 0's
+  `QualifyVariableReuseSpecialization` and the `_linearSpecializationAccumulators` scan that feeds
+  it, the only route by which a named-ADT accumulator reaches a specialization at all), the
+  reset-safety verdict's consumers (`_fullyReusingLabels`/`_resetSafeAccumulators`), and to-space
+  materialization itself.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization

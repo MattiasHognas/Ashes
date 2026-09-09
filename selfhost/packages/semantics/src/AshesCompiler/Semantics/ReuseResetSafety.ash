@@ -31,6 +31,7 @@ export (
     value reuseResetSafety,
     value specializationRebuildsAccumulator,
     value accumulatorIsFullyPersistent,
+    value accumulatorLayoutIsPersistable,
 )
 
 // The verdict on one specialized body: whether its loop's arena reset is safe, the decision reason
@@ -270,3 +271,12 @@ let accumulatorIsFullyPersistent (accumulatorType: SemanticType) =
     match accumulatorType with
         | SemList(element) -> canArenaResetLayout(element)
         | _ -> false
+
+// Whether a call may be routed to a specialization at all, stage 0's `AccumulatorLayoutIsPersistable`:
+// a list accumulator's cells are rebuilt in the ordinary heap and carry whatever their elements
+// already were, so its layout constrains nothing; only a named ADT accumulator, whose fresh cells
+// would be allocated into the never-reset to-space, has its field layout gated.
+let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) =
+    match accumulatorType with
+        | SemNamed(_symbol, _name, _arguments) -> accumulatorIsFullyPersistent(accumulatorType)
+        | _ -> true

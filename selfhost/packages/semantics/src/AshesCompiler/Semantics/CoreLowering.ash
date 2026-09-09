@@ -80,7 +80,7 @@ import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.ReuseResetSafety.specializationRebuildsAccumulator
-import AshesCompiler.Semantics.ReuseResetSafety.accumulatorIsFullyPersistent
+import AshesCompiler.Semantics.ReuseResetSafety.accumulatorLayoutIsPersistable
 import AshesCompiler.Semantics.Unification
 // Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some
 // terminal arm, with no passthrough arm that could alias a tuple built elsewhere.
@@ -1172,6 +1172,17 @@ let recordValuePlacement (temp: Int) (semanticType: SemanticType) (state: CoreLo
 // branch wrote. `(false, false)` is the walk's own conservative-unknown, recorded here when the
 // answer genuinely depends on which branch ran.
 let recordDecidedRepresentation (temp: Int) (isArena: Bool) (isRc: Bool) (state: CoreLoweringState) = state with joinRepresentations = (state.activeFunctionOrigin, temp, isArena, isRc) :: state.joinRepresentations
+
+// Stage 0's `LowerLambdaCoreSeedScopeBindings` reuse arm: the parameter a specialization is being
+// generated for becomes a linear reuse root, so a match on it hands its dead cells to the arms as
+// arena reuse tokens. The request is consumed here, so a nested lambda never inherits it.
+let armSpecializationLinearParameter (parameter: Str) (state: CoreLoweringState) =
+    match state.specializingLinearParam with
+        | Some(linear) ->
+            if linear == parameter
+            then state with linearReuseNames = [parameter], specializingLinearParam = None
+            else state
+        | None -> state
 
 let recursive containsTempOrigin (temp: Int) (origin: Maybe(IrFunctionOrigin)) (seen: List((Int, Maybe(IrFunctionOrigin)))) =
     match seen with
@@ -3778,6 +3789,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
+        |> armSpecializationLinearParameter(parameter)
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
 let bigIntCopySizeBytes = -2
@@ -11297,17 +11309,6 @@ let recursive bindingNames (bindings: List(CoreBinding)) =
         | [] -> []
         | CoreBinding { name = name } :: rest -> name :: bindingNames(rest)
 
-// Stage 0's `LowerLambdaCoreSeedScopeBindings` reuse arm: the parameter a specialization is being
-// generated for becomes a linear reuse root, so a match on it hands its dead cells to the arms as
-// arena reuse tokens. The request is consumed here, so a nested lambda never inherits it.
-let armSpecializationLinearParameter (parameter: Str) (state: CoreLoweringState) =
-    match state.specializingLinearParam with
-        | Some(linear) ->
-            if linear == parameter
-            then state with linearReuseNames = [parameter], specializingLinearParam = None
-            else state
-        | None -> state
-
 // The recursive group's member names are remembered for the body and everything lifted out of
 // it, so a member captured into an inner curried stage is still known as a self callee.
 let prepareRecursiveBodyState parameter parameterType captures selfBindings origin state =
@@ -15267,6 +15268,12 @@ let tryInlineHelperCall (spine: CoreCallSpine) lower (state: CoreLoweringState) 
             |> Some
         | None -> None
 
+let recursive lastArgument (arguments: List(Expr)) =
+    match arguments with
+        | [] -> None
+        | argument :: [] -> Some(argument)
+        | _argument :: rest -> lastArgument(rest)
+
 let recursive lookupSpecializationCandidate (name: Str) (candidates: List((Str, List(Str), Expr))) =
     match candidates with
         | [] -> None
@@ -15295,36 +15302,60 @@ let reuseSpecializationArgumentIsFresh (argument: Expr) (state: CoreLoweringStat
 // The accumulator parameter type and the whole function type a specialization candidate is called
 // at, read through the current substitution. A callee whose binding is not a resolved single-
 // parameter function has neither.
-let reuseSpecializationCalleeType (callee: Str) (state: CoreLoweringState) =
+// The type of the accumulator (the last parameter) after `argumentCount` arguments are applied,
+// paired with the callee's whole resolved function type. `None` when the callee is not bound here
+// or takes fewer parameters than the call passes arguments.
+let recursive appliedAccumulatorType (functionType: SemanticType) (argumentCount: Int) (accumulator: Maybe(SemanticType)) =
+    if argumentCount == 0
+    then accumulator
+    else
+        match functionType with
+            | SemFunction(argument, result, _effects) -> appliedAccumulatorType(result)(argumentCount - 1)(Some(argument))
+            | _ -> None
+
+let reuseSpecializationCalleeType (callee: Str) (argumentCount: Int) (state: CoreLoweringState) =
     match lookupBinding(callee)(state.bindings) with
         | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
             match resolveType(state)(body) with
-                | SemFunction(parameterType, resultType, effects) ->
-                    Some((resolveType(state)(parameterType), SemFunction(resolveType(state)(parameterType))(resolveType(state)(resultType))(effects)))
+                | SemFunction(_parameterType, _resultType, _effects) as functionType ->
+                    match appliedAccumulatorType(functionType)(argumentCount)(None) with
+                        | Some(accumulatorType) -> Some((accumulatorType, functionType))
+                        | None -> None
                 | _ -> None
         | None -> None
 
+// The last of a candidate's parameters, its accumulator, and whether the call passes one argument
+// per parameter.
+let recursive lastParameterName (parameters: List(Str)) =
+    match parameters with
+        | [] -> None
+        | parameter :: [] -> Some(parameter)
+        | _parameter :: rest -> lastParameterName(rest)
+
 // The specialization a call qualifies for, stage 0's `QualifyReuseSpecializationCall` narrowed to
-// the fresh-result path over a single accumulator parameter: the callee is one of the program's
-// self-recursive top-level functions, takes exactly the one argument, rebuilds its accumulator,
-// carries a list of a copy-type element (nothing in it needs the to-space materialization no
-// lowering site emits), is handed a provably fresh value, and mentions only names a body lowered
-// here can bind. A candidate already being specialized is skipped, so neither the specialization's
-// own self-calls nor the call it is generated for re-enter this path.
+// the fresh-result path: the callee is one of the program's self-recursive top-level functions,
+// takes exactly its own parameter count of arguments, rebuilds its accumulator, carries a layout
+// the specialization can keep persistent (a list always does; a named ADT would need the to-space
+// materialization no lowering site emits), is handed a provably fresh accumulator, and mentions
+// only names a body lowered here can bind. A candidate already being specialized is skipped, so
+// neither the specialization's own self-calls nor the call it is generated for re-enter this path.
 let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
             if state.reuseEnabled && containsName(callee)(state.specializingInProgress) == false
             then
-                match (lookupSpecializationCandidate(callee)(state.specializationCandidates), spine.arguments) with
-                    | (Some((parameter :: [], value)), argument :: []) ->
-                        match reuseSpecializationCalleeType(callee)(state) with
-                            | Some((accumulatorType, functionType)) ->
-                                if specializationRebuildsAccumulator(functionType)(1) && accumulatorIsFullyPersistent(accumulatorType) && reuseSpecializationArgumentIsFresh(argument)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
-                                then Some((callee, parameter, value, argument))
-                                else None
-                            | None -> None
-                    | _ -> None
+                match lookupSpecializationCandidate(callee)(state.specializationCandidates) with
+                    | Some((parameters, value)) ->
+                        match (lastParameterName(parameters), lastArgument(spine.arguments)) with
+                            | (Some(parameter), Some(accumulator)) ->
+                                match reuseSpecializationCalleeType(callee)(coreListLength(spine.arguments))(state) with
+                                    | Some((accumulatorType, functionType)) ->
+                                        if length(parameters) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType) && reuseSpecializationArgumentIsFresh(accumulator)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
+                                        then Some((callee, parameter, value, spine.arguments))
+                                        else None
+                                    | None -> None
+                            | _ -> None
+                    | None -> None
             else None
         | _ -> None
 
@@ -15347,7 +15378,13 @@ let restoreSpecializationScope (outer: CoreLoweringState) (lowered: LoweredCoreV
 // as a linear reuse root, its self-calls bind to that label through the group's self binding, and
 // the group's continuation is the original call, now reaching the specialization. Each qualifying
 // call site generates its own specialization; stage 0 shares one per concrete instantiation.
-let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (argument: Expr) lower (state: CoreLoweringState) =
+let recursive specializedCallExpression (callee: Expr) (arguments: List(Expr)) =
+    match arguments with
+        | [] -> callee
+        | argument :: rest ->
+            specializedCallExpression(ExprCall(callee)(argument)(false)(callArgumentsInline))(rest)
+
+let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let label =
         state.reuseSpecializations
         |> length
@@ -15358,7 +15395,7 @@ let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (argu
                 []
                 |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingInProgress = callee :: state.specializingInProgress, reuseSpecializations = (label, callee) :: state.reuseSpecializations))
                 |> relabelReuseSpecialization(label)
-                |> lowerPreparedRecursiveGroup([(callee, value)])(ExprCall(ExprVar(callee))(argument)(false)(callArgumentsInline))(lower)(outerBindings)
+                |> lowerPreparedRecursiveGroup([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(outerBindings)
                 |> restoreSpecializationScope(state))
 
 let lowerGeneralCall expression function argument lower state =
@@ -15371,7 +15408,7 @@ let lowerGeneralCall expression function argument lower state =
             |> locateLoweredMismatch(argumentSiteOf(state))
         | _ ->
             match reuseSpecializedCallOf(collectCallSpine(expression))(state) with
-                | Some((callee, parameter, value, accumulator)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(accumulator)(lower)(state)
+                | Some((callee, parameter, value, arguments)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(arguments)(lower)(state)
                 | None ->
                     match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
                         | Some(inlined) -> inlined

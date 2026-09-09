@@ -57,9 +57,13 @@ let twoCallSiteSource unit = "let recursive makeList (count: Int) =\n" + "    if
 // reaches that parameter, so the argument is not provably fresh and no specialization is built.
 let threadedListSource unit = "let recursive buildList (count: Int) (acc: List(Int)) =\n" + "    if count == 0\n" + "    then acc\n" + "    else buildList(count - 1)(count :: acc)\n" + "\n" + "let recursive doubleAll (values: List(Int)) =\n" + "    match values with\n" + "        | [] -> []\n" + "        | value :: rest -> value * 2 :: doubleAll(rest)\n" + "\n" + "doubleAll(buildList(4)([]))\n"
 
-// A heap element: the accumulator's cells would carry pointers the to-space materialization would
-// have to make persistent, so the call stays on its ordinary path.
+// A heap element: the rebuild passes each element straight through into the reused cell, so the
+// list's own layout constrains nothing and stage 0 specializes it too.
 let heapElementSource unit = "let recursive makeList (count: Int) =\n" + "    if count == 0\n" + "    then []\n" + "    else \"x\" :: makeList(count - 1)\n" + "\n" + "let recursive keepAll (values: List(Str)) =\n" + "    match values with\n" + "        | [] -> []\n" + "        | value :: rest -> value :: keepAll(rest)\n" + "\n" + "keepAll(makeList(4))\n"
+
+// The accumulator is the LAST of several parameters; the earlier ones are configuration the
+// specialization carries unchanged. Stage 0's own `moveBodies` shape.
+let multiParameterSource unit = "let recursive makeList (count: Int) =\n" + "    if count == 0\n" + "    then []\n" + "    else 7 :: makeList(count - 1)\n" + "\n" + "let recursive scaleAll (factor: Int) (values: List(Int)) =\n" + "    match values with\n" + "        | [] -> []\n" + "        | value :: rest -> value * factor :: scaleAll(factor)(rest)\n" + "\n" + "scaleAll(3)(makeList(4))\n"
 
 // A reader rather than a rewriter: its result is not the accumulator's type, so routing it
 // through a specialization would allocate its result where nothing reclaims it.
@@ -129,12 +133,26 @@ let testThreadedListArgumentKeepsOrdinaryCall unit =
     |> containsText("__reuse")
     |> test.assertEqual(false)
 
-let testHeapElementListKeepsOrdinaryCall unit =
+let testHeapElementListGeneratesSpecialization unit =
     Unit
     |> heapElementSource
     |> dumped
-    |> containsText("__reuse")
-    |> test.assertEqual(false)
+    |> containsText("function keepAll__reuse")
+    |> test.assertEqual(true)
+
+let testMultiParameterCandidateGeneratesSpecialization unit =
+    Unit
+    |> multiParameterSource
+    |> dumped
+    |> containsText("function scaleAll__reuse")
+    |> test.assertEqual(true)
+
+let testMultiParameterSpecializationReusesListCell unit =
+    Unit
+    |> multiParameterSource
+    |> dumped
+    |> containsText("AllocReusing")
+    |> test.assertEqual(true)
 
 let testReaderKeepsOrdinaryCall unit =
     Unit
@@ -156,6 +174,8 @@ let runReuseFunctionSpecializationTests unit =
     |> testLoopedCallGeneratesSpecialization
     |> testSecondCallSiteTakesASuffixedLabel
     |> testThreadedListArgumentKeepsOrdinaryCall
-    |> testHeapElementListKeepsOrdinaryCall
+    |> testHeapElementListGeneratesSpecialization
+    |> testMultiParameterCandidateGeneratesSpecialization
+    |> testMultiParameterSpecializationReusesListCell
     |> testReaderKeepsOrdinaryCall
     |> reportSuccess
