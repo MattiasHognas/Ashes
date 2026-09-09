@@ -2125,8 +2125,19 @@ same public behavior.
   self-hosted CLI compiling and running the same programs to stage 0's answers, with peak RSS
   matching its own `--debug-disable-reuse` build to within the reused cells. Still open: sharing
   one specialization across call sites (stage 0 caches per concrete instantiation; each qualifying
-  site generates its own here), the reset-safety verdict's consumers
-  (`_fullyReusingLabels`/`_resetSafeAccumulators`), and to-space materialization itself.
+  site generates its own here) and to-space materialization itself. The reset-safety verdict now
+  has its consumers (2026-09-09): `recordFullyReusingSpecialization` scans the generated body that
+  bound the linear parameter (`specializingReuseLabel`, stage 0's own) with `reuseResetSafety` and,
+  when it allocates nothing that could escape the watermark and the accumulator's layout is fully
+  persistent — a list only over a copy-type element, stricter than the routing gate —
+  records the callee in `fullyReusingCallees`; `backEdgeArgumentIsInPlaceReuse` then lets a loop
+  argument that is a call to such a callee over that loop's own parameter count as surviving a
+  plain reset (stage 0's `stableAccArg`), recognized structurally rather than by remembering the
+  call node, which has no identity here. The `Tree` loop's back edge consequently reclaims its
+  arena on every iteration, pinned by `testLoopBackEdgeReclaimsItsArena`. It costs that particular
+  program nothing measurable — once the specialization rewrites every cell in place there is
+  nothing above the watermark left to reclaim — which is the expected shape of the win, not its
+  absence.
   The direct-unique call path over a loop accumulator is ported (2026-09-09), together with the
   named-ADT accumulator shape it is the only route to: stage 0's fresh-result path rejects any
   accumulator that is not a `TList` outright

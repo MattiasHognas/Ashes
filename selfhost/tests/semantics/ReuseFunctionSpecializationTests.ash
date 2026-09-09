@@ -35,6 +35,11 @@ let dumped (source: Str) =
     |> (given (program: IrProgram) -> formatIr(program)(LoweredIr)(None))
     |> Ashes.Text.join("\n")
 
+let dumpedLines (source: Str) =
+    source
+    |> lowered
+    |> (given (program: IrProgram) -> formatIr(program)(LoweredIr)(None))
+
 let containsText (needle: Str) (haystack: Str) = Ashes.Text.contains(haystack)(needle)
 
 let recursive lookupCandidateValue (name: Str) (candidates: List((Str, List(Str), Expr))) =
@@ -198,6 +203,24 @@ let testLoopAccumulatorGeneratesSpecialization unit =
     |> containsText("function bump__reuse")
     |> test.assertEqual(true)
 
+// The back edge of a loop whose accumulator a fully-reusing specialization rewrites in place
+// reclaims its arena, which only the reset-safety verdict licenses: the reclaim sits immediately
+// before the loop's stack-pointer restore, a pairing no other reset in the program produces.
+let recursive linesHaveAdjacent (first: Str) (second: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> false
+        | line :: rest ->
+            match rest with
+                | [] -> false
+                | next :: _remaining -> Ashes.Text.contains(line)(first) && Ashes.Text.contains(next)(second) || linesHaveAdjacent(first)(second)(rest)
+
+let testLoopBackEdgeReclaimsItsArena unit =
+    Unit
+    |> loopAccumulatorSource
+    |> dumpedLines
+    |> linesHaveAdjacent("ReclaimArenaChunks")("RestoreStackPointer")
+    |> test.assertEqual(true)
+
 let testLoopAccumulatorSpecializationReusesCells unit =
     Unit
     |> loopAccumulatorSource
@@ -231,5 +254,6 @@ let runReuseFunctionSpecializationTests unit =
     |> testLoopScanFindsSpecializationAccumulator
     |> testLoopAccumulatorGeneratesSpecialization
     |> testLoopAccumulatorSpecializationReusesCells
+    |> testLoopBackEdgeReclaimsItsArena
     |> testReaderKeepsOrdinaryCall
     |> reportSuccess
