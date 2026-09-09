@@ -11,7 +11,7 @@
 
     <MbedTlsVersion>3.6.7</MbedTlsVersion>
     <OpenlibmVersion>0.8.8</OpenlibmVersion>
-    <Pcre2Version>10.45</Pcre2Version>
+    <Pcre2Version>10.48</Pcre2Version>
 
     <!-- Enable .NET analyzers -->
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
