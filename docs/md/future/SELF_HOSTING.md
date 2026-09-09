@@ -1768,9 +1768,18 @@ same public behavior.
   special resources (compiler-provided handles with deterministic cleanup; SEM-14), globals
   (the `.bss` segment with the entry-captured environment pointer, and string literals under
   the immortal sentinel; CG-7 and CG-6), and the OS-backed file view (`File.mmap`'s zero-copy
-  `Bytes`; LNK-4). Open: stack placement — the backend emits the stack forms (`AllocAdtStack`,
-  `MakeClosureStack`), but the lowering never chooses them, since stage 0's proof that a value
-  never escapes its frame is not ported; the persistent regions — the backend emits the
+  `Bytes`; LNK-4). Verified (2026-09-09), one of the two stack-placement proofs: the closure form
+  (`MakeClosureStack`) is chosen, not merely emitted from hand-built IR — `armSourceFunction`'s
+  `nameUsedOnlyAsDirectCallee` (`CoreLowering.ash`, stage 0's `UsesLetNameOnlyAsDirectCallee`) sets
+  `pendingStackClosure` for a let-bound lambda whose name is never read except as the callee of a
+  direct call, and `ExprLambda`'s own lowering reads that flag as `stackAllocate`; covered end to
+  end by `CoreLoweringTests.ash`'s `expectStrictImmediateCall`/`expectPartialApplicationOrder`,
+  which assert the exact `MakeClosureStack` instruction for a top-level helper called only
+  directly. Still open: the ADT form (`AllocAdtStack`) — stage 0's sibling proof
+  (`IsConstructorExpression`/`IsImmediateSingleArmAdtDestructuringMatch`, a `let` immediately
+  destructured by a single-arm match) has no self-hosted counterpart (grepped
+  `CoreLowering.ash` for a real `AllocAdtStack` emission site — none; only hand-built IR in the
+  backend test suite reaches it) — and the persistent regions — the backend emits the
   to-space and blob forms from hand-built IR only (see CG-4), and the lowering produces none
   until OPT-42 reaches the reuse specialization; and the task and capability regions, which
   belong to milestone 4 (CG-12, OPT-43) and are not started.
