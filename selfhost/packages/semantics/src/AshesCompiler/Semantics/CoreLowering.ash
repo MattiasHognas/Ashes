@@ -12482,6 +12482,26 @@ let materializeConstructorFields (arguments: List(Expr)) (fieldTypes: List(Seman
         | None -> (state, temps)
         | Some(_freshInputs) -> materializeSpecializationFields(arguments)(fieldTypes)(resultType)(token)(cellTemp)(0)(tagless)(temps)([])(state)
 
+// Stage 0's `_inSpecialization`: a cell built while a reuse specialization's body is being lowered
+// belongs to the accumulator the loop rewrites in place, and the loop's per-iteration reset must not
+// reclaim it.
+let specializationCellsArePersistent (state: CoreLoweringState) =
+    match state.specializationFreshInputs with
+        | None -> false
+        | Some(_freshInputs) -> true
+
+// Stage 0's `EmitFreshConstructorCell`: a cell a rebuild could not take from a reuse token is fresh.
+// Inside a specialization it goes into the never-reset to-space, so the accumulator it becomes part
+// of survives the loop's own arena reset; outside one it takes the consumer's placement request.
+// `AllocAdtToSpace` is also what keeps the body's reset safe: the scan rejects a plain `AllocAdt`,
+// which could put a live part of the result above the watermark, and never a to-space cell.
+let emitFreshConstructorCell (resultTemp: Int) (tag: Int) (fieldCount: Int) (runtimeManaged: Bool) (tagless: Bool) (state: CoreLoweringState) =
+    if specializationCellsArePersistent(state)
+    then
+        emit(AllocAdtToSpace(resultTemp)(tag)(fieldCount)(tagless))(state)
+    else
+        emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))(state)
+
 // The cell's temp is taken before the transferred children are guarded, stage 0's order. Only a
 // reference-counted token's transferred children are guarded; an arena token's cell keeps the
 // arena and its fields pass straight through. The fresh-input fields are materialized after the
@@ -12518,12 +12538,12 @@ let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(
                         // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
                         // without one the cell is arena-placed.
                         match allocatedState
-                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))
+                        |> emitFreshConstructorCell(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless)
                         |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(None)(resultTemp)(tagless)(temps) with
                             | (materializedState, materializedTemps) ->
                                 materializedState
                                 |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
-                                |> markAggregateRuntimeManaged(resultTemp)(runtimeManaged)
+                                |> markAggregateRuntimeManaged(resultTemp)(specializationCellsArePersistent(state) == false && runtimeManaged)
                                 |> success(resultTemp)(resolveType(materializedState)(resultType)))
 
 let finishConstructorAllocation arguments layout resultType runtimeManaged lowered =
