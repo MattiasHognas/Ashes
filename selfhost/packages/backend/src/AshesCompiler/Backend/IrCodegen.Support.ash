@@ -52,6 +52,7 @@ export (
     value emitRcAllocPayloadPtr,
     value emitAllocAdtRuntimeManaged,
     value emitStackAlloc,
+    value emitStackAllocAdt,
     value closureSizeBytes,
     value closureRuntimeManagedBit,
     value closureRuntimeManagedBitClearMask,
@@ -608,6 +609,24 @@ let emitStackAlloc builder i64 sizeBytes name =
     buildAlloca(builder)((sizeBytes + 7) / 8
     |> Ashes.Number.UInt.fromInt64
     |> arrayType(i64))(name)
+
+// An ADT cell in the caller's own frame (`AllocAdtStack`, stage 0's `EmitStackAllocAdt`): the same
+// `[tag][fields...]` layout the arena and RC forms use, so the tag store is the same and a tagless
+// cell has none. Lowering picks this form only for a value whose scope proves it dead at the end of
+// the frame, so nothing reclaims it and nothing may outlive the frame.
+let emitStackAllocAdt builder i64 tag fieldCount tagless resultName =
+    (let cellPtr =
+        emitStackAlloc(builder)(i64)(adtAllocationSizeBytes(tagless)(fieldCount))("adt_stack")
+    in
+        let _ =
+            if tagless
+            then Unit
+            else
+                Unit
+                |> (given (_) ->
+                    buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(cellPtr))
+                |> (given (_) -> Unit)
+        in buildPtrToInt(builder)(cellPtr)(i64)(resultName))
 
 // The closure object `LlvmCodegenExpressions.cs`'s `EmitMakeClosure`/`EmitMakeClosureStack` lay
 // out: four `i64` words `{code, env, packedEnvironmentSize, dropper}`. `code` is the lifted
