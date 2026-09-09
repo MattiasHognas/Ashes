@@ -85,3 +85,24 @@ should gate any future attempt so it is not re-derived:
   shared; `FunctionOwnershipSummary` (AST-phase, `FuncKey`-keyed) and the IR-phase label-keyed
   analyses stay separate by design, since forcing one node type across that phase boundary buys
   nothing their consumers need.
+- **The per-call arena window over a non-tail recursive producer.** `LowerCallGeneral` opens an arena
+  window around every general call, and `LowerCallRestoreArena` copies an arena-placed result out of
+  it before reclaiming. For a self-recursive producer — `let recursive makeList (count: Int) = if
+  count == 0 then [] else 7 :: makeList(count - 1)` — that is a `CopyOutList` of a result that grows
+  with the recursion level, so peak memory is quadratic in the list's length. Measured (linux-x64,
+  peak RSS): 70 MB at N=2000, 259 MB at 4000, 1010 MB at 8000, against 320 KB of actual data at
+  N=20000. The copy is not avoidable while the window is: the restore rewinds the cursor to just
+  below the returned cells, so the cons cell the caller allocates next lands on top of them.
+  Confirmed by deleting the copy and the teardown together, which takes N=8000 from 1010 MB to
+  4.4 MB with the answer unchanged.
+  Do not attempt the obvious fix without a repro harness wider than the test suites. Skipping the
+  window for a call to a member of the enclosing recursive group was tried four ways — leaving the
+  window open, suppressing the `SaveArenaState` entirely, restricting to list results, restricting to
+  a call outside any TCO context, and restricting to the lexically enclosing function's own label —
+  and every one of them passes the whole stage-0 gate (2553 unit, 72 LSP, 748 end-to-end tests) while
+  segfaulting the self-hosted semantics test binary at the same point, jumping through an overwritten
+  code pointer. Treating the un-copied result like a stable reuse result in
+  `resultCopySeversArgumentReferences` and `resultCopyCopiesElements` does not change that. The real
+  fix has to keep the window and promote the result out of the reclaimed range rather than copy it,
+  and the shape that breaks the naive version has to be minimized first — `selfhost/tests/semantics`
+  is currently the only thing that catches it, which is itself a coverage gap worth closing.
