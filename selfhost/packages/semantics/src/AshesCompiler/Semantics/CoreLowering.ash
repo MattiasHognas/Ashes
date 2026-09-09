@@ -80,7 +80,7 @@ import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.ReuseResetSafety.specializationRebuildsAccumulator
-import AshesCompiler.Semantics.ReuseResetSafety.accumulatorLayoutIsPersistable
+import AshesCompiler.Semantics.ReuseResetSafety.namedAccumulatorFieldsPersistent
 import AshesCompiler.Semantics.Unification
 // Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some
 // terminal arm, with no passthrough arm that could alias a tuple built elsewhere.
@@ -269,6 +269,9 @@ type CoreTcoLoop =
     // constructor, in the order the body first matches them (stage 0's
     // `CollectCtorMatchedScrutinees`).
     | matchedAccumulators: List((Str, Str))
+    // Every parameter the loop body hands straight to a single-parameter specialization candidate
+    // as its accumulator, with that callee's name (stage 0's `CollectSpecializableCallArgs`).
+    | specializationAccumulators: List((Str, Str))
     | emitsLoop: Bool
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
@@ -384,7 +387,12 @@ type CoreLoweringState =
     | linearReuseNames: List(Str)
     // Each linear accumulator's slot, type, name, and whether the whole-program move analysis
     // proves it uniquely owned at every call of the loop function, which elides its entry deep copy.
-    | directReuseCandidates: List((Int, SemanticType, Str, Bool))
+    // Each entry-copy candidate: the loop parameter's slot, its type, its name, whether the move
+    // analysis proved it already unique (so the copy is elided), and whether it was admitted for a
+    // specialization rather than for direct in-place reuse in this body — a specialization's own
+    // reuse happens in the generated function, so the "did the body rebuild structurally" gate
+    // that governs a direct candidate must not govern it.
+    | directReuseCandidates: List((Int, SemanticType, Str, Bool, Bool))
     // The program's top-level functions and every call site among them, the census the
     // move-safety proof of a loop parameter is drawn from.
     | moveFunctionTable: List((Str, List(Str), Expr))
@@ -452,6 +460,11 @@ type CoreLoweringState =
     | reuseSpecializations: List((Str, Str))
     | specializingLinearParam: Maybe(Str)
     | specializingInProgress: List(Str)
+    // Stage 0's `_linearSpecializationAccumulators`: the loop parameters this body hands straight
+    // to a single-parameter specialization candidate, deep-copied once at loop entry so the
+    // specialization may rewrite them in place. The only route by which a call whose accumulator
+    // is a bare name — rather than a provably fresh call result — reaches a specialization.
+    | linearSpecializationAccumulators: List(Str)
     // Stage 0's `_topLevelFunctionRefs`: each top-level `let` whose lambda captured nothing, by
     // name with its code label and generalized scheme, so a body spliced into a scope that never
     // captured it (an inlined helper) can rebuild its closure from the label with a null
@@ -776,6 +789,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         reuseSpecializations = [],
         specializingLinearParam = None,
         specializingInProgress = [],
+        linearSpecializationAccumulators = [],
         topLevelFunctionRefs = [],
         valuePlacements = [],
         joinRepresentations = [],
@@ -3786,7 +3800,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)
@@ -6859,11 +6873,11 @@ let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: C
 // The entry deep copy of every direct-reuse accumulator the move analysis did not prove unique:
 // the accumulator is loaded, cloned, and stored back, so the loop body may overwrite its
 // matched cells in place.
-let recursive emitDirectReuseEntryCopies (candidates: List((Int, SemanticType, Str, Bool))) (state: CoreLoweringState) =
+let recursive emitDirectReuseEntryCopies (candidates: List((Int, SemanticType, Str, Bool, Bool))) (state: CoreLoweringState) =
     match candidates with
         | [] -> state
-        | (_slot, _semanticType, _name, true) :: rest -> emitDirectReuseEntryCopies(rest)(state)
-        | (slot, semanticType, _name, false) :: rest ->
+        | (_slot, _semanticType, _name, true, _isSpecialization) :: rest -> emitDirectReuseEntryCopies(rest)(state)
+        | (slot, semanticType, _name, false, _isSpecialization) :: rest ->
             match freshTemp(state) with
                 | FreshTemp { state = allocated, temp = loaded } ->
                     match allocated
@@ -6880,6 +6894,12 @@ let recursive emitDirectReuseEntryCopies (candidates: List((Int, SemanticType, S
 // omitted and the body's nullary reuses, no longer backed by a copy, revert to fresh arena
 // allocations. A copy that stays is elided when the move analysis proves the accumulator
 // uniquely owned at every call, and spliced in at the loop-entry point otherwise.
+let recursive specializationEntryCopies (candidates: List((Int, SemanticType, Str, Bool, Bool))) =
+    match candidates with
+        | [] -> []
+        | (slot, semanticType, name, provesUnique, true) :: rest -> (slot, semanticType, name, provesUnique, true) :: specializationEntryCopies(rest)
+        | _candidate :: rest -> specializationEntryCopies(rest)
+
 let finalizeDirectReuse (frame: CoreTcoLoopFrame) lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
@@ -6893,7 +6913,13 @@ let finalizeDirectReuse (frame: CoreTcoLoopFrame) lowered =
                         then
                             match emitDirectReuseEntryCopies(candidates)((state with reversedInstructions = [])) with
                                 | generated -> success(bodyTemp)(semanticType)((generated with reversedInstructions = spliceGeneratedInstructions(bodyCount)([])(state.reversedInstructions)(generated.reversedInstructions)))
-                        else success(bodyTemp)(semanticType)((state with reversedInstructions = revertReuseAllocations(bodyCount)(state.reversedInstructions)))
+                        else
+                            // Only the direct candidates lose their copies: a specialization's own
+                            // reuse fires inside the generated function, which this body's
+                            // instructions never contain.
+                            match emitDirectReuseEntryCopies(specializationEntryCopies(candidates))((state with reversedInstructions = [])) with
+                                | generated ->
+                                    success(bodyTemp)(semanticType)((generated with reversedInstructions = spliceGeneratedInstructions(bodyCount)([])(revertReuseAllocations(bodyCount)(state.reversedInstructions))(generated.reversedInstructions)))
 
 let finalizeTcoRuntimeManagedParams (label: Str) lowered =
     match lowered with
@@ -6974,7 +7000,16 @@ and collectCtorMatchedScrutineesInCases (parameters: List(Str)) (cases: List((Pa
             |> collectCtorMatchedScrutinees(parameters)(body)
             |> collectCtorMatchedScrutineesInCases(parameters)(rest)
 
-let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) =
+// The names of the program's single-parameter specialization candidates: stage 0 excludes a
+// multi-parameter candidate from this scan (`_freshCompositionOnlySpecializable`), since only the
+// fresh-composition call site can supply its earlier arguments.
+let recursive singleParameterCandidateNames (candidates: List((Str, List(Str), Expr))) =
+    match candidates with
+        | [] -> []
+        | (name, _parameter :: [], _value) :: rest -> name :: singleParameterCandidateNames(rest)
+        | _candidate :: rest -> singleParameterCandidateNames(rest)
+
+let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (candidates: List((Str, List(Str), Expr))) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
         let parameters = parameter :: collectLambdaParamNames([])(body)
@@ -6995,6 +7030,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             argumentShapes = shapes,
                             patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
                             matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
+                            specializationAccumulators = collectSpecializableCallArgs(parameters)(singleParameterCandidateNames(candidates))(innermost)([]),
                             emitsLoop = emitsLoop
                         ))
                     else None)
@@ -7002,7 +7038,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
 // A single recursive binding's loop is emitted as stage 0's loop; a mutual-recursion group
 // member keeps the loop context for its tail self-call arguments but stays a call until the
 // group dispatch is ported.
-let enterRecursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) = state with tcoLoop = recursiveTcoLoop(name)(parameter)(body)(emitsLoop)(state.constructorLayouts)
+let enterRecursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) = state with tcoLoop = recursiveTcoLoop(name)(parameter)(body)(emitsLoop)(state.constructorLayouts)(state.specializationCandidates)
 
 let recursive isChainParameterName (name: Str) (names: List(Str)) =
     match names with
@@ -7192,11 +7228,97 @@ let recursive scanDirectReuseAccumulators (loop: CoreTcoLoop) (slots: List(Int))
                             then
                                 state
                                 |> synthesizeAccumulatorCopier(named)
-                                |> (given (synthesized: CoreLoweringState) -> synthesized with linearReuseNames = accumulator :: synthesized.linearReuseNames, directReuseCandidates = append(synthesized.directReuseCandidates)([(slot, named, accumulator, reuseAccumulatorIsUnique(loop.selfName)(accumulator)(synthesized))]))
+                                |> (given (synthesized: CoreLoweringState) -> synthesized with linearReuseNames = accumulator :: synthesized.linearReuseNames, directReuseCandidates = append(synthesized.directReuseCandidates)([(slot, named, accumulator, reuseAccumulatorIsUnique(loop.selfName)(accumulator)(synthesized), false)]))
                                 |> scanDirectReuseAccumulators(loop)(slots)(rest)
                             else scanDirectReuseAccumulators(loop)(slots)(rest)(state)
                         | _ -> scanDirectReuseAccumulators(loop)(slots)(rest)(state)
                 | _ -> scanDirectReuseAccumulators(loop)(slots)(rest)(state)
+
+// The accumulator parameter type of a single-parameter specialization candidate, read through the
+// current substitution, and whether its layout admits the entry deep copy that makes it unique
+// (stage 0's `IsReusableSpecializationAccumulatorType`): a list of a deep-copyable element, or a
+// named ADT whose own direct-reuse rule already accepts it.
+let specializationAccumulatorTypeOf (callee: Str) (state: CoreLoweringState) =
+    match lookupBinding(callee)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+            match resolveType(state)(body) with
+                | SemFunction(parameterType, _resultType, _effects) ->
+                    parameterType
+                    |> resolveType(state)
+                    |> Some
+                | _ -> None
+        | None -> None
+
+// Every constructor field of a named type, resolved, with whether the type has any constructor at
+// all: a type the lowering knows no constructor for proves nothing about its own layout.
+let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (found: Bool) (fieldTypes: List(SemanticType)) =
+    match layouts with
+        | [] -> (found, fieldTypes)
+        | layout :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName
+                    then
+                        match layoutFieldTypes(layout)(state) with
+                            | (layoutFields, _resultType) ->
+                                layoutFields
+                                |> map(resolveType(state))
+                                |> append(fieldTypes)
+                                |> namedTypeConstructorFieldTypes(typeName)(rest)(state)(true)
+                    else namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
+                | None -> namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
+
+// Stage 0's `AccumulatorLayoutIsPersistable`: a list accumulator's cells are rebuilt in the
+// ordinary heap and carry whatever their elements already were, so its layout constrains nothing;
+// a named ADT accumulator's fresh cells would be allocated into the never-reset to-space, so it is
+// admitted only in the shape needing no materialization — every field the accumulator itself or a
+// copy type.
+let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) (state: CoreLoweringState) =
+    match accumulatorType with
+        | SemNamed(_symbolId, typeName, _arguments) ->
+            match namedTypeConstructorFieldTypes(typeName)(state.constructorLayouts)(state)(false)([]) with
+                | (false, _fieldTypes) -> false
+                | (true, fieldTypes) -> namedAccumulatorFieldsPersistent(typeName)(fieldTypes)
+        | _ -> true
+
+// Stage 0's `IsReusableSpecializationAccumulatorType`, whose real question is whether the loop
+// entry can build the deep copy that makes the accumulator unique (`TrySynthesizeAdtCopier is not
+// null`). A list qualifies when its element copies out; a named ADT when it is not a resource and
+// every constructor field is the accumulator itself or a copy type — a self field the synthesized
+// copier calls itself for, a copy field it copies inline, so the copier always exists. That is
+// deliberately not `arenaDeepCopySupported`, whose cycle guard reports every recursive ADT as
+// not deep-copyable: that flag answers whether an INLINE walk terminates, not whether a copier
+// function can be synthesized, and `StructuralCopiers.ash`'s `emitCopierField` synthesizes a
+// recursive one by construction.
+let reusableSpecializationAccumulatorType (accumulatorType: SemanticType) (state: CoreLoweringState) =
+    match accumulatorType with
+        | SemList(element) ->
+            match heapFactsOf(element)(state) with
+                | HeapLayoutFacts { containsResource = containsResource, arenaDeepCopySupported = deepCopySupported } -> !containsResource && deepCopySupported
+        | SemNamed(_symbolId, typeName, _arguments) -> !isResourceTypeName(typeName) && accumulatorLayoutIsPersistable(accumulatorType)(state)
+        | _ -> false
+
+// Stage 0's `LowerLambdaCoreScanSpecializationReuse`: a loop parameter handed straight to a
+// single-parameter specialization candidate is deep-copied once at loop entry so the
+// specialization may rewrite it in place, and its name joins
+// `linearSpecializationAccumulators` so the call site can prove it unique. The gate reads the
+// CALLEE's accumulator parameter type, the copy the loop parameter's own.
+let recursive scanSpecializationAccumulators (loop: CoreTcoLoop) (slots: List(Int)) (accumulators: List((Str, Str))) (state: CoreLoweringState) =
+    match accumulators with
+        | [] -> state
+        | (accumulator, callee) :: rest ->
+            match (parameterOrdinalOf(accumulator)(loop.parameterNames)(0), specializationAccumulatorTypeOf(callee)(state)) with
+                | (Some(ordinal), Some(calleeAccumulatorType)) ->
+                    match (loopSlotAtOrdinal(ordinal)(slots), lookupBinding(accumulator)(state.bindings)) with
+                        | (Some(slot), Some(CoreBinding { scheme = TypeScheme { body = parameterType } })) ->
+                            if containsName(accumulator)(state.linearReuseNames) == false && !provisionallyRuntimeManagedLoopSlot(ordinal)(slot)(loop)(state) && reusableSpecializationAccumulatorType(calleeAccumulatorType)(state)
+                            then
+                                state
+                                |> (given (scanned: CoreLoweringState) -> scanned with linearSpecializationAccumulators = accumulator :: scanned.linearSpecializationAccumulators, directReuseCandidates = append(scanned.directReuseCandidates)([(slot, resolveType(scanned)(parameterType), accumulator, reuseAccumulatorIsUnique(loop.selfName)(accumulator)(scanned), true)]))
+                                |> scanSpecializationAccumulators(loop)(slots)(rest)
+                            else scanSpecializationAccumulators(loop)(slots)(rest)(state)
+                        | _ -> scanSpecializationAccumulators(loop)(slots)(rest)(state)
+                | _ -> scanSpecializationAccumulators(loop)(slots)(rest)(state)
 
 // The loop body of a loop function (stage 0's `LowerLambdaCoreEnterTcoLoop`): once the innermost
 // chain lambda is entered, its parameters get their back-edge slots, the direct-reuse
@@ -7213,6 +7335,7 @@ let enterTcoLoopBody (label: Str) (parameter: Str) (state: CoreLoweringState) =
                 | (slotted, slots) ->
                     slotted
                     |> scanDirectReuseAccumulators(loop)(slots)(loop.matchedAccumulators)
+                    |> scanSpecializationAccumulators(loop)(slots)(loop.specializationAccumulators)
                     |> emitTcoLoopEntry(label)(slots)(loop)(length(slotted.reversedInstructions))
         | _ -> state
 
@@ -11329,7 +11452,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)
@@ -15332,8 +15455,29 @@ let recursive lastParameterName (parameters: List(Str)) =
         | parameter :: [] -> Some(parameter)
         | _parameter :: rest -> lastParameterName(rest)
 
-// The specialization a call qualifies for, stage 0's `QualifyReuseSpecializationCall` narrowed to
-// the fresh-result path: the callee is one of the program's self-recursive top-level functions,
+// Stage 0's `QualifyVariableReuseSpecialization`: the accumulator is a bare name the enclosing
+// loop's entry deep copy already made uniquely owned, so the specialization may rewrite it in
+// place without proving the value itself fresh.
+let reuseSpecializationArgumentIsLinearAccumulator (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) -> containsName(name)(state.linearSpecializationAccumulators)
+        | _ -> false
+
+// The two ways stage 0 proves the accumulator uniquely owned at the call. The fresh-result path
+// additionally requires a list accumulator (`QualifyFreshResultReuseSpecialization`'s
+// `NthCurriedArgType ... is not TypeRef.TList` rejection): a named ADT's fresh cells are allocated
+// into the never-reset to-space, which only the loop path's entry copy makes safe.
+let specializationAccumulatorIsUnique (accumulator: Expr) (accumulatorType: SemanticType) (state: CoreLoweringState) =
+    if reuseSpecializationArgumentIsLinearAccumulator(accumulator)(state)
+    then true
+    else
+        match accumulatorType with
+            | SemList(_element) -> reuseSpecializationArgumentIsFresh(accumulator)(state)
+            | _ -> false
+
+// The specialization a call qualifies for, stage 0's `QualifyReuseSpecializationCall`: the
+// accumulator is either a provably fresh call result or a loop accumulator the entry copy made
+// unique. The callee is one of the program's self-recursive top-level functions,
 // takes exactly its own parameter count of arguments, rebuilds its accumulator, carries a layout
 // the specialization can keep persistent (a list always does; a named ADT would need the to-space
 // materialization no lowering site emits), is handed a provably fresh accumulator, and mentions
@@ -15350,7 +15494,7 @@ let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                             | (Some(parameter), Some(accumulator)) ->
                                 match reuseSpecializationCalleeType(callee)(coreListLength(spine.arguments))(state) with
                                     | Some((accumulatorType, functionType)) ->
-                                        if length(parameters) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType) && reuseSpecializationArgumentIsFresh(accumulator)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
+                                        if length(parameters) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType)(state) && specializationAccumulatorIsUnique(accumulator)(accumulatorType)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
                                         then Some((callee, parameter, value, spine.arguments))
                                         else None
                                     | None -> None

@@ -31,7 +31,7 @@ export (
     value reuseResetSafety,
     value specializationRebuildsAccumulator,
     value accumulatorIsFullyPersistent,
-    value accumulatorLayoutIsPersistable,
+    value namedAccumulatorFieldsPersistent,
 )
 
 // The verdict on one specialized body: whether its loop's arena reset is safe, the decision reason
@@ -272,11 +272,16 @@ let accumulatorIsFullyPersistent (accumulatorType: SemanticType) =
         | SemList(element) -> canArenaResetLayout(element)
         | _ -> false
 
-// Whether a call may be routed to a specialization at all, stage 0's `AccumulatorLayoutIsPersistable`:
-// a list accumulator's cells are rebuilt in the ordinary heap and carry whatever their elements
-// already were, so its layout constrains nothing; only a named ADT accumulator, whose fresh cells
-// would be allocated into the never-reset to-space, has its field layout gated.
-let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) =
-    match accumulatorType with
-        | SemNamed(_symbol, _name, _arguments) -> accumulatorIsFullyPersistent(accumulatorType)
-        | _ -> true
+// The named-ADT half of stage 0's `AccumulatorIsFullyPersistent`, restricted to the shape that
+// needs no to-space materialization at all: every constructor field is either the accumulator type
+// itself (a recursive child, rewritten in place) or a copy type (inline, nothing to relocate). A
+// field of any other shape — a string, a list, a foreign ADT — could point into per-iteration
+// scratch and is what to-space materialization exists for. `fieldTypes` is every constructor's
+// fields of the named type, already resolved.
+let recursive everyAccumulatorFieldSelfOrCopy (accumulatorName: Str) (fieldTypes: List(SemanticType)) =
+    match fieldTypes with
+        | [] -> true
+        | SemNamed(_symbol, fieldName, _arguments) :: rest -> fieldName == accumulatorName && everyAccumulatorFieldSelfOrCopy(accumulatorName)(rest)
+        | fieldType :: rest -> canArenaResetLayout(fieldType) && everyAccumulatorFieldSelfOrCopy(accumulatorName)(rest)
+
+let namedAccumulatorFieldsPersistent (accumulatorName: Str) (fieldTypes: List(SemanticType)) = everyAccumulatorFieldSelfOrCopy(accumulatorName)(fieldTypes)

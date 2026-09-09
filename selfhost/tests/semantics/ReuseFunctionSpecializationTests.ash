@@ -11,6 +11,7 @@ import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
+import AshesCompiler.Semantics.TcoAnalysis.collectInnermostBody
 export (
     value runReuseFunctionSpecializationTests,
 )
@@ -35,6 +36,14 @@ let dumped (source: Str) =
     |> Ashes.Text.join("\n")
 
 let containsText (needle: Str) (haystack: Str) = Ashes.Text.contains(haystack)(needle)
+
+let recursive lookupCandidateValue (name: Str) (candidates: List((Str, List(Str), Expr))) =
+    match candidates with
+        | [] -> None
+        | (candidate, parameters, value) :: rest ->
+            if candidate == name
+            then Some((parameters, value))
+            else lookupCandidateValue(name)(rest)
 
 let recursive coreCandidateCount (candidates: List((Str, List(Str), Expr))) =
     match candidates with
@@ -64,6 +73,11 @@ let heapElementSource unit = "let recursive makeList (count: Int) =\n" + "    if
 // The accumulator is the LAST of several parameters; the earlier ones are configuration the
 // specialization carries unchanged. Stage 0's own `moveBodies` shape.
 let multiParameterSource unit = "let recursive makeList (count: Int) =\n" + "    if count == 0\n" + "    then []\n" + "    else 7 :: makeList(count - 1)\n" + "\n" + "let recursive scaleAll (factor: Int) (values: List(Int)) =\n" + "    match values with\n" + "        | [] -> []\n" + "        | value :: rest -> value * factor :: scaleAll(factor)(rest)\n" + "\n" + "scaleAll(3)(makeList(4))\n"
+
+// The accumulator is a loop parameter rather than a fresh call result, and a named ADT whose every
+// constructor field is the accumulator itself or a copy type — the shape stage 0 routes through
+// `QualifyVariableReuseSpecialization` after its loop-entry copy makes the parameter unique.
+let loopAccumulatorSource unit = "type Tree =\n" + "    | Leaf\n" + "    | Node(Tree, Int, Tree)\n" + "\n" + "let recursive bump (tree: Tree) =\n" + "    match tree with\n" + "        | Leaf -> Leaf\n" + "        | Node(left, value, right) -> Node(bump(left), value + 1, bump(right))\n" + "\n" + "let recursive makeTree (depth: Int) =\n" + "    if depth == 0\n" + "    then Leaf\n" + "    else Node(makeTree(depth - 1), depth, makeTree(depth - 1))\n" + "\n" + "let recursive rounds (count: Int) (acc: Tree) =\n" + "    if count == 0\n" + "    then acc\n" + "    else rounds(count - 1)(bump(acc))\n" + "\n" + "rounds(3)(makeTree(3))\n"
 
 // A reader rather than a rewriter: its result is not the accumulator's type, so routing it
 // through a specialization would allocate its result where nothing reclaims it.
@@ -154,6 +168,43 @@ let testMultiParameterSpecializationReusesListCell unit =
     |> containsText("AllocReusing")
     |> test.assertEqual(true)
 
+let recursive describeSpecializationAccumulators (found: List((Str, Str))) =
+    match found with
+        | [] -> ""
+        | (accumulator, callee) :: rest -> accumulator + "->" + callee + describeSpecializationAccumulators(rest)
+
+// The loop-parameter scan on its own: `rounds`'s body hands `acc` straight to the single-parameter
+// candidate `bump`.
+let testLoopScanFindsSpecializationAccumulator unit =
+    match Unit
+    |> loopAccumulatorSource
+    |> parsed with
+        | ProgramSyntax { items = items } ->
+            match reuseSpecializationCandidates(items) with
+                | candidates ->
+                    match lookupCandidateValue("rounds")(candidates) with
+                        | Some((parameters, value)) ->
+                            value
+                            |> collectInnermostBody
+                            |> (given (body: Expr) -> collectSpecializableCallArgs(parameters)(["bump"])(body)([]))
+                            |> describeSpecializationAccumulators
+                            |> test.assertEqual("acc->bump")
+                        | None -> test.fail("rounds should be a specialization candidate")
+
+let testLoopAccumulatorGeneratesSpecialization unit =
+    Unit
+    |> loopAccumulatorSource
+    |> dumped
+    |> containsText("function bump__reuse")
+    |> test.assertEqual(true)
+
+let testLoopAccumulatorSpecializationReusesCells unit =
+    Unit
+    |> loopAccumulatorSource
+    |> dumped
+    |> containsText("AllocReusing")
+    |> test.assertEqual(true)
+
 let testReaderKeepsOrdinaryCall unit =
     Unit
     |> readerSource
@@ -177,5 +228,8 @@ let runReuseFunctionSpecializationTests unit =
     |> testHeapElementListGeneratesSpecialization
     |> testMultiParameterCandidateGeneratesSpecialization
     |> testMultiParameterSpecializationReusesListCell
+    |> testLoopScanFindsSpecializationAccumulator
+    |> testLoopAccumulatorGeneratesSpecialization
+    |> testLoopAccumulatorSpecializationReusesCells
     |> testReaderKeepsOrdinaryCall
     |> reportSuccess
