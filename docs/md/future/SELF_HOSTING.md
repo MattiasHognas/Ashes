@@ -2123,9 +2123,17 @@ same public behavior.
   `--explain reuse` output — and the two declines, a threaded rather than fresh argument and a
   reader); all four self-hosted suites and the whole-program IR parity fixtures green; and the
   self-hosted CLI compiling and running the same programs to stage 0's answers, with peak RSS
-  matching its own `--debug-disable-reuse` build to within the reused cells. Still open: sharing
-  one specialization across call sites (stage 0 caches per concrete instantiation; each qualifying
-  site generates its own here) and to-space materialization itself. The reset-safety verdict now
+  matching its own `--debug-disable-reuse` build to within the reused cells. Still open: to-space
+  materialization itself. A specialization is now generated once per concrete instantiation
+  (2026-09-09), stage 0's own cache: `reuseSpecializationCacheKey` keys `reuseSpecializations` on
+  the callee and its resolved function type, and a later call at the same type takes a closure over
+  the label already emitted (`lowerCachedReuseSpecializedCall`) instead of lowering the candidate's
+  body again — the closure goes in a local and the ordinary call path applies the arguments to it,
+  so nothing about argument ownership is re-implemented. The cached path marks the callee in
+  progress exactly as generation does; without that the rebuilt call qualifies again, hits the same
+  cache entry, and recurses until the stack overflows. Measured on a program calling one
+  specializable function from two sites: the emitted binary drops from 28,784 to 24,688 bytes and
+  its answer is unchanged. The reset-safety verdict now
   has its consumers (2026-09-09): `recordFullyReusingSpecialization` scans the generated body that
   bound the linear parameter (`specializingReuseLabel`, stage 0's own) with `reuseResetSafety` and,
   when it allocates nothing that could escape the watermark and the accumulator's layout is fully

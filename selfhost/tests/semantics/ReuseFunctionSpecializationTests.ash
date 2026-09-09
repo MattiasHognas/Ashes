@@ -138,11 +138,20 @@ let testLoopedCallGeneratesSpecialization unit =
     |> containsText("function doubleAll__reuse")
     |> test.assertEqual(true)
 
-let testSecondCallSiteTakesASuffixedLabel unit =
+// Two call sites of the same function at the same type share one specialization, stage 0's cache:
+// the second takes a closure over the label already emitted rather than generating its own.
+let testSecondCallSiteSharesTheSpecialization unit =
     Unit
     |> twoCallSiteSource
     |> dumped
     |> containsText("function doubleAll__reuse$1")
+    |> test.assertEqual(false)
+
+let testTwoCallSitesStillGenerateOne unit =
+    Unit
+    |> twoCallSiteSource
+    |> dumped
+    |> containsText("function doubleAll__reuse")
     |> test.assertEqual(true)
 
 let testThreadedListArgumentKeepsOrdinaryCall unit =
@@ -246,7 +255,8 @@ let runReuseFunctionSpecializationTests unit =
     |> testSpecializationRebuildsListCellInPlace
     |> testSpecializationPublishesListCellToken
     |> testLoopedCallGeneratesSpecialization
-    |> testSecondCallSiteTakesASuffixedLabel
+    |> testSecondCallSiteSharesTheSpecialization
+    |> testTwoCallSitesStillGenerateOne
     |> testThreadedListArgumentKeepsOrdinaryCall
     |> testHeapElementListGeneratesSpecialization
     |> testMultiParameterCandidateGeneratesSpecialization

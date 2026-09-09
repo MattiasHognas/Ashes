@@ -15548,7 +15548,7 @@ let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 match reuseSpecializationCalleeType(callee)(coreListLength(spine.arguments))(state) with
                                     | Some((accumulatorType, functionType)) ->
                                         if length(parameters) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType)(state) && specializationAccumulatorIsUnique(accumulator)(accumulatorType)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
-                                        then Some((callee, parameter, value, accumulatorType, spine.arguments))
+                                        then Some((callee, parameter, value, accumulatorType, functionType, spine.arguments))
                                         else None
                                     | None -> None
                             | _ -> None
@@ -15580,6 +15580,43 @@ let recursive specializedCallExpression (callee: Expr) (arguments: List(Expr)) =
         | [] -> callee
         | argument :: rest ->
             specializedCallExpression(ExprCall(callee)(argument)(false)(callArgumentsInline))(rest)
+
+// Stage 0's `GetOrCreateReuseSpecialization` cache key: a specialization is monomorphized to the
+// call's own argument types, so a function used at two concrete types gets two of them, and two
+// call sites at the same type share one.
+let reuseSpecializationCacheKey (callee: Str) (functionType: SemanticType) = callee + "|" + formatSemanticType(functionType)
+
+let recursive lookupReuseSpecialization (key: Str) (specializations: List((Str, Str))) =
+    match specializations with
+        | [] -> None
+        | (candidate, label) :: rest ->
+            if candidate == key
+            then Some(label)
+            else lookupReuseSpecialization(key)(rest)
+
+// A call routed to an already-generated specialization: its label takes a closure over the empty
+// environment (the generated body captures nothing — `inlinedReferencesResolveHere` is what proves
+// that at qualification), the closure goes in a local, and the ordinary call path applies the
+// arguments to it exactly as it would to any other bound function. The callee is marked in progress
+// for that continuation exactly as generation marks it, since the rebuilt call otherwise qualifies
+// again, hits this same cache entry, and recurses without end.
+let lowerCachedReuseSpecializedCall (callee: Str) (label: Str) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = envState, temp = environmentTemp } ->
+            match envState
+            |> emit(LoadConstInt(environmentTemp)(0))
+            |> emitClosure(label)(environmentTemp)(0)(false) with
+                | (closureState, closureTemp) ->
+                    match freshLocal(closureState) with
+                        | FreshLocal { state = slotState, local = slot } ->
+                            match slotState |> emit(StoreLocal(slot)(closureTemp)) |> addBinding(callee)(TypeScheme(quantified = [], body = functionType, constraints = []))(CoreLocal(slot)) |> (given (bound: CoreLoweringState) -> bound with specializingInProgress = callee :: bound.specializingInProgress) |> lower(specializedCallExpression(ExprVar(callee))(arguments)) with
+                                | LoweredCoreValue { state = callState, temp = temp, semanticType = semanticType, error = error } ->
+                                    LoweredCoreValue(
+                                        state = restoreBindings(state.bindings)((callState with specializingInProgress = state.specializingInProgress)),
+                                        temp = temp,
+                                        semanticType = semanticType,
+                                        error = error
+                                    )
 
 let recursive functionWithLabel (label: Str) (functions: List(IrFunction)) =
     match functions with
@@ -15617,7 +15654,7 @@ let recordFullyReusingSpecialization (callee: Str) (accumulatorType: SemanticTyp
                                     then lowered with state = (state with fullyReusingCallees = callee :: state.fullyReusingCallees)
                                     else lowered
 
-let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (accumulatorType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+let generateReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let label =
         state.reuseSpecializations
         |> length
@@ -15626,11 +15663,21 @@ let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (accu
         match state with
             | CoreLoweringState { bindings = outerBindings, currentSpan = declarationSpan } ->
                 []
-                |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingReuseLabel = None, specializingInProgress = callee :: state.specializingInProgress, reuseSpecializations = (label, callee) :: state.reuseSpecializations))
+                |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingReuseLabel = None, specializingInProgress = callee :: state.specializingInProgress, reuseSpecializations = (cacheKey, label) :: state.reuseSpecializations))
                 |> relabelReuseSpecialization(label)
                 |> lowerPreparedRecursiveGroup([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(outerBindings)
                 |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
                 |> restoreSpecializationScope(state))
+
+// The specialization is generated once per concrete instantiation, stage 0's cache: a later call
+// at the same type takes a closure over the label already emitted instead of lowering the
+// candidate's body again.
+let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (accumulatorType: SemanticType) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+    (let cacheKey = reuseSpecializationCacheKey(callee)(functionType)
+    in
+        match lookupReuseSpecialization(cacheKey)(state.reuseSpecializations) with
+            | Some(label) -> lowerCachedReuseSpecializedCall(callee)(label)(functionType)(arguments)(lower)(state)
+            | None -> generateReuseSpecializedCall(callee)(parameter)(value)(accumulatorType)(cacheKey)(arguments)(lower)(state))
 
 let lowerGeneralCall expression function argument lower state =
     match (isTailSelfCall(collectCallSpine(expression))(state), state.tcoLoopFrame, state.tcoLoop) with
@@ -15642,7 +15689,7 @@ let lowerGeneralCall expression function argument lower state =
             |> locateLoweredMismatch(argumentSiteOf(state))
         | _ ->
             match reuseSpecializedCallOf(collectCallSpine(expression))(state) with
-                | Some((callee, parameter, value, accumulatorType, arguments)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(accumulatorType)(arguments)(lower)(state)
+                | Some((callee, parameter, value, accumulatorType, functionType, arguments)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(accumulatorType)(functionType)(arguments)(lower)(state)
                 | None ->
                     match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
                         | Some(inlined) -> inlined
