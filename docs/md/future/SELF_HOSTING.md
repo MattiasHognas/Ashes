@@ -2076,8 +2076,22 @@ same public behavior.
   first port slice restricts to a copy-type element (no to-space needed at all, since
   `AccumulatorIsFullyPersistent` degenerates trivially): specialization generation, call-site
   qualification, and the reset-safety scan, deferring the to-space materialization of a heap-leaf
-  accumulator field to a follow-up. Still open in full: the general named-type and nested-ADT
-  accumulator cases, and to-space materialization itself.
+  accumulator field to a follow-up. Ported (2026-09-09), the analysis half of that slice:
+  `ReuseResetSafety.ash` carries stage 0's `IsFullyReusing` whole — the forbidden-allocation scan
+  (`AllocAdt`/`AllocAdtStack`/`AllocStack`/`ConcatStr` and the four copy-outs, each rejecting with
+  its own `ReuseDecisionReason` and the offending instruction's location), the temp-reader and
+  local-slot dataflow tables, the safely-consumed walk (writes into, field reads from,
+  `CopyFixedInto`/`CopyOutArenaToSpace` materialization, closure-environment capture, and
+  borrow/single-store-slot moves, bounded at stage 0's four levels), and the closure-consumed-as-
+  call-target walk that rejects a closure passed as an argument — plus
+  `specializationRebuildsAccumulator` (a rewriter's result type is the same list or named type as
+  its last parameter; a reader is declined) and `accumulatorIsFullyPersistent`, which admits a
+  copy-type-element list and nothing else, since a named type's fresh heap leaf fields would need
+  the to-space materialization no self-hosted lowering site emits. Verified by 30 unit tests in
+  `ReuseResetSafetyTests.ash` over hand-built instruction lists; the semantics suite and the
+  whole-program IR parity fixtures are unchanged (nothing calls the module yet). Still open: the
+  specialization generation and call-site qualification that consume it, the general named-type and
+  nested-ADT accumulator cases, and to-space materialization itself.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization

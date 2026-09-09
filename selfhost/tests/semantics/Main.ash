@@ -56,6 +56,7 @@ import PerceusLifetimePlacementTests
 import OwnershipInferenceTests
 import HeapLayoutClassificationTests
 import ReuseSpecializationTests
+import ReuseResetSafetyTests
 import ExplainReportTests
 import TaglessAdtLayoutTests
 import StructuralDroppersTests
@@ -121,6 +122,7 @@ let run unit =
     |> (given (_) -> OwnershipInferenceTests.runOwnershipInferenceTests(Unit))
     |> (given (_) -> HeapLayoutClassificationTests.runHeapLayoutClassificationTests(Unit))
     |> (given (_) -> ReuseSpecializationTests.runReuseSpecializationTests(Unit))
+    |> (given (_) -> ReuseResetSafetyTests.runReuseResetSafetyTests(Unit))
     |> (given (_) -> ExplainReportTests.runExplainReportTests(Unit))
     |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
     |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
