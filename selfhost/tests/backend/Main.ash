@@ -4804,6 +4804,36 @@ let buildAllocAdtToSpaceSurvivesResetsModule name context =
     |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(14))
     |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
 
+// Two ADT cells in the frame's own stack storage, a tagged two-field one and a tagless one holding
+// it, written and read back through the same frame across an arena bracket whose chunk is unmapped:
+// stack storage belongs to the frame, so the arena reclaim leaves it alone. Prints `45`
+// (`3 + 7 + 35`), the same answer the to-space form gives for the same shape.
+let buildAllocAdtStackModule name context =
+    [
+        IrInstruction(instruction = AllocAdtStack(0)(3)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(1)(7), location = None),
+        IrInstruction(instruction = SetAdtField(0)(0)(1)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(35), location = None),
+        IrInstruction(instruction = SetAdtField(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdtStack(3)(0)(1)(true), location = None),
+        IrInstruction(instruction = SetAdtField(3)(0)(0)(true), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(4)(6000000)(false), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = GetAdtField(5)(3)(0)(true), location = None),
+        IrInstruction(instruction = GetAdtTag(6)(5), location = None),
+        IrInstruction(instruction = GetAdtField(7)(5)(0)(false), location = None),
+        IrInstruction(instruction = GetAdtField(8)(5)(1)(false), location = None),
+        IrInstruction(instruction = AddInt(9)(7)(8), location = None),
+        IrInstruction(instruction = AddInt(10)(9)(6), location = None),
+        IrInstruction(instruction = PrintInt(10), location = None),
+        IrInstruction(instruction = LoadConstInt(11)(0), location = None),
+        IrInstruction(instruction = Return(11), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(12))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
 // An arena string and a 16-byte arena tuple, both in a chunk of their own, copied into the blob
 // region (`-1` by header length, `16` fixed) and read back once the chunk is unmapped. Prints
 // `hello|42`.
@@ -5040,6 +5070,8 @@ let testCopyOutClosureRcNormalizer unit = assertProgramPrintsLines(buildCopyOutC
 
 let testAllocAdtToSpaceSurvivesResets unit = assertProgramPrints(buildAllocAdtToSpaceSurvivesResetsModule)("selfhostBackendAllocAdtToSpace")("selfhost_backend_alloc_adt_to_space_e2e")("45")
 
+let testAllocAdtStack unit = assertProgramPrints(buildAllocAdtStackModule)("selfhostBackendAllocAdtStack")("selfhost_backend_alloc_adt_stack_e2e")("45")
+
 let testCopyOutArenaToSpace unit = assertProgramPrints(buildCopyOutArenaToSpaceModule)("selfhostBackendCopyOutArenaToSpace")("selfhost_backend_copy_out_arena_to_space_e2e")("hello|42")
 
 let testCopyFixedInto unit = assertProgramPrints(buildCopyFixedIntoModule)("selfhostBackendCopyFixedInto")("selfhost_backend_copy_fixed_into_e2e")("42")
@@ -5199,6 +5231,7 @@ let run shipped =
     |> testCopyOutClosureArena
     |> testCopyOutClosureRcNormalizer
     |> testAllocAdtToSpaceSurvivesResets
+    |> testAllocAdtStack
     |> testCopyOutArenaToSpace
     |> testCopyFixedInto
     |> testCopyStringIntoOrFresh

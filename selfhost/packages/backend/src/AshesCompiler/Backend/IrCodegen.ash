@@ -910,6 +910,7 @@ let codegenInstructionKind cx builder kind state =
                                                 if runtimeManaged
                                                 then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
                                                 else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
+                                        | AllocAdtStack(target, tag, fieldCount, tagless) -> ((target, emitStackAllocAdt(builder)(i64)(tag)(fieldCount)(tagless)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // The reuse pair (`IrCodegen.Rc`): an arena `DropReuse` is statically
                         // unique, so its token is the cell itself; the RC-managed form consumes
                         // the source and yields the cell only when its count is `1`, else the null

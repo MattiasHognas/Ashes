@@ -850,11 +850,19 @@ same public behavior.
   reuse token is allocated in the never-reset to-space with its tagless flag rather than the arena,
   and is not marked runtime-managed. That is also what keeps the specialized body's reset safe: the
   scan rejects a plain `AllocAdt`, which could put a live part of the result above the watermark, and
-  never a to-space cell. Still open: `AllocAdtStack`, whose only stage-0 producers are the two
-  scoped-placement sites `TryLowerConstructorExpression(stackAllocate: true)` serves — a `let`
-  binding an ADT the scope proves dead at its end, and a `match` scrutinee that is a constructor
-  expression. Neither placement decision is ported, so the flag reaches no self-hosted emission site
-  (only hand-built backend test IR does).
+  never a to-space cell. `AllocAdtStack` has its backend half too (2026-09-09):
+  `emitStackAllocAdt` is stage 0's `EmitStackAllocAdt`, the same `[tag][fields...]` layout the arena
+  and RC forms use over `emitStackAlloc`'s `[n x i64]` frame storage, with no tag word for a tagless
+  cell; `selfhost_backend_alloc_adt_stack_e2e` writes and reads back a tagged cell through a tagless
+  one across an arena bracket whose chunk is unmapped, since frame storage is not the arena's to
+  reclaim. `functionAllocatesStackMemory` deliberately does NOT list it, matching stage 0's own
+  `FunctionAllocatesNativeStackMemory`: a stack ADT is dead before any tail call in its frame, so
+  downgrading `musttail` for it would cost a real loop its tail call. Still open: the placement
+  decision that produces it. Stage 0 reaches `TryLowerConstructorExpression(stackAllocate: true)`
+  from exactly two sites — a `let` binding a constructor expression whose body is an immediate
+  single-arm destructuring match on that name (`IsImmediateSingleArmAdtDestructuringMatch`), and a
+  single-arm constructor-pattern `match` whose scrutinee is a constructor expression
+  (`ShouldStackAllocateImmediateMatchScrutinee`) — and neither is ported.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
