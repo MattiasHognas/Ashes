@@ -2058,9 +2058,26 @@ same public behavior.
   (`LowerLambdaCoreScanDirectReuse` and `CollectCtorMatchedScrutinees`'s constructor-pattern-only
   scan) is ported under OPT-25's aggregate tail (2026-09-07: linear reuse roots, arena tokens,
   the no-structural-reuse revert, and the move-safe entry-copy elision; see OPT-25's note and
-  `tco_variant_parameter_reused_in_place`). The full fold/list reuse SPECIALIZATION (`f$reuse`
-  functions, to-space allocation, `RcIsUnique`-gated runtime uniqueness checks, structural
-  droppers) is not ported — substantially larger than either slice and still open.
+  `tco_variant_parameter_reused_in_place`). Corrected (2026-09-09): `RcIsUnique` and structural
+  droppers are NOT part of the remaining gap — both are already fully ported end to end
+  (`RcIsUnique`'s IR kind, backend codegen `emitRuntimeRcIsUnique`, and three real `CoreLowering.ash`
+  emission sites plus `StructuralDroppers.ash`'s own dropper-sharing check). What is still missing
+  is specifically the `f$reuse` whole-function SPECIALIZATION stage 0's
+  `GetOrCreateReuseSpecialization` builds (`Lowering.Reuse.cs`): a compile-time, per-instantiation
+  monomorphization of a registered single-accumulator recursive function with its parameter treated
+  as linear, self-calls redirected to the specialization, and `IsFullyReusing` statically proving
+  every constructor in the specialized body is already an in-place `AllocReusing` before the
+  function's own arena reset is trusted safe — the qualification is static (call-site proofs of a
+  provably-unique argument), not an `RcIsUnique` runtime branch. Its to-space materialization side
+  (`AllocAdtToSpace`, `CopyOutArenaToSpace`, `CopyFixedInto`) has no self-hosted lowering emission
+  site at all yet (the IR kinds, backend codegen, and `PerceusLifetimePlacement.ash` awareness
+  exist; only hand-built backend test IR and stage-0 parity fixtures reach them). Given the
+  soundness risk (a wrong `IsFullyReusing` verdict corrupts memory, not merely leaks), the safest
+  first port slice restricts to a copy-type element (no to-space needed at all, since
+  `AccumulatorIsFullyPersistent` degenerates trivially): specialization generation, call-site
+  qualification, and the reset-safety scan, deferring the to-space materialization of a heap-leaf
+  accumulator field to a follow-up. Still open in full: the general named-type and nested-ADT
+  accumulator cases, and to-space materialization itself.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
