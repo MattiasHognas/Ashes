@@ -841,10 +841,13 @@ same public behavior.
   included — `CoreLowering.ash`'s ordinary-match-arm reuse path (OPT-42)
   `emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(token.runtimeManaged)(false)(tagless))`
   — stale by the time this note was last read; OPT-42's own entry already documented the mechanism,
-  just never crossed off this sibling claim. Still open: `AllocAdtStack`/`AllocAdtToSpace` carry
-  the flag but have no real emission site in `CoreLowering.ash` yet (confirmed by grep — only
-  hand-built backend test IR reaches them), and reuse-token layout exactness for the full
-  fold/list specialization still waits on OPT-42's own remaining scope.
+  just never crossed off this sibling claim. Reuse-token layout exactness reaches list cells too
+  (2026-09-09): the `f$reuse` specialization's cons arm mints a two-field token and the rebuild
+  consumes it as an `AllocReusing` carrying `ListCell`, the shape stage 0 emits for the same
+  program. Still open: `AllocAdtStack`/`AllocAdtToSpace` carry the flag but have no real emission
+  site in `CoreLowering.ash` yet (confirmed by grep — only hand-built backend test IR reaches
+  them), and the named-type and nested-ADT accumulator layouts still wait on OPT-42's own
+  remaining scope.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
@@ -2127,9 +2130,11 @@ same public behavior.
   recursive-copy admission a reuse-safe rebuild justifies, so every cell allocates fresh and the
   owner's scope-exit release stands — the placement the selfhost had before OPT-42's activation.
   Stage 0 instead keeps publishing tokens and refuses to consume them; the IR under the flag
-  therefore differs while the program's behavior is the same. Open: optimization levels
-  (milestone 5), trait specialization (milestone 3), and the report instrumentation's reuse
-  decisions under the flag.
+  therefore differs while the program's behavior is the same. The flag also withholds the whole
+  `f$reuse` specialization (2026-09-09): `reuseSpecializedCallOf` declines with `reuseEnabled`
+  false, so a qualifying call keeps its ordinary path and no specialization is generated at all.
+  Open: optimization levels (milestone 5), trait specialization (milestone 3), and the report
+  instrumentation's reuse decisions under the flag.
 - [~] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
   current public reports. Done: the report model, reporter, and formatter (`ExplainReport.ash`,
   `IrExplainReporter.ash`, `ExplainReportFormatter.ash`, `ReuseDecision.ash`), the decision
@@ -2241,8 +2246,11 @@ same public behavior.
   lowers instruction for instruction as stage 0 does, and
   `inlined_entry_helper_under_back_edge` pins a user helper spliced under a back edge as a
   whole-program parity fixture.
-- [~] **OPT-49** Both compilers: honor a poisoned result reach when releasing a consumed fresh
-  reference-counted argument. Only the deep-copied list case consults the callee's poison
+- [x] **OPT-49** Both compilers: honor a poisoned result reach when releasing a consumed fresh
+  reference-counted argument. Every shape named below is measured and fixed, and the work split
+  out of this item — OPT-49a, OPT-49b, OPT-49c, OPT-50, and OPT-51 — has all landed; the
+  self-hosted mirror of the two stage-0 halves continues under OPT-52. Only the deep-copied list
+  case consults the callee's poison
   (`ConsumedDeepCopiedListStaysWithCallee` / `consumedDeepCopiedListStaysWithCallee`); the
   remaining poison sources (a lambda, `await`, a handler, a result pipe, an unresolved callee)
   can still release an argument the callee's arena-placed result embeds. Model each shape
@@ -2312,7 +2320,8 @@ same public behavior.
   `tests/consumed_argument_captured_by_lambda_plateau.ash` pins the 200000-iteration output;
   `closure_record_parameter_entry_normalized.ash` and `closure_record_accumulator_loop.ash` pin
   a closure-bearing record through entry normalization and as a loop accumulator. The
-  self-hosted backend mirror needs the same closure-word bit and count-aware release.
+  self-hosted backend mirror of the closure-word bit and the count-aware release landed under
+  OPT-52 (2026-09-08).
 - [x] **OPT-49c** Self-hosted: the whole-program lowering takes capability declarations, `|?>`
   lowers as a core expression, and a record may hold a function-typed field, so the handler,
   result-pipe, and closure-capture shapes compile through the self-hosted compiler and OPT-49a
@@ -2701,10 +2710,12 @@ same public behavior.
   ADT cells, the `RcDup`s of the owned children they retain, and the inline spine, tuple, and
   field walks of an owned `let` (OPT-25's aggregate placements, OPT-30), exercised end to end by
   the owned-list, lambda-returns-record, and aggregate-children programs of the backend suite.
-  Open: the free-list cache if the compile-time benchmark needs it; the rest of Perceus
-  placement — the pattern-owner and loop-parameter drops from real lowering, shadowing-aware
-  liveness, and the TCO-loop-native and fold-specialization reuse emission OPT-42 has not yet
-  reached (its ordinary match-arm path is the first consumer; see OPT-42's note).
+  Every reuse emission path the lowering has now feeds this runtime: the ordinary match-arm
+  tokens, OPT-25's TCO-loop-native arena tokens, and (2026-09-09) the `f$reuse` specialization's
+  own list-cell tokens, whose `AllocReusing` carries `ListCell` and reuses the matched cons cell in
+  place. Open: the free-list cache if the compile-time benchmark needs it; the rest of Perceus
+  placement — the pattern-owner and loop-parameter drops from real lowering, and shadowing-aware
+  liveness.
 - [~] **CG-7** Link the emitted object into a real executable (`AshesCompiler.Backend.ElfLinker`, pure Ashes
   byte manipulation, no `ld`/`lld`). Source of truth: `LlvmImageLinkerElf.cs`. Static and
   eager-dynamic paths are chosen automatically from `.text`'s relocations: dynamic imports resolve
