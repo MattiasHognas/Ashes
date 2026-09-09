@@ -16,8 +16,8 @@
 // - A named-type accumulator is persistent when every constructor field is either the accumulator
 //   itself or a leaf the lowering's constructor-site materialization relocates into the never-reset
 //   to-space (`namedAccumulatorFieldsPersistent`). A field the materialization has no case for —
-//   a list, a closure, a foreign ADT — would be left pointing into reclaimed scratch, so it
-//   declines the accumulator instead.
+//   a list over a heap element, a closure, a resource handle — would be left pointing into
+//   reclaimed scratch, so it declines the accumulator instead.
 
 import Ashes.Collection.List.map
 import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
@@ -274,11 +274,10 @@ let accumulatorIsFullyPersistent (accumulatorType: SemanticType) =
         | _ -> false
 
 // The leaf half of stage 0's `IsReuseMaterializableFieldType`: a constructor field the lowering's
-// materialization can relocate into to-space, where the loop's per-iteration reset never reaches.
-// A copy type is inline and needs nothing; a string or bytes value is copied by its length; a tuple
-// of copy types is a fixed-size shallow copy. Stage 0 also relocates a list of strings and a
-// to-space-copyable ADT through copiers synthesized for the purpose, which self-hosted lowering does
-// not emit yet, so a field of either shape still declines its accumulator.
+// materialization can relocate into to-space, where the loop's per-iteration reset never reaches,
+// without synthesizing a copier for it. A copy type is inline and needs nothing; a string or bytes
+// value is copied by its length; a tuple of copy types is a fixed-size shallow copy. The two shapes
+// that do need a synthesized copier are the caller's `relocatable` half.
 let recursive reuseMaterializableFieldType (fieldType: SemanticType) =
     match fieldType with
         | SemString -> true
@@ -292,13 +291,15 @@ and everyCopyTypeElement (elements: List(SemanticType)) =
 
 // The named-ADT half of stage 0's `AccumulatorIsFullyPersistent`: every constructor field is either
 // the accumulator type itself (a recursive child, rewritten in place) or a leaf the materialization
-// makes persistent. A field of any other shape — a list, a closure, a foreign ADT — could point into
-// per-iteration scratch with nothing to relocate it. `fieldTypes` is every constructor's fields of
-// the named type, already resolved.
-let recursive everyAccumulatorFieldPersistable (accumulatorName: Str) (fieldTypes: List(SemanticType)) =
+// makes persistent. `relocatable` answers for the shapes whose materialization needs the type
+// environment — a list of strings and a to-space-copyable ADT, both relocated through a synthesized
+// copier — which this module has no access to; a field neither half admits could point into
+// per-iteration scratch with nothing to relocate it, and declines the accumulator. `fieldTypes` is
+// every constructor's fields of the named type, already resolved.
+let recursive everyAccumulatorFieldPersistable (accumulatorName: Str) relocatable (fieldTypes: List(SemanticType)) =
     match fieldTypes with
         | [] -> true
-        | SemNamed(_symbol, fieldName, _arguments) :: rest -> fieldName == accumulatorName && everyAccumulatorFieldPersistable(accumulatorName)(rest)
-        | fieldType :: rest -> reuseMaterializableFieldType(fieldType) && everyAccumulatorFieldPersistable(accumulatorName)(rest)
+        | (SemNamed(_symbol, fieldName, _arguments) as fieldType) :: rest -> (fieldName == accumulatorName || reuseMaterializableFieldType(fieldType) || relocatable(fieldType)) && everyAccumulatorFieldPersistable(accumulatorName)(relocatable)(rest)
+        | fieldType :: rest -> (reuseMaterializableFieldType(fieldType) || relocatable(fieldType)) && everyAccumulatorFieldPersistable(accumulatorName)(relocatable)(rest)
 
-let namedAccumulatorFieldsPersistent (accumulatorName: Str) (fieldTypes: List(SemanticType)) = everyAccumulatorFieldPersistable(accumulatorName)(fieldTypes)
+let namedAccumulatorFieldsPersistent (accumulatorName: Str) relocatable (fieldTypes: List(SemanticType)) = everyAccumulatorFieldPersistable(accumulatorName)(relocatable)(fieldTypes)

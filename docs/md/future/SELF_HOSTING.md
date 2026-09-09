@@ -813,8 +813,8 @@ same public behavior.
   ADT and TCO list-element support flags, and the stable rejection flags (resource or borrowed-view
   containment, unsupported child drop layout, unresolved type, unsupported outer-cell reuse).
   Deferred to reuse specialization: the borrowed-view projection of a capability. The reuse flags
-  now have a first consumer (OPT-42's ordinary match-arm path), gated on a still-open producer gap
-  — see OPT-42's own note. FIXED (2026-09-05): every cycle guard on the classification walks keyed
+  now have a first consumer (OPT-42's ordinary match-arm path); the producer gap that then gated it
+  is closed with the rest of OPT-42 — see its own note. FIXED (2026-09-05): every cycle guard on the classification walks keyed
   on the symbol id alone, and the lowering's own type layer names every declared type with id 0,
   so a nested named type (a record of records, a record holding a resource-bearing record) looked
   like a cycle back into its parent: nested records were never admitted to the record layout, and
@@ -844,10 +844,10 @@ same public behavior.
   just never crossed off this sibling claim. Reuse-token layout exactness reaches list cells too
   (2026-09-09): the `f$reuse` specialization's cons arm mints a two-field token and the rebuild
   consumes it as an `AllocReusing` carrying `ListCell`, the shape stage 0 emits for the same
-  program. Still open: `AllocAdtStack`/`AllocAdtToSpace` carry the flag but have no real emission
-  site in `CoreLowering.ash` yet (confirmed by grep — only hand-built backend test IR reaches
-  them), and the named-type and nested-ADT accumulator layouts still wait on OPT-42's own
-  remaining scope.
+  program. A named-type accumulator layout followed with OPT-42's to-space materialization
+  (2026-09-09). Still open: `AllocAdtStack` and `AllocAdtToSpace` carry the flag but have no real
+  emission site in `CoreLowering.ash` yet (confirmed by grep — only hand-built backend test IR
+  reaches them).
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
@@ -1803,9 +1803,10 @@ same public behavior.
   (`IsConstructorExpression`/`IsImmediateSingleArmAdtDestructuringMatch`, a `let` immediately
   destructured by a single-arm match) has no self-hosted counterpart (grepped
   `CoreLowering.ash` for a real `AllocAdtStack` emission site — none; only hand-built IR in the
-  backend test suite reaches it) — and the persistent regions — the backend emits the
-  to-space and blob forms from hand-built IR only (see CG-4), and the lowering produces none
-  until OPT-42 reaches the reuse specialization; and the task and capability regions, which
+  backend test suite reaches it) — and the persistent regions — the lowering now produces the
+  to-space and blob forms through OPT-42's specialization materialization and the copiers
+  `ToSpaceCopiers.ash` synthesizes for it, while `AllocAdtToSpace` itself still reaches the backend
+  from hand-built IR only (see CG-4); and the task and capability regions, which
   belong to milestone 4 (CG-12, OPT-43) and are not started.
 - [x] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
   them. Done (2026-09-06): a generic callee's deep-copied list result shares nothing with the
@@ -2015,7 +2016,7 @@ same public behavior.
   `reuse_shared_falls_back` exercised the case end to end and needed its checked-in `.ir`
   regenerated (one fewer `RcDup`, `temps=36` → `35`). All ten selfhost test suites, the full C#
   suite (2553/2553), the LSP suite (72/72), and the e2e suite are green.
-- [~] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
+- [x] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
   allocation reuse for tuples, ADTs, closures, and tail-recursive paths. Done: a first consumer of
   `HeapLayoutClassification.ash`'s reuse-eligibility flags for the ORDINARY (non-TCO,
   non-specialization) match-arm path — `ReuseSpecialization.ash` (the pure Expr/Pattern-shape
@@ -2199,11 +2200,31 @@ same public behavior.
   the fresh cell; an ordinary constructor outside a specialization emits neither), all four self-hosted
   suites plus both parity runners green, and stage 0's own `--explain reuse`/`--emit-ir` on the same
   `Tree` program confirming it accepts reset safety and emits `CopyStringIntoOrFresh` there too.
-  Still open, the last of OPT-42: the two field shapes needing synthesized to-space copiers —
-  a list of strings (`SynthesizeListToSpaceCopier`) and a non-self to-space-copyable ADT
-  (`TrySynthesizeAdtToSpaceCopier`, with `IsToSpaceCopySafeType` gating it). Both build the cell as
-  ordinary arena scratch with its fields already relocated and then flat-copy the finished cell into
-  the blob, a shape `StructuralCopiers.ash`'s existing arena copiers already have the plumbing for.
+  The two field shapes needing a synthesized copier followed (2026-09-09), closing OPT-42:
+  `ToSpaceCopiers.ash` is the to-space analogue of `StructuralCopiers.ash`, carrying stage 0's
+  `SynthesizeListToSpaceCopier` and `TrySynthesizeAdtToSpaceCopier`. Neither can allocate directly
+  in to-space — `AllocAdtToSpace` is reserved for in-place reuse's own fixed-shape node arena, and
+  interleaving unrelated cells into it would corrupt that mechanism — so both follow stage 0's
+  shape: build the cell as ordinary arena scratch with its fields already relocated, then flat-copy
+  the finished cell into the blob with `CopyOutArenaToSpace`'s fixed-size branch, the scratch cell's
+  own later reclaim being harmless once it has been copied. The label is registered before the body
+  is emitted, so a recursive or mutually recursive type finds its own label instead of recursing
+  forever, and the shared copier-label cache keys a to-space copier apart from the arena copier of
+  the same type by prefix. `toSpaceCopySafeType` is stage 0's `IsToSpaceCopySafeType` with the same
+  path guard: it decides which field shapes the walk relocates completely, so
+  `namedAccumulatorFieldsPersistent` can decline the rest rather than leave half a graph behind — it
+  takes that predicate as a parameter, since the answer needs the type environment the analysis
+  module has no access to. `materializeSpecializationField` routes a `SemList` and a non-self
+  `SemNamed` field through `synthesizeToSpaceCopy`, always rebuilding fresh rather than over an
+  update's dead cell (no in-place primitive exists for either shape, stage 0's own reason). A field
+  of the accumulator's own type is still excluded by symbol identity, stage 0's
+  `isAccumulatorSelfType`. Verified: three more tests in `ReuseFunctionSpecializationTests.ash` (a
+  `List(Str)` field relocates through `__tospacecopy_list_`, a foreign `Label` ADT field through
+  `__tospacecopy_adt_`, and the `Tree` accumulator's own recursive child through neither); all four
+  self-hosted suites and both parity runners green; the self-hosted CLI compiling all three probe
+  programs to binaries that run natively and print stage 0's own answers; and, on a 4095-node tree
+  with a string label rewritten 200 times, 9.7 MB peak resident against stage 0's 8.2 MB and
+  32.8 MB for the same program built `--debug-disable-reuse`.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
