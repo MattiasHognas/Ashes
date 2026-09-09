@@ -522,23 +522,45 @@ let recursive classifyInstructionRepr (kind: IrInstructionKind) (reprs: List((In
                 | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
         | _ -> (reprs, slots)
 
-let recursive walkFunctionInstructions (instructions: List(IrInstruction)) (reprs: List((Int, Bool, Bool))) (slots: List((Int, Bool, Bool))) =
+let originGeneratedLabel (origin: Maybe(IrFunctionOrigin)) =
+    match origin with
+        | Some(IrFunctionOrigin { generatedLabel = label }) -> Some(label)
+        | None -> None
+
+// The facts the lowering decided for itself always win over the walk's: they are kept at the head
+// of the map after every step, so a later store can neither shadow one nor carry a wrong
+// representation on through the temps that read it.
+let recursive walkFunctionInstructions (instructions: List(IrInstruction)) (decided: List((Int, Bool, Bool))) (reprs: List((Int, Bool, Bool))) (slots: List((Int, Bool, Bool))) =
     match instructions with
         | [] -> reprs
         | IrInstruction { instruction = kind } :: rest ->
             match classifyInstructionRepr(kind)(reprs)(slots) with
-                | (nextReprs, nextSlots) -> walkFunctionInstructions(rest)(nextReprs)(nextSlots)
+                | (nextReprs, nextSlots) ->
+                    walkFunctionInstructions(rest)(decided)(append(decided)(nextReprs))(nextSlots)
+
+let recursive decidedReprsFor (label: Str) (decided: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))) =
+    match decided with
+        | [] -> []
+        | (origin, temp, isArena, isRc) :: rest ->
+            match originGeneratedLabel(origin) with
+                | Some(candidate) ->
+                    if candidate == label
+                    then (temp, isArena, isRc) :: decidedReprsFor(label)(rest)
+                    else decidedReprsFor(label)(rest)
+                | None -> decidedReprsFor(label)(rest)
 
 // Every function's temp -> (isArena, isRc) map, keyed by generated label so it can be looked up
 // per value-placement entry.
-let functionRepr (function: IrFunction) =
+let functionRepr (decided: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))) (function: IrFunction) =
     match function with
-        | IrFunction { label = label, instructions = instructions } -> (label, walkFunctionInstructions(instructions)([])([]))
+        | IrFunction { label = label, instructions = instructions } ->
+            match decidedReprsFor(label)(decided) with
+                | functionDecided -> (label, walkFunctionInstructions(instructions)(functionDecided)(functionDecided)([]))
 
-let recursive programRepr (functions: List(IrFunction)) =
+let recursive programRepr (decided: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))) (functions: List(IrFunction)) =
     match functions with
         | [] -> []
-        | function :: rest -> functionRepr(function) :: programRepr(rest)
+        | function :: rest -> functionRepr(decided)(function) :: programRepr(decided)(rest)
 
 let recursive lookupFunctionRepr (label: Str) (reprs: List((Str, List((Int, Bool, Bool))))) =
     match reprs with
@@ -547,11 +569,6 @@ let recursive lookupFunctionRepr (label: Str) (reprs: List((Str, List((Int, Bool
             if candidate == label
             then temps
             else lookupFunctionRepr(label)(rest)
-
-let originGeneratedLabel (origin: Maybe(IrFunctionOrigin)) =
-    match origin with
-        | Some(IrFunctionOrigin { generatedLabel = label }) -> Some(label)
-        | None -> None
 
 // One placement record per (temp, origin, isCopyType) fact `recordValuePlacement` captured during
 // lowering, with its representation looked up from the matching function's instruction walk.
@@ -587,7 +604,7 @@ let recursive placementRecordsFrom (ordinal: Int) (functionReprs: List((Str, Lis
 // `valuePlacements` is the `(temp, functionOrigin, isCopyType)` list `CoreLoweringResult` carries
 // out of lowering. Reuse decisions, coroutine representations, and pattern bindings are not
 // retained by the self-hosted lowering yet.
-let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: IrProgram) (valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))) =
+let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: IrProgram) (valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))) (joinRepresentations: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))) =
     (let valueNames =
         program
         |> topLevelFunctions
@@ -595,7 +612,7 @@ let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: I
     in
         let constructorArities = programConstructorArities(program.items)
         in
-            let functionReprs = programRepr(lowered.functions)
+            let functionReprs = programRepr(joinRepresentations)(lowered.functions)
             in
                 let placements =
                     valuePlacements

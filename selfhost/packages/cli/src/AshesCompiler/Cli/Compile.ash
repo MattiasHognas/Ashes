@@ -295,7 +295,7 @@ let loweringErrorText (error: CoreLoweringError) =
 
 let lowerStitchedProgram reuseEnabled inputPath source program =
     match lowerCoreProgramWithSourceAndReuse(reuseEnabled)(inputPath)(source)(program) with
-        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements } -> Ok((lowered, optimizeIrProgram(lowered), valuePlacements))
+        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> Ok((lowered, optimizeIrProgram(lowered), (valuePlacements, joinRepresentations)))
         | CoreLoweringResult { error = Some(error) } ->
             error
             |> loweringErrorText
@@ -334,13 +334,14 @@ let stitchedQualifiedName (stitched: StitchedSyntaxProject) =
         | StitchedSyntaxProject { definitionPlacements = placements, entryModuleName = entryModule } -> qualifiedNameIn(entryModule)(placements)
 
 // The requested reports as text lines: the decision snapshot pairs the stitched program with its
-// lowering and the value placements recorded against it, and the RC counts read the optimized
-// program the backend is about to receive.
-let explainReportLines (explain: ExplainRequest) (stitched: StitchedSyntaxProject) (lowered: IrProgram) valuePlacements (optimized: IrProgram) =
-    match stitched with
-        | StitchedSyntaxProject { program = program } ->
-            valuePlacements
-            |> captureDecisionSnapshot(stitchedQualifiedName(stitched))(program)(lowered)
+// lowering and the placement facts recorded against it — every value's placement, and the
+// representation the lowering decided for each control-flow join — and the RC counts read the
+// optimized program the backend is about to receive.
+let explainReportLines (explain: ExplainRequest) (stitched: StitchedSyntaxProject) (lowered: IrProgram) placementFacts (optimized: IrProgram) =
+    match (stitched, placementFacts) with
+        | (StitchedSyntaxProject { program = program }, (valuePlacements, joinRepresentations)) ->
+            joinRepresentations
+            |> captureDecisionSnapshot(stitchedQualifiedName(stitched))(program)(lowered)(valuePlacements)
             |> (given (snapshot) -> buildExplainReport(snapshot)(optimized)(explain))
             |> (given (report) -> formatExplainReport(report)(explain))
 

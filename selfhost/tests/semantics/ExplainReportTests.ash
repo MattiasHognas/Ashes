@@ -30,7 +30,7 @@ let expectedReport (name: Str) (kindName: Str) = readFixture(fixtureRoot + "/exp
 
 let lowerFixture (name: Str) (source: Str) (program: ProgramSyntax) =
     match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
-        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements } -> (lowered, valuePlacements)
+        | CoreLoweringResult { program = Some(lowered), error = None, valuePlacements = valuePlacements, joinRepresentations = joinRepresentations } -> (lowered, valuePlacements, joinRepresentations)
         | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed for " + name + ": " + Ashes.Trait.Show.show(error))
         | _ -> test.fail("lowering produced no program for " + name)
 
@@ -44,13 +44,13 @@ let renderLines (lines: List(Str)) = Ashes.Text.join("\n")(lines) + "\n"
 // The report the self-hosted pipeline renders for one fixture and kind: the parsed program and
 // its lowering feed the decision snapshot, the optimized program feeds the RC counts, exactly as
 // `ashes compile --explain` observes them.
-let renderReportBody (name: Str) (kind: ExplainKind) (program: ProgramSyntax) (lowered: IrProgram) (valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))) =
+let renderReportBody (name: Str) (kind: ExplainKind) (program: ProgramSyntax) (lowered: IrProgram) (valuePlacements: List((Int, Maybe(IrFunctionOrigin), Bool))) (joinRepresentations: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))) =
     (let request = explainRequestOf([kind])(None)
     in
         lowered
         |> optimizeIrProgram
         |> (given (optimized) ->
-            buildExplainReport(captureDecisionSnapshot(given (_) -> None)(program)(lowered)(valuePlacements))(optimized)(request))
+            buildExplainReport(captureDecisionSnapshot(given (_) -> None)(program)(lowered)(valuePlacements)(joinRepresentations))(optimized)(request))
         |> (given (report) -> formatExplainReport(report)(request))
         |> renderLines)
 
@@ -60,7 +60,7 @@ let renderReport (name: Str) (kind: ExplainKind) =
         let program = parseFixture(name)(source)
         in
             match lowerFixture(name)(source)(program) with
-                | (lowered, valuePlacements) -> renderReportBody(name)(kind)(program)(lowered)(valuePlacements))
+                | (lowered, valuePlacements, joinRepresentations) -> renderReportBody(name)(kind)(program)(lowered)(valuePlacements)(joinRepresentations))
 
 let checkFixture (name: Str) (kind: ExplainKind) (kindName: Str) =
     (let expected = expectedReport(name)(kindName)
@@ -209,21 +209,19 @@ let checkConsumedListArgument unit =
         |> argNormalizePrologueMergesRcBranch
         |> checkKnownDifference("consumed_list_argument")(ExplainMemory)("memory")(argNormalizePrologueMergesRcBranchReason))
 
-// A total match's overall result is a reload of whichever arm's own (already-recorded) result
-// reached the shared result slot, classified by the same last-write-wins walk: since every arm,
-// including the unreachable match_none fallback, writes to that slot in program order, the join
-// read picks up the last write in program order rather than the reachable arm that actually
-// produced the value, misclassifying the join read as conservative-unknown. Stage 0 classifies
-// that read and the function's result reload of it as runtime rc, since the fallback arm's
-// `fromInt` result is fresh; this walk reports the join read and the reload as unknown instead,
-// so the block carries two unknowns and one fewer runtime-rc value.
+// The join read and the function's result reload of it are classified as runtime rc here, as stage
+// 0 classifies them: the lowering records the representation it decided for the join itself, so the
+// walk no longer reads it back off the shared result slot the unreachable match_none fallback wrote
+// last. What remains is a count difference, not a classification one — the self-hosted lowering
+// records a value placement for one more value in this function than stage 0 records at all, and
+// the walk cannot place that value, so the block carries one conservative-unknown stage 0 has no
+// entry for.
 let matchResultSlotJoinLine (line: Str) =
     match line with
-        | "    region:               2" -> ["    conservative unknown: 2", "    region:               2"]
-        | "    runtime rc:           3" -> ["    runtime rc:           2"]
+        | "    region:               2" -> ["    conservative unknown: 1", "    region:               2"]
         | _ -> [line]
 
-let matchResultSlotJoinReason = "representation is classified by a post-hoc walk that is last-write-wins in program order rather than per-branch, so a total match's result-slot join read takes whichever arm wrote the slot last in program order (here the unreachable match_none fallback) instead of the reachable arm that actually produced the value"
+let matchResultSlotJoinReason = "the self-hosted lowering records a value placement for one more value in this function than stage 0 records at all, and the representation walk cannot place it, so the block carries one conservative-unknown with no stage-0 counterpart"
 
 let checkMatchRcScrutinee unit =
     unit
