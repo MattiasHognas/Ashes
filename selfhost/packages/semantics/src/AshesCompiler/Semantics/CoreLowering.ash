@@ -463,6 +463,12 @@ type CoreLoweringState =
     | reuseSpecializations: List((Str, Str))
     | specializingLinearParam: Maybe(Str)
     | specializingInProgress: List(Str)
+    // Stage 0's `_specFreshInputNames`: while a specialization's body is being lowered, the names
+    // whose values came in from the caller's per-iteration arena scratch — the specialization's own
+    // parameters, plus any inlined helper parameter bound to one of them or to a value the arm
+    // computed. A constructor field built from one of these dangles past the loop's arena reset
+    // unless it is materialized into to-space first. `None` outside a specialization.
+    | specializationFreshInputs: Maybe(List(Str))
     // Stage 0's `_linearSpecializationAccumulators`: the loop parameters this body hands straight
     // to a single-parameter specialization candidate, deep-copied once at loop entry so the
     // specialization may rewrite them in place. The only route by which a call whose accumulator
@@ -800,6 +806,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         reuseSpecializations = [],
         specializingLinearParam = None,
         specializingInProgress = [],
+        specializationFreshInputs = None,
         linearSpecializationAccumulators = [],
         specializingReuseLabel = None,
         fullyReusingCallees = [],
@@ -12338,30 +12345,136 @@ let recursive reuseApplyTransferredChildren (index: Int) (pointerIndices: List(I
                 match reuseApplyTransferredChildren(index + 1)(pointerIndices)(tokenTemp)(rest)(state) with
                     | (finalState, restTemps) -> (finalState, fieldTemp :: restTemps)
 
+let recursive allCopyTypeElements (elements: List(SemanticType)) =
+    match elements with
+        | [] -> true
+        | element :: rest -> canArenaResetLayout(element) && allCopyTypeElements(rest)
+
+// A field whose argument is a name the enclosing specialization did not bring in as a fresh input
+// was matched out of the accumulator, so it already lives where the accumulator does and needs no
+// relocation. Every other shape — a fresh input by name, or any expression the arm computed — is
+// per-iteration arena scratch. Over-materializing an already-persistent value costs a copy, never
+// correctness.
+let specializationFieldIsPersistent (argument: Expr) (freshInputs: List(Str)) =
+    match unspanArgument(argument) with
+        | ExprVar(name) -> containsName(name)(freshInputs) == false
+        | _ -> false
+
+// Relocates a value into to-space, the region the loop's watermark reset never rewinds. A negative
+// size copies a length-prefixed blob (a string or bytes value); a positive one a fixed-size cell.
+let emitSpecializationToSpaceCopy (fieldTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = copyState, temp = destinationTemp } ->
+            (emit(CopyOutArenaToSpace(destinationTemp)(fieldTemp)(sizeBytes))(copyState), destinationTemp)
+
+// Stage 0's `MaterializeSpecializationStringField`/`MaterializeSpecializationTupleField` update
+// half: the reused cell's old field is unreferenced, so the new value overwrites the old blob in
+// place when the backend's runtime check finds it persistent, and materializes fresh otherwise.
+// This bounds blob growth to the largest value a cell ever held instead of leaving one blob per
+// rewrite behind. `cellTemp` is the reused cell, whose fields still hold the old values until
+// `emitAdtFields` overwrites them.
+let emitSpecializationInPlaceCopy (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (fieldTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = oldState, temp = oldFieldTemp } ->
+            match oldState
+            |> emit(GetAdtField(oldFieldTemp)(cellTemp)(fieldIndex)(tagless))
+            |> freshTemp with
+                | FreshTemp { state = copyState, temp = destinationTemp } ->
+                    if sizeBytes < 0
+                    then
+                        (emit(CopyStringIntoOrFresh(destinationTemp)(oldFieldTemp)(fieldTemp))(copyState), destinationTemp)
+                    else
+                        (emit(CopyFixedIntoOrFresh(destinationTemp)(oldFieldTemp)(fieldTemp)(sizeBytes))(copyState), destinationTemp)
+
+let recursive fieldIndexIsUnbound (fieldIndex: Int) (fieldBindings: List((Int, Str))) =
+    match fieldBindings with
+        | [] -> true
+        | (boundIndex, _name) :: rest -> boundIndex != fieldIndex && fieldIndexIsUnbound(fieldIndex)(rest)
+
+// Stage 0's `ReuseTokenFieldIsDead`, restricted to the half a name alone decides: a field the
+// matched pattern bound to no name can no longer be referenced on this path, so the reused cell's
+// old blob is free to overwrite. Stage 0 additionally clears a field whose bound name has had every
+// arm reference lowered already, which needs the per-binding reference tally this lowering does not
+// keep; without it a bound field takes the fresh path, which costs a blob and never correctness.
+let specializationFieldSlotIsDead (fieldIndex: Int) (token: Maybe(CoreReuseToken)) =
+    match token with
+        | None -> false
+        | Some(CoreReuseToken { fieldBindings = fieldBindings }) -> fieldIndexIsUnbound(fieldIndex)(fieldBindings)
+
+// Stage 0's `MaterializeSpecializationField`. A constructor field built from one of the
+// specialization's fresh inputs points into the arena scratch the loop's per-iteration reset
+// reclaims, so the rebuilt cell would outlive its own field; the copy relocates the value into
+// to-space, which the reset never touches. A copy type is inline and needs nothing. A recursive
+// child of the accumulator's own type is left alone as well: the recursive call that produced it is
+// part of the specialization, so it is already a reuse-managed cell, and copying it would
+// synthesize the self-recursive copier closure the reset-safety scan reads as an escape.
+// Stage 0 also relocates a list of strings and a to-space-copyable ADT through copiers synthesized
+// for the purpose; selfhost has no to-space copier synthesis, so a field of either shape passes
+// through here and `namedAccumulatorFieldsPersistent` declines the accumulator carrying it.
+let materializeSpecializationField (argument: Expr) (fieldType: SemanticType) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (fieldTemp: Int) (state: CoreLoweringState) =
+    match state.specializationFreshInputs with
+        | None -> (state, fieldTemp)
+        | Some(freshInputs) ->
+            if specializationFieldIsPersistent(argument)(freshInputs)
+            then (state, fieldTemp)
+            else
+                let materialize =
+                    if specializationFieldSlotIsDead(fieldIndex)(token)
+                    then emitSpecializationInPlaceCopy(cellTemp)(fieldIndex)(tagless)(fieldTemp)
+                    else emitSpecializationToSpaceCopy(fieldTemp)
+                in
+                    match resolveType(state)(fieldType) with
+                        | SemString -> materialize(-1)(state)
+                        | SemBytes -> materialize(-1)(state)
+                        | SemTuple(elements) ->
+                            if allCopyTypeElements(elements)
+                            then materialize(8 * length(elements))(state)
+                            else (state, fieldTemp)
+                        | _ -> (state, fieldTemp)
+
+let recursive materializeSpecializationFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (temps: List(Int)) (reversed: List(Int)) (state: CoreLoweringState) =
+    match (arguments, fieldTypes, temps) with
+        | (argument :: restArguments, fieldType :: restTypes, temp :: restTemps) ->
+            match materializeSpecializationField(argument)(fieldType)(token)(cellTemp)(fieldIndex)(tagless)(temp)(state) with
+                | (materialized, materializedTemp) -> materializeSpecializationFields(restArguments)(restTypes)(token)(cellTemp)(fieldIndex + 1)(tagless)(restTemps)(materializedTemp :: reversed)(materialized)
+        | _ ->
+            (state, append(reverse(reversed))(temps))
+
+// The materialization runs only inside a specialization; outside one every field passes through and
+// the walk is skipped so no ordinary constructor pays for it.
+let materializeConstructorFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (tagless: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+    match state.specializationFreshInputs with
+        | None -> (state, temps)
+        | Some(_freshInputs) -> materializeSpecializationFields(arguments)(fieldTypes)(token)(cellTemp)(0)(tagless)(temps)([])(state)
+
 // The cell's temp is taken before the transferred children are guarded, stage 0's order. Only a
 // reference-counted token's transferred children are guarded; an arena token's cell keeps the
-// arena and its fields pass straight through.
-let allocateReusedConstructorCell (token: CoreReuseToken) (tag: Int) (fieldCount: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (temps: List(Int)) (state: CoreLoweringState) =
+// arena and its fields pass straight through. The fresh-input fields are materialized after the
+// cell is claimed and before the stores, so the update path can read the old field off it.
+let allocateReusedConstructorCell (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (token: CoreReuseToken) (tag: Int) (fieldCount: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (temps: List(Int)) (state: CoreLoweringState) =
     match (layoutFieldTypes(layout)(state), freshTemp(state)) with
         | ((fieldTypes, _fieldsResultType), FreshTemp { state = allocatedState, temp = resultTemp }) ->
             match reuseApplyTransferredChildren(0)(if token.runtimeManaged
             then reusePointerFieldIndices(fieldTypes)(allocatedState)
             else [])(token.temp)(temps)(allocatedState) with
                 | (transferredState, transferredTemps) ->
-                    transferredState
+                    match transferredState
                     |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(token.runtimeManaged)(false)(tagless))
-                    |> emitAdtFields(resultTemp)(0)(tagless)(transferredTemps)
-                    |> markAggregateRuntimeManaged(resultTemp)(token.runtimeManaged)
-                    |> success(resultTemp)(resolveType(transferredState)(resultType))
+                    |> materializeConstructorFields(arguments)(argumentTypes)(Some(token))(resultTemp)(tagless)(transferredTemps) with
+                        | (materializedState, materializedTemps) ->
+                            materializedState
+                            |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
+                            |> markAggregateRuntimeManaged(resultTemp)(token.runtimeManaged)
+                            |> success(resultTemp)(resolveType(materializedState)(resultType))
 
 // A live token of the rebuilt constructor's layout is consumed whatever the consumer's own
 // placement request: the token was published by the arm that matched this same constructor
 // (`reuseCaseSafe`), and its cell keeps the matched value's reference-counted placement.
-let allocateOrReuseConstructorCell (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
     (let fieldCount = coreListLength(temps)
     in
         match reuseConsumeToken(ctorName)(fieldCount)(tagless)(state) with
-            | Some((token, consumedState)) -> allocateReusedConstructorCell(token)(tag)(fieldCount)(tagless)(layout)(resultType)(temps)(consumedState)
+            | Some((token, consumedState)) -> allocateReusedConstructorCell(arguments)(argumentTypes)(token)(tag)(fieldCount)(tagless)(layout)(resultType)(temps)(consumedState)
             | None ->
                 match freshTemp(state) with
                     | FreshTemp { state = allocatedState, temp = resultTemp } ->
@@ -12369,13 +12482,16 @@ let allocateOrReuseConstructorCell (ctorName: Str) (tag: Int) (tagless: Bool) (l
                         // `let` path's flag carried by the constructor shape, or a request the
                         // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
                         // without one the cell is arena-placed.
-                        allocatedState
+                        match allocatedState
                         |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))
-                        |> emitAdtFields(resultTemp)(0)(tagless)(temps)
-                        |> markAggregateRuntimeManaged(resultTemp)(runtimeManaged)
-                        |> success(resultTemp)(resolveType(allocatedState)(resultType)))
+                        |> materializeConstructorFields(arguments)(argumentTypes)(None)(resultTemp)(tagless)(temps) with
+                            | (materializedState, materializedTemps) ->
+                                materializedState
+                                |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
+                                |> markAggregateRuntimeManaged(resultTemp)(runtimeManaged)
+                                |> success(resultTemp)(resolveType(materializedState)(resultType)))
 
-let finishConstructorAllocation layout resultType runtimeManaged lowered =
+let finishConstructorAllocation arguments layout resultType runtimeManaged lowered =
     match (layout, lowered) with
         | (_layout, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (CoreConstructorLayout { isZeroCost = true }, LoweredCoreValues { state = state, temps = temp :: [], error = None }) ->
@@ -12385,7 +12501,7 @@ let finishConstructorAllocation layout resultType runtimeManaged lowered =
             |> coreListLength
             |> CoreConstructorArityMismatch(name)(1)
             |> failure(state)
-        | (CoreConstructorLayout { name = ctorName, tag = tag, tagless = tagless } as ctorLayout, LoweredCoreValues { state = state, temps = temps, error = None }) -> allocateOrReuseConstructorCell(ctorName)(tag)(tagless)(ctorLayout)(resultType)(runtimeManaged)(temps)(state)
+        | (CoreConstructorLayout { name = ctorName, tag = tag, tagless = tagless } as ctorLayout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) -> allocateOrReuseConstructorCell(arguments)(semanticTypes)(ctorName)(tag)(tagless)(ctorLayout)(resultType)(runtimeManaged)(temps)(state)
 
 let nullaryConstructorRuntimeManageable (resultType: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(resultType)(state) with
@@ -12665,7 +12781,7 @@ let finishConstructorArguments arguments (request: ConsumerRequest) lower shape 
                                                 (lowered with state = typedState)
                                                 |> retainConstructorLoopParameterArguments(arguments)
                                                 |> retainRuntimeCellChildren(runtimeManaged)(arguments)
-                                                |> finishConstructorAllocation(layout)(resultType)(runtimeManaged)
+                                                |> finishConstructorAllocation(arguments)(layout)(resultType)(runtimeManaged)
 
 let lowerConstructor layout arguments (request: ConsumerRequest) lower state =
     state
@@ -13311,7 +13427,7 @@ let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldType
         | (CoreConstructorLayout { tagless = tagless }, (typedState, None)) ->
             typedState
             |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(0)(tagless)(lower)([])([])
-            |> finishConstructorAllocation(layout)(resultType)(runtimeManaged)
+            |> finishConstructorAllocation([])(layout)(resultType)(runtimeManaged)
 
 let finishRecordUpdateShape layout fieldNames fields targetTemp targetType lower shape =
     match shape with
@@ -15417,6 +15533,31 @@ let recursive withoutName (name: Str) (names: List(Str)) =
 
 let withoutInliningInProgress (callee: Str) (state: CoreLoweringState) = state with inliningInProgress = withoutName(callee)(state.inliningInProgress)
 
+// Stage 0's `InlineCall` fresh-parameter half: an inlined helper's parameter inherits the enclosing
+// specialization's fresh-input status when its argument names a fresh input, or is any expression
+// other than a bare name — a value the arm computed lives in the per-iteration arena scratch the
+// reset reclaims, exactly like a parameter handed in from the caller. A parameter bound to a name
+// the arm matched out of the accumulator is already persistent and is left alone.
+let recursive extendedSpecializationFreshInputs (parameters: List(Str)) (arguments: List(Expr)) (names: List(Str)) =
+    match (parameters, arguments) with
+        | (parameter :: restParameters, argument :: restArguments) ->
+            if containsName(parameter)(names)
+            then extendedSpecializationFreshInputs(restParameters)(restArguments)(names)
+            else
+                match unspanArgument(argument) with
+                    | ExprVar(argumentName) ->
+                        if containsName(argumentName)(names)
+                        then extendedSpecializationFreshInputs(restParameters)(restArguments)(parameter :: names)
+                        else extendedSpecializationFreshInputs(restParameters)(restArguments)(names)
+                    | _ -> extendedSpecializationFreshInputs(restParameters)(restArguments)(parameter :: names)
+        | _ -> names
+
+let withInlinedSpecializationFreshInputs (parameters: List(Str)) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match state.specializationFreshInputs with
+        | None -> state
+        | Some(names) ->
+            state with specializationFreshInputs = Some(extendedSpecializationFreshInputs(parameters)(arguments)(names))
+
 // Stage 0's `InlineCall`: the arguments are evaluated in the caller's scope, the parameters bound
 // to their slots, and the helper's body lowered in place under the call's own request; the
 // caller's bindings are restored afterwards.
@@ -15424,15 +15565,14 @@ let lowerInlinedHelperCall (callee: Str) (parameters: List(Str)) (body: Expr) (r
     match lowerInlinedHelperArguments(arguments)(lower)(state)([]) with
         | (failedState, _lowered, Some(error)) -> failure(failedState)(error)
         | (argumentState, lowered, None) ->
-            match lower(body)(withConsumerRequest(consumerRequestOf(state))(bindInlinedParameters(parameters)(lowered)((argumentState with inliningInProgress = callee :: argumentState.inliningInProgress)))) with
+            match lower(body)(withConsumerRequest(consumerRequestOf(state))(bindInlinedParameters(parameters)(lowered)(withInlinedSpecializationFreshInputs(parameters)(arguments)((argumentState with inliningInProgress = callee :: argumentState.inliningInProgress))))) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } ->
-                    failure(failedState
-                    |> restoreBindings(state.bindings)
-                    |> withoutInliningInProgress(callee))(error)
+                    failure(failedState |> restoreBindings(state.bindings) |> withoutInliningInProgress(callee) |> (given (restored: CoreLoweringState) -> restored with specializationFreshInputs = state.specializationFreshInputs))(error)
                 | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
                     bodyState
                     |> restoreBindings(state.bindings)
                     |> withoutInliningInProgress(callee)
+                    |> (given (restored: CoreLoweringState) -> restored with specializationFreshInputs = state.specializationFreshInputs)
                     |> releaseInlinedFreshArguments(parameters)(lowered)(reach)(resultTemp)
                     |> success(resultTemp)(resultType)
 
@@ -15532,8 +15672,9 @@ let specializationAccumulatorIsUnique (accumulator: Expr) (accumulatorType: Sema
 // accumulator is either a provably fresh call result or a loop accumulator the entry copy made
 // unique. The callee is one of the program's self-recursive top-level functions,
 // takes exactly its own parameter count of arguments, rebuilds its accumulator, carries a layout
-// the specialization can keep persistent (a list always does; a named ADT would need the to-space
-// materialization no lowering site emits), is handed a provably fresh accumulator, and mentions
+// the specialization can keep persistent (a list always does; a named ADT does when the rebuild's
+// to-space materialization reaches every one of its leaf fields), is handed a provably fresh
+// accumulator, and mentions
 // only names a body lowered here can bind. A candidate already being specialized is skipped, so
 // neither the specialization's own self-calls nor the call it is generated for re-enter this path.
 let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
@@ -15548,7 +15689,7 @@ let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 match reuseSpecializationCalleeType(callee)(coreListLength(spine.arguments))(state) with
                                     | Some((accumulatorType, functionType)) ->
                                         if length(parameters) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType)(state) && specializationAccumulatorIsUnique(accumulator)(accumulatorType)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
-                                        then Some((callee, parameter, value, accumulatorType, functionType, spine.arguments))
+                                        then Some((callee, parameter, parameters, value, accumulatorType, functionType, spine.arguments))
                                         else None
                                     | None -> None
                             | _ -> None
@@ -15568,7 +15709,7 @@ let relabelReuseSpecialization (label: Str) prepared =
 
 let restoreSpecializationScope (outer: CoreLoweringState) (lowered: LoweredCoreValue) =
     match lowered with
-        | LoweredCoreValue { state = state } -> lowered with state = (state with specializingInProgress = outer.specializingInProgress, specializingLinearParam = outer.specializingLinearParam, specializingReuseLabel = outer.specializingReuseLabel)
+        | LoweredCoreValue { state = state } -> lowered with state = (state with specializingInProgress = outer.specializingInProgress, specializingLinearParam = outer.specializingLinearParam, specializingReuseLabel = outer.specializingReuseLabel, specializationFreshInputs = outer.specializationFreshInputs)
 
 // Stage 0's `GetOrCreateReuseSpecialization` plus `LowerReuseSpecializedCall`, as one recursive
 // group: the candidate's own lambda is lowered under a label of its own with its accumulator armed
@@ -15654,7 +15795,7 @@ let recordFullyReusingSpecialization (callee: Str) (accumulatorType: SemanticTyp
                                     then lowered with state = (state with fullyReusingCallees = callee :: state.fullyReusingCallees)
                                     else lowered
 
-let generateReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let label =
         state.reuseSpecializations
         |> length
@@ -15663,7 +15804,7 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (a
         match state with
             | CoreLoweringState { bindings = outerBindings, currentSpan = declarationSpan } ->
                 []
-                |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingReuseLabel = None, specializingInProgress = callee :: state.specializingInProgress, reuseSpecializations = (cacheKey, label) :: state.reuseSpecializations))
+                |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingReuseLabel = None, specializingInProgress = callee :: state.specializingInProgress, specializationFreshInputs = Some(parameters), reuseSpecializations = (cacheKey, label) :: state.reuseSpecializations))
                 |> relabelReuseSpecialization(label)
                 |> lowerPreparedRecursiveGroup([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(outerBindings)
                 |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
@@ -15672,12 +15813,12 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (a
 // The specialization is generated once per concrete instantiation, stage 0's cache: a later call
 // at the same type takes a closure over the label already emitted instead of lowering the
 // candidate's body again.
-let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (accumulatorType: SemanticType) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let cacheKey = reuseSpecializationCacheKey(callee)(functionType)
     in
         match lookupReuseSpecialization(cacheKey)(state.reuseSpecializations) with
             | Some(label) -> lowerCachedReuseSpecializedCall(callee)(label)(functionType)(arguments)(lower)(state)
-            | None -> generateReuseSpecializedCall(callee)(parameter)(value)(accumulatorType)(cacheKey)(arguments)(lower)(state))
+            | None -> generateReuseSpecializedCall(callee)(parameter)(parameters)(value)(accumulatorType)(cacheKey)(arguments)(lower)(state))
 
 let lowerGeneralCall expression function argument lower state =
     match (isTailSelfCall(collectCallSpine(expression))(state), state.tcoLoopFrame, state.tcoLoop) with
@@ -15689,7 +15830,7 @@ let lowerGeneralCall expression function argument lower state =
             |> locateLoweredMismatch(argumentSiteOf(state))
         | _ ->
             match reuseSpecializedCallOf(collectCallSpine(expression))(state) with
-                | Some((callee, parameter, value, accumulatorType, functionType, arguments)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(accumulatorType)(functionType)(arguments)(lower)(state)
+                | Some((callee, parameter, parameters, value, accumulatorType, functionType, arguments)) -> lowerReuseSpecializedCall(callee)(parameter)(parameters)(value)(accumulatorType)(functionType)(arguments)(lower)(state)
                 | None ->
                     match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
                         | Some(inlined) -> inlined
