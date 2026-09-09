@@ -845,9 +845,16 @@ same public behavior.
   (2026-09-09): the `f$reuse` specialization's cons arm mints a two-field token and the rebuild
   consumes it as an `AllocReusing` carrying `ListCell`, the shape stage 0 emits for the same
   program. A named-type accumulator layout followed with OPT-42's to-space materialization
-  (2026-09-09). Still open: `AllocAdtStack` and `AllocAdtToSpace` carry the flag but have no real
-  emission site in `CoreLowering.ash` yet (confirmed by grep — only hand-built backend test IR
-  reaches them).
+  (2026-09-09), and `AllocAdtToSpace` with it: `emitFreshConstructorCell` is stage 0's
+  `EmitFreshConstructorCell` `_inSpecialization` branch, so a cell a rebuild could not take from a
+  reuse token is allocated in the never-reset to-space with its tagless flag rather than the arena,
+  and is not marked runtime-managed. That is also what keeps the specialized body's reset safe: the
+  scan rejects a plain `AllocAdt`, which could put a live part of the result above the watermark, and
+  never a to-space cell. Still open: `AllocAdtStack`, whose only stage-0 producers are the two
+  scoped-placement sites `TryLowerConstructorExpression(stackAllocate: true)` serves — a `let`
+  binding an ADT the scope proves dead at its end, and a `match` scrutinee that is a constructor
+  expression. Neither placement decision is ported, so the flag reaches no self-hosted emission site
+  (only hand-built backend test IR does).
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
@@ -2224,7 +2231,13 @@ same public behavior.
   self-hosted suites and both parity runners green; the self-hosted CLI compiling all three probe
   programs to binaries that run natively and print stage 0's own answers; and, on a 4095-node tree
   with a string label rewritten 200 times, 9.7 MB peak resident against stage 0's 8.2 MB and
-  32.8 MB for the same program built `--debug-disable-reuse`.
+  32.8 MB for the same program built `--debug-disable-reuse`. The last placement the mechanism
+  needed followed (2026-09-09), closing OPT-24's remaining `AllocAdtToSpace` note with it: a cell
+  the rebuild could not take from a reuse token is fresh, and inside a specialization
+  `emitFreshConstructorCell` puts it in to-space rather than the arena, stage 0's
+  `EmitFreshConstructorCell` `_inSpecialization` branch. Pinned by two more tests, one that the fresh
+  `Tag("z")` cell of a specialized body is an `AllocAdtToSpace` and one that an ordinary constructor
+  outside a specialization is not.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization

@@ -313,6 +313,23 @@ let testAccumulatorSelfFieldIsNotRelocated unit =
     |> containsText("__tospacecopy_adt_")
     |> test.assertEqual(false)
 
+// A cell the rebuild could not take from a reuse token is fresh, and inside a specialization it
+// belongs in the never-reset to-space with the accumulator it becomes part of. That is also what
+// keeps the body's reset safe: the scan rejects a plain `AllocAdt` and never a to-space cell.
+let testFreshCellInsideSpecializationGoesToSpace unit =
+    Unit
+    |> adtFieldLoopSource
+    |> dumped
+    |> containsText("AllocAdtToSpace")
+    |> test.assertEqual(true)
+
+let testFreshCellOutsideSpecializationStaysInTheArena unit =
+    Unit
+    |> readerSource
+    |> dumped
+    |> containsText("AllocAdtToSpace")
+    |> test.assertEqual(false)
+
 // Nothing outside a specialization pays for the relocation.
 let testOrdinaryConstructorSkipsMaterialization unit =
     Unit
@@ -356,6 +373,8 @@ let runReuseFunctionSpecializationTests unit =
     |> testListFieldRelocatesThroughItsCopier
     |> testAdtFieldRelocatesThroughItsCopier
     |> testAccumulatorSelfFieldIsNotRelocated
+    |> testFreshCellInsideSpecializationGoesToSpace
+    |> testFreshCellOutsideSpecializationStaysInTheArena
     |> testOrdinaryConstructorSkipsMaterialization
     |> testReaderKeepsOrdinaryCall
     |> reportSuccess
