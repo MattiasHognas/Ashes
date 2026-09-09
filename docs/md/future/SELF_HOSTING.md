@@ -837,9 +837,14 @@ same public behavior.
   synthesized droppers and copiers read the flag: field loads and stores carry it, the
   deep-copy plan of a sole-constructor type never switches on a tag, and the constructor-switching
   ADT dropper loads a tagless cell's tag as the literal 0 (stage 0's `EmitAdtTag`), checked by
-  `StructuralDroppersTests.ash`. Open: `AllocAdtStack`/`AllocAdtToSpace`/`AllocReusing` carry the
-  flag but are not lowered or emitted yet; reuse-token layout exactness waits on reuse
-  specialization.
+  `StructuralDroppersTests.ash`. Verified (2026-09-09): `AllocReusing` is emitted, tagless flag
+  included — `CoreLowering.ash`'s ordinary-match-arm reuse path (OPT-42)
+  `emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(token.runtimeManaged)(false)(tagless))`
+  — stale by the time this note was last read; OPT-42's own entry already documented the mechanism,
+  just never crossed off this sibling claim. Still open: `AllocAdtStack`/`AllocAdtToSpace` carry
+  the flag but have no real emission site in `CoreLowering.ash` yet (confirmed by grep — only
+  hand-built backend test IR reaches them), and reuse-token layout exactness for the full
+  fold/list specialization still waits on OPT-42's own remaining scope.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
