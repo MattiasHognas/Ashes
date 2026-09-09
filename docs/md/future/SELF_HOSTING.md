@@ -1040,10 +1040,26 @@ same public behavior.
   (`// expect: 200000 09876543210987654321 30`) already pins exactly this shape and passes
   byte-for-byte through the self-hosted compiler; a hand-built 200000-iteration probe of the same
   shape plateaus at 6.2 MB through the self-hosted CLI (stage 0: 8.4 MB), confirming the affine
-  reservation, not a growing arena copy, is what runs. Still open: an append whose operand types
-  are still unresolved when it is lowered (the deferred add seals to a copying `ConcatStr`) — not
-  reproduced or ruled out this pass; needs a self-referential or otherwise late-resolved-type
-  accumulator shape to test, which this session did not construct. A `List`-typed
+  reservation, not a growing arena copy, is what runs. Still open, root-caused (2026-09-09): an
+  append whose operand type is still a raw type variable at the point it is lowered speculates
+  `AddInt` and records the target temp in `pendingOperatorDefaults`
+  (`emitDeferredCoreAdd`/`deferredCoreOperatorEmitter`, `CoreLowering.ash`); once the whole
+  program's substitution is final, `resolveDeferredOperator` seals a `Str`-resolved deferred add
+  unconditionally to a copying `ConcatStr`, never consulting `state.affineAppendReservation` the
+  way the immediate path's `emitCoreConcat` does — so a self-append that would otherwise qualify
+  for the in-place `ConcatStrTip` reservation loses the optimization if its operand type happened
+  to still be a variable at lowering time, even though `binaryAffineReservation` already computed
+  the reservation before the operand type check ran. A minimal reproduction was attempted and did
+  not succeed: a self-recursive loop's own accumulator append needs a trait witness for `+`
+  resolved at loop-definition time, so an accumulator used nowhere else in the loop's own body is
+  an ambiguous `Ashes.Trait.Add(a)` (`ASH010`) in stage 0 itself, not a deferred-then-resolved
+  case; the shape the deferred path actually exists for (`Text.join`'s `pairwiseGo`, cited by the
+  code's own comment) accumulates a `List` of merged strings rather than growing one string in
+  place, so it was never an affine-reservation candidate regardless of timing. The natural
+  candidate for a genuinely late-resolved self-append — a mutually recursive accumulator loop,
+  where a sibling member's body fixes the shared element type — depends on the mutual-recursion
+  loop merge this note's own list below still has open (milestone 5's OPT-19), so this gap's
+  practical exposure is unconfirmed rather than ruled out. A `List`-typed
   parameter is placed the same way in two self-call shapes (`TcoRuntimeManagedParams.ash`'s
   `tcoSelfCallShapes`, stage 0's `TcoSelfCallArgumentShape` walk over the loop body's `if`
   branches, `match` arms, and `let` bodies): grown by one cons cell per iteration onto the
