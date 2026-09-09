@@ -9,7 +9,7 @@
          cannot silently rot. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
-    <MbedTlsVersion>3.6.4</MbedTlsVersion>
+    <MbedTlsVersion>3.6.7</MbedTlsVersion>
     <OpenlibmVersion>0.8.7</OpenlibmVersion>
     <Pcre2Version>10.45</Pcre2Version>
 
