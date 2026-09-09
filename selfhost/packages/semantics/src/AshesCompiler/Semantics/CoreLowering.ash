@@ -81,6 +81,9 @@ import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.ReuseResetSafety.specializationRebuildsAccumulator
 import AshesCompiler.Semantics.ReuseResetSafety.namedAccumulatorFieldsPersistent
+import AshesCompiler.Semantics.ReuseResetSafety.accumulatorIsFullyPersistent
+import AshesCompiler.Semantics.ReuseResetSafety.reuseResetSafety
+import AshesCompiler.Semantics.ReuseResetSafety.ReuseResetSafety
 import AshesCompiler.Semantics.Unification
 // Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some
 // terminal arm, with no passthrough arm that could alias a tuple built elsewhere.
@@ -465,6 +468,14 @@ type CoreLoweringState =
     // specialization may rewrite them in place. The only route by which a call whose accumulator
     // is a bare name — rather than a provably fresh call result — reaches a specialization.
     | linearSpecializationAccumulators: List(Str)
+    // Stage 0's `_specializingReuseLabel`: the label of the function that bound the linear
+    // parameter while a specialization was being generated, so the reset-safety scan runs over the
+    // body that actually rebuilds the accumulator; and its `_fullyReusingLabels`/
+    // `_resetSafeAccumulators` verdict, kept by the name of the callee whose specialization the
+    // scan accepted, so a back edge threading that call's result knows the value is the same cell
+    // rewritten in place.
+    | specializingReuseLabel: Maybe(Str)
+    | fullyReusingCallees: List(Str)
     // Stage 0's `_topLevelFunctionRefs`: each top-level `let` whose lambda captured nothing, by
     // name with its code label and generalized scheme, so a body spliced into a scope that never
     // captured it (an inlined helper) can rebuild its closure from the label with a null
@@ -790,6 +801,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         specializingLinearParam = None,
         specializingInProgress = [],
         linearSpecializationAccumulators = [],
+        specializingReuseLabel = None,
+        fullyReusingCallees = [],
         topLevelFunctionRefs = [],
         valuePlacements = [],
         joinRepresentations = [],
@@ -1190,13 +1203,13 @@ let recordDecidedRepresentation (temp: Int) (isArena: Bool) (isRc: Bool) (state:
 // Stage 0's `LowerLambdaCoreSeedScopeBindings` reuse arm: the parameter a specialization is being
 // generated for becomes a linear reuse root, so a match on it hands its dead cells to the arms as
 // arena reuse tokens. The request is consumed here, so a nested lambda never inherits it.
-let armSpecializationLinearParameter (parameter: Str) (state: CoreLoweringState) =
-    match state.specializingLinearParam with
-        | Some(linear) ->
+let armSpecializationLinearParameter (parameter: Str) (origin: IrFunctionOrigin) (state: CoreLoweringState) =
+    match (state.specializingLinearParam, origin) with
+        | (Some(linear), IrFunctionOrigin { generatedLabel = label }) ->
             if linear == parameter
-            then state with linearReuseNames = [parameter], specializingLinearParam = None
+            then state with linearReuseNames = [parameter], specializingLinearParam = None, specializingReuseLabel = Some(label)
             else state
-        | None -> state
+        | _ -> state
 
 let recursive containsTempOrigin (temp: Int) (origin: Maybe(IrFunctionOrigin)) (seen: List((Int, Maybe(IrFunctionOrigin)))) =
     match seen with
@@ -3760,6 +3773,9 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with bodyRuntimeManagedByLabel = bodyState.bodyRuntimeManagedByLabel)
             |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
             |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements, joinRepresentations = bodyState.joinRepresentations)
+            // The label that bound a specialization's linear parameter is decided inside the body
+            // being generated and read once it is finished, so it leaves the frame with it.
+            |> (given (current: CoreLoweringState) -> current with specializingReuseLabel = bodyState.specializingReuseLabel, fullyReusingCallees = bodyState.fullyReusingCallees)
             |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = append(bodyState.unresolvedCallResults)(outer.unresolvedCallResults))
             |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels, dropperLabels = bodyState.dropperLabels)
 
@@ -3803,7 +3819,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
-        |> armSpecializationLinearParameter(parameter)
+        |> armSpecializationLinearParameter(parameter)(origin)
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
 let bigIntCopySizeBytes = -2
@@ -5330,7 +5346,44 @@ let argumentTypeResolved (argument: TcoResetArgument) (state: CoreLoweringState)
 // An argument that needs no copy at the reset: a scalar, a resource handle, or the loop's own
 // unchanged value, which sits below the watermark (stage 0's `ArgResetSafe`); an argument whose
 // type is still unresolved is never reset-safe.
-let compactionArgumentSurvives (argument: TcoResetArgument) (state: CoreLoweringState) = resultSurvivesReset(argument.argumentType)(state) || argumentTypeResolved(argument)(state) && (isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape)
+let recursive backEdgeParameterName (ordinal: Int) (names: List(Str)) =
+    match names with
+        | [] -> None
+        | name :: rest ->
+            if ordinal == 0
+            then Some(name)
+            else backEdgeParameterName(ordinal - 1)(rest)
+
+// The root and last argument of a call spine, without the general spine collector defined further
+// down: this runs while a back edge's reset is being resolved.
+let recursive backEdgeCallRootAndAccumulator (expression: Expr) (lastArgument: Maybe(Expr)) =
+    match unspanArgument(expression) with
+        | ExprCall(function, argument, _isSugar, _layout) ->
+            match lastArgument with
+                | None -> backEdgeCallRootAndAccumulator(function)(Some(argument))
+                | Some(_alreadyLast) -> backEdgeCallRootAndAccumulator(function)(lastArgument)
+        | root -> (root, lastArgument)
+
+// Stage 0's `stableAccArg`: a fully-reusing specialization rewrites its accumulator in place below
+// the loop watermark, so the value the back edge threads is the same cell the iteration started
+// with and a plain reset keeps it live. The call is recognized structurally — the callee's
+// specialization was accepted as fully reusing, and its own accumulator argument is this loop
+// parameter — rather than by remembering the call node, which has no identity here.
+let backEdgeArgumentIsInPlaceReuse (argument: TcoResetArgument) (state: CoreLoweringState) =
+    match state.tcoLoop with
+        | None -> false
+        | Some(CoreTcoLoop { parameterNames = parameterNames }) ->
+            match backEdgeParameterName(argument.ordinal)(parameterNames) with
+                | None -> false
+                | Some(parameterName) ->
+                    match backEdgeCallRootAndAccumulator(argument.argumentExpression)(None) with
+                        | (ExprVar(callee), Some(accumulatorArgument)) ->
+                            containsName(callee)(state.fullyReusingCallees) && (match unspanArgument(accumulatorArgument) with
+                                | ExprVar(name) -> name == parameterName
+                                | _ -> false)
+                        | _ -> false
+
+let compactionArgumentSurvives (argument: TcoResetArgument) (state: CoreLoweringState) = resultSurvivesReset(argument.argumentType)(state) || backEdgeArgumentIsInPlaceReuse(argument)(state) || argumentTypeResolved(argument)(state) && (isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape)
 
 let recursive allArgumentsSurvivePlainReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match arguments with
@@ -11455,7 +11508,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
-        |> armSpecializationLinearParameter(parameter)
+        |> armSpecializationLinearParameter(parameter)(origin)
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
 // A recursive member's result meets the callers the same way a plain lambda's does: a
@@ -15495,7 +15548,7 @@ let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 match reuseSpecializationCalleeType(callee)(coreListLength(spine.arguments))(state) with
                                     | Some((accumulatorType, functionType)) ->
                                         if length(parameters) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType)(state) && specializationAccumulatorIsUnique(accumulator)(accumulatorType)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
-                                        then Some((callee, parameter, value, spine.arguments))
+                                        then Some((callee, parameter, value, accumulatorType, spine.arguments))
                                         else None
                                     | None -> None
                             | _ -> None
@@ -15515,7 +15568,7 @@ let relabelReuseSpecialization (label: Str) prepared =
 
 let restoreSpecializationScope (outer: CoreLoweringState) (lowered: LoweredCoreValue) =
     match lowered with
-        | LoweredCoreValue { state = state } -> lowered with state = (state with specializingInProgress = outer.specializingInProgress, specializingLinearParam = outer.specializingLinearParam)
+        | LoweredCoreValue { state = state } -> lowered with state = (state with specializingInProgress = outer.specializingInProgress, specializingLinearParam = outer.specializingLinearParam, specializingReuseLabel = outer.specializingReuseLabel)
 
 // Stage 0's `GetOrCreateReuseSpecialization` plus `LowerReuseSpecializedCall`, as one recursive
 // group: the candidate's own lambda is lowered under a label of its own with its accumulator armed
@@ -15528,7 +15581,43 @@ let recursive specializedCallExpression (callee: Expr) (arguments: List(Expr)) =
         | argument :: rest ->
             specializedCallExpression(ExprCall(callee)(argument)(false)(callArgumentsInline))(rest)
 
-let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+let recursive functionWithLabel (label: Str) (functions: List(IrFunction)) =
+    match functions with
+        | [] -> None
+        | (IrFunction { label = candidate } as function) :: rest ->
+            if candidate == label
+            then Some(function)
+            else functionWithLabel(label)(rest)
+
+// Stage 0's `RecordReuseSpecializationDecisions` reset-safety half plus `RecordFullyReusingCall`:
+// the body that bound the linear parameter is scanned, and when it allocates nothing that could
+// escape the loop watermark AND the accumulator's own layout is fully persistent, the callee is
+// recorded so a back edge threading its result knows the value is that accumulator rewritten in
+// place. `AccumulatorIsFullyPersistent` is stricter than the routing gate: a list qualifies only
+// over a copy-type element, since a heap element's cells are not the whole graph.
+let specializationAccumulatorFullyPersistent (accumulatorType: SemanticType) (state: CoreLoweringState) =
+    match accumulatorType with
+        | SemNamed(_symbolId, typeName, _arguments) -> accumulatorLayoutIsPersistable(accumulatorType)(state)
+        | other -> accumulatorIsFullyPersistent(other)
+
+let recordFullyReusingSpecialization (callee: Str) (accumulatorType: SemanticType) (outer: CoreLoweringState) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state } ->
+            match state.specializingReuseLabel with
+                | None -> lowered
+                | Some(reuseLabel) ->
+                    match functionWithLabel(reuseLabel)(state.functions) with
+                        | None -> lowered
+                        | Some(IrFunction { instructions = instructions }) ->
+                            match reuseResetSafety(instructions) with
+                                | ReuseResetSafety { accepted = false } -> lowered
+                                | ReuseResetSafety { accepted = true } ->
+                                    if specializationAccumulatorFullyPersistent(accumulatorType)(state)
+                                    then lowered with state = (state with fullyReusingCallees = callee :: state.fullyReusingCallees)
+                                    else lowered
+
+let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (accumulatorType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let label =
         state.reuseSpecializations
         |> length
@@ -15537,9 +15626,10 @@ let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (argu
         match state with
             | CoreLoweringState { bindings = outerBindings, currentSpan = declarationSpan } ->
                 []
-                |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingInProgress = callee :: state.specializingInProgress, reuseSpecializations = (label, callee) :: state.reuseSpecializations))
+                |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingReuseLabel = None, specializingInProgress = callee :: state.specializingInProgress, reuseSpecializations = (label, callee) :: state.reuseSpecializations))
                 |> relabelReuseSpecialization(label)
                 |> lowerPreparedRecursiveGroup([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(outerBindings)
+                |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
                 |> restoreSpecializationScope(state))
 
 let lowerGeneralCall expression function argument lower state =
@@ -15552,7 +15642,7 @@ let lowerGeneralCall expression function argument lower state =
             |> locateLoweredMismatch(argumentSiteOf(state))
         | _ ->
             match reuseSpecializedCallOf(collectCallSpine(expression))(state) with
-                | Some((callee, parameter, value, arguments)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(arguments)(lower)(state)
+                | Some((callee, parameter, value, accumulatorType, arguments)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(accumulatorType)(arguments)(lower)(state)
                 | None ->
                     match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
                         | Some(inlined) -> inlined
