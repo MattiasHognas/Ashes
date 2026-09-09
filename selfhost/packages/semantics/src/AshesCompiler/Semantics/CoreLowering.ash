@@ -470,6 +470,11 @@ type CoreLoweringState =
     // computed. A constructor field built from one of these dangles past the loop's arena reset
     // unless it is materialized into to-space first. `None` outside a specialization.
     | specializationFreshInputs: Maybe(List(Str))
+    // Stage 0's `stackAllocate` argument to `LowerConstructorApplication`, carried here rather than
+    // through every constructor-lowering signature: a one-shot request from the `let` or `match`
+    // that is about to lower a constructor expression it has proven dead at the end of the frame.
+    // `lowerConstructor` takes it and clears it, so a nested constructor argument never claims it.
+    | stackAllocateConstructor: Bool
     // Stage 0's `_linearSpecializationAccumulators`: the loop parameters this body hands straight
     // to a single-parameter specialization candidate, deep-copied once at loop entry so the
     // specialization may rewrite them in place. The only route by which a call whose accumulator
@@ -808,6 +813,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         specializingLinearParam = None,
         specializingInProgress = [],
         specializationFreshInputs = None,
+        stackAllocateConstructor = false,
         linearSpecializationAccumulators = [],
         specializingReuseLabel = None,
         fullyReusingCallees = [],
@@ -10576,9 +10582,69 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                                     match closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
                                         | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
+let recursive constructorSpineRoot (expression: Expr) (argumentCount: Int) =
+    match expression with
+        | ExprAt(_span, inner) -> constructorSpineRoot(inner)(argumentCount)
+        | ExprCall(function, _argument, _isSugar, _layout) -> constructorSpineRoot(function)(argumentCount + 1)
+        | ExprVar(name) -> Some((name, argumentCount))
+        | _ -> None
+
+// Stage 0's `IsConstructorExpression`: the call spine's root names a constructor, so the whole
+// expression builds one cell here rather than calling something that returns one. Saturation is
+// required on top, because only a saturated application reaches `lowerConstructor` — a partial one
+// builds a closure instead, and would leave the stack request for whatever constructor comes next.
+let constructorExpression (expression: Expr) (state: CoreLoweringState) =
+    match constructorSpineRoot(expression)(0) with
+        | None -> false
+        | Some((name, argumentCount)) ->
+            match constructorLayout(name)(state) with
+                | None -> false
+                | Some(layout) -> constructorArity(layout) == argumentCount
+
+let recursive constructorPattern (pattern: Pattern) =
+    match pattern with
+        | PatternAt(_span, inner) -> constructorPattern(inner)
+        | PatternConstructor(_name, _subPatterns) -> true
+        | _ -> false
+
+// Stage 0's `ShouldStackAllocateImmediateMatchScrutinee`: one arm, and that arm destructures a
+// constructor. The cell is read apart on the way in and nothing else can reach it.
+let stackAllocatableScrutineeCases (cases: List((Pattern, Expr, Maybe(Expr)))) =
+    match cases with
+        | (pattern, _body, _guard) :: [] -> constructorPattern(pattern)
+        | _ -> false
+
+// Stage 0's `IsImmediateSingleArmAdtDestructuringMatch`: the binding's whole body is a single-arm
+// destructuring match on the binding itself, and neither the guard nor the arm body names it again,
+// so the cell is dead the moment the arm binds its fields. `exprMentionsName` is shadow-blind, so a
+// pattern that rebinds the name declines the placement where stage 0 allows it — a missed
+// optimization, never an unsound one.
+let immediateSingleArmDestructuringMatch (name: Str) (body: Expr) =
+    match unspanArgument(body) with
+        | ExprMatch(scrutinee, cases, _position) ->
+            match (unspanArgument(scrutinee), cases) with
+                | (ExprVar(scrutineeName), (pattern, armBody, guard) :: []) ->
+                    scrutineeName == name && constructorPattern(pattern) && exprMentionsName(name)(armBody) == false && (match guard with
+                        | None -> true
+                        | Some(guardExpr) -> exprMentionsName(name)(guardExpr) == false)
+                | _ -> false
+        | _ -> false
+
+// The one-shot request `lowerConstructor` takes and clears, so the cell the `let` or `match` proved
+// dead at the end of the frame is built there rather than in the arena.
+let requestStackAllocatedConstructor (state: CoreLoweringState) = state with stackAllocateConstructor = true
+
 let lowerLet name value body lower state =
     match state with
-        | CoreLoweringState { bindings = outerBindings } -> lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
+        | CoreLoweringState { bindings = outerBindings } ->
+            // Stage 0 also withholds the placement inside a coroutine body, whose frame is not the
+            // native one; this lowering has no coroutine bodies to withhold it from yet.
+            if constructorExpression(value)(state) && immediateSingleArmDestructuringMatch(name)(body)
+            then
+                state
+                |> requestStackAllocatedConstructor
+                |> lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)
+            else lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
 
 // Whether every arm leaves the matched cell dead: no guard, and no body mentioning the scrutinee.
 let recursive reuseCasesLeaveScrutineeDead (name: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) =
@@ -11478,6 +11544,10 @@ let withStaticStringNormalization cases (plan: CoreMatchPlan) =
 let lowerMatch value cases lower state =
     state
     |> clearConsumerRequest
+    |> (given (cleared: CoreLoweringState) ->
+        if stackAllocatableScrutineeCases(cases) && constructorExpression(value)(cleared)
+        then requestStackAllocatedConstructor(cleared)
+        else cleared)
     |> lower(value)
     |> prepareMatchPlan
     |> withPlanArmRequest(withReconcilableFreshStringJoinRequest(ExprMatch(value)(cases)(None))(state
@@ -12491,16 +12561,21 @@ let specializationCellsArePersistent (state: CoreLoweringState) =
         | Some(_freshInputs) -> true
 
 // Stage 0's `EmitFreshConstructorCell`: a cell a rebuild could not take from a reuse token is fresh.
-// Inside a specialization it goes into the never-reset to-space, so the accumulator it becomes part
-// of survives the loop's own arena reset; outside one it takes the consumer's placement request.
-// `AllocAdtToSpace` is also what keeps the body's reset safe: the scan rejects a plain `AllocAdt`,
-// which could put a live part of the result above the watermark, and never a to-space cell.
-let emitFreshConstructorCell (resultTemp: Int) (tag: Int) (fieldCount: Int) (runtimeManaged: Bool) (tagless: Bool) (state: CoreLoweringState) =
-    if specializationCellsArePersistent(state)
+// A `stackAllocate` request comes from a scope that proved the cell dead at the end of the frame, so
+// it is built in the frame itself and nothing reclaims it. Inside a specialization the cell goes into
+// the never-reset to-space, so the accumulator it becomes part of survives the loop's own arena
+// reset; that placement is also what keeps the body's reset safe, since the scan rejects a plain
+// `AllocAdt` and never a to-space cell. Otherwise the cell takes the consumer's placement request.
+let emitFreshConstructorCell (resultTemp: Int) (tag: Int) (fieldCount: Int) (stackAllocate: Bool) (runtimeManaged: Bool) (tagless: Bool) (state: CoreLoweringState) =
+    if stackAllocate
     then
-        emit(AllocAdtToSpace(resultTemp)(tag)(fieldCount)(tagless))(state)
+        emit(AllocAdtStack(resultTemp)(tag)(fieldCount)(tagless))(state)
     else
-        emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))(state)
+        if specializationCellsArePersistent(state)
+        then
+            emit(AllocAdtToSpace(resultTemp)(tag)(fieldCount)(tagless))(state)
+        else
+            emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))(state)
 
 // The cell's temp is taken before the transferred children are guarded, stage 0's order. Only a
 // reference-counted token's transferred children are guarded; an arena token's cell keeps the
@@ -12525,10 +12600,12 @@ let allocateReusedConstructorCell (arguments: List(Expr)) (argumentTypes: List(S
 // A live token of the rebuilt constructor's layout is consumed whatever the consumer's own
 // placement request: the token was published by the arm that matched this same constructor
 // (`reuseCaseSafe`), and its cell keeps the matched value's reference-counted placement.
-let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (stackAllocate: Bool) (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
     (let fieldCount = coreListLength(temps)
     in
-        match reuseConsumeToken(ctorName)(fieldCount)(tagless)(state) with
+        match if stackAllocate
+        then None
+        else reuseConsumeToken(ctorName)(fieldCount)(tagless)(state) with
             | Some((token, consumedState)) -> allocateReusedConstructorCell(arguments)(argumentTypes)(token)(tag)(fieldCount)(tagless)(layout)(resultType)(temps)(consumedState)
             | None ->
                 match freshTemp(state) with
@@ -12538,15 +12615,15 @@ let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(
                         // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
                         // without one the cell is arena-placed.
                         match allocatedState
-                        |> emitFreshConstructorCell(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless)
+                        |> emitFreshConstructorCell(resultTemp)(tag)(fieldCount)(stackAllocate)(runtimeManaged)(tagless)
                         |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(None)(resultTemp)(tagless)(temps) with
                             | (materializedState, materializedTemps) ->
                                 materializedState
                                 |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
-                                |> markAggregateRuntimeManaged(resultTemp)(specializationCellsArePersistent(state) == false && runtimeManaged)
+                                |> markAggregateRuntimeManaged(resultTemp)(stackAllocate == false && specializationCellsArePersistent(state) == false && runtimeManaged)
                                 |> success(resultTemp)(resolveType(materializedState)(resultType)))
 
-let finishConstructorAllocation arguments layout resultType runtimeManaged lowered =
+let finishConstructorAllocation arguments (stackAllocate: Bool) layout resultType runtimeManaged lowered =
     match (layout, lowered) with
         | (_layout, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (CoreConstructorLayout { isZeroCost = true }, LoweredCoreValues { state = state, temps = temp :: [], error = None }) ->
@@ -12556,7 +12633,7 @@ let finishConstructorAllocation arguments layout resultType runtimeManaged lower
             |> coreListLength
             |> CoreConstructorArityMismatch(name)(1)
             |> failure(state)
-        | (CoreConstructorLayout { name = ctorName, tag = tag, tagless = tagless } as ctorLayout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) -> allocateOrReuseConstructorCell(arguments)(semanticTypes)(ctorName)(tag)(tagless)(ctorLayout)(resultType)(runtimeManaged)(temps)(state)
+        | (CoreConstructorLayout { name = ctorName, tag = tag, tagless = tagless } as ctorLayout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) -> allocateOrReuseConstructorCell(arguments)(semanticTypes)(stackAllocate)(ctorName)(tag)(tagless)(ctorLayout)(resultType)(runtimeManaged)(temps)(state)
 
 let nullaryConstructorRuntimeManageable (resultType: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(resultType)(state) with
@@ -12810,7 +12887,7 @@ let retainRuntimeCellChildren (runtimeManaged: Bool) arguments lowered =
             else lowered
         | _ -> lowered
 
-let finishConstructorArguments arguments (request: ConsumerRequest) lower shape =
+let finishConstructorArguments arguments (request: ConsumerRequest) (stackAllocate: Bool) lower shape =
     match shape with
         | CoreConstructorShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType, constructorRuntimeManaged = requested } ->
             let expectedArity = coreListLength(parameterTypes)
@@ -12836,13 +12913,17 @@ let finishConstructorArguments arguments (request: ConsumerRequest) lower shape 
                                                 (lowered with state = typedState)
                                                 |> retainConstructorLoopParameterArguments(arguments)
                                                 |> retainRuntimeCellChildren(runtimeManaged)(arguments)
-                                                |> finishConstructorAllocation(arguments)(layout)(resultType)(runtimeManaged)
+                                                |> finishConstructorAllocation(arguments)(stackAllocate)(layout)(resultType)(runtimeManaged)
 
+// The stack request is taken and cleared here, so a nested constructor argument lowered further
+// down never claims the one its parent's `let` or `match` made.
 let lowerConstructor layout arguments (request: ConsumerRequest) lower state =
-    state
-    |> markResourceArgumentsMoved(arguments)
-    |> instantiateConstructor(layout)
-    |> finishConstructorArguments(arguments)(request)(lower)
+    (let stackAllocate = state.stackAllocateConstructor
+    in
+        (state with stackAllocateConstructor = false)
+        |> markResourceArgumentsMoved(arguments)
+        |> instantiateConstructor(layout)
+        |> finishConstructorArguments(arguments)(request)(stackAllocate)(lower))
 
 let recursive resolveCoreTypes state semanticTypes =
     match semanticTypes with
@@ -13482,7 +13563,7 @@ let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldType
         | (CoreConstructorLayout { tagless = tagless }, (typedState, None)) ->
             typedState
             |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(0)(tagless)(lower)([])([])
-            |> finishConstructorAllocation([])(layout)(resultType)(runtimeManaged)
+            |> finishConstructorAllocation([])(false)(layout)(resultType)(runtimeManaged)
 
 let finishRecordUpdateShape layout fieldNames fields targetTemp targetType lower shape =
     match shape with

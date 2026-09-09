@@ -355,7 +355,23 @@ let isCmpIntNe (instruction: IrInstructionKind) =
         | CmpIntNe(_target, _left, _right) -> true
         | _ -> false
 
+let isAllocAdtStack (instruction: IrInstructionKind) =
+    match instruction with
+        | AllocAdtStack(_target, _tag, _fieldCount, _tagless) -> true
+        | _ -> false
+
 let taglessRecordSource = "type Point =\n    | x: Int\n    | y: Int\n\nlet p = Point(x = 3, y = 4)\n\nmatch p with\n    | Point(a, b) -> a + b"
+
+// The two shapes stage 0 stack-allocates: a `let` whose whole body destructures it in one arm, and
+// a single-arm match on a constructor expression. Both cells are read apart in the same frame and
+// reach nothing outside it.
+let stackAllocatedLetSource = "type Pair =\n    | Pair(Int, Int)\n\nlet sum (a: Int) (b: Int) =\n    let p = Pair(a, b)\n    in\n        match p with\n            | Pair(x, y) -> x + y\n\nsum(3)(4)"
+
+let stackAllocatedScrutineeSource = "type Pair =\n    | Pair(Int, Int)\n\nlet product (a: Int) (b: Int) =\n    match Pair(a, b) with\n        | Pair(x, y) -> x * y\n\nproduct(3)(4)"
+
+// The binding is named again after the match, so its cell outlives the destructuring and stays in
+// the arena.
+let escapingLetSource = "type Pair =\n    | Pair(Int, Int)\n\nlet second (q: Pair) =\n    match q with\n        | Pair(_a, b) -> b\n\nlet sum (a: Int) (b: Int) =\n    let p = Pair(a, b)\n    in\n        match p with\n            | Pair(x, _y) -> x + second(p)\n\nsum(3)(4)"
 
 // A tagless constructor allocates, stores, and loads with the flag set; its match keeps the
 // `ptr != 0` guard and emits no tag read.
@@ -563,6 +579,27 @@ let expectGenericSingleConstructorTagless unit =
             |> countMatching(isGetAdtTag)
             |> test.assertEqual(0)))
 
+let expectImmediatelyDestructuredLetOnTheStack unit =
+    stackAllocatedLetSource
+    |> loweredProgramSource
+    |> allInstructions
+    |> countMatching(isAllocAdtStack)
+    |> test.assertEqual(1)
+
+let expectSingleArmConstructorScrutineeOnTheStack unit =
+    stackAllocatedScrutineeSource
+    |> loweredProgramSource
+    |> allInstructions
+    |> countMatching(isAllocAdtStack)
+    |> test.assertEqual(1)
+
+let expectEscapingLetStaysInTheArena unit =
+    escapingLetSource
+    |> loweredProgramSource
+    |> allInstructions
+    |> countMatching(isAllocAdtStack)
+    |> test.assertEqual(0)
+
 let runTaglessAdtLayoutTests unit =
     Unit
     |> expectTaglessSingleConstructorRecord
@@ -590,4 +627,7 @@ let runTaglessAdtLayoutTests unit =
     |> expectResourceBearingRecordStaysTagged
     |> expectBuiltinHandleFieldStaysConcrete
     |> expectGenericSingleConstructorTagless
+    |> expectImmediatelyDestructuredLetOnTheStack
+    |> expectSingleArmConstructorScrutineeOnTheStack
+    |> expectEscapingLetStaysInTheArena
     |> (given (_) -> Ashes.IO.print("tagless adt layout tests passed"))
