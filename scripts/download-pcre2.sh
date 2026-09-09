@@ -229,11 +229,11 @@ pcre2_triple_for() {
 
 # The 8-bit PCRE2 library source set (JIT, tools, fuzz/debug harnesses, and #included-only translation
 # units excluded). pcre2_chartables is the shipped default table (.dist), not the generated variant.
-PCRE2_SOURCES="pcre2_auto_possess pcre2_chartables pcre2_chkdint pcre2_compile pcre2_compile_class \
-pcre2_config pcre2_context pcre2_convert pcre2_dfa_match pcre2_error pcre2_extuni pcre2_find_bracket \
-pcre2_maketables pcre2_match pcre2_match_data pcre2_newline pcre2_ord2utf pcre2_pattern_info \
-pcre2_script_run pcre2_serialize pcre2_string_utils pcre2_study pcre2_substitute pcre2_substring \
-pcre2_tables pcre2_ucd pcre2_valid_utf pcre2_xclass"
+PCRE2_SOURCES="pcre2_auto_possess pcre2_chartables pcre2_chkdint pcre2_compile pcre2_compile_cgroup \
+pcre2_compile_class pcre2_config pcre2_context pcre2_convert pcre2_dfa_match pcre2_error pcre2_extuni \
+pcre2_find_bracket pcre2_maketables pcre2_match pcre2_match_data pcre2_match_next pcre2_newline \
+pcre2_ord2utf pcre2_pattern_info pcre2_script_run pcre2_serialize pcre2_string_utils pcre2_study \
+pcre2_substitute pcre2_substring pcre2_tables pcre2_ucd pcre2_valid_utf pcre2_xclass"
 
 # The exposed API surface: everything reachable from these roots survives globaldce; the rest is
 # stripped. These are the symbols the backend's regex intrinsics call (all suffixed _8 for the 8-bit
@@ -360,9 +360,9 @@ build_pcre2_bitcode() {
         write_win_stub_headers "$tmpdir/winstub"
         extra_include="-isystem $tmpdir/winstub"
         write_shims_c "$tmpdir/ashes_pcre2_shims.c"
-        expected_undefined="free malloc memcmp memcpy memset strlen"
+        expected_undefined="free malloc memcmp memcpy memmove memset strlen"
     else
-        expected_undefined="free malloc memchr memcmp memcpy memset"
+        expected_undefined="free malloc memchr memcmp memcpy memmove memset"
     fi
 
     bc="$tmpdir/bc"; mkdir -p "$bc"
@@ -392,8 +392,9 @@ build_pcre2_bitcode() {
 
     # Guard the invariant the backend relies on: the payload only leaves external the leaf functions
     # the program module already provides -- malloc/free (the emitted PCRE2 region allocator),
-    # memcpy/memset/memcmp/strlen (backend builtins), and, on Linux, memchr (libc import). Anything
-    # else would fail to link into a hermetic executable.
+    # memcpy/memset/memcmp/strlen (backend builtins), memmove (a libc.so.6 / msvcrt.dll import the
+    # image linkers already carry), and, on Linux, memchr (libc import). Anything else would fail to
+    # link into a hermetic executable.
     local undefined
     undefined="$(llvm-nm --undefined-only "$output_path" | awk '{print $2}' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
     if [ "$undefined" != "$expected_undefined" ]; then
