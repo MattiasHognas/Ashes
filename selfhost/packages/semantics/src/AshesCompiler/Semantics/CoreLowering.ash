@@ -78,6 +78,9 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.PerceusLifetimePlacement
 import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 import AshesCompiler.Semantics.ReuseSpecialization
+import AshesCompiler.Semantics.ReuseFunctionSpecialization
+import AshesCompiler.Semantics.ReuseResetSafety.specializationRebuildsAccumulator
+import AshesCompiler.Semantics.ReuseResetSafety.accumulatorIsFullyPersistent
 import AshesCompiler.Semantics.Unification
 // Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some
 // terminal arm, with no passthrough arm that could alias a tuple built elsewhere.
@@ -438,6 +441,16 @@ type CoreLoweringState =
     // are being spliced, so a helper is never spliced into itself.
     | inlinableHelpers: List(Str)
     | inliningInProgress: List(Str)
+    // Stage 0's `_specializableFunctions`: every self-recursive top-level function of the program
+    // by name, with its curried parameter names and its whole lambda value, so a call passing a
+    // provably unique last argument can be routed to an in-place-reuse specialization of it; the
+    // specializations generated so far, by the name and accumulator type they were monomorphized
+    // for; and stage 0's `_specializingLinearParam`, the parameter the specialization being
+    // generated treats as a linear reuse root, consumed by the lambda that binds it.
+    | specializationCandidates: List((Str, List(Str), Expr))
+    | reuseSpecializations: List((Str, Str))
+    | specializingLinearParam: Maybe(Str)
+    | specializingInProgress: List(Str)
     // Stage 0's `_topLevelFunctionRefs`: each top-level `let` whose lambda captured nothing, by
     // name with its code label and generalized scheme, so a body spliced into a scope that never
     // captured it (an inlined helper) can rebuild its closure from the label with a null
@@ -752,6 +765,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         reuseTokens = [],
         inlinableHelpers = [],
         inliningInProgress = [],
+        specializationCandidates = [],
+        reuseSpecializations = [],
+        specializingLinearParam = None,
+        specializingInProgress = [],
         topLevelFunctionRefs = [],
         valuePlacements = [],
         unresolvedCallResults = [],
@@ -10410,6 +10427,41 @@ let recursive reuseFieldBindingNames (bindings: List((Int, Str))) =
         | [] -> []
         | (_index, name) :: rest -> name :: reuseFieldBindingNames(rest)
 
+// The pseudo-constructor a list cell's reuse token is minted and matched under: a cons cell has no
+// constructor layout of its own, so its two-word shape is named here and nowhere else.
+let listCellReuseConstructorName = "::"
+
+let recursive isConsPattern (pattern: Pattern) =
+    match pattern with
+        | PatternAt(_span, inner) -> isConsPattern(inner)
+        | PatternCons(_head, _tail) -> true
+        | _ -> false
+
+// A list cell matched by a cons pattern on a linear reuse root hands its dead cell to the arm as
+// an arena token, stage 0's `ListCell` reuse: the rebuilt cell overwrites it in place. Only an
+// arena token is minted this way — a reference-counted cell's transferred children would each
+// need the runtime nullness guard the constructor path emits.
+let listCellReuseToken (runtimeManagedToken: Bool) (pattern: Pattern) (valueTemp: Int) (state: CoreLoweringState) =
+    if runtimeManagedToken || isConsPattern(pattern) == false
+    then None
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = allocatedState, temp = tokenTemp } ->
+                Some((CoreReuseToken(
+                    temp = tokenTemp,
+                    fieldCount = 2,
+                    tagless = false,
+                    runtimeManaged = false,
+                    constructorName = listCellReuseConstructorName,
+                    fieldBindings = []
+                ), emit(DropReuse(tokenTemp)(valueTemp)(2)(false))(allocatedState)))
+
+let publishReuseToken (token: CoreReuseToken) (transferredNames: List(Str)) (tokensBefore: Int) (state: CoreLoweringState) =
+    (LoweredCorePattern(
+        state = (state with reuseTokens = token :: state.reuseTokens, reuseTransferredNames = transferredNames),
+        error = None
+    ), Some(tokensBefore))
+
 let reuseTokenIfEligible (reuseScrutineeName: Maybe((Str, Bool))) (pattern: Pattern) (body: Expr) (valueTemp: Int) (patternResult: LoweredCorePattern) =
     match patternResult with
         | LoweredCorePattern { error = Some(_error) } -> (patternResult, None)
@@ -10420,35 +10472,37 @@ let reuseTokenIfEligible (reuseScrutineeName: Maybe((Str, Bool))) (pattern: Patt
                     if exprMentionsName(scrutineeName)(body)
                     then (patternResult, None)
                     else
-                        match reuseCaseConstructorLayout(pattern)(state) with
-                            | None -> (patternResult, None)
-                            | Some(CoreConstructorLayout { name = ctorName, tagless = tagless }) ->
-                                let arity =
-                                    match reusePatternConstructorArity(pattern) with
-                                        | Some((_name, patternArity)) -> patternArity
-                                        | None -> 0
-                                in
-                                    let tokensBefore = length(state.reuseTokens)
-                                    in
-                                        match freshTemp(state) with
-                                            | FreshTemp { state = allocatedState, temp = tokenTemp } ->
-                                                let token =
-                                                    CoreReuseToken(
-                                                        temp = tokenTemp,
-                                                        fieldCount = arity,
-                                                        tagless = tagless,
-                                                        runtimeManaged = runtimeManagedToken,
-                                                        constructorName = ctorName,
-                                                        fieldBindings = reusePatternFieldBindings(pattern)
-                                                    )
-                                                in
-                                                    (LoweredCorePattern(
-                                                        state = allocatedState
-                                                        |> emit(DropReuse(tokenTemp)(valueTemp)(arity)(runtimeManagedToken))
-                                                        |> (given (published: CoreLoweringState) ->
-                                                            published with reuseTokens = token :: published.reuseTokens, reuseTransferredNames = reuseFieldBindingNames(reusePatternFieldBindings(pattern))),
-                                                        error = None
-                                                    ), Some(tokensBefore))
+                        match listCellReuseToken(runtimeManagedToken)(pattern)(valueTemp)(state) with
+                            | Some((listToken, publishedState)) ->
+                                publishReuseToken(listToken)([])(length(state.reuseTokens))(publishedState)
+                            | None ->
+                                match reuseCaseConstructorLayout(pattern)(state) with
+                                    | None -> (patternResult, None)
+                                    | Some(CoreConstructorLayout { name = ctorName, tagless = tagless }) ->
+                                        let arity =
+                                            match reusePatternConstructorArity(pattern) with
+                                                | Some((_name, patternArity)) -> patternArity
+                                                | None -> 0
+                                        in
+                                            let tokensBefore = length(state.reuseTokens)
+                                            in
+                                                match freshTemp(state) with
+                                                    | FreshTemp { state = allocatedState, temp = tokenTemp } ->
+                                                        let token =
+                                                            CoreReuseToken(
+                                                                temp = tokenTemp,
+                                                                fieldCount = arity,
+                                                                tagless = tagless,
+                                                                runtimeManaged = runtimeManagedToken,
+                                                                constructorName = ctorName,
+                                                                fieldBindings = reusePatternFieldBindings(pattern)
+                                                            )
+                                                        in
+                                                            allocatedState
+                                                            |> emit(DropReuse(tokenTemp)(valueTemp)(arity)(runtimeManagedToken))
+                                                            |> publishReuseToken(token)(pattern
+                                                            |> reusePatternFieldBindings
+                                                            |> reuseFieldBindingNames)(tokensBefore)
 
 let recursive reuseDropExtra (excess: Int) (tokens: List(CoreReuseToken)) =
     if excess <= 0
@@ -11215,6 +11269,17 @@ let recursive bindingNames (bindings: List(CoreBinding)) =
         | [] -> []
         | CoreBinding { name = name } :: rest -> name :: bindingNames(rest)
 
+// Stage 0's `LowerLambdaCoreSeedScopeBindings` reuse arm: the parameter a specialization is being
+// generated for becomes a linear reuse root, so a match on it hands its dead cells to the arms as
+// arena reuse tokens. The request is consumed here, so a nested lambda never inherits it.
+let armSpecializationLinearParameter (parameter: Str) (state: CoreLoweringState) =
+    match state.specializingLinearParam with
+        | Some(linear) ->
+            if linear == parameter
+            then state with linearReuseNames = [parameter], specializingLinearParam = None
+            else state
+        | None -> state
+
 // The recursive group's member names are remembered for the body and everything lifted out of
 // it, so a member captured into an inner curried stage is still known as a self callee.
 let prepareRecursiveBodyState parameter parameterType captures selfBindings origin state =
@@ -11238,6 +11303,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
+        |> armSpecializationLinearParameter(parameter)
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
 // A recursive member's result meets the callers the same way a plain lambda's does: a
@@ -11702,17 +11768,52 @@ let lowerTuple elements lower state =
             |> lowerTupleElementsInto(request)(runtimeTuple)(tupleTransfers(request)(state))(elements)(lower)([])([])
             |> finishTupleLowering(elements)(runtimeTuple)(tupleTransfers(request)(state))
 
+// The live arena list-cell token, if one was published by a cons arm of the match this cell is
+// rebuilt in. A reference-counted cell never takes one: its token would carry transferred children
+// needing the runtime nullness guard only the constructor path emits.
+let recursive takeListCellReuseToken (tokens: List(CoreReuseToken)) =
+    match tokens with
+        | [] -> None
+        | (CoreReuseToken { constructorName = candidateName, runtimeManaged = candidateManaged } as token) :: rest ->
+            if candidateName == listCellReuseConstructorName && candidateManaged == false
+            then Some((token, rest))
+            else
+                match takeListCellReuseToken(rest) with
+                    | Some((found, remaining)) -> Some((found, token :: remaining))
+                    | None -> None
+
+let consumeListCellReuseToken (runtimeManaged: Bool) (state: CoreLoweringState) =
+    if runtimeManaged
+    then None
+    else
+        match takeListCellReuseToken(state.reuseTokens) with
+            | Some((token, remaining)) -> Some((token, (state with reuseTokens = remaining)))
+            | None -> None
+
 let allocateListCell headTemp tailTemp elementType (runtimeManaged: Bool) state =
-    match freshTemp(state) with
-        | FreshTemp { state = allocatedState, temp = cellTemp } ->
-            allocatedState
-            |> emit(Alloc(cellTemp)(16)(runtimeManaged))
-            |> emit(StoreMemOffset(cellTemp)(0)(headTemp))
-            |> emit(StoreMemOffset(cellTemp)(8)(tailTemp))
-            |> markAggregateRuntimeManaged(cellTemp)(runtimeManaged)
-            |> success(cellTemp)(elementType
-            |> resolveType(allocatedState)
-            |> SemList)
+    match consumeListCellReuseToken(runtimeManaged)(state) with
+        | Some((token, consumedState)) ->
+            match freshTemp(consumedState) with
+                | FreshTemp { state = allocatedState, temp = cellTemp } ->
+                    allocatedState
+                    |> emit(AllocReusing(cellTemp)(0)(2)(token.temp)(false)(true)(false))
+                    |> emit(StoreMemOffset(cellTemp)(0)(headTemp))
+                    |> emit(StoreMemOffset(cellTemp)(8)(tailTemp))
+                    |> markAggregateRuntimeManaged(cellTemp)(false)
+                    |> success(cellTemp)(elementType
+                    |> resolveType(allocatedState)
+                    |> SemList)
+        | None ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocatedState, temp = cellTemp } ->
+                    allocatedState
+                    |> emit(Alloc(cellTemp)(16)(runtimeManaged))
+                    |> emit(StoreMemOffset(cellTemp)(0)(headTemp))
+                    |> emit(StoreMemOffset(cellTemp)(8)(tailTemp))
+                    |> markAggregateRuntimeManaged(cellTemp)(runtimeManaged)
+                    |> success(cellTemp)(elementType
+                    |> resolveType(allocatedState)
+                    |> SemList)
 
 // The request a list element or cons head is lowered under, stage 0's
 // `LowerRuntimeManagedListElement`: the list's own flags stay, the element type is expected, and
@@ -15138,6 +15239,100 @@ let tryInlineHelperCall (spine: CoreCallSpine) lower (state: CoreLoweringState) 
             |> Some
         | None -> None
 
+let recursive lookupSpecializationCandidate (name: Str) (candidates: List((Str, List(Str), Expr))) =
+    match candidates with
+        | [] -> None
+        | (candidate, parameters, value) :: rest ->
+            if candidate == name
+            then Some((parameters, value))
+            else lookupSpecializationCandidate(name)(rest)
+
+// Stage 0's `IsFreshOwnershipResultCall`: the accumulator argument is itself a saturated call
+// whose callee's whole-program result reach keeps none of its parameters, so the value handed to
+// the specialization is freshly built here and aliased by nothing the specialization could
+// overwrite out from under.
+let reuseSpecializationArgumentIsFresh (argument: Expr) (state: CoreLoweringState) =
+    match collectCallSpine(argument) with
+        | CoreCallSpine { arguments = [] } -> false
+        | CoreCallSpine { root = root, arguments = callArguments } ->
+            match unspanArgument(root) with
+                | ExprVar(callee) ->
+                    match lookupLetLambda(callee)(state.letLambdas) with
+                        | Some((recordedParameters, recordedBody)) ->
+                            match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
+                                | (parameters, _body, reach) -> length(parameters) == coreListLength(callArguments) && helperResultFresh(reach)
+                        | None -> false
+                | _ -> false
+
+// The accumulator parameter type and the whole function type a specialization candidate is called
+// at, read through the current substitution. A callee whose binding is not a resolved single-
+// parameter function has neither.
+let reuseSpecializationCalleeType (callee: Str) (state: CoreLoweringState) =
+    match lookupBinding(callee)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+            match resolveType(state)(body) with
+                | SemFunction(parameterType, resultType, effects) ->
+                    Some((resolveType(state)(parameterType), SemFunction(resolveType(state)(parameterType))(resolveType(state)(resultType))(effects)))
+                | _ -> None
+        | None -> None
+
+// The specialization a call qualifies for, stage 0's `QualifyReuseSpecializationCall` narrowed to
+// the fresh-result path over a single accumulator parameter: the callee is one of the program's
+// self-recursive top-level functions, takes exactly the one argument, rebuilds its accumulator,
+// carries a list of a copy-type element (nothing in it needs the to-space materialization no
+// lowering site emits), is handed a provably fresh value, and mentions only names a body lowered
+// here can bind. A candidate already being specialized is skipped, so neither the specialization's
+// own self-calls nor the call it is generated for re-enter this path.
+let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprVar(callee) ->
+            if state.reuseEnabled && containsName(callee)(state.specializingInProgress) == false
+            then
+                match (lookupSpecializationCandidate(callee)(state.specializationCandidates), spine.arguments) with
+                    | (Some((parameter :: [], value)), argument :: []) ->
+                        match reuseSpecializationCalleeType(callee)(state) with
+                            | Some((accumulatorType, functionType)) ->
+                                if specializationRebuildsAccumulator(functionType)(1) && accumulatorIsFullyPersistent(accumulatorType) && reuseSpecializationArgumentIsFresh(argument)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
+                                then Some((callee, parameter, value, argument))
+                                else None
+                            | None -> None
+                    | _ -> None
+            else None
+        | _ -> None
+
+let relabelReuseSpecialization (label: Str) prepared =
+    match prepared with
+        | PreparedCoreRecursiveGroup { state = state, members = member :: [], error = None } ->
+            PreparedCoreRecursiveGroup(
+                state = state,
+                members = [(member with label = label)],
+                error = None
+            )
+        | _ -> prepared
+
+let restoreSpecializationScope (outer: CoreLoweringState) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state } -> lowered with state = (state with specializingInProgress = outer.specializingInProgress, specializingLinearParam = outer.specializingLinearParam)
+
+// Stage 0's `GetOrCreateReuseSpecialization` plus `LowerReuseSpecializedCall`, as one recursive
+// group: the candidate's own lambda is lowered under a label of its own with its accumulator armed
+// as a linear reuse root, its self-calls bind to that label through the group's self binding, and
+// the group's continuation is the original call, now reaching the specialization. Each qualifying
+// call site generates its own specialization; stage 0 shares one per concrete instantiation.
+let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (value: Expr) (argument: Expr) lower (state: CoreLoweringState) =
+    (let label =
+        state.reuseSpecializations
+        |> length
+        |> reuseSpecializationLabel(callee)
+    in
+        match state with
+            | CoreLoweringState { bindings = outerBindings, currentSpan = declarationSpan } ->
+                []
+                |> prepareRecursiveGroup([(callee, value)])((state with recursiveDeclarationSpan = declarationSpan, specializingLinearParam = Some(parameter), specializingInProgress = callee :: state.specializingInProgress, reuseSpecializations = (label, callee) :: state.reuseSpecializations))
+                |> relabelReuseSpecialization(label)
+                |> lowerPreparedRecursiveGroup([(callee, value)])(ExprCall(ExprVar(callee))(argument)(false)(callArgumentsInline))(lower)(outerBindings)
+                |> restoreSpecializationScope(state))
+
 let lowerGeneralCall expression function argument lower state =
     match (isTailSelfCall(collectCallSpine(expression))(state), state.tcoLoopFrame, state.tcoLoop) with
         | (true, Some(frame), Some(loop)) ->
@@ -15147,13 +15342,16 @@ let lowerGeneralCall expression function argument lower state =
             |> unifyOptionalExpectedResult(expectedTypeOf(state))
             |> locateLoweredMismatch(argumentSiteOf(state))
         | _ ->
-            match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
-                | Some(inlined) -> inlined
+            match reuseSpecializedCallOf(collectCallSpine(expression))(state) with
+                | Some((callee, parameter, value, accumulator)) -> lowerReuseSpecializedCall(callee)(parameter)(value)(accumulator)(lower)(state)
                 | None ->
-                    state
-                    |> clearConsumerRequest
-                    |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
-                    |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
+                    match tryInlineHelperCall(collectCallSpine(expression))(lower)(state) with
+                        | Some(inlined) -> inlined
+                        | None ->
+                            state
+                            |> clearConsumerRequest
+                            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(argumentSiteOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(tailCallPosition(state))(lower)
+                            |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
 
 // A call whose root qualifies an operation with a registered capability or a static provider is
 // the implicit form of `perform`, and lowers as the operation call.
@@ -16364,7 +16562,7 @@ let lowerCoreProgram (program: ProgramSyntax) =
             in
                 Unit
                 |> initialState
-                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
+                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
@@ -16391,7 +16589,7 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 Unit
                 |> initialStateWithContext(constructorLayouts)(builtinLayouts)
                 |> (given (state: CoreLoweringState) ->
-                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items))
+                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
@@ -16411,7 +16609,7 @@ let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (sou
                 Unit
                 |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
                 |> (given (state: CoreLoweringState) ->
-                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items), reuseEnabled = reuseEnabled)
+                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items), reuseEnabled = reuseEnabled)
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
@@ -16437,7 +16635,7 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
             in
                 Unit
                 |> initialState
-                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
+                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(Some(environment))
                 |> buildProgram
