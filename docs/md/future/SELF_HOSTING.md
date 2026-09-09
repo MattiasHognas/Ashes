@@ -2125,11 +2125,26 @@ same public behavior.
   self-hosted CLI compiling and running the same programs to stage 0's answers, with peak RSS
   matching its own `--debug-disable-reuse` build to within the reused cells. Still open: sharing
   one specialization across call sites (stage 0 caches per concrete instantiation; each qualifying
-  site generates its own here), the direct-unique call path over a loop accumulator (stage 0's
-  `QualifyVariableReuseSpecialization` and the `_linearSpecializationAccumulators` scan that feeds
-  it, the only route by which a named-ADT accumulator reaches a specialization at all), the
+  site generates its own here), the direct-unique call path over a loop accumulator, the
   reset-safety verdict's consumers (`_fullyReusingLabels`/`_resetSafeAccumulators`), and to-space
-  materialization itself.
+  materialization itself. Those last three are one coupled unit, not three independent slices, and
+  the ordering matters: stage 0's fresh-result path rejects any accumulator that is not a `TList`
+  outright (`QualifyFreshResultReuseSpecialization`'s `NthCurriedArgType ... is not TypeRef.TList`,
+  reproduced by running a `Tree -> Tree` rewriter through stage 0's `--explain reuse`, which reports
+  `fresh accumulator layout unsupported`), so a named-ADT accumulator can only ever reach a
+  specialization through `QualifyVariableReuseSpecialization`, which reads
+  `_linearSpecializationAccumulators` — a set only the TCO loop scan
+  (`LowerLambdaCoreScanSpecializationReuse`, `CollectSpecializableCallArgs`, and the reuse entry
+  copies that make the accumulator unique) ever fills, and which the self-hosted lowering has no
+  counterpart for. To-space materialization is likewise reachable only from a named-ADT
+  accumulator's fresh heap leaf fields. Whoever picks this up should port the loop scan first
+  (single-parameter candidates only — stage 0's `_freshCompositionOnlySpecializable` excludes the
+  multi-parameter ones from it), then the named-ADT half of `accumulatorIsFullyPersistent` for the
+  self-or-copy-field shape that needs no materialization at all, and only then to-space; the
+  self-hosted entry-copy machinery `scanDirectReuseAccumulators`/`finalizeDirectReuse` already
+  provides the copier synthesis and the move-safety elision, but its "worth its cost" gate looks
+  for an `AllocReusing` in the loop body and a specialization's reuse happens in the generated
+  function instead, so that gate needs widening in the same change.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
