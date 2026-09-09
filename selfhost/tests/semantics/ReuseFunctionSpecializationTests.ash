@@ -93,6 +93,14 @@ let stringFieldLoopSource unit = "type Tree =\n" + "    | Leaf\n" + "    | Node(
 // blob is not free and the new label is materialized into a fresh to-space cell instead.
 let boundStringFieldLoopSource unit = "type Tree =\n" + "    | Leaf\n" + "    | Node(Tree, Str, Tree)\n" + "\n" + "let recursive relabel (tree: Tree) =\n" + "    match tree with\n" + "        | Leaf -> Leaf\n" + "        | Node(left, label, right) -> Node(relabel(left), label + \"z\", relabel(right))\n" + "\n" + "let recursive makeTree (depth: Int) =\n" + "    if depth == 0\n" + "    then Leaf\n" + "    else Node(makeTree(depth - 1), \"x\", makeTree(depth - 1))\n" + "\n" + "let recursive rounds (count: Int) (acc: Tree) =\n" + "    if count == 0\n" + "    then acc\n" + "    else rounds(count - 1)(relabel(acc))\n" + "\n" + "rounds(3)(makeTree(3))\n"
 
+// A list-of-strings leaf: no in-place primitive exists for a list spine, so the rebuilt field is
+// relocated through the synthesized to-space list copier.
+let listFieldLoopSource unit = "type Tree =\n" + "    | Leaf\n" + "    | Node(Tree, List(Str), Tree)\n" + "\n" + "let recursive relabel (tree: Tree) =\n" + "    match tree with\n" + "        | Leaf -> Leaf\n" + "        | Node(left, _, right) -> Node(relabel(left), [\"z\"], relabel(right))\n" + "\n" + "let recursive makeTree (depth: Int) =\n" + "    if depth == 0\n" + "    then Leaf\n" + "    else Node(makeTree(depth - 1), [\"x\"], makeTree(depth - 1))\n" + "\n" + "let recursive rounds (count: Int) (acc: Tree) =\n" + "    if count == 0\n" + "    then acc\n" + "    else rounds(count - 1)(relabel(acc))\n" + "\n" + "rounds(3)(makeTree(3))\n"
+
+// A foreign ADT leaf, distinct from the accumulator's own type: relocated through the synthesized
+// to-space ADT copier, which walks its constructors and relocates their fields in turn.
+let adtFieldLoopSource unit = "type Label =\n" + "    | Tag(Str)\n" + "\n" + "type Tree =\n" + "    | Leaf\n" + "    | Node(Tree, Label, Tree)\n" + "\n" + "let recursive relabel (tree: Tree) =\n" + "    match tree with\n" + "        | Leaf -> Leaf\n" + "        | Node(left, _, right) -> Node(relabel(left), Tag(\"z\"), relabel(right))\n" + "\n" + "let recursive makeTree (depth: Int) =\n" + "    if depth == 0\n" + "    then Leaf\n" + "    else Node(makeTree(depth - 1), Tag(\"x\"), makeTree(depth - 1))\n" + "\n" + "let recursive rounds (count: Int) (acc: Tree) =\n" + "    if count == 0\n" + "    then acc\n" + "    else rounds(count - 1)(relabel(acc))\n" + "\n" + "rounds(3)(makeTree(3))\n"
+
 // A reader rather than a rewriter: its result is not the accumulator's type, so routing it
 // through a specialization would allocate its result where nothing reclaims it.
 let readerSource unit = "let recursive makeList (count: Int) =\n" + "    if count == 0\n" + "    then []\n" + "    else 7 :: makeList(count - 1)\n" + "\n" + "let recursive countAll (values: List(Int)) =\n" + "    match values with\n" + "        | [] -> 0\n" + "        | _value :: rest -> 1 + countAll(rest)\n" + "\n" + "countAll(makeList(4))\n"
@@ -281,6 +289,30 @@ let testBoundStringFieldMaterializesFresh unit =
     |> containsText("CopyOutArenaToSpace")
     |> test.assertEqual(true)
 
+let testListFieldRelocatesThroughItsCopier unit =
+    Unit
+    |> listFieldLoopSource
+    |> dumped
+    |> containsText("__tospacecopy_list_")
+    |> test.assertEqual(true)
+
+let testAdtFieldRelocatesThroughItsCopier unit =
+    Unit
+    |> adtFieldLoopSource
+    |> dumped
+    |> containsText("__tospacecopy_adt_")
+    |> test.assertEqual(true)
+
+// A recursive child of the accumulator's own type is already a reuse-managed cell, so it is not
+// relocated: the copier it would need is self-recursive, and the closure carrying it is exactly
+// what the reset-safety scan reads as an escape.
+let testAccumulatorSelfFieldIsNotRelocated unit =
+    Unit
+    |> loopAccumulatorSource
+    |> dumped
+    |> containsText("__tospacecopy_adt_")
+    |> test.assertEqual(false)
+
 // Nothing outside a specialization pays for the relocation.
 let testOrdinaryConstructorSkipsMaterialization unit =
     Unit
@@ -321,6 +353,9 @@ let runReuseFunctionSpecializationTests unit =
     |> testStringFieldOverwritesTheDeadBlob
     |> testStringFieldLoopBackEdgeReclaimsItsArena
     |> testBoundStringFieldMaterializesFresh
+    |> testListFieldRelocatesThroughItsCopier
+    |> testAdtFieldRelocatesThroughItsCopier
+    |> testAccumulatorSelfFieldIsNotRelocated
     |> testOrdinaryConstructorSkipsMaterialization
     |> testReaderKeepsOrdinaryCall
     |> reportSuccess

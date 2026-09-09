@@ -63,6 +63,7 @@ import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.StructuralCopiers
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TaglessAdtLayout
+import AshesCompiler.Semantics.ToSpaceCopiers
 import AshesCompiler.Semantics.TcoAffineAppend.affineSelfAppendOrdinals
 import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.PatternBindingOwnership
@@ -7328,17 +7329,25 @@ let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(Core
                     else namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
                 | None -> namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
 
+// Whether the rebuild's constructor-site materialization can relocate a field of this type into
+// to-space through a synthesized copier — the half of the persistence question that needs the type
+// environment, so `ReuseResetSafety.ash` takes it as a parameter.
+let specializationFieldRelocatable (fieldType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> coverageEnvironment
+    |> toSpaceCopySafeType(resolveType(state)(fieldType))
+
 // Stage 0's `AccumulatorLayoutIsPersistable`: a list accumulator's cells are rebuilt in the
 // ordinary heap and carry whatever their elements already were, so its layout constrains nothing;
 // a named ADT accumulator's fresh cells would be allocated into the never-reset to-space, so it is
-// admitted only in the shape needing no materialization — every field the accumulator itself or a
-// copy type.
+// admitted only when every field is the accumulator itself or a leaf the materialization relocates.
 let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) (state: CoreLoweringState) =
     match accumulatorType with
         | SemNamed(_symbolId, typeName, _arguments) ->
             match namedTypeConstructorFieldTypes(typeName)(state.constructorLayouts)(state)(false)([]) with
                 | (false, _fieldTypes) -> false
-                | (true, fieldTypes) -> namedAccumulatorFieldsPersistent(typeName)(fieldTypes)
+                | (true, fieldTypes) ->
+                    namedAccumulatorFieldsPersistent(typeName)(given (fieldType: SemanticType) -> specializationFieldRelocatable(fieldType)(state))(fieldTypes)
         | _ -> true
 
 // Stage 0's `IsReusableSpecializationAccumulatorType`, whose real question is whether the loop
@@ -12401,17 +12410,36 @@ let specializationFieldSlotIsDead (fieldIndex: Int) (token: Maybe(CoreReuseToken
         | None -> false
         | Some(CoreReuseToken { fieldBindings = fieldBindings }) -> fieldIndexIsUnbound(fieldIndex)(fieldBindings)
 
+// A field whose own type is the type being rebuilt is a recursive child of the accumulator: the
+// recursive call that produced it is part of the specialization, so it is already a reuse-managed
+// cell. Relocating it would be redundant, and — since the copier it needs is self-recursive — would
+// leave the reset-safety scan looking at an escaping closure, defeating the very reset this
+// mechanism exists to enable. Stage 0 compares the two type symbols, which the name and its symbol
+// id are here.
+let specializationFieldIsAccumulatorSelf (fieldType: SemanticType) (resultType: SemanticType) =
+    match (fieldType, resultType) with
+        | (SemNamed(fieldSymbol, fieldName, _fieldArguments), SemNamed(resultSymbol, resultName, _resultArguments)) -> fieldSymbol == resultSymbol && fieldName == resultName
+        | _ -> false
+
+// A list or ADT leaf has no in-place update primitive, so it is always rebuilt fresh through the
+// synthesized to-space copier rather than over an update's dead cell — stage 0 makes the same
+// choice for the same reason.
+let relocateSpecializationField (fieldType: SemanticType) (fieldTemp: Int) (state: CoreLoweringState) =
+    if specializationFieldRelocatable(fieldType)(state)
+    then
+        match state with
+            | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+                match synthesizeToSpaceCopy(fieldTemp)(resolveType(state)(fieldType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                    | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
+    else (state, fieldTemp)
+
 // Stage 0's `MaterializeSpecializationField`. A constructor field built from one of the
 // specialization's fresh inputs points into the arena scratch the loop's per-iteration reset
 // reclaims, so the rebuilt cell would outlive its own field; the copy relocates the value into
-// to-space, which the reset never touches. A copy type is inline and needs nothing. A recursive
-// child of the accumulator's own type is left alone as well: the recursive call that produced it is
-// part of the specialization, so it is already a reuse-managed cell, and copying it would
-// synthesize the self-recursive copier closure the reset-safety scan reads as an escape.
-// Stage 0 also relocates a list of strings and a to-space-copyable ADT through copiers synthesized
-// for the purpose; selfhost has no to-space copier synthesis, so a field of either shape passes
-// through here and `namedAccumulatorFieldsPersistent` declines the accumulator carrying it.
-let materializeSpecializationField (argument: Expr) (fieldType: SemanticType) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (fieldTemp: Int) (state: CoreLoweringState) =
+// to-space, which the reset never touches. A copy type is inline and needs nothing. A string, bytes
+// or copy-tuple leaf is a direct blob copy; a list of strings and a non-self ADT go through the
+// copiers `ToSpaceCopiers.ash` synthesizes for them.
+let materializeSpecializationField (argument: Expr) (fieldType: SemanticType) (resultType: SemanticType) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (fieldTemp: Int) (state: CoreLoweringState) =
     match state.specializationFreshInputs with
         | None -> (state, fieldTemp)
         | Some(freshInputs) ->
@@ -12430,22 +12458,29 @@ let materializeSpecializationField (argument: Expr) (fieldType: SemanticType) (t
                             if allCopyTypeElements(elements)
                             then materialize(8 * length(elements))(state)
                             else (state, fieldTemp)
+                        | SemList(element) -> relocateSpecializationField(SemList(element))(fieldTemp)(state)
+                        | SemNamed(_symbolId, _typeName, _arguments) as namedFieldType ->
+                            if resultType
+                            |> resolveType(state)
+                            |> specializationFieldIsAccumulatorSelf(namedFieldType)
+                            then (state, fieldTemp)
+                            else relocateSpecializationField(namedFieldType)(fieldTemp)(state)
                         | _ -> (state, fieldTemp)
 
-let recursive materializeSpecializationFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (temps: List(Int)) (reversed: List(Int)) (state: CoreLoweringState) =
+let recursive materializeSpecializationFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (resultType: SemanticType) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (temps: List(Int)) (reversed: List(Int)) (state: CoreLoweringState) =
     match (arguments, fieldTypes, temps) with
         | (argument :: restArguments, fieldType :: restTypes, temp :: restTemps) ->
-            match materializeSpecializationField(argument)(fieldType)(token)(cellTemp)(fieldIndex)(tagless)(temp)(state) with
-                | (materialized, materializedTemp) -> materializeSpecializationFields(restArguments)(restTypes)(token)(cellTemp)(fieldIndex + 1)(tagless)(restTemps)(materializedTemp :: reversed)(materialized)
+            match materializeSpecializationField(argument)(fieldType)(resultType)(token)(cellTemp)(fieldIndex)(tagless)(temp)(state) with
+                | (materialized, materializedTemp) -> materializeSpecializationFields(restArguments)(restTypes)(resultType)(token)(cellTemp)(fieldIndex + 1)(tagless)(restTemps)(materializedTemp :: reversed)(materialized)
         | _ ->
             (state, append(reverse(reversed))(temps))
 
 // The materialization runs only inside a specialization; outside one every field passes through and
 // the walk is skipped so no ordinary constructor pays for it.
-let materializeConstructorFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (tagless: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+let materializeConstructorFields (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (resultType: SemanticType) (token: Maybe(CoreReuseToken)) (cellTemp: Int) (tagless: Bool) (temps: List(Int)) (state: CoreLoweringState) =
     match state.specializationFreshInputs with
         | None -> (state, temps)
-        | Some(_freshInputs) -> materializeSpecializationFields(arguments)(fieldTypes)(token)(cellTemp)(0)(tagless)(temps)([])(state)
+        | Some(_freshInputs) -> materializeSpecializationFields(arguments)(fieldTypes)(resultType)(token)(cellTemp)(0)(tagless)(temps)([])(state)
 
 // The cell's temp is taken before the transferred children are guarded, stage 0's order. Only a
 // reference-counted token's transferred children are guarded; an arena token's cell keeps the
@@ -12460,7 +12495,7 @@ let allocateReusedConstructorCell (arguments: List(Expr)) (argumentTypes: List(S
                 | (transferredState, transferredTemps) ->
                     match transferredState
                     |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(token.runtimeManaged)(false)(tagless))
-                    |> materializeConstructorFields(arguments)(argumentTypes)(Some(token))(resultTemp)(tagless)(transferredTemps) with
+                    |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(Some(token))(resultTemp)(tagless)(transferredTemps) with
                         | (materializedState, materializedTemps) ->
                             materializedState
                             |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
@@ -12484,7 +12519,7 @@ let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(
                         // without one the cell is arena-placed.
                         match allocatedState
                         |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))
-                        |> materializeConstructorFields(arguments)(argumentTypes)(None)(resultTemp)(tagless)(temps) with
+                        |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(None)(resultTemp)(tagless)(temps) with
                             | (materializedState, materializedTemps) ->
                                 materializedState
                                 |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
