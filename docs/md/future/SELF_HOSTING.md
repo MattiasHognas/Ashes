@@ -820,7 +820,7 @@ same public behavior.
   like a cycle back into its parent: nested records were never admitted to the record layout, and
   resource or unresolved-type containment through a nested type was missed. The guards now key
   on the id and name together (`heapPathContains`), as the constructor lookup already did.
-- [~] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
+- [x] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
   carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
   synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
   layout from the start rather than unboxing the tagged layout later. Done: `TaglessAdtLayout.ash`
@@ -857,12 +857,19 @@ same public behavior.
   one across an arena bracket whose chunk is unmapped, since frame storage is not the arena's to
   reclaim. `functionAllocatesStackMemory` deliberately does NOT list it, matching stage 0's own
   `FunctionAllocatesNativeStackMemory`: a stack ADT is dead before any tail call in its frame, so
-  downgrading `musttail` for it would cost a real loop its tail call. Still open: the placement
-  decision that produces it. Stage 0 reaches `TryLowerConstructorExpression(stackAllocate: true)`
-  from exactly two sites — a `let` binding a constructor expression whose body is an immediate
-  single-arm destructuring match on that name (`IsImmediateSingleArmAdtDestructuringMatch`), and a
-  single-arm constructor-pattern `match` whose scrutinee is a constructor expression
-  (`ShouldStackAllocateImmediateMatchScrutinee`) — and neither is ported.
+  downgrading `musttail` for it would cost a real loop its tail call. The placement decision followed
+  (2026-09-09), closing the gate: `constructorExpression` is stage 0's `IsConstructorExpression`
+  plus a saturation check (only a saturated application reaches `lowerConstructor`; a partial one
+  builds a closure and would leave the request for whatever constructor came next),
+  `immediateSingleArmDestructuringMatch` its `IsImmediateSingleArmAdtDestructuringMatch`, and
+  `stackAllocatableScrutineeCases` its `ShouldStackAllocateImmediateMatchScrutinee`. The request
+  rides `stackAllocateConstructor` on the lowering state rather than a parameter on every
+  constructor-lowering signature, and `lowerConstructor` takes it and clears it before lowering its
+  own arguments, so a nested constructor argument never claims the one its parent made. A stack cell
+  consumes no reuse token and is not marked runtime-managed. Two deliberate narrowings against
+  stage 0, both costing an optimization and never soundness: `exprMentionsName` is shadow-blind, so a
+  pattern that rebinds the `let`'s name declines where stage 0 allows it; and stage 0 also withholds
+  the placement inside a coroutine body, which this lowering has none of yet.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
