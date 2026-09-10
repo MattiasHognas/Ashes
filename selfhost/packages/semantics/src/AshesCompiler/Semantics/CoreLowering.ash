@@ -1370,6 +1370,41 @@ let bodyReturnsRuntimeManaged (label: Str) (state: CoreLoweringState) = lookupBo
 
 let recordBodyRuntimeManaged (label: Str) (runtimeManaged: Bool) (state: CoreLoweringState) = state with bodyRuntimeManagedByLabel = (label, runtimeManaged) :: state.bodyRuntimeManagedByLabel
 
+// Stage 0's `BackfillSelfClosureResultOwnership`: a recursive function's own call sites build its
+// callee closure from `CoreSelf` while the body is still being lowered, before this body's own
+// runtime-managed verdict exists, so every self-closure was emitted with the returns bit clear —
+// its call site then always takes the arena copy-out branch, one copy of the whole result per
+// recursion level for a non-tail recursive producer. The bit is a compile-time constant in an
+// instruction this function already owns, so once the verdict is known it is written back into
+// the not-yet-frozen instruction buffer, before `finishLiftedFunction` freezes it. Scoped to this
+// same function's own body, exactly as stage 0's own backfill is: a self-call reached only
+// through a nested closure helper's separate function is out of scope for both.
+let recursive backfillSelfClosureInstructions (label: Str) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = MakeClosure(target, funcLabel, environmentTemp, environmentSize, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument), location = location } as instruction) :: rest ->
+            if funcLabel == label && returnsRuntimeManaged == false
+            then IrInstruction(instruction = MakeClosure(target)(funcLabel)(environmentTemp)(environmentSize)(runtimeManaged)(true)(acceptsRuntimeManagedArgument), location = location) :: backfillSelfClosureInstructions(label)(rest)
+            else instruction :: backfillSelfClosureInstructions(label)(rest)
+        | instruction :: rest -> instruction :: backfillSelfClosureInstructions(label)(rest)
+
+// Also reaches a reuse specialization's own self-call, generated through this same recursive-body
+// finishing path (the "one-member recursive group" that redirects the specialization's recursion
+// into itself). Stage 0 skips a returns-bit check there entirely — its dedicated specialization
+// lowering (`LowerReuseSpecializedCall`) never opens a call window around that self-call at all,
+// since the result is consumed directly by the rebuild regardless of representation — a bypass
+// this lowering does not have yet (its specialization body reuses the SAME general call-window
+// path an ordinary call takes). Measured (`makeList`/`doubleAll` reuse over 20000 elements): the
+// window that path opens costs real work per level either way; leaving this backfill unconditional
+// gives the window's own runtime branch a bit it can prove always takes the reclaim side, which
+// measures far better (28.1 GB baseline to 9.4 GB) than gating it off to match stage 0's own
+// instruction shape structurally (18.7 GB) — until that dedicated bypass is ported, this is the
+// better of the two available answers, not the final one.
+let backfillSelfClosureResultOwnership (label: Str) (runtimeManaged: Bool) (state: CoreLoweringState) =
+    if runtimeManaged
+    then state with reversedInstructions = backfillSelfClosureInstructions(label)(state.reversedInstructions)
+    else state
+
 // The label of the closure a lowered body returns: the last closure instruction that produced
 // the body temp, read from the body's instructions in reverse emission order.
 let recursive returnedClosureLabelOf (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) =
@@ -5836,24 +5871,29 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
         | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
             let loweredBody = adoptNormalizedParameterResult(label)(bodyTemp)(bodyState)
             in
-                let returned =
-                    match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
-                        | (normalized, returnedTemp) ->
-                            normalized
-                            |> emit(Return(returnedTemp))
-                            |> resolvePendingTcoResets
+                let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(loweredBody)
                 in
-                    match pruneDeadCaptures(captures)(returned.reversedInstructions) with
-                        | (survivors, prunedInstructions) ->
-                            let finishedBody = finishLiftedFunction(label)(origin)((returned with reversedInstructions = prunedInstructions))
-                            in
-                                finishedBody
-                                |> restoreOuterFrame(typedOuter)
-                                |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(loweredBody))
-                                |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
-                                |> markCapturedResourcesMoved(survivors)
-                                |> allocateEnvironment(captures)(survivors)(stackAllocate)
-                                |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                    let returned =
+                        match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
+                            | (normalized, returnedTemp) ->
+                                normalized
+                                |> emit(Return(returnedTemp))
+                                |> resolvePendingTcoResets
+                    in
+                        match pruneDeadCaptures(captures)(returned.reversedInstructions) with
+                            | (survivors, prunedInstructions) ->
+                                let finishedBody =
+                                    (returned with reversedInstructions = prunedInstructions)
+                                    |> backfillSelfClosureResultOwnership(label)(bodyRuntimeManaged)
+                                    |> finishLiftedFunction(label)(origin)
+                                in
+                                    finishedBody
+                                    |> restoreOuterFrame(typedOuter)
+                                    |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
+                                    |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
+                                    |> markCapturedResourcesMoved(survivors)
+                                    |> allocateEnvironment(captures)(survivors)(stackAllocate)
+                                    |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus
@@ -11608,23 +11648,26 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                 | (boundBody, None) ->
                     let typedBody = adoptNormalizedParameterResult(label)(bodyTemp)(boundBody)
                     in
-                        let finishedBody =
-                            match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
-                                | (normalized, returnedTemp) ->
-                                    normalized
-                                    |> emit(Return(returnedTemp))
-                                    |> resolvePendingTcoResets
-                                    |> finishLiftedFunction(label)(origin)
+                        let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(typedBody)
                         in
-                            let restored =
-                                finishedBody
-                                |> restoreOuterFrame(typedOuter)
-                                |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(typedBody))
-                                |> recordReturnedClosureLabel(label)(bodyTemp)(typedBody.reversedInstructions)
+                            let finishedBody =
+                                match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
+                                    | (normalized, returnedTemp) ->
+                                        normalized
+                                        |> emit(Return(returnedTemp))
+                                        |> resolvePendingTcoResets
+                                        |> backfillSelfClosureResultOwnership(label)(bodyRuntimeManaged)
+                                        |> finishLiftedFunction(label)(origin)
                             in
-                                match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
-                                    | (closureState, closureTemp) ->
-                                        success(closureTemp)(resolveType(finishedBody)(semanticType))(closureState)
+                                let restored =
+                                    finishedBody
+                                    |> restoreOuterFrame(typedOuter)
+                                    |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
+                                    |> recordReturnedClosureLabel(label)(bodyTemp)(typedBody.reversedInstructions)
+                                in
+                                    match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
+                                        | (closureState, closureTemp) ->
+                                            success(closureTemp)(resolveType(finishedBody)(semanticType))(closureState)
 
 // A curried parameter lambda written as `let recursive f a b = ...` sugar carries its
 // declaration's span in stage 0's syntax tree, so the chain's inner lambdas are lowered under it.
@@ -12272,16 +12315,56 @@ let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tai
             else lowered
         | _ -> lowered
 
+// The call spine's root and whether it applied at least one argument, stripping source-location
+// wrappers on the way down — `collectCallSpine`'s own shape, restated here since it is declared
+// later in this file and sequential scoping keeps it out of reach at this point.
+let recursive consTailCallRoot (expression: Expr) (sawArgument: Bool) =
+    match expression with
+        | ExprAt(_span, inner) -> consTailCallRoot(inner)(sawArgument)
+        | ExprCall(function, _argument, _isSugar, _layout) -> consTailCallRoot(function)(true)
+        | root -> (root, sawArgument)
+
+// Stage 0's `IsRecursiveProducerTail`: a cons whose tail calls a member of the enclosing recursive
+// group is the spine of a non-tail recursive producer, one cell per level. Placing those cells in
+// the arena makes every level's own call window copy the whole result out before reclaiming it —
+// quadratic in the finished list's length. The call site's copy-out is already conditional on the
+// callee's own returns bit, which the backfill above now reports accurately, so a cell requested
+// here on the reference-counted heap skips that copy instead: the value is reference-counted on
+// both sides of that branch either way, so the cell never mixes an arena tail into an RC spine.
+let isRecursiveProducerTail (tail: Expr) (state: CoreLoweringState) =
+    match consTailCallRoot(tail)(false) with
+        | (ExprVar(name), true) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { location = CoreSelf(_label, _environmentSize) }) -> true
+                | _ -> false
+        | _ -> false
+
+// A live arena list-cell reuse token beats the rule above: it rebuilds this exact cell in place,
+// for zero allocation, where the reuse rule exists precisely for the case a reuse token is NOT
+// available — OPT-42's specialized body still rebuilds its accumulator's spine in place, not on
+// the reference-counted heap, and `consumeListCellReuseToken` itself declines a token whenever
+// the request already asks for a runtime-managed cell, so forcing one here would silently defeat
+// the reuse this exact program shape is the reason `f$reuse` specialization exists for.
+let listCellReuseTokenAvailable (tokens: List(CoreReuseToken)) =
+    match takeListCellReuseToken(tokens) with
+        | Some(_found) -> true
+        | None -> false
+
 let lowerCons head tail lower state =
     match consumerRequestOf(state) with
-        | request ->
-            state
-            |> markResourceArgumentsMoved([head, tail])
-            |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
-            |> lower(head)
-            |> normalizeRuntimeManagedConsHead(request)(head)(tail)
-            |> retainListElement(request)(listTransfers(request)(state))(head)
-            |> finishConsTail(request)(listTransfers(request)(state))(lower)(head)(tail)
+        | outerRequest ->
+            let request =
+                if isRecursiveProducerTail(tail)(state) && listCellReuseTokenAvailable(state.reuseTokens) == false
+                then outerRequest with runtimeList = true
+                else outerRequest
+            in
+                state
+                |> markResourceArgumentsMoved([head, tail])
+                |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
+                |> lower(head)
+                |> normalizeRuntimeManagedConsHead(request)(head)(tail)
+                |> retainListElement(request)(listTransfers(request)(state))(head)
+                |> finishConsTail(request)(listTransfers(request)(state))(lower)(head)(tail)
 
 let emptyList state =
     match freshType(state) with

@@ -2,10 +2,10 @@ IR (lowered)
 ============
 
 trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8651)
 
 function lambda_0  [SourceFunction from stamp]
-  locals=19 temps=40
+  locals=19 temps=39
     LoadLocal             Target=0 Slot=1   (pattern_head_read_under_operator.ash:6:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (pattern_head_read_under_operator.ash:6:5)
@@ -35,13 +35,13 @@ function lambda_0  [SourceFunction from stamp]
     AddInt                Target=12 Left=10 Right=11   (pattern_head_read_under_operator.ash:8:28)
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     LoadLocal             Target=14 Slot=0   (pattern_head_read_under_operator.ash:8:64)
-    MakeClosure           Target=13 FuncLabel=lambda_0 EnvPtrTemp=14 EnvSizeBytes=0   (pattern_head_read_under_operator.ash:8:64)
+    MakeClosure           Target=13 FuncLabel=lambda_0 EnvPtrTemp=14 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (pattern_head_read_under_operator.ash:8:64)
     LoadLocal             Target=15 Slot=10   (pattern_head_read_under_operator.ash:8:70)
     Borrow                Target=16 SourceTemp=15
     LoadMemOffset         Target=17 BasePtr=13 OffsetBytes=16   (pattern_head_read_under_operator.ash:8:64)
     LoadConstInt          Target=18 Value=63   (pattern_head_read_under_operator.ash:8:64)
     ShrInt                Target=19 Left=17 Right=18   (pattern_head_read_under_operator.ash:8:64)
-    RcDup                 Target=39 SourceTemp=16   (pattern_head_read_under_operator.ash:8:64)
+    RcDup                 Target=38 SourceTemp=16   (pattern_head_read_under_operator.ash:8:64)
     CallClosure           Target=20 ClosureTemp=13 ArgTemp=16   (pattern_head_read_under_operator.ash:8:64)
     StoreLocal            Slot=14 Source=20   (pattern_head_read_under_operator.ash:8:64)
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
@@ -53,53 +53,51 @@ function lambda_0  [SourceFunction from stamp]
   call_reclaim_owned_result_6:
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
     LoadLocal             Target=22 Slot=14   (pattern_head_read_under_operator.ash:8:64)
-    Alloc                 Target=23 SizeBytes=16   (pattern_head_read_under_operator.ash:8:28)
+    Alloc                 Target=23 SizeBytes=16 RuntimeManaged=true   (pattern_head_read_under_operator.ash:8:28)
     StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=12   (pattern_head_read_under_operator.ash:8:28)
     StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=22   (pattern_head_read_under_operator.ash:8:28)
     StoreLocal            Slot=2 Source=23   (pattern_head_read_under_operator.ash:6:5)
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=15
-    CopyOutList           DestTemp=26 SrcTemp=23 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (pattern_head_read_under_operator.ash:6:5)
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=15
     RcDrop                SourceTemp=7 TypeName=List OwnerSlot=10
-    StoreLocal            Slot=2 Source=26   (pattern_head_read_under_operator.ash:6:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=15
     Jump                  Target=match_end_0   (pattern_head_read_under_operator.ash:6:5)
   match_arm_cleanup_4:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=16
     Jump                  Target=match_none_1   (pattern_head_read_under_operator.ash:6:5)
   match_none_1:
-    LoadConstInt          Target=27 Value=0   (pattern_head_read_under_operator.ash:6:5)
-    StoreLocal            Slot=2 Source=27   (pattern_head_read_under_operator.ash:6:5)
+    LoadConstInt          Target=26 Value=0   (pattern_head_read_under_operator.ash:6:5)
+    StoreLocal            Slot=2 Source=26   (pattern_head_read_under_operator.ash:6:5)
   match_end_0:
-    LoadLocal             Target=28 Slot=2   (pattern_head_read_under_operator.ash:6:5)
-    LoadArgumentOwnership Target=29
-    LoadConstInt          Target=30 Value=1
-    ShrInt                Target=31 Left=29 Right=30
-    JumpIfFalse           CondTemp=31 Target=rc_result_owned_7
-    CopyOutList           DestTemp=32 SrcTemp=28 HeadCopy=Inline Purpose=ArenaResultBoundary
-    StoreLocal            Slot=18 Source=28
+    LoadLocal             Target=27 Slot=2   (pattern_head_read_under_operator.ash:6:5)
+    LoadArgumentOwnership Target=28
+    LoadConstInt          Target=29 Value=1
+    ShrInt                Target=30 Left=28 Right=29
+    JumpIfFalse           CondTemp=30 Target=rc_result_owned_7
+    CopyOutList           DestTemp=31 SrcTemp=27 HeadCopy=Inline Purpose=ArenaResultBoundary
+    StoreLocal            Slot=18 Source=27
   rcdrop_list_9:
-    LoadLocal             Target=33 Slot=18
-    LoadConstInt          Target=34 Value=0
-    CmpIntNe              Target=35 Left=33 Right=34
-    JumpIfFalse           CondTemp=35 Target=rcdrop_list_end_11
-    RcIsUnique            Target=36 SourceTemp=33
-    JumpIfFalse           CondTemp=36 Target=rcdrop_list_shared_10
-    LoadMemOffset         Target=37 BasePtr=33 OffsetBytes=8
-    RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=18 Source=37
+    LoadLocal             Target=32 Slot=18
+    LoadConstInt          Target=33 Value=0
+    CmpIntNe              Target=34 Left=32 Right=33
+    JumpIfFalse           CondTemp=34 Target=rcdrop_list_end_11
+    RcIsUnique            Target=35 SourceTemp=32
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_shared_10
+    LoadMemOffset         Target=36 BasePtr=32 OffsetBytes=8
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=18 Source=36
     Jump                  Target=rcdrop_list_9
   rcdrop_list_shared_10:
-    RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_11
   rcdrop_list_end_11:
-    StoreLocal            Slot=17 Source=32
+    StoreLocal            Slot=17 Source=31
     Jump                  Target=rc_result_done_8
   rc_result_owned_7:
-    StoreLocal            Slot=17 Source=28
+    StoreLocal            Slot=17 Source=27
   rc_result_done_8:
-    LoadLocal             Target=38 Slot=17
-    Return                Source=38
+    LoadLocal             Target=37 Slot=17
+    Return                Source=37
 
 function lambda_1  [SourceFunction from count]
   locals=11 temps=11

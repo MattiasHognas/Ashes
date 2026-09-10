@@ -2,9 +2,9 @@ IR (lowered)
 ============
 
 trait evidence
-  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9024)
+  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9348)
   resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
+  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9447)
 
 function lambda_0  [SourceFunction from go]
   locals=8 temps=24
@@ -20,7 +20,7 @@ function lambda_0  [SourceFunction from go]
     LoadConstStr          Target=5 StrLabel=str_1   (self_call_operand_string_result.ash:4:10)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=7 Slot=0   (self_call_operand_string_result.ash:4:16)
-    MakeClosure           Target=6 FuncLabel=lambda_0 EnvPtrTemp=7 EnvSizeBytes=0   (self_call_operand_string_result.ash:4:16)
+    MakeClosure           Target=6 FuncLabel=lambda_0 EnvPtrTemp=7 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (self_call_operand_string_result.ash:4:16)
     LoadLocal             Target=8 Slot=1   (self_call_operand_string_result.ash:4:19)
     LoadConstInt          Target=9 Value=1   (self_call_operand_string_result.ash:4:23)
     SubInt                Target=10 Left=8 Right=9   (self_call_operand_string_result.ash:4:19)

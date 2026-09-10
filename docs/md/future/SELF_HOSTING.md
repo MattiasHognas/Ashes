@@ -2253,6 +2253,29 @@ same public behavior.
   `EmitFreshConstructorCell` `_inSpecialization` branch. Pinned by two more tests, one that the fresh
   `Tag("z")` cell of a specialized body is an `AllocAdtToSpace` and one that an ordinary constructor
   outside a specialization is not.
+  Stage 0's own reference-counted-spine fix for a non-tail recursive producer followed
+  (2026-09-10): a self-recursive call built its callee closure before its own body's
+  runtime-managed verdict existed, so every self-closure carried the returns bit clear and its
+  call site always took the arena copy-out branch — one copy of the whole result per recursion
+  level. `backfillSelfClosureResultOwnership` writes the verdict back into the not-yet-frozen
+  instruction buffer once known, mirroring stage 0's own backfill; `isRecursiveProducerTail`
+  requests the reference-counted heap for a cons cell whose tail calls a member of the enclosing
+  recursive group, so the copy is unnecessary rather than merely cheaper, deferring to a live
+  arena list-cell reuse token when one exists (`consumeListCellReuseToken` already declines a
+  token under a runtime-managed request, so forcing one blindly here would have silently defeated
+  the reuse OPT-42 exists for). `makeList(20000) |> sumList`: 6.3 GB to 10.4 MB, matching stage
+  0's own 11.6 MB. Still open: when the same producer's result feeds an OPT-42 specialization
+  (`doubleAll(makeList(20000))`), the specialization's own self-call is generated through this
+  lowering's general recursive-body finishing path — the same one an ordinary call uses — where
+  stage 0 has a dedicated specialization-call lowering that never opens a window around it at
+  all. Backfilling that self-call too (the current behavior) still measures far better than not
+  (28.1 GB baseline to 9.4 GB) but neither matches stage 0's 11.6 MB for this combined shape;
+  porting stage 0's window-free specialization-call bypass is the next step. Pinned by
+  `CallWindowLoweringTests.ash`'s `expectNonTailSelfCallReadsReturnsBit`; three whole-program IR
+  parity fixtures refreshed to match stage 0's own now-current output
+  (`non_tail_self_call_list_result`, `self_call_operand_string_result`,
+  `pattern_head_read_under_operator` — stale since stage 0's own fix landed, exposed only once
+  this lowering started producing the matching shape).
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
