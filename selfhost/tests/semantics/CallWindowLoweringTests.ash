@@ -177,15 +177,32 @@ let expectCurriedSelfCallKeepsWindowOpen unit =
 
 // A self call outside tail position is an ordinary call: its string-list result crosses the
 // window through the returns-bit copy-out, and placement keeps the pattern-owned tail alive
-// across it with a protective duplicate.
+// across it with a protective duplicate. The cons cell built around that result is itself the
+// spine of a non-tail recursive producer, so it is placed on the reference-counted heap rather
+// than the arena — the call site's copy-out above is already conditional on the very bit this
+// cell's own closure now reports correctly (`ReturnsRuntimeManaged=true`), so nothing above this
+// cell needs to change for the placement to be sound.
 let expectNonTailSelfCallReadsReturnsBit unit =
     "let bang (n: Str) = n + \"!\"\n\nlet recursive stamp xs =\n    match xs with\n        | [] -> []\n        | head :: tail -> bang(head) :: stamp(tail)\n\nmatch stamp([\"a\"]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
     |> dumpSource
     |> liftedFunctionLines
+    |> expectInstruction("MakeClosure           Target=12 FuncLabel=lambda_1 EnvPtrTemp=13 EnvSizeBytes=8 ReturnsRuntimeManaged=true")
     |> expectInstruction("LoadConstInt          Target=17 Value=63")
-    |> expectInstruction("RcDup                 Target=26 SourceTemp=15")
+    |> expectInstruction("RcDup                 Target=37 SourceTemp=15")
     |> expectInstruction("JumpIfFalse           CondTemp=18 Target=call_copy_arena_result_7")
     |> expectInstruction("CopyOutList           DestTemp=20 SrcTemp=19 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization")
+    |> expectInstruction("Alloc                 Target=22 SizeBytes=16 RuntimeManaged=true")
+    |> (given (_) -> Unit)
+
+// The control for the rule above: this cons's tail is an ordinary parameter, not a call to a
+// member of the enclosing recursive group, so nothing forces the spine onto the
+// reference-counted heap and the cell keeps the plain arena placement.
+let expectPlainConsTailStaysInTheArena unit =
+    "let recursive prepend (value: Int) (rest: List(Int)) (extra: Int) =\n    if extra == 0\n    then value :: rest\n    else prepend(value)(rest)(extra - 1)\n\nmatch prepend(1)([2, 3])(0) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
+    |> dumpSource
+    |> liftedFunctionLines
+    |> expectInstruction("Alloc                 Target=10 SizeBytes=16")
+    |> expectNoInstructionText("Alloc                 Target=10 SizeBytes=16 RuntimeManaged")
     |> (given (_) -> Unit)
 
 // A recursive group member's tail call to its sibling is the fused self call: no returns bit,
@@ -267,6 +284,7 @@ let runCallWindowLoweringTests unit =
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
     |> expectNonTailSelfCallReadsReturnsBit
+    |> expectPlainConsTailStaysInTheArena
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag
     |> expectBodyRuntimeManagedNonEligibleCalleeReadsReturnsBit
