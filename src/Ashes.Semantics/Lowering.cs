@@ -14237,6 +14237,26 @@ public sealed partial class Lowering
         return supported;
     }
 
+    /// <summary>
+    /// A cons whose tail is the result of calling a member of the enclosing recursive group is the
+    /// spine of a non-tail recursive producer, one cell per level. Placing those cells in the arena
+    /// makes every level's call site copy the whole result out of its own arena window before
+    /// reclaiming it, which is quadratic in the finished list's length; a reference-counted cell is
+    /// handed straight back instead, because the call site's copy-out is already conditional on the
+    /// callee's own result-ownership bit and the callee now reports one. The value is
+    /// reference-counted on both sides of that branch either way — the copy path produces an owned
+    /// list, and the no-copy path is taken only when the callee already returned one — so the cell
+    /// never mixes an arena tail into a reference-counted spine.
+    /// </summary>
+    private bool IsRecursiveProducerTail(Expr tail)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(tail, arguments);
+        return arguments.Count > 0
+            && root is Expr.Var callee
+            && Lookup(callee.Name) is Binding.Self;
+    }
+
     private (int, TypeRef) LowerCons(
         Expr.Cons cons,
         LoweredValueRequest request)
@@ -14244,6 +14264,9 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(cons);
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+        request = request.AddRuntime(
+            IsRecursiveProducerTail(cons.Tail),
+            LoweredValueRuntimeRepresentation.List);
 
         TypeRef? expectedElementType = request.ExpectedType is not null
             && Prune(request.ExpectedType) is TypeRef.TList expectedList
