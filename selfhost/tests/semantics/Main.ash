@@ -39,6 +39,7 @@ import IrFunctionSelectionTests
 import IrTextTests
 import CoreLoweringTests
 import CoreProgramLoweringTests
+import RecursiveProducerResultTests
 import FunctionFieldLoweringTests
 import ResultPipeLoweringTests
 import CapabilityProgramLoweringTests
@@ -107,6 +108,7 @@ let run unit =
     |> (given (_) -> IrTextTests.runIrTextTests(Unit))
     |> (given (_) -> CoreLoweringTests.runCoreLoweringTests(Unit))
     |> (given (_) -> CoreProgramLoweringTests.runCoreProgramLoweringTests(Unit))
+    |> (given (_) -> RecursiveProducerResultTests.runRecursiveProducerResultTests(Unit))
     |> (given (_) -> FunctionFieldLoweringTests.runFunctionFieldLoweringTests(Unit))
     |> (given (_) -> ResultPipeLoweringTests.runResultPipeLoweringTests(Unit))
     |> (given (_) -> CapabilityProgramLoweringTests.runCapabilityProgramLoweringTests(Unit))

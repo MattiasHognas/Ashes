@@ -25,6 +25,7 @@ import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.AggregateOwnership
+import AshesCompiler.Semantics.RecursiveProducerResult
 import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.CallResultProvenance
 import AshesCompiler.Semantics.CoreBuiltinLowering
@@ -421,6 +422,7 @@ type CoreLoweringState =
     // is the armed accumulator, read by the string concatenation emitter and cleared after it.
     | affineAppendReservation: Maybe((Int, Int))
     | bodyRuntimeManagedByLabel: List((Str, Bool))
+    | recursiveProducerResultSlots: List(Int)
     // The parameter of the function being lowered that its entry copies into an owned
     // runtime-managed value because the result always reaches it (stage 0's
     // `_normalizedAlwaysReturnedParameter`): its name, its slot, and its type. A read of it
@@ -789,6 +791,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         affineAppendContext = None,
         affineAppendReservation = None,
         bodyRuntimeManagedByLabel = [],
+        recursiveProducerResultSlots = [],
         normalizedAlwaysReturnedParameter = None,
         runtimeNormalizedArgumentLabels = [],
         recursiveGroupNames = [],
@@ -2929,13 +2932,38 @@ let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp r
                         | (closed, None) -> reloadLetResult(resultTemp)(resultSlot)(closed)
         | (None, _owned) -> (closeScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot)(state), resultTemp)
 
+// Resolve producer provenance against the defining lexical scope, before the new binding shadows
+// its name. Local slots are frame-specific; a recorded fact never confers unique ownership.
+let recursiveProducerBinding name (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreSelf(_label, _size) }) -> RecursiveProducerFunction
+        | Some(CoreBinding { location = CoreLocal(slot) }) ->
+            if containsInt(slot)(state.recursiveProducerResultSlots)
+            then RecursiveProducerValue
+            else OtherProducerBinding
+        | _ -> OtherProducerBinding
+
+let recursiveProducerResult expression state =
+    isRecursiveProducerResult(expression)(given (name) -> recursiveProducerBinding(name)(state))
+
+let recordRecursiveProducerSlot expression (fresh: FreshLocal) =
+    match fresh with
+        | FreshLocal { state = state, local = local } ->
+            if recursiveProducerResult(expression)(state)
+            then
+                let recorded = state with recursiveProducerResultSlots = local :: state.recursiveProducerResultSlots
+                in fresh with state = recorded
+            else fresh
+
 // `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it,
 // and the body's request decided by the caller from the body the binding scopes over.
-let finishLetValueInSlot name body requestBody bodyRequest lower outerBindings lowered =
+let finishLetValueInSlot name value body requestBody bodyRequest lower outerBindings lowered =
     match lowered with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> (failure(failedState)(error), -1)
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            match freshLocal(state) with
+            match state
+            |> freshLocal
+            |> recordRecursiveProducerSlot(value) with
                 | FreshLocal { local = local } as fresh -> (lowerStoredLet(name)(body)(requestBody)(bodyRequest)(lower)(outerBindings)(temp)(semanticType)(fresh), local)
 
 // Stage 0's `IsRuntimeRcStringProducer`: `+` or a fully applied call to a builtin declared to
@@ -3865,7 +3893,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -10616,7 +10644,7 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(state))
                             |> armOwnerReleasePlan(value)
-                            |> finishLetValueInSlot(name)(stripChainedLetAt(body))(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lower)(outerBindings) with
+                            |> finishLetValueInSlot(name)(value)(stripChainedLetAt(body))(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lower)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
@@ -11631,7 +11659,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -12191,19 +12219,21 @@ let finishCons (request: ConsumerRequest) (headExpression: Expr) head tail =
                     allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState))(typedState)
 
 // The tail of an escaping arena cell carries a runtime-managed owner out of the scope that owns
-// it exactly like an escaping tuple element, and is retained; a runtime cell's tail is stored as
-// lowered.
+// it exactly like an escaping tuple element, and is retained. A recursive producer result stored
+// in a runtime cell also needs its own reference when an existing local owns the tail.
 let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression: Expr) (tailExpression: Expr) head tail =
     match (head, tail) with
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
-            if transfers && cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(tailState) == false
-            then
-                match retainAggregateChildTemp(tailExpression)(tailTemp)(tailType)(tailState) with
-                    | (retained, retainedTemp) ->
-                        retained
-                        |> success(retainedTemp)(tailType)
-                        |> retainLoopParameterChild(tailExpression)(tailTemp)
-            else tail
+            let managed = cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(tailState)
+            in
+                if transfers && managed == false || managed && recursiveProducerResult(tailExpression)(tailState)
+                then
+                    match retainAggregateChildTemp(tailExpression)(tailTemp)(tailType)(tailState) with
+                        | (retained, retainedTemp) ->
+                            retained
+                            |> success(retainedTemp)(tailType)
+                            |> retainLoopParameterChild(tailExpression)(tailTemp)
+                else tail
         | _ -> tail
 
 // Stage 0's `LowerCons` order once both parts are lowered: the head's pattern-owner duplicate,
@@ -12315,15 +12345,6 @@ let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tai
             else lowered
         | _ -> lowered
 
-// The call spine's root and whether it applied at least one argument, stripping source-location
-// wrappers on the way down — `collectCallSpine`'s own shape, restated here since it is declared
-// later in this file and sequential scoping keeps it out of reach at this point.
-let recursive consTailCallRoot (expression: Expr) (sawArgument: Bool) =
-    match expression with
-        | ExprAt(_span, inner) -> consTailCallRoot(inner)(sawArgument)
-        | ExprCall(function, _argument, _isSugar, _layout) -> consTailCallRoot(function)(true)
-        | root -> (root, sawArgument)
-
 // Stage 0's `IsRecursiveProducerTail`: a cons whose tail calls a member of the enclosing recursive
 // group is the spine of a non-tail recursive producer, one cell per level. Placing those cells in
 // the arena makes every level's own call window copy the whole result out before reclaiming it —
@@ -12331,13 +12352,7 @@ let recursive consTailCallRoot (expression: Expr) (sawArgument: Bool) =
 // callee's own returns bit, which the backfill above now reports accurately, so a cell requested
 // here on the reference-counted heap skips that copy instead: the value is reference-counted on
 // both sides of that branch either way, so the cell never mixes an arena tail into an RC spine.
-let isRecursiveProducerTail (tail: Expr) (state: CoreLoweringState) =
-    match consTailCallRoot(tail)(false) with
-        | (ExprVar(name), true) ->
-            match lookupBinding(name)(state.bindings) with
-                | Some(CoreBinding { location = CoreSelf(_label, _environmentSize) }) -> true
-                | _ -> false
-        | _ -> false
+let isRecursiveProducerTail (tail: Expr) (state: CoreLoweringState) = recursiveProducerResult(tail)(state)
 
 // A live arena list-cell reuse token beats the rule above: it rebuilds this exact cell in place,
 // for zero allocation, where the reuse rule exists precisely for the case a reuse token is NOT
@@ -16336,7 +16351,7 @@ let lowerArenaBracketedTopLevelLet name value remainingBody environment continua
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(saved))
                             |> armOwnerReleasePlan(rewrittenValue)
-                            |> finishLetValueInSlot(name)(topLevelContinuationBody)(remainingBody)(escapingLetBodyRequest(remainingBody)(consumerRequestOf(saved))(saved))(continuation)(outerBindings) with
+                            |> finishLetValueInSlot(name)(rewrittenValue)(topLevelContinuationBody)(remainingBody)(escapingLetBodyRequest(remainingBody)(consumerRequestOf(saved))(saved))(continuation)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(letOwnedTypeName(rewrittenValue)(loweredValue)(saved))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with

@@ -2522,6 +2522,38 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_recursive_map_bound_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The old lowering grows from 8 MiB to 20 MiB at these scales. Use the low-floor
+        // harness so the measurement wrapper's own resident set cannot hide that regression.
+        List<MemoryExecutionResult> samples = await MeasureLowFloorMemoryGrowthAsync(iterations => $$"""
+            let decorate (value: Str) = value + "!"
+            let recursive mapText (values: List(Str)) =
+                match values with
+                    | [] -> []
+                    | head :: tail ->
+                        let decorated = decorate(head) in
+                        let mappedTail = mapText(tail) in
+                        let alias = mappedTail in decorated :: alias
+            let recursive sumLengths (values: List(Str)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | head :: tail -> sumLengths(tail)(total + Ashes.Text.byteLength(head))
+            let recursive loop count total =
+                if count == 0 then total
+                else let values = mapText(["left", "mid", "right"]) in
+                     loop(count - 1)(total + sumLengths(values)(0))
+            Ashes.IO.print(loop({{iterations}})(0))
+            """, outputPerIteration: 15).ConfigureAwait(false);
+        AssertMemoryPlateaus("recursive map with a bound tail", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_hot_loop_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
