@@ -694,6 +694,7 @@ public sealed partial class Lowering
     // binding: m2 is address-stable when every leaf of that match/if is itself stable. Cleared at each
     // function boundary because local slots are numbered per function.
     private Dictionary<int, Expr> _letBindingValues = new();
+    private HashSet<int> _recursiveProducerResultSlots = [];
     private Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance>
         _localBytesProvenance = new();
 
@@ -3481,7 +3482,7 @@ public sealed partial class Lowering
         }
         // Record the binding value so a later tail call `loop(<this name>)` can prove the accumulator
         // address-stable by tracing it back through this let into the value's match/if leaves.
-        _letBindingValues[slot] = let.Value;
+        RecordLetProducerProvenance(slot, let.Value);
         TypeScheme scheme = FinalizeLetTraitScheme(
             let,
             value.valueType,
@@ -8223,6 +8224,7 @@ public sealed partial class Lowering
         Dictionary<int, string> KnownFunctionLabelsBySlot,
         Dictionary<int, string> KnownFunctionLabelsByEnvIndex,
         Dictionary<int, Expr> LetBindingValues,
+        HashSet<int> RecursiveProducerResultSlots,
         Dictionary<int, BuiltinRegistry.BytesOwnershipProvenance> LocalBytesProvenance);
 
     // The enclosing function's per-frame collections move into the frame as they are and fresh
@@ -8298,6 +8300,8 @@ public sealed partial class Lowering
         _knownFunctionLabelsByEnvIndex = [];
         var savedLetBindingValues = _letBindingValues;
         _letBindingValues = [];
+        HashSet<int> savedRecursiveProducerResultSlots = _recursiveProducerResultSlots;
+        _recursiveProducerResultSlots = [];
         var savedLocalBytesProvenance = _localBytesProvenance;
         _localBytesProvenance = [];
 
@@ -8308,6 +8312,7 @@ public sealed partial class Lowering
             savedTempOwnershipFacts, savedPendingRuntimeArgumentFlags,
             savedPatternBindingPlacementSites, savedKnownFunctionLabelsBySlot,
             savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues,
+            savedRecursiveProducerResultSlots,
             savedLocalBytesProvenance);
     }
 
@@ -9457,6 +9462,7 @@ public sealed partial class Lowering
         _knownFunctionLabelsByEnvIndex = frame.KnownFunctionLabelsByEnvIndex;
         _reuseTokens = frame.ReuseTokens;
         _letBindingValues = frame.LetBindingValues;
+        _recursiveProducerResultSlots = frame.RecursiveProducerResultSlots;
         _localBytesProvenance = frame.LocalBytesProvenance;
     }
 
@@ -14249,13 +14255,7 @@ public sealed partial class Lowering
     /// never mixes an arena tail into a reference-counted spine.
     /// </summary>
     private bool IsRecursiveProducerTail(Expr tail)
-    {
-        var arguments = new List<Expr>();
-        Expr root = CollectCallArgs(tail, arguments);
-        return arguments.Count > 0
-            && root is Expr.Var callee
-            && Lookup(callee.Name) is Binding.Self;
-    }
+        => IsRecursiveProducerResult(tail);
 
     private (int, TypeRef) LowerCons(
         Expr.Cons cons,
@@ -14292,6 +14292,10 @@ public sealed partial class Lowering
             && IsRuntimeManageableListElement(head.Type, head.Temp))
         {
             tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp, request);
+            if (request.RuntimeListTailBinding is null && IsRecursiveProducerTail(cons.Tail))
+            {
+                tailTemp = RetainRuntimeManagedAggregateChild(cons.Tail, tailTemp, tailType);
+            }
         }
         else if (transfersChildren)
         {

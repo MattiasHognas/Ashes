@@ -154,6 +154,45 @@ public sealed class NonTailRecursiveProducerTests
         cells.ShouldAllBe(a => !a.RuntimeManaged);
     }
 
+    [Test]
+    [Arguments("let rest = makeList(count - 1) in 7 :: rest")]
+    [Arguments("let rest = makeList(count - 1) in let alias = rest in 7 :: alias")]
+    [Arguments("let rest = if count > 2 then makeList(count - 1) else makeList(0) in 7 :: rest")]
+    [Arguments("let rest = match count with | 1 -> makeList(0) | _ -> makeList(count - 1) in 7 :: rest")]
+    public void Recursive_result_aliases_keep_their_spine_owned(string body)
+    {
+        IrProgram program = LowerProgram($$"""
+            let recursive makeList (count: Int) =
+                if count == 0 then [] else {{body}}
+            makeList(3)
+            """);
+        IrFunction producer = FunctionWithSelfClosure(program);
+        List<IrInst.Alloc> cells = producer.Instructions.OfType<IrInst.Alloc>()
+            .Where(allocation => allocation.SizeBytes == 16).ToList();
+        cells.ShouldNotBeEmpty();
+        cells.ShouldAllBe(allocation => allocation.RuntimeManaged);
+    }
+
+    [Test]
+    [Arguments("let rest = makeList(count - 1)(input) in let rest = input in 7 :: rest")]
+    [Arguments("let rest = if count > 2 then makeList(count - 1)(input) else input in 7 :: rest")]
+    [Arguments("let rest = makeList(count - 1)(input) in match input with | rest -> 7 :: rest")]
+    public void Unproven_tails_do_not_inherit_producer_provenance(string body)
+    {
+        IrProgram program = LowerProgram($$"""
+            let recursive makeList (count: Int) (input: List(Int)) =
+                if count == 0 then []
+                else {{body}}
+            makeList(3)([1, 2])
+            """);
+        List<IrInst.Alloc> cells = program.Functions
+            .Where(function => function.Origin?.Source?.SourceName is "makeList")
+            .SelectMany(function => function.Instructions).OfType<IrInst.Alloc>()
+            .Where(allocation => allocation.SizeBytes == 16).ToList();
+        cells.ShouldNotBeEmpty();
+        cells.ShouldContain(allocation => !allocation.RuntimeManaged);
+    }
+
     // --- Helpers ---
 
     private static IrFunction FunctionWithSelfClosure(IrProgram program)

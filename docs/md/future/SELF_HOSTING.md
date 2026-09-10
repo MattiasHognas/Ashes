@@ -2276,6 +2276,9 @@ same public behavior.
   (`non_tail_self_call_list_result`, `self_call_operand_string_result`,
   `pattern_head_read_under_operator` — stale since stage 0's own fix landed, exposed only once
   this lowering started producing the matching shape).
+  Recursive producer provenance also follows frame-local aliases and all-proven joins
+  (`RecursiveProducerResult.ash`); shadowed names and mixed joins stay conservative, and a cons
+  retains an already-owned recursive tail (`RecursiveProducerResultTests.ash`).
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [~] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization

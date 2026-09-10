@@ -814,6 +814,13 @@ conservative. The reportable `ForwardsTo` field names one immediate target only
 when the source function has exactly one exact forwarding target; it never
 substitutes an arbitrary component representative.
 
+Within a recursive producer, list-spine placement also follows the recursive result
+through local aliases and joins whose every result is proven recursive. Facts are
+recorded by frame-local binding identity in the defining lexical scope; shadowed
+names and mixed joins do not inherit them. This provenance requests RC placement,
+not uniqueness: a cons still acquires a reference when a local already owns its
+tail. Self-closure return metadata is backfilled once the body's placement is known.
+
 Self-recursive functions also retain positional `TcoParamStructuralFacts`. Each fact carries the
 parameter ordinal used as its binding identity plus its diagnostic source name; duplicate curried
 parameter names therefore remain distinct in the immutable summary. The analysis threads a lexical
