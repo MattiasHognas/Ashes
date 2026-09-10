@@ -298,6 +298,36 @@ call flags before code generation. This restored reverse-complement from quadrat
 (4.80 seconds at fasta N=30,000) to linear scaling (0.01 seconds at N=30,000; 0.06 seconds at
 N=100,000), with byte-identical output.
 
+#### Reference-counted spines for non-tail recursive producers
+
+A non-tail recursive list producer — `let recursive makeList (count: Int) = if count == 0 then []
+else 7 :: makeList(count - 1)` — built one cell per recursion level in the arena. Every level's call
+site opens its own arena window, and a window whose result is arena-placed is torn down by copying
+that result out first, so each level copied the whole list built below it: peak memory quadratic in
+the length. Measured 70 MB at 2,000 elements, 1,010 MB at 8,000 and 6.26 GB at 20,000, against
+320 KB of actual data.
+
+Removing the window is not the fix, and the reason is worth keeping: the per-call window is where an
+arena-placed call result is *normalized to reference-counted*, and every enclosing bracket is emitted
+assuming that already happened. Suppressing it inside a `match` arm leaves the arm's own
+save/reclaim pair — taken before the call — freeing the result the arm just stored. Five variants of
+that approach each passed the whole test gate while corrupting real programs.
+
+The copy is instead made unnecessary. A call site's copy-out is already a run-time branch on the
+callee's result-ownership bit, so a producer whose cells are reference-counted from the start skips
+it and every enclosing bracket stays correct. Two narrow changes get there. A recursive function's
+own call sites built their callee closure from the self binding before the body's ownership verdict
+existed, so a self-closure always claimed an arena result and always took the copy branch; the
+verdict is now written back into that instruction once known. And a cons whose tail is a call to a
+member of the enclosing recursive group is recognized as such a spine, so those cells — and only
+those — are requested on the reference-counted heap. The tail is reference-counted on both sides of
+the call's branch, so the cell never mixes an arena tail into a reference-counted spine.
+
+Peak memory became linear: 8.5 MB at 2,000, 9.6 MB at 8,000, 11.6 MB at 20,000. Programs without the
+shape are unaffected — the self-hosted semantics test binary measures 424.4 MB against 424.5 MB at
+identical wall time — while the same binary gained 6.3% from the ownership-bit half alone, which
+fires at 605 self-call sites in one compile.
+
 #### Exact-size RC allocator bins
 
 The next scaling correction replaced the RC allocator's single unsorted exact-size free list with
