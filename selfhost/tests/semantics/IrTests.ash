@@ -163,7 +163,7 @@ let ioInstructions =
         BytesSetU16Le(0)(1)(2)(3)(true)(true),
         BytesSetU32Le(0)(1)(2)(3)(true)(true),
         BytesSetU64Le(0)(1)(2)(3)(true)(true),
-        BytesFromList(0)(1)(true),
+        BytesFromList(0)(1)(true)(true),
         BytesHash(0)(1),
         BytesU16Le(0)(1)(true),
         BytesU32Le(0)(1)(true),

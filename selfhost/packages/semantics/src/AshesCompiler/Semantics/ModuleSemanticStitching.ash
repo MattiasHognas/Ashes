@@ -540,7 +540,21 @@ let addWholeModuleImport ownerModule fatalConflict (imported: StitchedModuleScop
                     in
                         let withShort =
                             match alias with
-                                | Some(_name) -> qualified
+                                // A qualified reference through the module's own canonical name
+                                // (`Ashes.Collection.List.length(xs)`) must resolve regardless of
+                                // whatever alias the import chose, matching stage 0's algorithmic
+                                // qualifier resolution (`ResolveModuleAlias`, consulted only to
+                                // rewrite an alias to its target before mangling — a canonical
+                                // name that is not itself a registered alias resolves unchanged).
+                                // Registered unconditionally, with no `qualifierConflicts` check:
+                                // stage 0 has none either for a directly-written canonical name.
+                                | Some(_name) ->
+                                    if importedName == primaryQualifier
+                                    then qualified
+                                    else
+                                        definitions
+                                        |> exportedBindings(Some(importedName))
+                                        |> appendList(qualified)
                                 | None ->
                                     let leaf = moduleLeaf(importedName)
                                     in
