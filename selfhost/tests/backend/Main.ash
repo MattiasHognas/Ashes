@@ -162,7 +162,11 @@ let buildAddTwoModule name context =
 
 // A global constant (`i32 counter = 99`) read back by a function
 // (`i32 getCounter() { ret i32 counter }`), proving `addGlobal`, `setInitializer`,
-// `setGlobalConstant`, and `setLinkage` all work.
+// `setGlobalConstant`, and `setLinkage` all work. External linkage (rather than internal): an
+// internal constant global with no other reference is exactly what LLVM's optimizer legitimately
+// folds away at `-O2` (`getCounter` becomes a bare `mov eax, 99; ret`, correctly eliminating the
+// global this test means to prove exists), so `assertLooksLikeAssembly`'s later "counter" text
+// check needs a linkage the optimizer cannot assume has no external reader.
 let buildGlobalCounterModule name context =
     (let module_ = createModule(name)(context)
     in
@@ -176,7 +180,7 @@ let buildGlobalCounterModule name context =
                         Unit
                         |> (given (_) -> setInitializer(global)(initialValue))
                         |> (given (_) -> setGlobalConstant(global)(true))
-                        |> (given (_) -> setLinkage(global)(linkageInternal))
+                        |> (given (_) -> setLinkage(global)(linkageExternal))
                     in
                         match beginFunction(module_)(context)(None)("getCounter")(i32)([])(0u32) with
                             | (_, _, builder) ->
@@ -231,7 +235,7 @@ let buildMallocFreeModule name context =
 // A hand-built entry function's own exit-syscall tail, matching
 // `AshesCompiler.Backend.IrCodegen`'s `emitLinuxProcessExit` exactly (that function isn't exported
 // from the package — this file has always hand-built every LLVM sequence it tests independently).
-let emitLinuxProcessExitForTest builder i64 =
+let emitLinuxProcessExitForTest builder i64 exitCode =
     (let syscallType = functionType(i64)([i64, i64, i64, i64])(4u32)(false)
     in
         let syscallAsm = getInlineAsm(syscallType)("syscall")("={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}")(true)(false)
@@ -240,7 +244,7 @@ let emitLinuxProcessExitForTest builder i64 =
             in
                 let zero = constInt(i64)(0u64)(false)
                 in
-                    let _ = buildCall(builder)(syscallType)(syscallAsm)([sixty, zero, zero, zero])(4u32)("sys_exit")
+                    let _ = buildCall(builder)(syscallType)(syscallAsm)([sixty, exitCode, zero, zero])(4u32)("sys_exit")
                     in buildUnreachable(builder))
 
 // An entry-shaped module (`void`, ends in the exit syscall, never `ret`) that also calls
@@ -280,12 +284,25 @@ let buildMallocFreeEntryModule name context =
                                                     in
                                                         let seven = constInt(i64)(7u64)(false)
                                                         in
-                                                            let _ = buildStore(builder)(seven)(ptr)
+                                                            let storeInst = buildStore(builder)(seven)(ptr)
                                                             in
-                                                                let _ = buildCall(builder)(freeType)(freeFn)([ptr])(1u32)("")
+                                                                // Volatile, not just read back: LLVM's default optimization level can
+                                                                // still prove `load(store(malloc(n), v))` equals `v` regardless of what
+                                                                // the allocator actually returns, and fully elide the malloc/store/
+                                                                // load/free chain in favor of the constant `v` — exactly the PLT32
+                                                                // relocations against `malloc`/`free` this test exists to prove the
+                                                                // linker handles, gone. `setVolatile` marks both accesses as ones LLVM
+                                                                // must neither eliminate, reorder, nor prove a value for ahead of time.
+                                                                let _ = setVolatile(storeInst)(true)
                                                                 in
-                                                                    let _ = emitLinuxProcessExitForTest(builder)(i64)
-                                                                    in (module_, builder))
+                                                                    let loaded = buildLoad(builder)(i64)(ptr)("loaded")
+                                                                    in
+                                                                        let _ = setVolatile(loaded)(true)
+                                                                        in
+                                                                            let _ = buildCall(builder)(freeType)(freeFn)([ptr])(1u32)("")
+                                                                            in
+                                                                                let _ = emitLinuxProcessExitForTest(builder)(i64)(loaded)
+                                                                                in (module_, builder))
 
 // A function using a real two-field struct type (`{i32, i32}`, matching a pair/record layout): it
 // allocates one on the stack, addresses each field with `buildGEP`, stores into both, loads both
@@ -2349,7 +2366,7 @@ let resolveHostTargetMachine triple =
                         | Error(message) -> Error(message)
                         | Ok(features) ->
                             codeModelDefault
-                            |> createTargetMachine(target)(triple)(cpu)(features)(codeGenOptLevelNone)(relocModeStatic)
+                            |> createTargetMachine(target)(triple)(cpu)(features)(codeGenOptLevelDefault)(relocModeStatic)
                             |> Ok
 
 // Builds a module with `buildModule` (any module builder above), emits it as `fileType`, copies
@@ -2369,23 +2386,29 @@ let emitModule buildModule name fileType =
                             in
                                 let _ = applyDataLayout(module_)(machine)
                                 in
-                                    match targetMachineEmitToMemoryBuffer(machine)(module_)(fileType) with
-                                        | (true, _, _) -> Error("LLVM reported the module as broken during emission")
-                                        | (false, _, None) -> Error("expected an emitted buffer")
-                                        | (false, _, Some(buffer)) ->
-                                            let size = getBufferSize(buffer)
-                                            in
-                                                let start = getBufferStart(buffer)
+                                    let _ =
+                                        let options = createPassBuilderOptions(Unit)
+                                        in
+                                            let _ = runPasses(module_)("default<O2>")(machine)(options)
+                                            in disposePassBuilderOptions(options)
+                                    in
+                                        match targetMachineEmitToMemoryBuffer(machine)(module_)(fileType) with
+                                            | (true, _, _) -> Error("LLVM reported the module as broken during emission")
+                                            | (false, _, None) -> Error("expected an emitted buffer")
+                                            | (false, _, Some(buffer)) ->
+                                                let size = getBufferSize(buffer)
                                                 in
-                                                    let bytesResult = Ashes.Ffi.copyBytes(start)(size)
+                                                    let start = getBufferStart(buffer)
                                                     in
-                                                        Unit
-                                                        |> (given (_) -> disposeMemoryBuffer(buffer))
-                                                        |> (given (_) -> disposeTargetMachine(machine))
-                                                        |> (given (_) -> disposeBuilder(builder))
-                                                        |> (given (_) -> disposeModule(module_))
-                                                        |> (given (_) -> contextDispose(context))
-                                                        |> (given (_) -> bytesResult))
+                                                        let bytesResult = Ashes.Ffi.copyBytes(start)(size)
+                                                        in
+                                                            Unit
+                                                            |> (given (_) -> disposeMemoryBuffer(buffer))
+                                                            |> (given (_) -> disposeTargetMachine(machine))
+                                                            |> (given (_) -> disposeBuilder(builder))
+                                                            |> (given (_) -> disposeModule(module_))
+                                                            |> (given (_) -> contextDispose(context))
+                                                            |> (given (_) -> bytesResult))
 
 let assertLooksLikeElf bytes =
     Unit
@@ -2619,13 +2642,17 @@ let assertLooksLikeStaticExecutable bytes =
         |> Ashes.Byte.getU16Le(bytes)
         |> test.assertEqual(62u16))
     |> (given (_) ->
-        // Three `PT_LOAD`s: the `R+X` text segment, the read-only `.rodata` segment every
-        // codegen'd program carries for the arena's allocation-failure message (neither module
-        // here embeds a string literal of its own), and the trailing `R+W` `.bss` page for the
-        // entry-captured `__ashes_envp` and the arena cursor/end globals.
+        // Two or three `PT_LOAD`s: the `R+X` text segment and the read-only `.rodata` segment
+        // every codegen'd program carries for the arena's allocation-failure message (neither
+        // module here embeds a string literal of its own) are always present; the trailing `R+W`
+        // `.bss` page for the entry-captured `__ashes_envp` and the arena cursor/end globals is
+        // present only when something in the module actually reads or writes them — at LLVM's
+        // default optimization level, a trivial module the DCE pass proves never touches them
+        // (this one included) legitimately links without it.
         56
         |> Ashes.Byte.getU16Le(bytes)
-        |> test.assertEqual(3u16))
+        |> (given (count) -> count == 2u16 || count == 3u16)
+        |> test.assertEqual(true))
 
 let testLinkStaticExecutableForRealIrArithmeticModule unit =
     match emitModule(buildRealIrArithmeticModule)("selfhostBackendLinkArith")(objectFileType) with
@@ -3536,7 +3563,12 @@ let testRunStaticExecutableForRealIrJumpTableDispatchModule unit = assertProgram
 // it carries neither the codegen arena runtime's `.rodata` message nor its `.bss` globals) that
 // the REAL Linux dynamic loader can load and run. Verified independently outside this assertion (via `strace`) that the kernel loads
 // `ld-linux-x86-64.so.2`, which loads real glibc and calls its actual `malloc` (observable as a
-// real `brk` syscall extending the heap) before this program's own `exit(0)` syscall fires.
+// real `brk` syscall extending the heap) before this program's own `exit(7)` syscall fires (`7`,
+// not `0`: `buildMallocFreeEntryModule` threads the stored-then-loaded value into the exit code
+// itself, the one dependency LLVM's default optimization level cannot see through — a stored value
+// nothing reads back is exactly a dead store, and a malloc/free pair around it a dead allocation,
+// both of which the optimizer legitimately removes, taking this test's own PLT32 relocations with
+// them).
 let testLinkAndRunDynamicMallocFreeModule unit =
     match emitModule(buildMallocFreeEntryModule)("selfhostBackendDynamicMallocFree")(objectFileType) with
         | Error(message) -> test.fail(message)
@@ -3571,7 +3603,7 @@ let testLinkAndRunDynamicMallocFreeModule unit =
                                             | Ok(process) ->
                                                 process
                                                 |> Ashes.IO.Process.waitForExit
-                                                |> test.assertEqual(0)
+                                                |> test.assertEqual(7)
 
 // Runs `buildRealIrTwoStringLiteralsModule`'s executable end to end: proves two distinct string
 // literals in one object are both laid out and printed correctly.

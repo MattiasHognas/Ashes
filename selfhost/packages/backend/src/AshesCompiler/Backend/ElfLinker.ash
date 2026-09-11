@@ -213,15 +213,23 @@ let recursive findSymbolByName bytes symtabOffset symbolCount strtabOffset name 
 // `getenv`/`getcwd`/`readlink` for the `Environment` directory/variable builtins — stage 0's
 // own `EmitLinuxDirectoryEntriesCore`/`EmitLinuxDirectoryRemoveTree` reach for the identical set,
 // since neither `nftw`'s recursive walk nor `readdir`'s stream have a raw-syscall equivalent worth
-// reinventing here). Grown alongside `IrCodegen`'s own external-call coverage, the same "cover
-// exactly what's verified, panic/error on anything else" discipline every other slice in this arc
-// uses — an unrecognized external symbol is a linker `Error`, never a silently-ignored or
-// mis-resolved relocation.
+// reinventing here) plus `bcmp`/`memset`, which this codegen never emits itself: LLVM's optimizer
+// legitimately recognizes certain codegen'd patterns as the C standard idiom a libc intrinsic exists
+// for and rewrites them at its default optimization level — an equality-only `memcmp(a, b, n) == 0`
+// (exactly `CmpStrEq`/`CmpStrNe`'s own shape) into a call to the faster, ordering-agnostic `bcmp`,
+// and a store-in-a-loop that zero-fills a buffer into `memset` — so a symbol this codegen never
+// itself references by name can still surface as a relocation once codegen runs LLVM's pass
+// pipeline. Grown alongside `IrCodegen`'s own external-call coverage, the same "cover exactly what's
+// verified, panic/error on anything else" discipline every other slice in this arc uses — an
+// unrecognized external symbol is a linker `Error`, never a silently-ignored or mis-resolved
+// relocation.
 let linuxDynamicImportLibraries =
     [
         ("malloc", "libc.so.6"),
         ("free", "libc.so.6"),
         ("memcmp", "libc.so.6"),
+        ("bcmp", "libc.so.6"),
+        ("memset", "libc.so.6"),
         ("memcpy", "libc.so.6"),
         ("realloc", "libc.so.6"),
         ("memmove", "libc.so.6"),
@@ -401,11 +409,21 @@ let bssTargetedPatch relocOffset relocationType symbolValue addend =
         dataPatchTargetsBss = true
     )
 
-// `.rodata` plus LLVM's read-only companions (`.rodata.cst8`/`.rodata.cst16` constant pools for
-// `double` literals, `.rodata.str1.*` merged strings): every PROGBITS section whose name starts
-// with `.rodata` joins one concatenated read-only image, each section placed at a 16-byte-aligned
-// layout offset (plain `.rodata`, when present, keeps its position in section order — alone it
-// sits at offset 0, byte-identical to the previous single-section model).
+// `.rodata` plus LLVM's read-only companions (`.rodata.cst8`/`.rodata.cst16`/`.rodata.cst32`
+// constant pools for scalar and vector literals, `.rodata.str1.*` merged strings): every PROGBITS
+// section whose name starts with `.rodata` joins one concatenated read-only image, each section
+// placed at a 32-byte-aligned layout offset (plain `.rodata`, when present, keeps its position in
+// section order — alone it sits at offset 0, byte-identical to the previous single-section model).
+// 32, not 16: at LLVM's default optimization level, the SLP vectorizer can fold scalar stores
+// building a string literal into a single 32-byte `ymm` load from a fresh `.rodata.cst32` constant
+// it synthesizes with its own natural (32-byte) alignment, loaded with an ALIGNED instruction
+// (`vmovaps`, not the unaligned `vmovups`) — trusting the object file's own declared section
+// alignment, which this linker must honor at every join, not just the first section's placement.
+// A section boundary this loose under-aligns nothing the compiler would place inside it: this only
+// has to guarantee each section's own FIRST byte lands on a boundary at least as strict as
+// anything LLVM could put there, and 32 covers every vector width `-O2`'s default pipeline reaches
+// for on a mainstream x86-64 target (`ymm`; a hypothetical `zmm`/AVX-512 constant would need this
+// raised to 64, not reduced).
 let isRodataSectionName name =
     if name == ".rodata"
     then true
@@ -415,7 +433,7 @@ let isRodataSectionName name =
             Ashes.Byte.subText(Ashes.Byte.fromText(name))(0)(7) == ".rodata"
         else false
 
-let alignToSixteen value = (value + 15) / 16 * 16
+let alignToThirtyTwo value = (value + 31) / 32 * 32
 
 type RodataSectionLayout =
     | rodataIndex: Int
@@ -436,7 +454,7 @@ let recursive collectRodataSectionLayouts bytes shoff shentsize shnum shstrtabOf
                 |> isRodataSectionName
                 then
                     collectRodataSectionLayouts(bytes)(shoff)(shentsize)(shnum)(shstrtabOffset)(index + 1)(
-                        alignToSixteen(nextOffset + section.sectionSize)
+                        alignToThirtyTwo(nextOffset + section.sectionSize)
                     )(
                         RodataSectionLayout(rodataIndex = index, rodataHeader = section, rodataLayoutOffset = nextOffset) :: acc
                     )

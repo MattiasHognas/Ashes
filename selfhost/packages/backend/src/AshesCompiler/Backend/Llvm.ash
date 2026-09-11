@@ -70,6 +70,9 @@ export (
     value getTargetFromTriple,
     value createTargetMachine,
     value disposeTargetMachine,
+    value createPassBuilderOptions,
+    value disposePassBuilderOptions,
+    value runPasses,
     value targetMachineEmitToMemoryBuffer,
     value getBufferStart,
     value getBufferSize,
@@ -79,6 +82,7 @@ export (
     value relocModeStatic,
     value codeModelDefault,
     value codeGenOptLevelNone,
+    value codeGenOptLevelDefault,
     value applyDataLayout,
     value hostCpuName,
     value hostCpuFeatures,
@@ -137,6 +141,7 @@ export (
     value buildEntryAlloca,
     value buildStore,
     value buildLoad,
+    value setVolatile,
     value buildCall,
     value tailCallKindTail,
     value tailCallKindMustTail,
@@ -197,6 +202,17 @@ external LLVMSetTarget(LLVMModuleRef, Str) -> void = "LLVMSetTarget@libLLVM.so"
 external LLVMGetTargetFromTriple(Str, out LLVMTargetRef, out *u8) -> Bool = "LLVMGetTargetFromTriple@libLLVM.so"
 external LLVMCreateTargetMachine(LLVMTargetRef, Str, Str, Str, u32, u32, u32) -> LLVMTargetMachineRef = "LLVMCreateTargetMachine@libLLVM.so"
 external LLVMDisposeTargetMachine(LLVMTargetMachineRef) -> void = "LLVMDisposeTargetMachine@libLLVM.so"
+external type LLVMPassBuilderOptionsRef
+external LLVMCreatePassBuilderOptions() -> LLVMPassBuilderOptionsRef = "LLVMCreatePassBuilderOptions@libLLVM.so"
+external LLVMDisposePassBuilderOptions(LLVMPassBuilderOptionsRef) -> void = "LLVMDisposePassBuilderOptions@libLLVM.so"
+// The real signature returns `LLVMErrorRef` (null on success, an owned error handle on failure).
+// Ashes' FFI model has no established way to null-check a directly-returned opaque handle (only
+// `out T` parameters get the null-becomes-`None` treatment), and every caller here passes the
+// fixed, well-known pipeline string `"default<O2>"` stage 0 already runs across its whole test
+// suite without incident — a hardcoded, previously-validated pass-pipeline string failing to
+// parse is not a real failure mode worth plumbing error recovery for. Declared `-> void`: the x86-64
+// SysV ABI leaves the returned pointer in RAX unread, which is safe to simply discard.
+external LLVMRunPasses(LLVMModuleRef, Str, LLVMTargetMachineRef, LLVMPassBuilderOptionsRef) -> void = "LLVMRunPasses@libLLVM.so"
 external LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef, LLVMModuleRef, u32, out *u8, out LLVMMemoryBufferRef) -> Bool = "LLVMTargetMachineEmitToMemoryBuffer@libLLVM.so"
 external LLVMGetBufferStart(LLVMMemoryBufferRef) -> *u8 = "LLVMGetBufferStart@libLLVM.so"
 external LLVMGetBufferSize(LLVMMemoryBufferRef) -> u64 = "LLVMGetBufferSize@libLLVM.so"
@@ -250,6 +266,7 @@ external LLVMGetFirstInstruction(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetFi
 external LLVMPositionBuilder(LLVMBuilderRef, LLVMBasicBlockRef, LLVMValueRef) -> void = "LLVMPositionBuilder@libLLVM.so"
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
+external LLVMSetVolatile(LLVMValueRef, Bool) -> void = "LLVMSetVolatile@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
 external LLVMSetTailCallKind(LLVMValueRef, u32) -> void = "LLVMSetTailCallKind@libLLVM.so"
 external LLVMAddGlobal(LLVMModuleRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMAddGlobal@libLLVM.so"
@@ -346,6 +363,16 @@ let createTargetMachine target triple cpu features optLevel relocMode codeModel 
 
 let disposeTargetMachine machine = LLVMDisposeTargetMachine(machine)
 
+let createPassBuilderOptions _ = LLVMCreatePassBuilderOptions(Unit)
+
+let disposePassBuilderOptions options = LLVMDisposePassBuilderOptions(options)
+
+// Runs LLVM's new-pass-manager pipeline named by `passes` (e.g. `"default<O2>"`, mirroring stage
+// 0's `RunLlvmOptimizationPasses`/`RunLlvmPassPipeline`) over `module_`, tuned for `machine`.
+// Best-effort: see `LLVMRunPasses`'s own binding comment for why a parse/run failure is not
+// surfaced here.
+let runPasses module_ passes machine options = LLVMRunPasses(module_)(passes)(machine)(options)
+
 // Returns `(isBroken, errorMessage, memoryBuffer)`: `isBroken` is `false` when emission succeeded,
 // `memoryBuffer` is `Some` only on success, and `errorMessage` is `Some` only on failure. The
 // returned buffer owns native memory and must be freed with `disposeMemoryBuffer` once its bytes
@@ -363,15 +390,19 @@ let objectFileType = 1u32
 
 let assemblyFileType = 0u32
 
-// The one `LLVMRelocMode`/`LLVMCodeModel`/`LLVMCodeGenOptLevel` value each currently in use, mirroring
-// the real backend's own choice in `LlvmTargetSetup.cs` (`LlvmRelocMode.Static`,
-// `LlvmCodeModel.Default`); optimization is `None` here since this package proves correctness, not
-// performance. The remaining enum values are unbound until something needs them.
+// The one `LLVMRelocMode`/`LLVMCodeModel` value each currently in use, mirroring the real backend's
+// own choice in `LlvmTargetSetup.cs` (`LlvmRelocMode.Static`, `LlvmCodeModel.Default`). The
+// remaining enum values are unbound until something needs them.
 let relocModeStatic = 1u32
 
 let codeModelDefault = 0u32
 
 let codeGenOptLevelNone = 0u32
+
+// `LLVMCodeGenOptLevel`'s `LLVMCodeGenLevelDefault`, mirroring stage 0's `BackendOptimizationLevel.O2`
+// -> `LlvmCodeGenOptLevel.Default` mapping (`LlvmTargetSetup.cs`'s `ResolveOptLevel`) — the level
+// `createTargetMachine` is given alongside the `"default<O2>"` `runPasses` pipeline.
+let codeGenOptLevelDefault = 2u32
 
 // `LLVMCopyStringRepOfTargetData` is direct-call-only (an `FfiStr` return), so this wraps rather
 // than aliases the three-call sequence it takes to apply a target machine's data layout to a
@@ -569,6 +600,8 @@ let buildEntryAlloca builder type_ name =
 let buildStore builder value ptr = LLVMBuildStore(builder)(value)(ptr)
 
 let buildLoad builder type_ ptr name = LLVMBuildLoad2(builder)(type_)(ptr)(name)
+
+let setVolatile memAccessInst isVolatile = LLVMSetVolatile(memAccessInst)(isVolatile)
 
 // `FfiBuffer` parameters must be called directly, so this wraps rather than aliases the raw
 // external, matching `functionType`. `argCount` is likewise taken from the caller rather than
