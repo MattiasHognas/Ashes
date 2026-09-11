@@ -2990,6 +2990,7 @@ public sealed partial class Lowering
             return LowerVarUnbound(v, request);
         }
 
+        RecordElementSpecializationRecursion(v.Name);
         var result = LowerVarBound(v, b);
 
         RecordHoverType(
@@ -3462,6 +3463,7 @@ public sealed partial class Lowering
         EmitArenaWatermark();
 
         int depth0Before = _depth0LambdaCount;
+        int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
 
         PushTraitConstraintScope();
         (int valueTemp, TypeRef valueType) value = LowerSequentialLetValueWithAffineArming(
@@ -3491,6 +3493,7 @@ public sealed partial class Lowering
             needsLateTraitTypeHint);
 
         LowerLetRegisterKnownFunctionIdentity(let, slot, scheme, depth0Before);
+        RegisterElementSpecializationCandidate(let.Name, let, let.Value, scheme, abstractElementTmcDeclinesBefore);
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
@@ -5711,6 +5714,7 @@ public sealed partial class Lowering
             CountSourceLambdaParameters(letRecursive.Value),
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
 
+        int abstractElementTmcDeclinesBefore = _abstractElementTmcDeclines;
         PushTraitConstraintScope();
         (int valTemp, TypeRef valType) valueAndType = LowerLetRecursiveValue(
             runtimeBinding,
@@ -5738,6 +5742,10 @@ public sealed partial class Lowering
             usesTraitDictionary ? signature.Type : null,
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0,
             needsLateTraitTypeHint);
+        RegisterRecursiveElementSpecializationCandidate(
+            letRecursive,
+            usesTraitDictionary,
+            abstractElementTmcDeclinesBefore);
         return new SequentialBindingFrame(
             SequentialBindingKind.Recursive,
             letRecursive.Name,
@@ -6011,7 +6019,9 @@ public sealed partial class Lowering
         Expr.Lambda lam2,
         TypeRef recursiveType,
         LoweredValueRequest request,
-        IReadOnlyList<string>? extraSelfAliases = null)
+        IReadOnlyList<string>? extraSelfAliases = null,
+        string? forcedLabel = null,
+        IrFunctionOriginSeed? originSeed = null)
     {
         // Detect lambda chain for TCO: given (x) -> given (y) -> body
         (List<string> tcoParamNames, Expr innermostBody) = DescribeTcoLambdaChain(lam2);
@@ -6034,11 +6044,14 @@ public sealed partial class Lowering
             _tcoCtx = null;
         }
 
-        var valueAndType = LowerLambdaRecursive(
+        var valueAndType = LowerLambdaCore(
+            lam2,
             letRecursive.Name,
             recursiveType,
-            lam2,
-            selfAliases: extraSelfAliases,
+            stackAllocateClosure: false,
+            extraSelfAliases,
+            forcedLabel: forcedLabel,
+            originSeed: originSeed,
             request: request);
 
         _tcoCtx = savedTcoCtx;
@@ -6582,6 +6595,7 @@ public sealed partial class Lowering
         IrFunctionOriginSeed? originSeed)
     {
         RecordTcoParamIdentity(lam, paramTy, label);
+        EnterElementSpecializationFunction(label);
         LambdaFunctionPlacementFrame placementFrame =
             LowerLambdaCoreEnterFunctionPlacement(lam, label, originSeed);
         LowerLambdaCoreFrame savedFrame = LowerLambdaCoreSaveFrame(label, captures);
@@ -8147,12 +8161,14 @@ public sealed partial class Lowering
                 _suppressTraitConstraintCollection = true;
                 _suppressActiveTraitDictionaryReferenceDepth++;
                 (int capTemp, TypeRef capTy) capture;
+                _elementSpecializationCaptureFillDepth++;
                 try
                 {
                     capture = LowerVar(new Expr.Var(captures[i]));
                 }
                 finally
                 {
+                    _elementSpecializationCaptureFillDepth--;
                     _suppressActiveTraitDictionaryReferenceDepth--;
                     _suppressTraitConstraintCollection = wasSuppressingTraitConstraints;
                 }
@@ -9426,6 +9442,7 @@ public sealed partial class Lowering
 
     private IrFunction LowerLambdaCoreFinishFunction(string label, IrFunctionOrigin origin)
     {
+        _elementSpecializationActiveLabels.Remove(label);
         var func = new IrFunction(
             Label: label,
             Instructions: _collectInferredTraitElaboration ? [] : new List<IrInst>(_inst),
@@ -11386,23 +11403,32 @@ public sealed partial class Lowering
         PreconstrainCallResultType(currentType, collectedArgs.Count, request.ExpectedType);
 
         List<ConsumedRuntimeArgument> consumedRuntimeArguments = [];
-        if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType,
-                consumedRuntimeArguments, out int runtimeManagedResultFlagTemp) is { } earlyResult)
+        int elementSpecializationScopeDepth = -1;
+        try
         {
-            return earlyResult;
-        }
-        tailPosition.Restore();
+            if (LowerCallApplyArgs(call, ref rootExpr, collectedArgs, ref currentTemp, ref currentType,
+                    consumedRuntimeArguments, out int runtimeManagedResultFlagTemp,
+                    ref elementSpecializationScopeDepth) is { } earlyResult)
+            {
+                return earlyResult;
+            }
+            tailPosition.Restore();
 
-        return LowerCallFinish(
-            rootExpr,
-            collectedArgs,
-            request,
-            callWmCursorSlot,
-            callWmEndSlot,
-            currentTemp,
-            currentType,
-            consumedRuntimeArguments,
-            runtimeManagedResultFlagTemp);
+            return LowerCallFinish(
+                rootExpr,
+                collectedArgs,
+                request,
+                callWmCursorSlot,
+                callWmEndSlot,
+                currentTemp,
+                currentType,
+                consumedRuntimeArguments,
+                runtimeManagedResultFlagTemp);
+        }
+        finally
+        {
+            LeaveElementSpecializationRoot(elementSpecializationScopeDepth);
+        }
     }
 
     // The tail of LowerCallGeneral once every argument is applied: unify the result type, normalize
@@ -11874,13 +11900,18 @@ public sealed partial class Lowering
     // Applies the collected arguments one closure call at a time, unifying each parameter and
     // recording the applied arrow's capabilities. Returns a diagnostic result to propagate on an
     // early error, or null when the whole chain applied cleanly.
-    private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs,
+    private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, ref Expr rootExpr, List<Expr> collectedArgs,
         ref int currentTemp, ref TypeRef currentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments,
-        out int runtimeManagedResultFlagTemp)
+        out int runtimeManagedResultFlagTemp,
+        ref int elementSpecializationScopeDepth)
     {
         runtimeManagedResultFlagTemp = -1;
         PreconstrainKnownCallArgumentTypes(collectedArgs, currentType);
+        ElementSpecializationCandidate? elementCandidate =
+            _configuration.EnableElementSpecialization
+                ? ResolveElementSpecializationCandidate(rootExpr, collectedArgs.Count)
+                : null;
         for (int i = 0; i < collectedArgs.Count; i++)
         {
             currentType = Prune(currentType);
@@ -11905,8 +11936,17 @@ public sealed partial class Lowering
                 return ReportNonFunctionCall(rootExpr, currentType, i + 1);
             }
 
-            LowerCallApplyOneArgument(
-                call, rootExpr, collectedArgs, i, funType,
+            (int argTemp, TypeRef argType) = LowerCallArgumentValue(rootExpr, collectedArgs, i, funType);
+            if (i == 0 && elementCandidate is not null)
+            {
+                elementSpecializationScopeDepth = TryRouteToElementSpecialization(
+                    elementCandidate,
+                    currentType,
+                    ref rootExpr,
+                    ref currentTemp);
+            }
+            LowerCallApplyLoweredArgument(
+                call, rootExpr, collectedArgs, i, funType, argTemp, argType,
                 ref currentTemp, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
         }
@@ -11914,26 +11954,12 @@ public sealed partial class Lowering
         return null;
     }
 
-    private void LowerCallApplyOneArgument(
-        Expr.Call call,
+    private (int Temp, TypeRef Type) LowerCallArgumentValue(
         Expr rootExpr,
         List<Expr> collectedArgs,
         int i,
-        TypeRef.TFun funType,
-        ref int currentTemp,
-        List<ConsumedRuntimeArgument> consumedRuntimeArguments,
-        ref int runtimeManagedResultFlagTemp)
+        TypeRef.TFun funType)
     {
-        // A callee whose own type scheme leaves this parameter position quantified is compiled
-        // once, generically — its body has no static layout for the parameter, so it can never
-        // normalize an arena-placed argument on entry the way a concretely-typed parameter's entry
-        // normalization does (see IsRuntimeNormalizableParameterType). The caller still knows the
-        // argument's real (unified) type here, so it copies the argument into the persistent
-        // to-space/blob region itself before the call — immune to an ordinary RestoreArenaState
-        // reset, unlike a plain RC allocation, which shares the arena's own reclaimable cursor and
-        // would otherwise dangle once the caller's own enclosing scope reclaims it.
-        bool calleeParameterIsGeneric = IsCalleeParameterQuantifiedInScheme(rootExpr, i);
-
         (int argTemp, TypeRef argType) =
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
             ?? LowerExpr(
@@ -11949,6 +11975,30 @@ public sealed partial class Lowering
             Unify(funType.Arg, argType);
         }
 
+        return (argTemp, argType);
+    }
+
+    private void LowerCallApplyLoweredArgument(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        int i,
+        TypeRef.TFun funType,
+        int argTemp,
+        TypeRef argType,
+        ref int currentTemp,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments,
+        ref int runtimeManagedResultFlagTemp)
+    {
+        // A callee whose own type scheme leaves this parameter position quantified is compiled
+        // once, generically — its body has no static layout for the parameter, so it can never
+        // normalize an arena-placed argument on entry the way a concretely-typed parameter's entry
+        // normalization does (see IsRuntimeNormalizableParameterType). The caller still knows the
+        // argument's real (unified) type here, so it copies the argument into the persistent
+        // to-space/blob region itself before the call — immune to an ordinary RestoreArenaState
+        // reset, unlike a plain RC allocation, which shares the arena's own reclaimable cursor and
+        // would otherwise dangle once the caller's own enclosing scope reclaims it.
+        bool calleeParameterIsGeneric = IsCalleeParameterQuantifiedInScheme(rootExpr, i);
         if (calleeParameterIsGeneric)
         {
             TypeRef prunedArgType = Prune(argType);
@@ -14411,6 +14461,10 @@ public sealed partial class Lowering
         if (tmcCandidate && CanBuildRuntimeManagedCell(request, head))
         {
             return LowerConsTmc(cons, head, listType, savedTailPos, request);
+        }
+        if (tmcCandidate)
+        {
+            RecordTmcDecline(head);
         }
 
         return LowerConsTail(cons, head, listType, transfersChildren, savedTailPos, request);

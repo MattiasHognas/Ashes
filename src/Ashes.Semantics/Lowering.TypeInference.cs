@@ -568,7 +568,7 @@ public sealed partial class Lowering
         bool isParameter = false,
         bool isDefinition = true)
     {
-        if (_collectInferredTraitElaboration || !IsValidSpan(span))
+        if (_collectInferredTraitElaboration || _suppressHoverRecording || !IsValidSpan(span))
         {
             return;
         }

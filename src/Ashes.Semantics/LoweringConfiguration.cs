@@ -4,7 +4,8 @@ namespace Ashes.Semantics;
 public sealed record LoweringConfiguration(
     bool EnableReuse = true,
     bool EnableTraitOperatorSpecialization = true,
-    bool CollectHoverTypes = true)
+    bool CollectHoverTypes = true,
+    bool EnableElementSpecialization = true)
 {
     /// <summary>The normal production lowering configuration.</summary>
     public static LoweringConfiguration Default { get; } = new();
