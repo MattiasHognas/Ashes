@@ -362,6 +362,17 @@ let writeExplainReport (explain: ExplainRequest) stitched lowered valuePlacement
         |> explainReportLines(explain)(stitched)(lowered)(valuePlacements)
         |> writeErrorLines
 
+// Mirrors stage 0's `RunLlvmOptimizationPasses`/`RunLlvmPassPipeline`: LLVM's new-pass-manager
+// default pipeline for the selected level, run once per emitted module right before codegen. A
+// call frame this backend's own codegen leaves fully materialized on the stack (this package
+// otherwise never runs mem2reg/SROA, unlike stage 0's default O2 build) is exactly the kind of
+// thing this pipeline exists to eliminate.
+let runOptimizationPasses module_ machine =
+    (let options = createPassBuilderOptions(Unit)
+    in
+        let _ = runPasses(module_)("default<O2>")(machine)(options)
+        in disposePassBuilderOptions(options))
+
 let disposeEmission buffer machine builder module_ context =
     Unit
     |> (given (_) -> disposeMemoryBuffer(buffer))
@@ -375,20 +386,23 @@ let emitObjectWithMachine machine builder module_ context =
     in
         let _ = applyDataLayout(module_)(machine)
         in
-            match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
-                | (false, _, None) -> Error("LLVM produced no object buffer.")
-                | (false, _, Some(buffer)) ->
-                    let bytesResult =
-                        buffer
-                        |> getBufferSize
-                        |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
-                    in
-                        let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
-                        in bytesResult)
+            let _ = runOptimizationPasses(module_)(machine)
+            in
+                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
+                    | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
+                    | (false, _, None) -> Error("LLVM produced no object buffer.")
+                    | (false, _, Some(buffer)) ->
+                        let bytesResult =
+                            buffer
+                            |> getBufferSize
+                            |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
+                        in
+                            let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
+                            in bytesResult)
 
 // A target machine for `triple` tuned to the host CPU, as `selfhost/tests/backend` resolves it:
-// no LLVM optimization and static relocations, the only configuration the linker accepts today.
+// LLVM's default optimization level and static relocations, matching stage 0's own default build
+// (`BackendOptimizationLevel.O2`).
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("Could not resolve an LLVM target for " + triple + ".")
@@ -400,7 +414,7 @@ let resolveHostTargetMachine triple =
                         | Error(message) -> Error(message)
                         | Ok(features) ->
                             codeModelDefault
-                            |> createTargetMachine(target)(triple)(cpu)(features)(codeGenOptLevelNone)(relocModeStatic)
+                            |> createTargetMachine(target)(triple)(cpu)(features)(codeGenOptLevelDefault)(relocModeStatic)
                             |> Ok
 
 // The lowered program as a linux-x64 relocatable object, through `codegenProgram` and real LLVM.
