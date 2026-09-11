@@ -14298,6 +14298,17 @@ public sealed partial class Lowering
             return LowerConsTmc(cons, head, listType, savedTailPos, request);
         }
 
+        return LowerConsTail(cons, head, listType, transfersChildren, savedTailPos, request);
+    }
+
+    private (int, TypeRef) LowerConsTail(
+        Expr.Cons cons,
+        LoweredValue head,
+        TypeRef listType,
+        bool transfersChildren,
+        bool savedTailPos,
+        LoweredValueRequest request)
+    {
         LoweredValueRequest tailRequest = LoweredValueRequest.None.WithExpectedType(listType);
         var (tailTemp, tailType) = LowerExpr(cons.Tail, tailRequest);
         head = CreateLoweredValue(
