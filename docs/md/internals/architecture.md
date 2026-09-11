@@ -768,6 +768,37 @@ an RC operation, or an arena bracket LLVM cannot prove dead wins at every level.
 See [Measuring an optimizer change](../guide/development.md#measuring-an-optimizer-change)
 for how such a change is validated.
 
+### Stdlib call fusion
+
+A handful of shapes at a stdlib call site are recognized during lowering itself, before any IR
+exists to optimize: `Ashes.Byte.fromList(Ashes.Collection.List.reverse(xs))` never builds the
+reversed list. `reverse` is a fixed, capability-free structural fold over a finite list — it cannot
+panic or fail to terminate — so its only observable effect is producing the reversed value, and
+`fromList` walking `xs` head-to-tail while filling the destination buffer back-to-front produces the
+identical bytes. `LowerBytesFromList` recognizes the shape and lowers straight to `xs`, emitting
+`IrInst.BytesFromList` with `Reversed: true`; the backend's existing two-pass count-then-fill loop
+picks the destination index as `length - 1 - i` instead of `i` in its second pass, everything else
+unchanged. A generic loop-fusion pass (pairing an arbitrary producer with an arbitrary consumer)
+does not exist and no other builtin gets this treatment yet — this is a fixed recognizer for one
+shape, matched against `Ashes.Collection.List.reverse` by *resolved callee identity*, never by the
+literal spelling `reverse`: a qualified reference resolves through `ResolveModuleAlias` regardless of
+import alias, and a bare name resolves either because it already is the canonical stitched compiler
+name or by chasing the import stitcher's own `let name = target in ...` aliases (indistinguishable
+here from an alias the user's own source wrote) through the same per-slot table that records every
+`let`'s original value. A user's own same-named `reverse` binding resolves through its own bound
+value, so it is never mistaken for the stdlib one. The argument must also be a *saturated* call —
+`reverse`'s result bound to a name and used again declines, since the expression that would need to
+be `xs` is a `Var`, not a call, and forcing that Var's own binding through the same fusion would
+double the work if the binding is read more than once.
+
+Fusing a *user-supplied callback* (a hypothetical `List.map`-then-`List.foldLeft` fusion) is a
+different and harder problem this mechanism deliberately does not attempt: unlike `reverse`, an
+arbitrary callback can panic (division by zero, an out-of-bounds `Byte.get`, none of it gated by a
+capability row) or fail to terminate, and `map`-then-`fold` evaluates every mapping callback before
+any folding call while a fused loop interleaves them — reordering which callback's panic or
+non-termination the program observes first is a real, user-visible difference a fusion cannot import
+into a purely structural traversal.
+
 ---
 
 ## Memory Model

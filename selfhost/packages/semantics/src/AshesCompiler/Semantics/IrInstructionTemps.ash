@@ -484,8 +484,8 @@ let mapInstructionTemps f (kind: IrInstructionKind) =
             BytesSetU32Le(f(T0))(f(T1))(f(T2))(f(T3))(b0)(b1)
         | BytesSetU64Le(T0, T1, T2, T3, b0, b1) ->
             BytesSetU64Le(f(T0))(f(T1))(f(T2))(f(T3))(b0)(b1)
-        | BytesFromList(T0, T1, b0) ->
-            BytesFromList(f(T0))(f(T1))(b0)
+        | BytesFromList(T0, T1, b0, b1) ->
+            BytesFromList(f(T0))(f(T1))(b0)(b1)
         | BytesHash(T0, T1) ->
             T1
             |> f

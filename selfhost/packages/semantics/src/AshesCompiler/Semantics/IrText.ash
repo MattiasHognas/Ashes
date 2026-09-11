@@ -1494,13 +1494,14 @@ let describeInstruction instruction =
                     boolOperand("RuntimeManaged")(runtimeManaged)
                 ]
             )
-        | BytesFromList(target, listTemp, runtimeManaged) ->
+        | BytesFromList(target, listTemp, runtimeManaged, reversed) ->
             IrInstructionDescription(
                 opcode = "BytesFromList",
                 operands = [
                     optionalIntOperand("Target")(target),
                     optionalIntOperand("ListTemp")(listTemp),
-                    boolOperand("RuntimeManaged")(runtimeManaged)
+                    boolOperand("RuntimeManaged")(runtimeManaged),
+                    boolOperand("Reversed")(reversed)
                 ]
             )
         | BytesHash(target, bytesTemp) ->

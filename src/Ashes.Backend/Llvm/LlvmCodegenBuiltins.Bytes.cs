@@ -748,7 +748,8 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitBytesFromList(
         LlvmCodegenState state,
         LlvmValueHandle listRef,
-        bool runtimeManaged = false)
+        bool runtimeManaged = false,
+        bool reversed = false)
     {
         // Two-pass: count cells, allocate, fill.
         // List cons layout: [head:i64 @ offset 0, tail:i64 @ offset 8]; nil = 0.
@@ -778,7 +779,8 @@ internal static partial class LlvmCodegen
             fillLoopBlock,
             fillBodyBlock,
             doneBlock,
-            runtimeManaged);
+            runtimeManaged,
+            reversed);
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "bfl_result_val");
@@ -808,7 +810,7 @@ internal static partial class LlvmCodegen
     private static void EmitBytesFromListAllocAndFill(
         LlvmCodegenState state, LlvmValueHandle listRef, LlvmValueHandle countSlot, LlvmValueHandle curSlot, LlvmValueHandle resultSlot,
         LlvmBasicBlockHandle allocBlock, LlvmBasicBlockHandle fillLoopBlock, LlvmBasicBlockHandle fillBodyBlock, LlvmBasicBlockHandle doneBlock,
-        bool runtimeManaged)
+        bool runtimeManaged, bool reversed = false)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
 
@@ -836,8 +838,14 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, fillBodyBlock);
         LlvmValueHandle headVal = LoadListHead(state, curFill, "bfl_head");
         LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "bfl_idx");
+        // Filling from the end while still walking the source list head-to-tail is what fuses
+        // Byte.fromList(List.reverse(xs)): the last element read lands at index 0, so the reversed
+        // list is never actually built.
+        LlvmValueHandle destIndex = reversed
+            ? LlvmApi.BuildSub(builder, LlvmApi.BuildSub(builder, length, LlvmApi.ConstInt(state.I64, 1, 0), "bfl_len_m1"), idx, "bfl_rev_idx")
+            : idx;
         LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bfl_dest_data");
-        LlvmValueHandle elemPtr = LlvmApi.BuildGEP2(builder, state.I8, destData, [idx], "bfl_elem_ptr");
+        LlvmValueHandle elemPtr = LlvmApi.BuildGEP2(builder, state.I8, destData, [destIndex], "bfl_elem_ptr");
         LlvmValueHandle truncByte = LlvmApi.BuildTrunc(builder, headVal, state.I8, "bfl_byte");
         LlvmApi.BuildStore(builder, truncByte, elemPtr);
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, idx, LlvmApi.ConstInt(state.I64, 1, 0), "bfl_idx_next"), indexSlot);

@@ -603,10 +603,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(length)
                                             |> emitBytesAllocate(context)(function_)(i64)(i8)(builder)(emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
-                                        | BytesFromList(target, list, _managed) ->
+                                        | BytesFromList(target, list, _managed, reversed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(list)
-                                            |> emitBytesFromList(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)) :: tempEnv, terminated)
+                                            |> emitBytesFromList(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(reversed)) :: tempEnv, terminated)
                                         | BytesEmpty(target, managed) ->
                                             ((target, managed
                                             |> emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)

@@ -1151,7 +1151,10 @@ public abstract record IrInst
     /// <param name="Target">Temp receiving the built buffer.</param>
     /// <param name="ListTemp">Temp holding the source list.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
-    public sealed record BytesFromList(int Target, int ListTemp, bool RuntimeManaged = false)
+    /// <param name="Reversed">True to fill the buffer back-to-front while still walking
+    /// <paramref name="ListTemp"/> head-to-tail — the fused form of <c>Byte.fromList(List.reverse(xs))</c>,
+    /// which never materializes the reversed list.</param>
+    public sealed record BytesFromList(int Target, int ListTemp, bool RuntimeManaged = false, bool Reversed = false)
         : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Yields a hash of a byte buffer into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the hash value.</param>

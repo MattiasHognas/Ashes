@@ -253,7 +253,7 @@ let instructionTemps (kind: IrInstructionKind) =
         | BytesSetU16Le(t1, t2, t3, t4, _, _) -> [t1, t2, t3, t4]
         | BytesSetU32Le(t1, t2, t3, t4, _, _) -> [t1, t2, t3, t4]
         | BytesSetU64Le(t1, t2, t3, t4, _, _) -> [t1, t2, t3, t4]
-        | BytesFromList(t1, t2, _) -> [t1, t2]
+        | BytesFromList(t1, t2, _, _) -> [t1, t2]
         | BytesHash(t1, t2) -> [t1, t2]
         | BytesU16Le(t1, t2, _) -> [t1, t2]
         | BytesU32Le(t1, t2, _) -> [t1, t2]

@@ -505,7 +505,7 @@ let recursive classifyInstructionRepr (kind: IrInstructionKind) (reprs: List((In
         | BytesAllocate(target, _size, runtimeManaged) ->
             match reprOfFlag(runtimeManaged) with
                 | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
-        | BytesFromList(target, _list, runtimeManaged) ->
+        | BytesFromList(target, _list, runtimeManaged, _reversed) ->
             match reprOfFlag(runtimeManaged) with
                 | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
         | CopyOutArena(destTemp, _srcTemp, _staticSizeBytes, runtimeManaged, _purpose, _deferredElementType) ->

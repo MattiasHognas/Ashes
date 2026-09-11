@@ -359,6 +359,56 @@ let rewriteQualifiedExpression project moduleName boundary qualifier name =
                                         | _ -> ExprQualifiedVar(qualifier)(name)
                                 | None -> ExprQualifiedVar(qualifier)(name)
 
+// Ashes.Byte.fromList(Ashes.Collection.List.reverse(xs)) never needs the reversed list: filling the
+// destination buffer back-to-front while walking xs forward produces the same bytes. Recognized
+// through this pass's own qualified/unqualified resolution — the exact mechanism every other alias
+// and selector import already goes through above — so it fires however the call reaches
+// Ashes.Collection.List.reverse, and a user's own same-named `reverse` binding, which resolves to a
+// different (or no) StitchedDefinition, never triggers it. Mirrors stage 0's
+// ResolveCalleeQualifiedName/TryMatchCallToQualifiedFunction.
+let recursive fusionCallSpine expression =
+    match expression with
+        | ExprAt(span, inner) ->
+            match fusionCallSpine(inner) with
+                | (root, arguments) -> (ExprAt(span)(root), arguments)
+        | ExprCall(function, argument, _whitespace, _layout) ->
+            match fusionCallSpine(function) with
+                | (root, arguments) -> (root, appendList(arguments)([argument]))
+        | _ -> (expression, [])
+
+let recursive fusionCalleeResolvesTo project moduleName boundary qualifiedName root =
+    match root with
+        | ExprAt(_span, inner) -> fusionCalleeResolvesTo(project)(moduleName)(boundary)(qualifiedName)(inner)
+        | ExprQualifiedVar(qualifier, name) ->
+            match resolveStitchedQualified(moduleName)(qualifier)(StitchedValue)(name)(project) with
+                | Some(StitchedDefinition { qualifiedName = actual }) -> actual == qualifiedName
+                | None -> false
+        | ExprVar(name) ->
+            match resolveStitchedUnqualified(moduleName)(boundary)(StitchedValue)(name)(project) with
+                | Some(StitchedDefinition { qualifiedName = actual }) -> actual == qualifiedName
+                | None -> false
+        | _ -> false
+
+let recursive isByteFromListReference expression =
+    match expression with
+        | ExprAt(_span, inner) -> isByteFromListReference(inner)
+        | ExprQualifiedVar("Ashes.Byte", "fromList") -> true
+        | _ -> false
+
+// The single-argument saturated call to reverse this fuses — a bound name reused elsewhere reads as
+// a Var here, not a Call, and correctly declines: forcing that binding's own value through this
+// same rewrite would duplicate the fill work on every one of its other reads.
+let tryFuseByteFromReversedList project moduleName boundary rewrittenFunction argument =
+    if isByteFromListReference(rewrittenFunction) == false
+    then None
+    else
+        match fusionCallSpine(argument) with
+            | (root, xsExpression :: []) ->
+                if fusionCalleeResolvesTo(project)(moduleName)(boundary)("Ashes.Collection.List.reverse")(root)
+                then Some(xsExpression)
+                else None
+            | _ -> None
+
 let recursive rewriteOptionalExpression project moduleName boundary locals expression =
     match expression with
         | None -> None
@@ -573,12 +623,23 @@ and rewriteExpression project moduleName boundary locals expression =
             |> rewriteOptionalType(project)(moduleName)(boundary)([])
             |> ExprLambda(name)(rewriteExpression(project)(moduleName)(boundary)(name :: locals)(body))
         | ExprCall(function, argument, whitespace, layout) ->
-            ExprCall(
-                rewriteExpression(project)(moduleName)(boundary)(locals)(function),
-                rewriteExpression(project)(moduleName)(boundary)(locals)(argument),
-                whitespace,
-                layout
-            )
+            let rewrittenFunction = rewriteExpression(project)(moduleName)(boundary)(locals)(function)
+            in
+                match tryFuseByteFromReversedList(project)(moduleName)(boundary)(rewrittenFunction)(argument) with
+                    | Some(xsExpression) ->
+                        ExprCall(
+                            ExprQualifiedVar("Ashes.Byte")("fromReversedList"),
+                            rewriteExpression(project)(moduleName)(boundary)(locals)(xsExpression),
+                            whitespace,
+                            layout
+                        )
+                    | None ->
+                        ExprCall(
+                            rewrittenFunction,
+                            rewriteExpression(project)(moduleName)(boundary)(locals)(argument),
+                            whitespace,
+                            layout
+                        )
         | ExprTuple(elements) ->
             elements
             |> rewriteExpressions(project)(moduleName)(boundary)(locals)

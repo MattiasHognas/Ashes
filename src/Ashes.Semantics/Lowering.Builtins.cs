@@ -4638,9 +4638,45 @@ public sealed partial class Lowering
             && value.Ownership.Ownership == LoweredTempOwnershipKind.NewlyProduced
             && value.Ownership.Producer != LoweredTempProducerKind.Borrow;
 
+    // Ashes.Byte.fromList(Ashes.Collection.List.reverse(xs)) never needs the reversed list:
+    // walking xs head-to-tail and filling the destination buffer back-to-front produces the exact
+    // same bytes as reversing first, without ever allocating the intermediate list. Recognized by
+    // resolved callee identity (ResolveCalleeQualifiedName), not by the literal source spelling, so
+    // any import alias fires it and a user's own same-named function never does. reverse itself is
+    // a fixed, capability-free structural fold with no way to panic or diverge on a finite list, so
+    // — unlike a fusion over a user-supplied callback — no separate purity proof is needed here: its
+    // only effect is producing the reversed list, and this lowers to the identical bytes without it.
+    private bool TryLowerBytesFromReversedList(
+        Expr listArg,
+        LoweredValueRequest request,
+        out (int, TypeRef) result)
+    {
+        if (TryMatchCallToQualifiedFunction(listArg, "Ashes.Collection.List.reverse", 1, out List<Expr>? arguments))
+        {
+            result = LowerBytesFromListCore(arguments[0], request, reversed: true);
+            return true;
+        }
+
+        result = default;
+        return false;
+    }
+
     private (int, TypeRef) LowerBytesFromList(
         Expr listArg,
         LoweredValueRequest request = default)
+    {
+        if (TryLowerBytesFromReversedList(listArg, request, out (int, TypeRef) fused))
+        {
+            return fused;
+        }
+
+        return LowerBytesFromListCore(listArg, request, reversed: false);
+    }
+
+    private (int, TypeRef) LowerBytesFromListCore(
+        Expr listArg,
+        LoweredValueRequest request,
+        bool reversed)
     {
         using var diagnosticSpan = PushDiagnosticSpan(listArg);
         var (listTemp, listType) = LowerExpr(listArg);
@@ -4678,7 +4714,8 @@ public sealed partial class Lowering
         Emit(new IrInst.BytesFromList(
             target,
             listTemp,
-            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes)));
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Bytes),
+            reversed));
         return (target, new TypeRef.TBytes());
     }
 
