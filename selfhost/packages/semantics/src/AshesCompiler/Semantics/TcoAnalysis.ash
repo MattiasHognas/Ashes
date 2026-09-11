@@ -24,6 +24,7 @@ export (
     value collectLambdaParamNames,
     value collectInnermostBody,
     value hasTailSelfCalls,
+    value hasTmcConsSelfCalls,
     value collectGroupTailCalls,
     value tryPlanMutualRecursionTco,
     value buildMutualDispatchParamNames,
@@ -153,6 +154,43 @@ let hasTailSelfCalls expr funcName arity =
             | _ -> true)
 
 let collectGroupTailCalls expr groupNames arity = collectTailCallsInExpr(groupNames)(arity)(InTailPos)(expr)([])
+
+// Whether a body contains a tail-position cons whose TAIL is a saturated self-call —
+// `head :: self(a1)...(aN)`, the tail-modulo-constructor shape. There is no tail call there, because
+// one constructor is still pending when the recursion happens, but the recursive result is consumed
+// by exactly one constructor field, so the loop can build the spine iteratively and fill that field
+// one iteration late. Walks tail position exactly like `collectTailCallsInExpr`, and reuses its
+// saturation test, so a differently-applied name is not mistaken for the recursive call.
+let recursive hasTmcConsSelfCallsIn funcName arity inTail expr =
+    if inTail
+    |> isTailPosition
+    |> notBool
+    then false
+    else
+        match expr with
+            | ExprAt(_span, inner) -> hasTmcConsSelfCallsIn(funcName)(arity)(inTail)(inner)
+            | ExprIf(_cond, t, e) ->
+                if hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(t)
+                then true
+                else hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(e)
+            | ExprMatch(_scrutinee, armList, _defaultArm) -> hasTmcConsSelfCallsInArms(funcName)(arity)(armList)
+            | ExprLet(_name, _value, b, _params, _ann, _traits) -> hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(b)
+            | ExprLetRecursive(_name, _value, b, _params, _ann, _traits) -> hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(b)
+            | ExprLetResult(_name, _value, b) -> hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(b)
+            | ExprCons(_head, tail) ->
+                match findCalledTarget(funcName :: [])(arity)(0)(tail) with
+                    | Some(_target) -> true
+                    | None -> false
+            | _ -> false
+and hasTmcConsSelfCallsInArms funcName arity arms =
+    match arms with
+        | [] -> false
+        | (_pat, b, _guard) :: rest ->
+            if hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(b)
+            then true
+            else hasTmcConsSelfCallsInArms(funcName)(arity)(rest)
+
+let hasTmcConsSelfCalls expr funcName arity = hasTmcConsSelfCallsIn(funcName)(arity)(InTailPos)(expr)
 
 let recursive checkAllEqualTypes t0 list =
     match list with
