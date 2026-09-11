@@ -63,10 +63,23 @@ let utilInterface =
 
 let utilUnit = unit("Foo.Util")("dep@1.0.0")("/dep/Foo/Util.ash")([])(utilInterface)(utilProgram)(false)
 
+let helperProgram =
+    ProgramSyntax(items = [TopLevelLet(binding("second")(ExprInt(5)))(false)], body = None)
+
+let helperInterface = moduleInterface("Bar.Helper")([ImportValueExport("second")])
+
+let helperUnit = unit("Bar.Helper")("dep@1.0.0")("/dep/Bar/Helper.ash")([])(helperInterface)(helperProgram)(false)
+
 let mainProgram =
     ProgramSyntax(items = [TopLevelLet(binding("entry")(ExprInt(0)))(false)], body = Some(ExprVar("entry")))
 
-let mainImports = [ResolvedModuleImport("Foo.Util")(None)(1)("import Foo.Util")]
+let mainImports =
+    [ResolvedModuleImport("Foo.Util")(None)(1)("import Foo.Util"), ResolvedModuleImport(
+        "Bar.Helper",
+        Some("helper"),
+        2,
+        "import Bar.Helper as helper"
+    )]
 
 let mainUnit =
     unit(
@@ -117,6 +130,18 @@ let expectImports (project: StitchedSemanticProject) =
         match resolveStitchedUnqualified("Main")(-1)(StitchedValue)("hidden")(project) with
             | None -> Unit
             | Some(_) -> test.fail("private declaration should not cross the module interface"))
+    |> (given (_) ->
+        project
+        |> resolveStitchedQualified("Main")("helper")(StitchedValue)("second")
+        |> requireDefinition("import alias should resolve")
+        |> definitionName
+        |> test.assertEqual("Bar_Helper_second"))
+    |> (given (_) ->
+        project
+        |> resolveStitchedQualified("Main")("Bar.Helper")(StitchedValue)("second")
+        |> requireDefinition("the module's own canonical name should resolve alongside its import alias")
+        |> definitionName
+        |> test.assertEqual("Bar_Helper_second"))
 
 let expectStablePrivateNames (project: StitchedSemanticProject) =
     project
@@ -138,7 +163,7 @@ let expectDefinitionMetadata (project: StitchedSemanticProject) =
         | None -> test.fail("stitched definition metadata should exist")
 
 let checkPrimaryPlan unitValue =
-    [utilUnit, mainUnit]
+    [utilUnit, helperUnit, mainUnit]
     |> buildStitchedSemanticProject
     |> requireProject
     |> (given (project) ->
