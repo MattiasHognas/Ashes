@@ -6,7 +6,6 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
-
     private void RegisterInlinableFunctions(IReadOnlyList<TopLevelItem> valueItems)
     {
         foreach (var item in valueItems)
@@ -26,6 +25,7 @@ public sealed partial class Lowering
             if (item is TopLevelItem.LetDecl { IsRecursive: false } let && RegisterInlinableStrip(let.Value) is Expr.Lambda lam)
             {
                 RegisterInlinableNonRecursiveLet(let, lam);
+                RegisterTotalityCallbackCandidate(let, lam);
             }
 
             // A recursive lambda chain is a candidate for in-place-reuse specialization when its
