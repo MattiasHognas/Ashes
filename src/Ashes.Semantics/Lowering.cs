@@ -6017,11 +6017,17 @@ public sealed partial class Lowering
         (List<string> tcoParamNames, Expr innermostBody) = DescribeTcoLambdaChain(lam2);
         var paramCount = tcoParamNames.Count;
         var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRecursive.Name, paramCount);
+        // A `head :: self(...)` producer has no tail self-call, but its recursive result is consumed by
+        // exactly one constructor field, so the same loop can build the spine iteratively and fill that
+        // field one iteration late (LowerConsTmc). It needs the same loop scaffold — parameter slots,
+        // body label, back edge — so the context is created for that shape too.
+        var hasTmcConsSelfCalls = HasTmcConsSelfCalls(innermostBody, letRecursive.Name, paramCount);
 
         var savedTcoCtx = _tcoCtx;
-        if (hasTailSelfCalls)
+        if (hasTailSelfCalls || hasTmcConsSelfCalls)
         {
             _tcoCtx = CreateRecursiveTcoContext(letRecursive, tcoParamNames, paramCount);
+            _tcoCtx.TmcShapePresent = hasTmcConsSelfCalls;
         }
         else
         {
@@ -6524,6 +6530,7 @@ public sealed partial class Lowering
 
         var outerTcoCtx = LowerLambdaCoreSuspendOuterTco(isChainLambda, lam);
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
+        if (savedTcoCtx is not null) savedTcoCtx.ResultType = retTy;
         var (bodyTemp, bodyType) = LowerLambdaCoreLowerBodyWithNormalizedParameter(lam, label, paramTy, argSlot, rowTy, selfName);
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
@@ -6534,6 +6541,7 @@ public sealed partial class Lowering
         _tcoCtx = outerTcoCtx;
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
 
+        bodyTemp = savedTcoCtx is { TmcActivated: true } tmc ? LowerLambdaCoreCloseTmcChain(tmc, bodyTemp) : bodyTemp;
         bodyTemp = FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy);
         RecordReturnedClosureLabel(label, bodyTemp);
         // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
@@ -8919,6 +8927,8 @@ public sealed partial class Lowering
                 tco.RuntimeManagedParamActiveSlots[slot] = NewLocal();
             }
         }
+
+        EmitTmcChainSlots(tco, compactionZero);
 
         // Emit loop start label
         tco.BodyLabel = $"{label}_body";
@@ -14264,8 +14274,9 @@ public sealed partial class Lowering
         using var diagnosticSpan = PushDiagnosticSpan(cons);
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
+        bool tmcCandidate = IsTmcCandidateCons(cons, savedTailPos);
         request = request.AddRuntime(
-            IsRecursiveProducerTail(cons.Tail),
+            IsRecursiveProducerTail(cons.Tail) || tmcCandidate,
             LoweredValueRuntimeRepresentation.List);
 
         TypeRef? expectedElementType = request.ExpectedType is not null
@@ -14282,6 +14293,11 @@ public sealed partial class Lowering
             cellRequest,
             expectedElementType);
         TypeRef listType = new TypeRef.TList(head.Type);
+        if (tmcCandidate && CanBuildRuntimeManagedCell(request, head))
+        {
+            return LowerConsTmc(cons, head, listType, savedTailPos, request);
+        }
+
         LoweredValueRequest tailRequest = LoweredValueRequest.None.WithExpectedType(listType);
         var (tailTemp, tailType) = LowerExpr(cons.Tail, tailRequest);
         head = CreateLoweredValue(
@@ -14315,6 +14331,198 @@ public sealed partial class Lowering
             tailType,
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
+    }
+
+    /// <summary>
+    /// Whether this cons is the tail-modulo-constructor shape: it is itself in tail position of a loop
+    /// whose body was found to contain that shape, and its tail is the loop's own recursive call.
+    /// </summary>
+    private bool IsTmcCandidateCons(Expr.Cons cons, bool inTailPosition)
+        => inTailPosition
+            && _tcoCtx is { TmcShapePresent: true, TmcDestSlot: >= 0 }
+            && IsTmcEligibleConsTail(cons.Tail, _tcoCtx);
+
+    /// <summary>
+    /// Whether the cell about to be built can be reference-counted, which is the only spine placement
+    /// the transform accepts. An arena spine fails twice over. It sits above the loop's per-iteration
+    /// watermark, so the back edge reclaims it under itself unless the loop stops reclaiming, and a
+    /// loop that stops reclaiming strands every iteration's garbage for the whole traversal. And even
+    /// with the watermark re-saved past each cell, the transformed cons publishes its head into a
+    /// structure outliving the iteration while the back edge is free to release the parameter graph
+    /// that head was borrowed from — a record field bound straight off the list being traversed, or a
+    /// callback result that may simply be its own argument. A reference-counted cell retains its head
+    /// and lives outside the arena, so neither applies. An element type that cannot carry one — a
+    /// still-unresolved one in a generic producer, most importantly — declines to the ordinary
+    /// recursive lowering, which is correct, just not stack-safe.
+    /// </summary>
+    private bool CanBuildRuntimeManagedCell(LoweredValueRequest request, LoweredValue head)
+        => request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            && IsRuntimeManageableListElement(head.Type, head.Temp);
+
+    /// <summary>
+    /// Whether a cons tail is a saturated call back into the loop this cons sits in — the recursion
+    /// <see cref="LowerConsTmc"/> replaces with a back edge. Uses the same root resolution as an
+    /// ordinary tail self-call, so a shadowed or differently-arity-applied name is not mistaken for it.
+    /// </summary>
+    private bool IsTmcEligibleConsTail(Expr tail, TcoContext tco)
+    {
+        if (tail is not Expr.Call)
+        {
+            return false;
+        }
+
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(tail, arguments);
+        return arguments.Count == tco.ParamCount && IsTcoSelfCallRoot(root, tco);
+    }
+
+    /// <summary>
+    /// Tail-modulo-constructor: lowers `head :: self(args)` as one more cell on an iteratively built
+    /// spine plus the loop's own back edge, instead of a call whose pending constructor keeps a native
+    /// frame alive per element.
+    ///
+    /// The cell is allocated with a NIL tail rather than an uninitialized one, so the spine is a
+    /// complete, well-formed (merely shorter) list at every instant: a structural dropper, a copy, or a
+    /// suspension that observes it walks to the nil and stops, and no reader can reach a field that has
+    /// not been written. Filling that field on the next iteration overwrites nil — which owns nothing —
+    /// with the freshly allocated successor, so the store is a plain ownership transfer needing no
+    /// release of the previous contents. The head keeps the ownership treatment the recursive lowering
+    /// gives it; the value that finally lands in the last cell's tail is the function's own result,
+    /// closed by <see cref="LowerLambdaCoreCloseTmcChain"/>.
+    /// </summary>
+    private (int, TypeRef) LowerConsTmc(
+        Expr.Cons cons,
+        LoweredValue head,
+        TypeRef listType,
+        bool savedTailPos,
+        LoweredValueRequest request)
+    {
+        TcoContext tco = _tcoCtx!;
+        // The tail expression is never lowered here, so the constraint its expected type used to carry
+        // — this cons IS what the recursive call returns — is restored against the loop's result type.
+        if (tco.ResultType is { } resultType)
+        {
+            Unify(resultType, listType);
+        }
+
+        int headTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp);
+        MarkResourceArgMoved(cons.Head);
+        MarkTmcSpineChildMoved(cons.Head);
+
+        // Building the cell with a nil tail goes through the ordinary cell lowering, so placement,
+        // reuse tokens, and head ownership are decided exactly as they are for a cons that is not
+        // transformed; only the tail differs, and nil is the one value that owns nothing.
+        int nilTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(nilTemp, 0));
+        (int cellTemp, _) = LowerConsCell(
+            headTemp,
+            nilTemp,
+            head.Type,
+            listType,
+            ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
+            request);
+
+        EmitTmcLinkCell(tco, cellTemp);
+        Emit(new IrInst.StoreLocal(tco.TmcDestSlot, cellTemp));
+        tco.TmcActivated = true;
+
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(cons.Tail, arguments);
+        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        (int backEdgeTemp, _) = LowerCallTcoSelfCall(tco, root, arguments);
+        return (backEdgeTemp, listType);
+    }
+
+    /// <summary>
+    /// A value moved into a spine cell belongs to that cell from here on, so the back edge this cons
+    /// jumps through must not release it with the iteration's other owners — the cell, and through it
+    /// the finished list, still holds it. The untransformed cons never needed this: its function
+    /// returns instead of continuing into another iteration, so no back-edge release follows.
+    /// </summary>
+    private void MarkTmcSpineChildMoved(Expr expression)
+    {
+        if (expression is Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { IsDropped: false } info)
+        {
+            info.ReleaseKind = ResourceReleaseKind.Moved;
+        }
+    }
+
+    /// <summary>
+    /// Reserves the tail-modulo-constructor chain slots once before the loop label: nothing has been
+    /// built yet, so both the pending-destination cell and the spine head start nil.
+    /// </summary>
+    private void EmitTmcChainSlots(TcoContext tco, int zeroTemp)
+    {
+        if (!tco.TmcShapePresent)
+        {
+            return;
+        }
+
+        tco.TmcDestSlot = NewLocal();
+        tco.TmcResultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(tco.TmcDestSlot, zeroTemp));
+        Emit(new IrInst.StoreLocal(tco.TmcResultSlot, zeroTemp));
+    }
+
+    private void EmitTmcLinkCell(TcoContext tco, int cellTemp)
+    {
+        int destTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(destTemp, tco.TmcDestSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int hasDestTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasDestTemp, destTemp, zeroTemp));
+        string firstLabel = NewLabel("tmc_first");
+        string doneLabel = NewLabel("tmc_link_done");
+        Emit(new IrInst.JumpIfFalse(hasDestTemp, firstLabel));
+        Emit(new IrInst.StoreMemOffset(
+            destTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex),
+            cellTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(firstLabel));
+        Emit(new IrInst.StoreLocal(tco.TmcResultSlot, cellTemp));
+        Emit(new IrInst.Label(doneLabel));
+    }
+
+    /// <summary>
+    /// Closes a tail-modulo-constructor spine at the function's single return: the value the body
+    /// produced is what the innermost recursive call would have returned, so it fills the last cell's
+    /// nil tail and the spine head becomes the result. With no cell built (an input that took the base
+    /// case immediately) the body value is returned unchanged.
+    ///
+    /// Called before any ownership finalization, because from that point on the function's result IS
+    /// the spine and the body value is only the last cell's tail: the returned-root transfer, the exit
+    /// drops, and the result-ownership bit the call site branches on all have to see the spine rather
+    /// than the value the transformed loop happened to leave behind.
+    /// </summary>
+    private int LowerLambdaCoreCloseTmcChain(TcoContext tco, int bodyTemp)
+    {
+        int resultSlot = NewLocal();
+        int destTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(destTemp, tco.TmcDestSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int hasDestTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(hasDestTemp, destTemp, zeroTemp));
+        string emptyLabel = NewLabel("tmc_close_empty");
+        string doneLabel = NewLabel("tmc_close_done");
+        Emit(new IrInst.JumpIfFalse(hasDestTemp, emptyLabel));
+        Emit(new IrInst.StoreMemOffset(
+            destTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex),
+            bodyTemp));
+        int spineTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(spineTemp, tco.TmcResultSlot));
+        Emit(new IrInst.StoreLocal(resultSlot, spineTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(emptyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     private int PrepareRuntimeRcListTail(

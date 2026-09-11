@@ -72,6 +72,7 @@ import AshesCompiler.Semantics.TcoAnalysis.collectInnermostBody
 import AshesCompiler.Semantics.TcoAnalysis.collectLambdaParamNames
 import AshesCompiler.Semantics.TcoAnalysis.countLambdaArity
 import AshesCompiler.Semantics.TcoAnalysis.hasTailSelfCalls
+import AshesCompiler.Semantics.TcoAnalysis.hasTmcConsSelfCalls
 import AshesCompiler.Semantics.TraitEvidenceRewriting
 import AshesCompiler.Semantics.TraitEvidenceThreading
 import AshesCompiler.Semantics.TypeInference
@@ -234,6 +235,11 @@ type ConsumerRequest =
     // position where the backend fuses a self call into a jump and no copy-out block may follow
     // it; `tailPosition` above is the loop body's own flag.
     | tailCall: Bool
+    // Like `tailPosition`, but a cons keeps it: a cons does not forward tail position to its
+    // operands, yet the cons ITSELF stands where the function's result does, which is what makes it
+    // the tail-modulo-constructor shape. Kept separate from `tailPosition` so recognizing that shape
+    // cannot disturb the ownership and transfer decisions `tailPosition` drives.
+    | consTailPosition: Bool
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -253,7 +259,8 @@ let emptyConsumerRequest =
         transferSlot = None,
         tailPosition = false,
         transfersRuntimeManagedChildren = false,
-        tailCall = false
+        tailCall = false,
+        consTailPosition = false
     )
 
 // The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop
@@ -277,6 +284,11 @@ type CoreTcoLoop =
     // Every parameter the loop body hands straight to a single-parameter specialization candidate
     // as its accumulator, with that callee's name (stage 0's `CollectSpecializableCallArgs`).
     | specializationAccumulators: List((Str, Str))
+    // Whether the body contains a `head :: self(...)` cons in tail position, decided syntactically
+    // before the body is lowered, because the spine slots have to be reserved at loop entry — ahead
+    // of a filter-shaped body, whose ordinary tail self-call in one arm is reached before the
+    // transformed cons in the other.
+    | tmcShapePresent: Bool
     | emitsLoop: Bool
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
@@ -314,6 +326,11 @@ type CoreTcoLoopFrame =
     | runtimeManagedListSlots: List((Int, Int, SemanticType))
     | runtimeManagedAdtSlots: List((Int, Int, SemanticType, Str))
     | runtimeManagedStrSlots: List((Int, Int))
+    // The tail-modulo-constructor spine: the cell whose tail field is still nil and must receive the
+    // next cell, and the first cell, which becomes the function's result. Both -1 when the loop has
+    // no `head :: self(...)` cons.
+    | tmcDestSlot: Int
+    | tmcResultSlot: Int
 
 // A pattern owner joined to its emitted slot (stage 0's `PatternBindingPlacementSite`): the
 // binder's slot, the loop parameter slot it was extracted from, the instruction count right
@@ -1527,6 +1544,17 @@ let recursive tailPositionForwards expression =
         | ExprCall(_, _, _, _) -> true
         | _ -> false
 
+// A cons does not forward tail position to its operands — a call under one is not a tail call — but
+// the cons ITSELF still stands where the function's result does, and that fact is what decides
+// whether its children are transferred out of the loop and whether it is the tail-modulo-constructor
+// shape. Stage 0 reads its ambient flag before the cons clears it; the same value is kept here by
+// forwarding tail position (and only tail position, never `tailCall`) into the cons.
+let recursive tailPositionOrConsForwards expression =
+    match expression with
+        | ExprAt(_span, inner) -> tailPositionOrConsForwards(inner)
+        | ExprCons(_, _) -> true
+        | _ -> tailPositionForwards(expression)
+
 // The transfer of an aggregate's children reaches the forms that forward their result and the
 // aggregates that store the children: a constructor application, a record, a cons cell, a list
 // literal, and a tuple.
@@ -1576,7 +1604,8 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         else None,
         tailPosition = tailPositionForwards(expression) && request.tailPosition,
         transfersRuntimeManagedChildren = transferRequestForwards(expression) && request.transfersRuntimeManagedChildren,
-        tailCall = tailPositionForwards(expression) && request.tailCall
+        tailCall = tailPositionForwards(expression) && request.tailCall,
+        consTailPosition = tailPositionOrConsForwards(expression) && request.consTailPosition
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (request: ConsumerRequest) (lowered: LoweredCoreValue) =
@@ -5893,8 +5922,71 @@ let adoptNormalizedParameterResult (label: Str) (bodyTemp: Int) (state: CoreLowe
             then markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
             else state
 
-let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
+// The branch stage 0 emits in `LowerLambdaCoreCloseTmcChain`: with a pending cell, the body's value
+// fills its still-nil tail and the spine head becomes the result; with none, the body's value is the
+// result unchanged.
+let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (joinSlot: Int) (emptyLabel: Str) (doneLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = destState, temp = destTemp } ->
+            match freshTemp(destState) with
+                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                    match freshTemp(zeroState) with
+                        | FreshTemp { state = condState, temp = condTemp } ->
+                            match freshTemp(condState) with
+                                | FreshTemp { state = spineState, temp = spineTemp } ->
+                                    match freshTemp(spineState) with
+                                        | FreshTemp { state = outState, temp = outTemp } ->
+                                            (outState
+                                            |> emit(LoadLocal(destTemp)(destSlot))
+                                            |> emit(LoadConstInt(zeroTemp)(0))
+                                            |> emit(CmpIntNe(condTemp)(destTemp)(zeroTemp))
+                                            |> emit(JumpIfFalse(condTemp)(emptyLabel))
+                                            |> emit(StoreMemOffset(destTemp)(8)(bodyTemp))
+                                            |> emit(LoadLocal(spineTemp)(resultSlot))
+                                            |> emit(StoreLocal(joinSlot)(spineTemp))
+                                            |> emit(Jump(doneLabel))
+                                            |> emit(Label(emptyLabel))
+                                            |> emit(StoreLocal(joinSlot)(bodyTemp))
+                                            |> emit(Label(doneLabel))
+                                            |> emit(LoadLocal(outTemp)(joinSlot)), outTemp)
+
+// Closes a tail-modulo-constructor spine at the function's single return, before any ownership
+// finalization: from here on the function's result IS the spine and the body value is only the last
+// cell's tail, so the returned-root transfer, the exit drops, and the result-ownership bit the call
+// site branches on all have to see the spine. Only the loop that owns this label closes, so a nested
+// binding lowered under an enclosing loop's frame leaves that loop's chain alone.
+let closeTmcChain (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | Some(CoreTcoLoopFrame { bodyLabel = bodyLabel, tmcDestSlot = destSlot, tmcResultSlot = resultSlot }) ->
+            if destSlot < 0 || bodyLabel != label + "_body"
+            then (state, bodyTemp)
+            else
+                match freshLocal(state) with
+                    | FreshLocal { state = joinState, local = joinSlot } ->
+                        match freshLabel("tmc_close_empty")(joinState) with
+                            | FreshLabel { state = emptyState, label = emptyLabel } ->
+                                match freshLabel("tmc_close_done")(emptyState) with
+                                    | FreshLabel { state = doneState, label = doneLabel } -> emitTmcChainClose(destSlot)(resultSlot)(bodyTemp)(joinSlot)(emptyLabel)(doneLabel)(doneState)
+        | None -> (state, bodyTemp)
+
+// `closeTmcChain` applied to a lowered body, so a caller can close the spine without restructuring
+// the ownership steps that follow it. A failed body passes through untouched.
+let closeTmcChainLowered (label: Str) (lowered: LoweredCoreValue) =
     match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state, temp = bodyTemp, semanticType = bodyType, error = None } ->
+            match closeTmcChain(label)(bodyTemp)(state) with
+                | (closedState, closedTemp) -> LoweredCoreValue(state = closedState, temp = closedTemp, semanticType = bodyType, error = None)
+
+let closeTmcChainPrepared (prepared: PreparedCoreRecursiveBinding) (lowered: LoweredCoreValue) =
+    match prepared with
+        | PreparedCoreRecursiveBinding { label = label } -> closeTmcChainLowered(label)(lowered)
+
+// A curried producer's loop body lives in an inner lambda rather than in the recursive binding, so
+// the spine is closed at this return too. Wrapping the lowered body keeps the close ahead of every
+// ownership step without disturbing the shape of the function below it.
+let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
+    match closeTmcChainLowered(label)(lowered) with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
             let loweredBody = adoptNormalizedParameterResult(label)(bodyTemp)(bodyState)
@@ -7153,7 +7245,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
             in
                 let shapes = tcoSelfCallShapes(name)(parameters)(innermost)
                 in
-                    if hasTailSelfCalls(innermost)(name)(arity)
+                    if hasTailSelfCalls(innermost)(name)(arity) || hasTmcConsSelfCalls(innermost)(name)(arity)
                     then
                         Some(CoreTcoLoop(
                             selfName = name,
@@ -7166,6 +7258,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
                             matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
                             specializationAccumulators = collectSpecializableCallArgs(parameters)(singleParameterCandidateNames(candidates))(innermost)([]),
+                            tmcShapePresent = hasTmcConsSelfCalls(innermost)(name)(arity),
                             emitsLoop = emitsLoop
                         ))
                     else None)
@@ -7240,7 +7333,7 @@ let recursive emitAffineReservations (ordinals: List(Int)) (slots: List(Int)) (o
                                     | (reserved, pairs) -> (reserved, (slot, reservationStart, reservationEnd) :: pairs)
             else emitAffineReservations(ordinals)(rest)(ordinal + 1)(zeroTemp)(state)
 
-let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (fixedEndSlot: Int) (compactionSizeSlot: Int) (entrySpliceCount: Int) (affineReservations: List((Int, Int, Int))) (listActiveSlots: List((Int, Int))) (bracket: ArenaBracket) =
+let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (fixedEndSlot: Int) (compactionSizeSlot: Int) (entrySpliceCount: Int) (affineReservations: List((Int, Int, Int))) (listActiveSlots: List((Int, Int))) (tmcDestSlot: Int) (tmcResultSlot: Int) (bracket: ArenaBracket) =
     match bracket with
         | ArenaBracket { bracketState = iterationState, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             match freshLocal(iterationState) with
@@ -7263,7 +7356,9 @@ let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (f
                             affineReservationSlots = affineReservations,
                             runtimeManagedListSlots = [],
                             runtimeManagedAdtSlots = [],
-                            runtimeManagedStrSlots = []
+                            runtimeManagedStrSlots = [],
+                            tmcDestSlot = tmcDestSlot,
+                            tmcResultSlot = tmcResultSlot
                         )))
 
 // The active-flag local of every parameter whose self-call shape may place a list on the
@@ -7283,6 +7378,21 @@ let recursive allocateListActiveSlots (ordinal: Int) (runtimeManagedOrdinals: Li
             else allocateListActiveSlots(ordinal + 1)(runtimeManagedOrdinals)(restShapes)(restSlots)(state)
         | _ -> (state, [])
 
+// The tail-modulo-constructor spine's two loop-carried slots, zeroed once before the body label:
+// nothing has been built yet, so both the pending-destination cell and the spine head start nil.
+// A loop without that cons shape reserves neither and keeps both at -1.
+let allocateTmcChainSlots (tmcShapePresent: Bool) (zeroTemp: Int) (state: CoreLoweringState) =
+    if tmcShapePresent
+    then
+        match freshLocal(state) with
+            | FreshLocal { state = destState, local = destSlot } ->
+                match freshLocal(destState) with
+                    | FreshLocal { state = resultState, local = resultSlot } ->
+                        (resultState
+                        |> emit(StoreLocal(destSlot)(zeroTemp))
+                        |> emit(StoreLocal(resultSlot)(zeroTemp)), destSlot, resultSlot)
+    else (state, -1, -1)
+
 // Stage 0's `LowerLambdaCoreEmitTcoLoopEntry`: the fixed loop-entry watermark saved once, the
 // compaction-size slot and the affine reservation slots zeroed, the list parameters' active
 // flags allocated, then the body label followed by the per-iteration watermark and stack pointer
@@ -7301,10 +7411,12 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
                                 | (reservedState, affineReservations) ->
                                     match allocateListActiveSlots(0)(loop.runtimeManagedOrdinals)(loop.argumentShapes)(slots)(reservedState) with
                                         | (activeState, listActiveSlots) ->
-                                            activeState
-                                            |> emit(Label(label + "_body"))
-                                            |> openArenaBracket
-                                            |> finishTcoLoopEntry(label)(slots)(fixedCursorSlot)(fixedEndSlot)(compactionSizeSlot)(entrySpliceCount)(affineReservations)(listActiveSlots)
+                                            match allocateTmcChainSlots(loop.tmcShapePresent)(zeroTemp)(activeState) with
+                                                | (tmcState, tmcDestSlot, tmcResultSlot) ->
+                                                    tmcState
+                                                    |> emit(Label(label + "_body"))
+                                                    |> openArenaBracket
+                                                    |> finishTcoLoopEntry(label)(slots)(fixedCursorSlot)(fixedEndSlot)(compactionSizeSlot)(entrySpliceCount)(affineReservations)(listActiveSlots)(tmcDestSlot)(tmcResultSlot)
 
 // A loop parameter the provisional loop entry already places on the reference-counted heap: a
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
@@ -7498,7 +7610,7 @@ let loopBodyTailPosition (state: CoreLoweringState) =
         | Some(CoreTcoLoop { pendingCurried = pending }) -> pending == 0
         | None -> false
 
-let withLoopBodyRequest (request: ConsumerRequest) (state: CoreLoweringState) = withConsumerRequest((request with tailPosition = loopBodyTailPosition(state)))(state)
+let withLoopBodyRequest (request: ConsumerRequest) (state: CoreLoweringState) = withConsumerRequest((request with tailPosition = loopBodyTailPosition(state), consTailPosition = loopBodyTailPosition(state)))(state)
 
 // Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
 // value's layout.
@@ -11668,7 +11780,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
 // A recursive member's result meets the callers the same way a plain lambda's does: a
 // reference-counted result is copied into the arena when the caller asked for one.
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
-    match (prepared, lowered) with
+    match (prepared, closeTmcChainPrepared(prepared)(lowered)) with
         | (_prepared, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None }) ->
             match bindType(resultType)(bodyType)(bodyState) with
@@ -16113,6 +16225,105 @@ let lowerCallExpression expression function argument lower state =
                                 |> locateLoweredMismatch(argumentSiteOf(state))
                             else lowerGeneralCall(expression)(function)(argument)(lower)(state)
 
+// Stage 0's `EmitTmcLinkCell`: the first cell becomes the spine head, every later one is stored into
+// its predecessor's still-nil tail field, and the new cell becomes the pending destination.
+let emitTmcLinkCell (frame: CoreTcoLoopFrame) (cellTemp: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = destState, temp = destTemp } ->
+            match freshTemp(destState) with
+                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                    match freshTemp(zeroState) with
+                        | FreshTemp { state = condState, temp = condTemp } ->
+                            match freshLabel("tmc_first")(condState) with
+                                | FreshLabel { state = firstState, label = firstLabel } ->
+                                    match freshLabel("tmc_link_done")(firstState) with
+                                        | FreshLabel { state = doneState, label = doneLabel } ->
+                                            doneState
+                                            |> emit(LoadLocal(destTemp)(frame.tmcDestSlot))
+                                            |> emit(LoadConstInt(zeroTemp)(0))
+                                            |> emit(CmpIntNe(condTemp)(destTemp)(zeroTemp))
+                                            |> emit(JumpIfFalse(condTemp)(firstLabel))
+                                            |> emit(StoreMemOffset(destTemp)(8)(cellTemp))
+                                            |> emit(Jump(doneLabel))
+                                            |> emit(Label(firstLabel))
+                                            |> emit(StoreLocal(frame.tmcResultSlot)(cellTemp))
+                                            |> emit(Label(doneLabel))
+                                            |> emit(StoreLocal(frame.tmcDestSlot)(cellTemp))
+
+// Tail modulo constructor, stage 0's `LowerConsTmc`: one more cell on an iteratively built spine plus
+// the loop's own back edge, instead of a call whose pending constructor keeps a native frame alive per
+// element. The cell goes through the ordinary cell path with a NIL tail, so placement, reuse tokens,
+// and head ownership are decided exactly as for a cons that is not transformed; nil is the one value
+// that owns nothing, so filling it on the next iteration is a plain ownership transfer, and the spine
+// is a complete, walkable list at every instant.
+// The spine must be reference-counted, stage 0's `CanBuildRuntimeManagedCell`. An arena spine sits
+// above the per-iteration watermark, so the back edge reclaims it unless the loop stops reclaiming,
+// and a loop that stops reclaiming strands every iteration's garbage for the whole traversal; and
+// even with the watermark moved past each cell, an arena cell stores its head raw while the back
+// edge is free to release the parameter graph that head was borrowed from. A head the cell cannot
+// own as a reference hands the cons back to the ordinary path, which recurses: correct, just not
+// stack-safe.
+let finishConsTmc (request: ConsumerRequest) (transfers: Bool) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (headExpression: Expr) (tailExpression: Expr) lower head =
+    match head with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } when cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(headState) == false -> finishConsTail(request)(transfers)(lower)(headExpression)(tailExpression)(head)
+        | LoweredCoreValue { state = headState, temp = headTemp, semanticType = headType, error = None } ->
+            match duplicatePatternOwnerTemp(headExpression)(headTemp)(headState) with
+                | (duplicatedState, duplicatedHead) ->
+                    match freshTemp(duplicatedState) with
+                        | FreshTemp { state = nilState, temp = nilTemp } ->
+                            match nilState
+                            |> emit(LoadConstInt(nilTemp)(0))
+                            |> allocateListCell(duplicatedHead)(nilTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(duplicatedHead)(headType)(nilState)) with
+                                | LoweredCoreValue { state = failedCell, error = Some(error) } -> failure(failedCell)(error)
+                                | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
+                                    match cellState
+                                    |> emitTmcLinkCell(frame)(cellTemp)
+                                    |> lowerTailSelfCall(collectCallSpine(tailExpression))(frame)(loop)(lower) with
+                                        | LoweredCoreValue { state = failedEdge, error = Some(error) } -> failure(failedEdge)(error)
+                                        | LoweredCoreValue { state = edgeState, temp = edgeTemp, semanticType = edgeType, error = None } ->
+                                            match bindType(SemList(headType))(edgeType)(edgeState) with
+                                                | (typedEdge, _error) ->
+                                                    success(edgeTemp)(headType
+                                                    |> resolveType(typedEdge)
+                                                    |> SemList)(typedEdge)
+
+// Whether this cons is the tail-modulo-constructor shape: the enclosing loop reserved the spine slots
+// for it, and the cons tail is that loop's own saturated self-call in tail position.
+let tmcSelfCallTail (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match (state.tcoLoop, consumerRequestOf(state), unspanArgument(spine.root)) with
+        | (Some(CoreTcoLoop { selfName = selfName, arity = arity, pendingCurried = pending }), ConsumerRequest { consTailPosition = true }, ExprVar(name)) -> pending == 0 && name == selfName && coreListLength(spine.arguments) == arity
+        | _ -> false
+
+let tmcCandidateCons (tailExpression: Expr) (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | Some(CoreTcoLoopFrame { tmcDestSlot = destSlot }) ->
+            destSlot >= 0 && tmcSelfCallTail(collectCallSpine(tailExpression))(state)
+        | None -> false
+
+// The transformed cons's own head prelude, deliberately identical to `lowerCons`'s up to the point
+// the tail would be lowered — a candidate tail is a saturated self-call, so the reuse-token rule
+// reaches the same request either way, and only the finisher differs. Keeping the prelude shared is
+// what lets `finishConsTmc` decline after the head is lowered without lowering it a second time.
+let lowerConsTmc head tail lower state =
+    match consumerRequestOf(state) with
+        | outerRequest ->
+            let request =
+                if listCellReuseTokenAvailable(state.reuseTokens) == false
+                then outerRequest with runtimeList = true
+                else outerRequest
+            in
+                match (state.tcoLoopFrame, state.tcoLoop) with
+                    | (Some(frame), Some(loop)) ->
+                        state
+                        |> markResourceArgumentsMoved([head, tail])
+                        |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
+                        |> lower(head)
+                        |> normalizeRuntimeManagedConsHead(request)(head)(tail)
+                        |> retainListElement(request)(listTransfers(request)(state))(head)
+                        |> finishConsTmc(request)(listTransfers(request)(state))(frame)(loop)(head)(tail)(lower)
+                    | _ -> lowerCons(head)(tail)(lower)(state)
+
 let lowerCoreDispatch expression lowerCore state =
     match expression with
         | ExprAt(span, inner) ->
@@ -16183,7 +16394,10 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprCall(function, argument, _whitespace, _layout) -> lowerCallExpression(expression)(function)(argument)(lowerCore)(state)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
-        | ExprCons(head, tail) -> lowerCons(head)(tail)(lowerCore)(state)
+        | ExprCons(head, tail) ->
+            if tmcCandidateCons(tail)(state)
+            then lowerConsTmc(head)(tail)(lowerCore)(state)
+            else lowerCons(head)(tail)(lowerCore)(state)
         | ExprRecord(name, fields, _isMultiline) -> lowerRecord(name)(fields)(lowerCore)(state)
         | ExprRecordUpdate(target, fields) -> lowerRecordUpdate(target)(fields)(lowerCore)(state)
         | ExprMatch(value, cases, _position) -> lowerMatch(value)(cases)(lowerCore)(state)

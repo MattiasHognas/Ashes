@@ -864,6 +864,45 @@ resolved all-inline-copy record layout gate. A tail call becomes a back edge onl
 resolves to the current curried function's generated label, or to the transported self slot of a
 synthesized coroutine loop; source spelling alone is insufficient.
 
+**Tail modulo constructor.** A producer whose tail is `head :: self(...)` has no tail call at all —
+one constructor is still pending when the recursion happens, so the shape costs a native frame per
+element and faults on long lists. Lowering recognizes exactly that shape (a cons in tail position
+whose tail is a saturated call resolving to the same loop root) and builds the spine iteratively
+instead: each iteration allocates its cell, stores the element, stores **nil** into the tail field,
+links the cell into the previous cell's tail, and takes the loop's ordinary back edge. Filling the
+nil one iteration late is what removes the pending work, and storing nil rather than leaving the
+field uninitialized is what makes it safe — the spine is a complete, walkable list at every instant,
+so a structural dropper, a copy, or a suspension that observes it terminates at the nil, and the
+later store overwrites a value that owns nothing. The function's own return closes the chain: the
+body's value is what the innermost call would have returned, so it fills the last nil tail and the
+first cell becomes the result, which also gives `append`-shaped producers their non-nil base for
+free.
+
+The chain is closed **before** any ownership finalization runs, and that ordering is load-bearing
+rather than incidental: from the close onward the function's result is the spine and the body value
+is only the last cell's tail, so the returned-root transfer, the exit drops, and the result-ownership
+bit the call site branches on must all see the spine. Closing it after those steps instead leaves
+them describing a value that is no longer returned, which hands the caller an ownership verdict for
+the wrong object. The cell goes through the ordinary cell lowering with a nil tail, so reuse tokens
+and head ownership are decided exactly as they are for a cons that was not transformed, and the back
+edge keeps its ordinary per-iteration arena reclaim.
+
+**The spine must be reference-counted**, which is the transform's one real eligibility limit: the
+cons is transformed only where the ordinary cell lowering would already place a runtime-managed cell,
+meaning the element either survives an arena reset outright (a scalar, a tuple of scalars) or is a
+runtime-managed pointer the cell can own (`Str`, `Bytes`, `BigInt`, a list, a named type). Every
+other producer — most importantly one whose element type is still a type variable, as in the shipped
+generic `List.map` — is declined and keeps recursing. An arena spine cannot be substituted, for two
+independent reasons. Its cells sit above the loop's per-iteration watermark, so the back edge frees
+them unless the loop stops reclaiming, and a loop that stops reclaiming strands every iteration's
+garbage for the whole traversal; re-saving the watermark past each cell fixes that, but not the
+second reason, which is that the transformed cons publishes its head into a structure that outlives
+the iteration while the back edge is free to release the parameter graph the head was borrowed from.
+A reference-counted cell retains its head and is safe; an arena cell stores it raw, and a head
+derived from the consumed input — a record field bound straight from the list being traversed, or a
+callback result that may simply return its argument — is left dangling. At an unresolved element type
+neither hazard can be ruled out, so the shape is declined rather than transformed.
+
 `TcoParamReuseAffinity.SelfAppendOnly` independently records the affine ownership discipline used
 by string reservation reuse. Along every loop-continuing path, the parameter may occur only as the
 leftmost leaf of the addition chain producing its own exact self-call argument, or pass through

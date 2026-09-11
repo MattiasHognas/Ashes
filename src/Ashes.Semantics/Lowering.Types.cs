@@ -341,6 +341,25 @@ public sealed partial class Lowering
 
         public bool InTailPosition { get; set; }
 
+        // Tail-modulo-constructor state. TmcShapePresent is the syntactic verdict from
+        // HasTmcConsSelfCalls, known before the body is lowered so the loop entry can reserve the two
+        // slots; TmcActivated records that a cons actually took the transformed path, which is what
+        // makes the function's return close the spine. DestSlot holds the cell whose tail field is
+        // still nil and must receive the next cell (0 before the first one); ResultSlot holds the first
+        // cell, which becomes the function's result.
+        public bool TmcShapePresent { get; set; }
+        public bool TmcActivated { get; set; }
+        public int TmcDestSlot { get; set; } = -1;
+        public int TmcResultSlot { get; set; } = -1;
+
+        // The innermost loop lambda's result type. The untransformed cons lowers its tail expression
+        // under an expected list type, which is what unifies the recursive call's result with the cons
+        // it feeds; a transformed cons never lowers that expression, so it restores the same fact
+        // directly against this type instead. Dropping it leaves a recursive producer's result under-
+        // constrained, which changes how the enclosing function generalizes and can leave a caller
+        // unable to discharge a trait constraint that used to resolve.
+        public TypeRef? ResultType { get; set; }
+
         // Pre-slot facts stashed at construction time (before ParamSlots is known) and consumed once
         // by BuildParamStaticFacts below. Loop invariance, whole-list rebuild, direct closure rebuild,
         // growing-cons, and consumed-tail shape are ordinal-keyed because they come from the
