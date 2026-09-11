@@ -220,7 +220,7 @@ type IrInstructionKind =
     | BytesSetU16Le(IrTemp, IrTemp, IrTemp, IrTemp, Bool, Bool)
     | BytesSetU32Le(IrTemp, IrTemp, IrTemp, IrTemp, Bool, Bool)
     | BytesSetU64Le(IrTemp, IrTemp, IrTemp, IrTemp, Bool, Bool)
-    | BytesFromList(IrTemp, IrTemp, Bool)
+    | BytesFromList(IrTemp, IrTemp, Bool, Bool)
     | BytesHash(IrTemp, IrTemp)
     | BytesU16Le(IrTemp, IrTemp, Bool)
     | BytesU32Le(IrTemp, IrTemp, Bool)

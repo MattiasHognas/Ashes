@@ -916,7 +916,9 @@ let emitBytesAllocate context function_ i64 i8 builder allocateDynamic lengthVal
 
 // `Byte.fromList(list)`: two passes over the cons cells — count, then allocate and fill each
 // byte in order (`EmitBytesFromList`'s exact shape; cons layout head at 0, tail at 8, nil = 0).
-let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocType listRef =
+// `reversed` fills from the end while still walking `listRef` head-to-tail — the fused form of
+// `Byte.fromList(List.reverse(xs))`, which never builds the reversed list.
+let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocType reversed listRef =
     (let countSlot = buildEntryAlloca(builder)(i64)("bfl_count")
     in
         let curSlot = buildEntryAlloca(builder)(i64)("bfl_cur")
@@ -1019,23 +1021,29 @@ let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocTy
                                                                                                                                                                                     in
                                                                                                                                                                                         let idx = buildLoad(builder)(i64)(idxSlot)("bfl_idx_value")
                                                                                                                                                                                         in
-                                                                                                                                                                                            let elemPtr = buildGEP(builder)(i8)(dataPtr)([idx])(1u32)("bfl_elem")
+                                                                                                                                                                                            let destIndex =
+                                                                                                                                                                                                if reversed
+                                                                                                                                                                                                then
+                                                                                                                                                                                                    buildSub(builder)(buildSub(builder)(length)(constInt(i64)(1u64)(false))("bfl_len_m1"))(idx)("bfl_rev_idx")
+                                                                                                                                                                                                else idx
                                                                                                                                                                                             in
-                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                    buildStore(builder)(buildTrunc(builder)(headVal)(i8)("bfl_byte"))(elemPtr)
+                                                                                                                                                                                                let elemPtr = buildGEP(builder)(i8)(dataPtr)([destIndex])(1u32)("bfl_elem")
                                                                                                                                                                                                 in
                                                                                                                                                                                                     let _ =
-                                                                                                                                                                                                        buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bfl_idx_next"))(idxSlot)
+                                                                                                                                                                                                        buildStore(builder)(buildTrunc(builder)(headVal)(i8)("bfl_byte"))(elemPtr)
                                                                                                                                                                                                     in
-                                                                                                                                                                                                        let fillTailPtr = gepBytes(builder)(i64)(i8)(fillCellPtr)(8)("bfl_fill_tail_ptr")
+                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                            buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bfl_idx_next"))(idxSlot)
                                                                                                                                                                                                         in
-                                                                                                                                                                                                            let _ =
-                                                                                                                                                                                                                buildStore(builder)(buildLoad(builder)(i64)(fillTailPtr)("bfl_fill_tail"))(curSlot)
+                                                                                                                                                                                                            let fillTailPtr = gepBytes(builder)(i64)(i8)(fillCellPtr)(8)("bfl_fill_tail_ptr")
                                                                                                                                                                                                             in
-                                                                                                                                                                                                                let _ = buildBr(builder)(fillCheckBlock)
+                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                    buildStore(builder)(buildLoad(builder)(i64)(fillTailPtr)("bfl_fill_tail"))(curSlot)
                                                                                                                                                                                                                 in
-                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
-                                                                                                                                                                                                                    in buildLoad(builder)(i64)(resultSlot)("bfl_result_value"))
+                                                                                                                                                                                                                    let _ = buildBr(builder)(fillCheckBlock)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                                                                                                        in buildLoad(builder)(i64)(resultSlot)("bfl_result_value"))
 
 // A fixed ASCII line written from a stack buffer via the raw `write` syscall followed by exit 1 —
 // the generalized form of the `Bytes.get` panic (`EmitPanic`/`EmitBytesGuard`'s observable shape).

@@ -121,6 +121,11 @@ type CoreBuiltinKind =
     | CoreBytesSetU32Le
     | CoreBytesSetU64Le
     | CoreBytesFromList
+    // Ashes.Byte.fromList(Ashes.Collection.List.reverse(xs)) fused into one pass: identical to
+    // CoreBytesFromList, filling the destination back-to-front instead of front-to-back. Never
+    // produced from a source-level module member — only CoreLowering's lowerBuiltin introduces it,
+    // after recognizing the fusion shape by resolved callee identity.
+    | CoreBytesFromReversedList
     | CoreBytesFromText
     | CoreBytesHash
     | CoreBytesU16Le
@@ -312,6 +317,10 @@ let bytesBuiltinKind memberName =
         | "setU32Le" -> Some(CoreBytesSetU32Le)
         | "setU64Le" -> Some(CoreBytesSetU64Le)
         | "fromList" -> Some(CoreBytesFromList)
+        // Compiler-synthesized: never a real source-level member. ModuleReferenceRewriting's
+        // tryFuseByteFromReversedList rewrites `fromList(reverse(xs))` to `fromReversedList(xs)`
+        // before this table is ever consulted for the original call.
+        | "fromReversedList" -> Some(CoreBytesFromReversedList)
         | "fromText" -> Some(CoreBytesFromText)
         | "hash" -> Some(CoreBytesHash)
         | "u16Le" -> Some(CoreBytesU16Le)
@@ -823,6 +832,11 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.Byte")("fromList")(
             TypeScheme(quantified = [], body = SemFunction(SemList(SemUInt(8)))(SemBytes)(None), constraints = [])
         ),
+        // Same signature as fromList: ModuleReferenceRewriting's tryFuseByteFromReversedList
+        // rewrites fromList(List.reverse(xs)) to this before CoreLowering ever sees the call.
+        standardBuiltinLayout("Ashes.Byte")("fromReversedList")(
+            TypeScheme(quantified = [], body = SemFunction(SemList(SemUInt(8)))(SemBytes)(None), constraints = [])
+        ),
         standardBuiltinLayout("Ashes.Byte")("hash")(
             TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemInt)(None), constraints = [])
         ),
@@ -1191,7 +1205,16 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
                 given (bytes) ->
                     given (index) ->
                         given (item) -> BytesSetU64Le(target)(bytes)(index)(item)(false)(false))
-        | (CoreBytesFromList, values :: [], _types) -> managedTarget1(start)(values)(BytesFromList)
+        | (CoreBytesFromList, values :: [], _types) ->
+            target1(start)(values)(given (target) ->
+                given (list) -> BytesFromList(target)(list)(false)(false))
+        | (CoreBytesFromReversedList, values :: [], _types) ->
+            // Ashes.Byte.fromList(Ashes.Collection.List.reverse(xs)) fused in CoreLowering's
+            // lowerBuiltin: this kind is never produced from source, only from that rewrite, and
+            // `values` is already xs — the reversed list is never built. Same shape as
+            // CoreBytesFromList above, Reversed=true instead.
+            target1(start)(values)(given (target) ->
+                given (list) -> BytesFromList(target)(list)(false)(true))
         | (CoreBytesFromText, text :: [], _types) -> identity(start)(text)
         | (CoreBytesHash, value :: [], _types) -> target1(start)(value)(BytesHash)
         | (CoreBytesU16Le, value :: [], _types) -> managedTarget1(start)(value)(BytesU16Le)
@@ -1242,6 +1265,7 @@ let isFreshRcBuiltinKind (kind: CoreBuiltinKind) =
         | CoreBytesSetU32Le -> true
         | CoreBytesSetU64Le -> true
         | CoreBytesFromList -> true
+        | CoreBytesFromReversedList -> true
         | CoreBytesU16Le -> true
         | CoreBytesU32Le -> true
         | CoreBytesU64Le -> true
