@@ -9703,6 +9703,11 @@ public sealed partial class Lowering
         var collectedArgs = new List<Expr>();
         var rootExpr = CollectCallArgs(call, collectedArgs);
 
+        if (TryLowerMapFoldLeftFusion(rootExpr, collectedArgs, request) is { } fusedResult)
+        {
+            return fusedResult;
+        }
+
         if (LowerCallTryDirectForms(call, rootExpr, collectedArgs, request) is { } directResult)
         {
             return directResult;

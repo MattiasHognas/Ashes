@@ -791,13 +791,37 @@ value, so it is never mistaken for the stdlib one. The argument must also be a *
 be `xs` is a `Var`, not a call, and forcing that Var's own binding through the same fusion would
 double the work if the binding is read more than once.
 
-Fusing a *user-supplied callback* (a hypothetical `List.map`-then-`List.foldLeft` fusion) is a
-different and harder problem this mechanism deliberately does not attempt: unlike `reverse`, an
-arbitrary callback can panic (division by zero, an out-of-bounds `Byte.get`, none of it gated by a
-capability row) or fail to terminate, and `map`-then-`fold` evaluates every mapping callback before
-any folding call while a fused loop interleaves them — reordering which callback's panic or
-non-termination the program observes first is a real, user-visible difference a fusion cannot import
-into a purely structural traversal.
+Fusing a *user-supplied callback* is a different and harder problem, since an arbitrary callback can
+panic (division by zero, an out-of-bounds `Byte.get`, none of it gated by a capability row) or fail
+to terminate, and `map`-then-`fold` evaluates every mapping callback before any folding call while a
+fused loop interleaves them — reordering which callback's panic or non-termination the program
+observes first would be a real, user-visible difference. `Ashes.Collection.List.foldLeft(f)(init)
+(Ashes.Collection.List.map(g)(xs))` (or its `fold` alias) is fused into this interleaved shape anyway,
+but only when that reordering is *provably* unobservable:
+
+- `f` and `g` are each resolved to a lambda — a literal `given (...) -> ...` at the call site, or a
+  named non-recursive top-level `let` — and their bodies must fall entirely within a restricted total
+  grammar: literals, variable reads, the arithmetic/comparison/boolean operators (excluding `/` and
+  `%`, both of which can panic on a zero divisor), and `if`. No `Call`, no `Match`, no `Let` — nothing
+  that can itself panic, diverge, or perform a capability effect.
+- `init`'s type and `xs`'s element type must both be one of `Int`, `Float`, `BigInt`, `UInt`, `Str`,
+  `Rune`, `Bool` — the primitive types whose `Add`/`Multiply`/etc. behavior is fixed by the language
+  and can never be overridden by a user `Ashes.Trait` implementation. The total-grammar check alone is
+  not sufficient: for any other type, an operator in the grammar could still dispatch to a
+  user-defined trait method capable of calling the capability-free `Ashes.IO.panic`.
+
+Both checks passing proves interleaving `g` then `f` per element instead of every `g` then every `f`
+changes nothing observable, so the fusion lowers straight to a single recursive loop — `go acc rest =
+match rest with | [] -> acc | head :: tail -> go(f(acc)(g(head)))(tail)` — applied to `init` and `xs`,
+with `f` and `g` passed in as the loop wrapper's own ordinary lambda parameters (never relocated or
+re-lowered, so they retain/release exactly as the unfused chain would) rather than inlined or
+re-derived. Like `reverse`-into-`fromList`, callee identity is resolved, not spelled: a user's own
+same-named `foldLeft`/`map` never triggers it. The mapped list is a saturated call to `map`, exactly
+as `reverse`'s argument must be a saturated call to `reverse` — read the mapped list a second time and
+the fusion declines, falling back to plain calls applied to the already-lowered `init`/`xs` rather
+than evaluating either twice. Because the loop is a genuine tail-recursive `go`, it also picks up TCO
+for free: unlike generic `List.map`'s own recursion (not TCO-eligible), a fused map-then-fold over an
+arbitrarily long list never grows the stack.
 
 ---
 
