@@ -1121,8 +1121,13 @@ public sealed class IrOptimizerTests
         CountErasedRcOperations(lowered).ShouldBeGreaterThan(0);
         CountErasedRcOperations(optimized).ShouldBe(0);
         // The entry's release of the mapped list, and mapGo's release of its own result on the
-        // arena-result boundary a generic caller can request.
-        CountRuntimeRcOperations(optimized).ShouldBe(6,
+        // arena-result boundary a generic caller can request. Fewer than the recursive shape needed:
+        // mapGo is now built by the tail-modulo-constructor loop, so the per-level result
+        // normalization the recursion paid at every call boundary is simply not there to release.
+        // That the remaining operations are still the COMPLETE set is covered behaviorally — by
+        // tests/tmc_constructor_recursion_semantics.ash for sharing and base cases, and by a
+        // repeated map-and-discard whose RSS plateaus instead of growing.
+        CountRuntimeRcOperations(optimized).ShouldBe(4,
             "The optimizer must retain the runtime-managed result list's lifetime operations.");
     }
 

@@ -85,6 +85,38 @@ public sealed partial class Lowering
         };
     }
 
+    /// <summary>
+    /// Check if an expression has any tail-position cons whose TAIL is a full self-call —
+    /// `head :: self(a1)...(aN)`, the tail-modulo-constructor shape. The recursive result is consumed
+    /// by exactly one constructor field, so the pending work is a single store the loop can perform on
+    /// the next iteration instead of a native frame per element (see LowerConsTmc). Shares
+    /// <see cref="HasTailSelfCalls"/>'s tail-position walk and shadowing rules, because a binder named
+    /// <paramref name="selfName"/> hides the recursive function here for the same reason.
+    /// </summary>
+    private static bool HasTmcConsSelfCalls(Expr body, string selfName, int paramCount)
+    {
+        return body switch
+        {
+            Expr.If iff => HasTmcConsSelfCalls(iff.Then, selfName, paramCount) || HasTmcConsSelfCalls(iff.Else, selfName, paramCount),
+            Expr.Match m => m.Cases.Any(c =>
+            {
+                HashSet<string> binders = new(StringComparer.Ordinal);
+                CollectPatternBinders(c.Pattern, binders);
+                return !binders.Contains(selfName)
+                    && HasTmcConsSelfCalls(c.Body, selfName, paramCount);
+            }),
+            Expr.Let l => !string.Equals(l.Name, selfName, StringComparison.Ordinal)
+                && HasTmcConsSelfCalls(l.Body, selfName, paramCount),
+            Expr.LetResult l => !string.Equals(l.Name, selfName, StringComparison.Ordinal)
+                && HasTmcConsSelfCalls(l.Body, selfName, paramCount),
+            Expr.LetRecursive l => !string.Equals(l.Name, selfName, StringComparison.Ordinal)
+                && HasTmcConsSelfCalls(l.Body, selfName, paramCount),
+            Expr.Cons cons => cons.Tail is Expr.Call tailCall
+                && IsSelfCallChain(tailCall, selfName, paramCount),
+            _ => false
+        };
+    }
+
     /// <summary>Check if a call expression is a full self-call chain: f(a1)(a2)...(aN)</summary>
     private static bool IsSelfCallChain(Expr.Call call, string selfName, int expectedArgs)
     {

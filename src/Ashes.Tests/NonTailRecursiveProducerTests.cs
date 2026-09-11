@@ -119,11 +119,61 @@ public sealed class NonTailRecursiveProducerTests
             sumList(makeList(3))(0)
             """);
 
-        IrFunction producer = FunctionWithSelfClosure(ir);
+        // The producer is found by its source name rather than by a closure of itself: the
+        // tail-modulo-constructor transform replaces that self-call with a back edge, so the
+        // self-closure this test originally keyed on is exactly what is no longer emitted.
+        IrFunction producer = FunctionFromSource(ir, "makeList");
         producer.Instructions
             .OfType<IrInst.Alloc>()
             .Where(a => a.SizeBytes == 16)
             .ShouldAllBe(a => a.RuntimeManaged);
+    }
+
+    [Test]
+    public void A_recursive_producer_builds_its_spine_in_a_loop_instead_of_recursing()
+    {
+        // Tail modulo constructor: `7 :: makeList(...)` becomes one cell per iteration plus a jump
+        // back to the loop body, so the pending constructor no longer holds a native frame per
+        // element. The cell's tail is stored as nil first, which is what keeps every intermediate
+        // state of the spine a complete, walkable list.
+        var ir = LowerProgram("""
+            let recursive makeList (count: Int) =
+                if count == 0
+                then []
+                else 7 :: makeList(count - 1)
+
+            let recursive sumList (values: List(Int)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | value :: rest -> sumList(rest)(total + value)
+
+            sumList(makeList(3))(0)
+            """);
+
+        IrFunction producer = FunctionFromSource(ir, "makeList");
+        string bodyLabel = producer.Instructions
+            .OfType<IrInst.Label>()
+            .Select(l => l.Name)
+            .FirstOrDefault(name => name.EndsWith("_body", StringComparison.Ordinal))
+            .ShouldNotBeNull();
+        producer.Instructions
+            .OfType<IrInst.Jump>()
+            .ShouldContain(j => string.Equals(j.Target, bodyLabel, StringComparison.Ordinal));
+        producer.Instructions
+            .OfType<IrInst.MakeClosure>()
+            .ShouldNotContain(c => string.Equals(c.FuncLabel, producer.Label, StringComparison.Ordinal));
+        int tailOffset = HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex);
+        int cellTemp = producer.Instructions
+            .OfType<IrInst.Alloc>()
+            .First(a => a.SizeBytes == 16)
+            .Target;
+        int nilTemp = producer.Instructions
+            .OfType<IrInst.StoreMemOffset>()
+            .First(s => s.BasePtr == cellTemp && s.OffsetBytes == tailOffset)
+            .Source;
+        producer.Instructions
+            .OfType<IrInst.LoadConstInt>()
+            .ShouldContain(c => c.Target == nilTemp && c.Value == 0);
     }
 
     [Test]
@@ -155,6 +205,14 @@ public sealed class NonTailRecursiveProducerTests
     }
 
     // --- Helpers ---
+
+    private static IrFunction FunctionFromSource(IrProgram program, string sourceName)
+    {
+        IrFunction? found = program.Functions.FirstOrDefault(f =>
+            string.Equals(f.Origin?.Source?.SourceName, sourceName, StringComparison.Ordinal));
+        found.ShouldNotBeNull();
+        return found;
+    }
 
     private static IrFunction FunctionWithSelfClosure(IrProgram program)
     {
