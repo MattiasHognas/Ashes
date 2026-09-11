@@ -938,7 +938,12 @@ rather than incidental: from the close onward the function's result is the spine
 is only the last cell's tail, so the returned-root transfer, the exit drops, and the result-ownership
 bit the call site branches on must all see the spine. Closing it after those steps instead leaves
 them describing a value that is no longer returned, which hands the caller an ownership verdict for
-the wrong object. The cell goes through the ordinary cell lowering with a nil tail, so reuse tokens
+the wrong object. The closed result is a control-flow join of two branches — the spine, whose cells
+the eligibility gate below makes reference-counted and whose last tail is the body value, and the
+body value alone when no cell was built — so it carries the body value's own representation into
+that verdict. A closed result with no representation fact reads as an arena value: the producer's
+closure then reports an arena result, and a caller copying an arena result out reclaims only its
+arena window, stranding the reference-counted spine one cell per element per call. The cell goes through the ordinary cell lowering with a nil tail, so reuse tokens
 and head ownership are decided exactly as they are for a cons that was not transformed, and the back
 edge keeps its ordinary per-iteration arena reclaim.
 

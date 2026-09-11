@@ -12241,6 +12241,24 @@ public sealed partial class Lowering
     {
         if (freshRuntimeArgument && !transfersFreshRuntimeArgument)
         {
+            // A poisoned callee's result reach is unknown, so it may keep this argument — and a fresh
+            // argument gets neither the transfer (which needs a proven whole reach) nor the forced
+            // retain (disabled for a value with no second owner in the caller). Releasing it outright
+            // would free what such a callee stored. Hand it over under the callee's own adoption flag
+            // instead: an adopting callee owns it, and a non-adopting one only releases it where the
+            // result was copied out and so kept nothing of it.
+            if (runtimeManagedArgumentFlagTemp >= 0
+                && GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false })
+            {
+                consumedRuntimeArguments.Add(
+                    new ConsumedRuntimeArgument(
+                        originalArgumentTemp,
+                        Prune(argumentType),
+                        PreserveEscapedChildren: true,
+                        AdoptionFlagTemp: runtimeManagedArgumentFlagTemp));
+                return;
+            }
+
             consumedRuntimeArguments.Add(
                 new ConsumedRuntimeArgument(originalArgumentTemp, Prune(argumentType), calleeResultMayReachThisParameter));
             return;
@@ -14515,6 +14533,8 @@ public sealed partial class Lowering
     /// </summary>
     private int LowerLambdaCoreCloseTmcChain(TcoContext tco, int bodyTemp)
     {
+        bool bodyRuntimeManaged = IsRuntimeManagedResultTemp(bodyTemp);
+        bool bodyNewlyProduced = IsNewlyProducedRcTemp(bodyTemp);
         int resultSlot = NewLocal();
         int destTemp = NewTemp();
         Emit(new IrInst.LoadLocal(destTemp, tco.TmcDestSlot));
@@ -14538,6 +14558,15 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        // The closed result joins two branches — the spine, whose cells are reference-counted by the
+        // transform's own eligibility gate and whose last tail is the body value, and the body value
+        // alone — so it carries the body value's own representation. Leaving the slot read without a
+        // fact reports an arena result, and a caller that copies an arena result out reclaims only the
+        // arena, stranding the reference-counted spine it copied.
+        if (tco.ResultType is { } resultType)
+        {
+            RecordControlFlowJoinTemp(resultTemp, Prune(resultType), bodyRuntimeManaged, bodyNewlyProduced);
+        }
         return resultTemp;
     }
 

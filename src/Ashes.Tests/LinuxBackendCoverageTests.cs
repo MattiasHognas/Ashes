@@ -3925,6 +3925,57 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildTailModuloConstructorResultReleaseMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("tail-modulo-constructor producer result released by its caller", samples);
+    }
+
+    // A map-shaped producer builds its spine in a loop, and a caller consumes and drops the result
+    // every round. The spine is reference-counted, so the producer's closure must report a
+    // reference-counted result: a caller reading it as arena copies the list out and reclaims only the
+    // arena, stranding the original spine one cell per element per round.
+    private static string BuildTailModuloConstructorResultReleaseMemoryProgram(int iterations)
+        => $$"""
+            let recursive build count acc =
+                if count == 0
+                then acc
+                else build(count - 1)(count :: acc)
+
+            let recursive incAll values =
+                match values with
+                    | [] -> []
+                    | head :: tail -> head + 1 :: incAll(tail)
+
+            let recursive sum (values: List(Int)) (acc: Int) =
+                match values with
+                    | [] -> acc
+                    | head :: tail -> sum(tail)(acc + head)
+
+            let round size =
+                let source = build(size)([])
+                in
+                    if sum(incAll(source))(0) > 0
+                    then 1
+                    else 0
+
+            let recursive loop remaining total =
+                if remaining == 0
+                then total
+                else loop(remaining - 1)(total + round(64))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    [Test]
     public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
