@@ -1799,13 +1799,27 @@ same public behavior.
   That recursion also overflowed the stack — the self-hosted `fmt` segfaulted on every source
   above roughly 90 KB, stage 0's own binaries above roughly 250 KB — so `Ashes.Text.length`,
   `take`, and `drop` now walk the bytes with an index (`countCodepoints`, `cpByteOffset`) and
-  slice; regression `tests/text_length_take_drop_large_string.ash`. What remains is the frame
-  size: this backend emits at LLVM optimization level none, so a call frame is about four times
-  stage 0's, and `Collection.List.map`/`filter`/`append` (one frame per element by design, the
-  shape the reuse optimizer relies on) overflow the 8 MB machine stack at about 100000 elements
-  against stage 0's 400000. The self-hosted `fmt` therefore still faults on the three sources
-  whose token lists pass that bound (`TypeInference.ash`, `ProgramInference.ash`,
-  `OwnershipInference.ash`); optimization-level selection is milestone 5's first item.
+  slice; regression `tests/text_length_take_drop_large_string.ash`. What remained was the frame
+  size: this backend emitted at LLVM optimization level none, so a call frame was about four
+  times stage 0's, and `Collection.List.map`/`filter`/`append` (one frame per element by design,
+  the shape the reuse optimizer relies on) overflowed the 8 MB machine stack at about 100000
+  elements against stage 0's 400000. Fixed (2026-09-11): optimization-level selection landed —
+  the backend now runs LLVM's own `default<O2>` pass pipeline (`OPT-58`'s neighbor; see
+  `project_selfhost_gaps_found_task3` session memory for the original bisection). Measured
+  directly: the same non-TMC `List.map` shape now survives to roughly 170000 elements, matching
+  stage 0's own threshold, up from roughly 30000 before. Landing it surfaced and fixed a genuine,
+  separate linker bug on the way (read-only sections joined at a fixed 16-byte boundary regardless
+  of what LLVM's optimizer actually needed, faulting the first time the SLP vectorizer folded a
+  string literal into an aligned 32-byte vector load — rodata joins are now 32-byte aligned) plus
+  two missing libc symbols (`bcmp`, `memset`) LLVM's idiom recognition can introduce even when the
+  codegen itself never calls them directly.
+  Still open: the self-hosted `fmt` still faults on the three sources whose token lists were
+  previously blamed on this same gap (`TypeInference.ash`, `ProgramInference.ash`,
+  `OwnershipInference.ash`) — confirmed directly (`TypeInference.ash` still segfaults) even with
+  the optimization pipeline now running, so `fmt`'s own stack cost has a further, separate cause
+  not covered by this fix (plausibly the parser/formatter's own recursive-descent shape rather
+  than the one-frame-per-element `List.map` pattern this fix specifically measured) — not yet
+  investigated.
 - [~] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract. Done, each under the item that
   owns its mechanism: the scoped region (the arena, with its brackets, fixed-watermark
