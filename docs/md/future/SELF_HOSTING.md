@@ -2755,6 +2755,22 @@ same public behavior.
   which the self-hosted deep-copy-plan machinery (`argumentCopyPlanOf`/`constructorCopyPlansOf` in
   `CoreLowering.ash`) does not yet cover for a `SemFunction` field. Pin both fixtures as plateau programs through
   the self-hosted compiler once they match.
+- [ ] **OPT-58** Self-hosted mirror of stage 0's map-then-`foldLeft` fusion (`Lowering.Fusion.cs`'s
+  `TryLowerMapFoldLeftFusion`): `Ashes.Collection.List.foldLeft(f)(init)(Ashes.Collection.List.map(g)(xs))`
+  (or its `fold` alias) fused into a single tail-recursive loop applying `g` then `f` per element,
+  never materializing the mapped list, whenever both callbacks are proven total over a type whose
+  arithmetic behavior is fixed by the language. Cannot reuse the mechanism the neighboring
+  `Byte.fromList(List.reverse(xs))` fusion was ported through (`ModuleReferenceRewriting.ash`'s
+  `tryFuseByteFromReversedList`, a pure source-AST rewrite during module-reference resolution,
+  before type inference runs) — that fusion's soundness is purely structural (`reverse` is a fixed,
+  capability-free fold, sound for any element type), but this one's is not: it needs `init`'s
+  resolved type and `xs`'s resolved element type to be one of the fixed-core-behavior primitives,
+  which is only known after type inference. Needs a new hook inside `CoreLowering.ash`'s own
+  call-lowering path instead, at whatever point a resolved `SemanticType` is available for a call's
+  arguments (not yet surveyed for this purpose) — mirroring stage 0's placement of the check inside
+  `LowerCall`, after `LowerExpr` returns a type for `init`/`xs`. Comparable in size to stage 0's own
+  implementation, not a mechanical port; details in
+  `project_mapfold_fusion_selfhost_port_not_attempted` (session memory).
 
 #### LLVM code generation and runtime integration
 
