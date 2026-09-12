@@ -198,6 +198,12 @@ static byte[] CompileToImage(
     // Run IR-level optimization passes before backend codegen
     ir = CompilePhaseTiming.Measure("optimize", () => IrOptimizer.Optimize(ir));
 
+    // An imported module's bindings are all lowered whether or not this program uses them; the ones
+    // it cannot reach do not need compiling. Placed before the dump and the reports below so both
+    // describe the program code generation actually receives, and run unconditionally so that
+    // asking for a report never selects a different image.
+    ir = CompilePhaseTiming.Measure("prune", () => IrOptimizer.PruneUnreachableFunctions(ir));
+
     WriteIrDump(emitIr, IrDumpStage.Final, ir);
 
     // The report observes here: the decisions lowering recorded, paired with the IR the backend is

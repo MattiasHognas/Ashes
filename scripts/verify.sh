@@ -99,13 +99,17 @@ machine=$(od -An -tx1 -j$((peOff + 4)) -N2 "$winArm64Out" | tr -d ' ')
 [ "$machine" = "64aa" ] || { echo "win-arm64 PE machine mismatch: got $machine, want 64aa" >&2; exit 1; }
 rm -f "$winArm64Src" "$winArm64Out"
 
-### Format all examples.
+### Format all examples and tests, then fail if the formatter changed anything.
+# Compared by content hash rather than `git diff`, because this script runs against
+# working trees that hold uncommitted work: a plain diff would also flag a developer's
+# own edits, and only formatting-induced changes are a correctness failure here.
+formattedBefore="$(find examples tests -name '*.ash' -type f -exec sha256sum {} +)"
+
 echo "--- Formatting examples..."
 for example in examples/**/*.ash; do
   "$ashesCli" fmt "$example" -w
 done
 
-### Format all tests.
 echo "--- Formatting tests..."
 for test in tests/**/*.ash; do
   if grep -q '^//\s*fmt-skip:' "$test"; then
@@ -113,6 +117,14 @@ for test in tests/**/*.ash; do
   fi
   "$ashesCli" fmt "$test" -w
 done
+
+formattedAfter="$(find examples tests -name '*.ash' -type f -exec sha256sum {} +)"
+if [ "$formattedBefore" != "$formattedAfter" ]; then
+  echo "Formatting changed these files; commit them in their formatted form:" >&2
+  diff <(printf '%s\n' "$formattedBefore") <(printf '%s\n' "$formattedAfter") \
+    | grep '^>' | awk '{ print "  " $3 }' >&2 || true
+  exit 1
+fi
 
 ## Run tests.
 echo "--- Running tests..."

@@ -3,20 +3,21 @@ import Ashes.Text.Json as json
 import Ashes.Collection.List as list
 import Ashes.Text as str
 import Ashes.Text as text
+import Ashes.Rune as rune
 capability Store =
-    | load : Unit -> Str
-    | save : Str -> Unit
+    | load : Unit -> Str needs {FileRead}
+    | save : Str -> Unit needs {ConsoleIO, FileWrite}
 
 let recursive escapeJson acc input =
     match text.uncons(input) with
         | None -> acc
         | Some((h, t)) ->
-            if h == "\""
+            if h == '"'
             then escapeJson(acc + "\\\"")(t)
             else
-                if h == "\\"
+                if h == '\\'
                 then escapeJson(acc + "\\\\")(t)
-                else escapeJson(acc + h)(t)
+                else escapeJson(acc + rune.toText(h))(t)
 
 let renderTodo todo =
     match todo with

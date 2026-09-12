@@ -541,7 +541,8 @@ same public behavior.
   resolution for an unconstrained caller, and the phase plan's keystone — constraint-aware local
   type reconstruction in `CoreLowering.ash`, or one merged type-variable space with inference
   (the local reconstruction and the external environment share no variable space; merging their
-  outputs into one scheme produced an infinite substitution cycle).- [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
+  outputs into one scheme produced an infinite substitution cycle).
+- [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
   ABI-ordered fields, and recursively constructed inherited evidence. Lower those values, default
   dispatch, method selection, and safe concrete specialization into IR without changing unoptimized
   behavior.
@@ -1821,7 +1822,10 @@ same public behavior.
   That recursion also overflowed the stack — the self-hosted `fmt` segfaulted on every source
   above roughly 90 KB, stage 0's own binaries above roughly 250 KB — so `Ashes.Text.length`,
   `take`, and `drop` now walk the bytes with an index (`countCodepoints`, `cpByteOffset`) and
-  slice; regression `tests/text_length_take_drop_large_string.ash`. What remained was the frame
+  slice; regression `tests/text_length_take_drop_large_string.ash`. That fix and the
+  optimization-level one below raised the threshold without removing it: `fmt` still segfaults on a
+  241 KB source, from a cause neither of them addressed. Tracked as OPT-67 — do not read this item
+  as having closed `fmt` on large files. What remained was the frame
   size: this backend emitted at LLVM optimization level none, so a call frame was about four
   times stage 0's, and `Collection.List.map`/`filter`/`append` (one frame per element by design,
   the shape the reuse optimizer relies on) overflowed the 8 MB machine stack at about 100000
@@ -2883,6 +2887,60 @@ same public behavior.
   cross-compiler tests: `tmc_constructor_recursion_semantics`, `tmc_constructor_recursion_stack`,
   `tmc_filter_shape_interleaved`, and `tmc_map_shape_stack`, plus generic fallback, shared-tail,
   stack-limit, effect-order, and repeated-run RSS cases.
+- [ ] **OPT-64** Self-hosted mirror of stage 0's unreachable-function prune
+  (`IrOptimizer.PruneUnreachableFunctions` in `Ashes.Semantics/IrOptimizer.Reachability.cs`). Every
+  top-level binding of an imported module is lowered whether or not the importing program uses it,
+  so importing one standard library function compiles in that module's whole surface; stage 0 drops
+  the functions the entry point cannot reach, following the labels instructions name — the closure
+  constructions, the devirtualized call, and the two releases that carry a generated helper label —
+  plus the `$env_normalize` helper the backend resolves by name suffix rather than through an
+  operand. Measured on a program importing `Ashes.Collection.List` and calling only `list.length`:
+  35 emitted functions down to 17. Placement is part of the contract, not an implementation detail:
+  it runs over already-lowered IR, so binding, inference, and lowering have all happened and no
+  diagnostic is affected; after the optimizer, whose own contract is that it never removes a
+  function; and before the IR dumps and explain reports, so `--emit-ir final` keeps meaning what
+  code generation receives. It is never gated on a report flag. The shared explain parity fixtures
+  depend on that placement — they are built from `IrOptimizer.Optimize` directly, so they stay
+  byte-identical until this port lands and can be compared across both compilers unchanged.
+- [ ] **OPT-65** Self-hosted mirror of stage 0's handed-over-argument release contract
+  (`ResolveHandedOverReleaseGuard` in `Lowering.cs`). A reference the caller hands over for the
+  callee's result to keep is stranded the moment the callee declines to adopt it, and stage 0 now
+  settles that from the callee's *compiled* result: a body verified to return a reference-counted
+  value owns every part it kept, so it strands the handed-over reference exactly as a copied result
+  does and needs no runtime result-ownership flag to guard the release — only the adoption flag,
+  which is still honoured. Until this lands, a statically reference-counted result suppresses the
+  release and leaks one argument list per call; stage 0 measured fannkuch N=9 going from 8,204 KiB
+  to 253,968 KiB, with N=11 no longer fitting in 1 GiB. This is the consumer half OPT-59 already
+  says needs surveying first — `CallOwnership.ash` models parameter ownership, not stage 0's
+  `ConsumedRuntimeArgument` hand-over under an adoption flag — so that survey is the prerequisite.
+  Mirror the contract rather than the symptom: unconditionally dropping a handed-over reference is
+  unsound, because other callees genuinely adopt it or keep it in their result.
+- [ ] **OPT-66** Self-hosted mirror of stage 0's let-bound tail-call argument facts. A tail self-call
+  whose argument is a `let`-bound name passes a value built earlier in the same iteration, and stage 0
+  read the loop's structural facts off that bare `Var`: the parameter was placed on the arena instead
+  of reference-counted, the back edge declined its reset, and the loop never released the parameter's
+  previous value — leaking the whole previous list every iteration (192,524 KiB over 2,000,000 rounds,
+  flat 8,204 KiB after). It is the let binding that matters, not the list length or the parameter
+  count. Two independent sites, and fixing either alone still leaks: the fact walker
+  (`TcoParamFactsWalkCall`) must carry the let-bound values alongside its tail-owner map and resolve
+  the argument only *after* the unchanged-passthrough and consumed-tail tests, which classify by which
+  binding the name refers to and so must keep seeing the name; and the lowering-time resolution
+  (`LowerCallTcoGatherResetFacts`) must accept both binding kinds, since a generalized `let` binds a
+  scheme rather than a local and the slot lives on both. The self-hosted equivalents are
+  `TcoAnalysis.ash` and `CoreLowering.ash`, neither audited for this. Details in
+  `project_let_bound_tail_call_argument_leak` (session memory).
+- [ ] **OPT-67** The self-hosted `fmt` still segfaults on a large source. Two separate fixes each
+  raised the threshold and neither removed it: `Ashes.Text.length`/`take`/`drop` moved to an index
+  walk (OPT-39's entry above), and the backend began running LLVM's `default<O2>` pipeline instead
+  of emitting at optimization level none. With both in place `fmt` still crashes on
+  `TypeInference.ash` (241 KB), confirmed directly against the built self-hosted CLI. The symptom
+  was previously attributed entirely to the missing optimization pipeline; that attribution is now
+  wrong, because the underlying gap is fixed and the crash persists. The remaining cause is
+  uninvestigated and is most likely a stack cost specific to the parser/formatter's own
+  recursive-descent shape rather than the one-frame-per-element `List.map` pattern the
+  optimization-level work measured and closed — so start by measuring frame depth through
+  `fmt` on a large source, not by re-checking the pass pipeline. Details in
+  `project_selfhost_gaps_found_task3` (session memory).
 
 #### LLVM code generation and runtime integration
 

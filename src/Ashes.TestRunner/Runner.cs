@@ -1080,9 +1080,13 @@ public static class Runner
         var loweredIr = lowering.Lower(program);
         diag.ThrowIfAny();
 
-        var finalIr = pipeline == TestPipeline.Optimized
+        var optimizedIr = pipeline == TestPipeline.Optimized
             ? IrOptimizer.Optimize(loweredIr)
             : loweredIr;
+
+        // Mirrors the CLI: drop what the entry point cannot reach, before the report below, so it
+        // describes the program the backend receives.
+        var finalIr = IrOptimizer.PruneUnreachableFunctions(optimizedIr);
 
         if (!_explain.IsEmpty)
         {
