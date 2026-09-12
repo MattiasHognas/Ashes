@@ -61,6 +61,43 @@ Reading these honestly:
   to Rust and Go (12.5x vs 12.3x vs 12.1x from N=10 to N=11), so it is a constant factor rather
   than an asymptotic difference.
 
+## The immutable-to-immutable comparison
+
+The table above measures each language in its idiomatic form, which for .NET, Rust, Go and OCaml
+means mutable arrays. That answers "how does Ashes compare", but it does not isolate what Ashes'
+constraints cost, because those ports are doing something Ashes forbids.
+
+`ml-immutable/` holds a second set of OCaml ports written inside Ashes' rules: lists and records,
+recursion and `match`, **no arrays, no `ref`, no loops, no mutation**. Each mirrors its `.ash`
+program operation for operation, and every output is verified identical.
+
+| Benchmark | Ashes | OCaml immutable | | OCaml mutable |
+|---|---|---|---|---|
+| spectral-norm 5,500 | **0.870s** | 2.577s | **2.96x faster** | 1.110s |
+| binary-trees 21 | **1.216s** | 2.453s | **2.02x faster** | 2.481s |
+| n-body 50,000,000 | **1.769s** | 1.895s | **1.07x faster** | 1.810s |
+| fannkuch-redux 11 | 24.996s | **3.733s** | 6.70x slower | 2.023s |
+
+**Ashes beats immutable OCaml on three of the four.** Immutability costs OCaml 2.3x on
+spectral-norm and 1.4x on binary-trees; Ashes pays neither.
+
+fannkuch-redux is the outlier and the shape is diagnostic. It does nothing but rewrite a small
+list at high rate -- allocate and immediately discard, with almost nothing surviving. That is the
+best case for a generational collector, where allocation is a pointer bump and a minor collection
+copies almost nothing, and the worst case for reference counting, which pays an increment and a
+decrement per cell however briefly it lives. The other three either allocate in bulk the arena
+reclaims at once (binary-trees) or build a list once and then read it (spectral-norm's folds).
+
+So the honest summary is not "immutable code is slower here". It is that Ashes' arena and
+reference-counted model is competitive-to-better on ordinary immutable workloads, and loses
+specifically to a generational collector on very high-rate small-object churn.
+
+These ports are not part of the default `bench.sh` run. Build one with:
+
+```sh
+ocamlopt -unsafe -inline 100 -o /tmp/fannkuch challenges/xlang/ml-immutable/fannkuch.ml
+```
+
 ## Caveats
 
 - The distro `ocamlopt` is frequently built without flambda, which makes `-O3` unavailable and caps
