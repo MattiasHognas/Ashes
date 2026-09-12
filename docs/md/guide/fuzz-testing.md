@@ -89,7 +89,8 @@ late growth of 8,192 KB or more. This distinguishes a fixed allocator high-water
 per-iteration values. It runs only when the selected target executes natively on a Linux or Windows
 host and defaults to three cases. Concurrent task and suspension shapes are excluded because
 outstanding background work is still live memory rather than a dropped-value leak; dedicated async
-RSS tests cover those lifecycles. The profile is kept out of `just ci-quick` and `just fuzz` because
+RSS tests cover those lifecycles. Console-writing shapes are excluded too: one line per evaluation
+exceeds the output limit at 50,000 iterations and says nothing about retained memory. The profile is kept out of `just ci-quick` and `just fuzz` because
 each case performs three native compilations and executions, but one case runs in every 50-case
 rotation of the `all` profile.
 
