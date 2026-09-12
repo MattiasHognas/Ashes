@@ -97,6 +97,7 @@ internal sealed class FuzzProfileRegistry
             observableTypes);
         string[] memoryCombinations = observableCombinations
             .Where(id => !id.StartsWith("async.", StringComparison.Ordinal))
+            .Where(id => !string.Equals(id, "process.stderr-exit", StringComparison.Ordinal))
             .ToArray();
         IReadOnlySet<Generation.OwnershipInterest> ownershipInterests = Enum.GetValues<Generation.OwnershipInterest>()
             .ToHashSet();

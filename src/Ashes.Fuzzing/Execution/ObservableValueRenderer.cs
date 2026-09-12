@@ -55,9 +55,12 @@ internal static class ObservableValueRenderer
             Call("Ashes.Text", "fromInt", result));
         Expr workload = new Expr.LetRecursive(loop, loopFunction, print)
         {
-            TypeAnnotation = new AshesType.Function(
-                AshesType.Int,
-                new AshesType.Function(AshesType.Int, AshesType.Int)).ToSyntax(),
+            TypeAnnotation = new TypeExpr.Arrow(
+                AshesType.Int.ToSyntax(),
+                new TypeExpr.Arrow(AshesType.Int.ToSyntax(), AshesType.Int.ToSyntax())
+                {
+                    Needs = new NeedsRowSyntax([], "e"),
+                }),
         };
         return AshesFormatter.Format(testCase.Program with { Body = workload });
     }
