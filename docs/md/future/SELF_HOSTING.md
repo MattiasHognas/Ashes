@@ -1,7 +1,8 @@
 # Self-Hosting: Building the Ashes Compiler in Ashes
 
-Status as of 2026-08-25. This document contains both the capability audit of what Ashes-the-language,
-its compiler/runtime, and its standard library must provide before a compiler can be written in Ashes,
+Status reviewed against `4ca84e43` on 2026-09-11 and reconciled with `758cfc0e` on 2026-09-12.
+This document contains both the capability audit of
+what Ashes-the-language, its compiler/runtime, and its standard library must provide before a compiler can be written in Ashes,
 and the implementation handoff for the active self-hosted toolchain migration. See
 [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broader roadmap and the
 [self-hosted toolchain README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md)
@@ -19,15 +20,15 @@ changed merely to make the self-hosted port easier.
 
 | Area | Ported surface | State |
 |---|---|---|
-| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, inline-module lifting and validation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests; token streams also have shared stage-0/self-hosted parity fixtures |
+| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, inline-module lifting and validation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests; token streams and frontend diagnostics also have shared stage-0/self-hosted parity fixtures |
 | Formatter | Canonical formatting for complete programs, declarations, expressions, patterns, and types, including precedence and idempotence coverage | Implemented and covered by pure-Ashes tests |
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, sequential top-level inference, and package-aware inference of dependency-ordered stitched modules | Implemented for the listed surface |
-| Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
+| Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection; dynamic-handler lowering and backend dispatch | Inference and the dynamic-handler subset are implemented; static `provide` lowering and remaining handler ownership/region work are open (IR-8, OPT-43, OPT-52) |
 | Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
-| IR, optimizer, ownership, backend, linker | Complete IR model/text form plus core lowering for constants, lexical locals, calls, closures, captures, control flow, recursion, structural values and patterns, operators, BigInt literals, and the shipped non-async/non-FFI builtin operations; arena brackets, call windows, and lifetime placement over six byte-exact IR parity fixtures; a linux-x64 LLVM backend and pure-Ashes ELF linker producing real executables | In progress; trait-evidence/provider/async lowering, Perceus dup/drop emission, reuse, optimization levels, and the other three targets remain |
-| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined; `fmt` and `init` are ported (see the checklist below) | Started |
-| Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
+| IR, optimizer, ownership, backend, linker | Complete IR model/text form, core and builtin lowering, scoped arenas, RC/Perceus insertion, reuse and placement paths, supported tail-modulo-constructor and reverse-list/bytes transforms; a linux-x64 LLVM backend and pure-Ashes ELF linker producing real executables | In progress; zero-cost classification, trait-evidence/static-provider/async lowering, remaining ownership and region-lifetime gaps, fusion correctness, optimization levels, and the other three targets remain; individual checklist items distinguish supported paths from open tails |
+| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | `fmt`, `init`, `compile`, `run`, `add`, `remove`, `restore`, `tree`, and `why` have implemented surfaces; compile/report options are partial (see CLI-1..CLI-11) | In progress; remaining commands, TestRunner, fuzzing runner, LSP, and DAP remain separate checklist work |
+| Bootstrap | Stage 0 builds an executable stage-1 CLI; stage-1-to-stage-2 compilation and bootstrap equivalence gates remain open | Stage-1 artifact available; self-compilation and equivalence not established |
 
 The current packages intentionally form the same strict dependency graph as the existing toolchain:
 `frontend` has no compiler dependency, `formatter` depends only on `frontend`, and `semantics` depends
@@ -150,15 +151,18 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    tests at all.
    Gates: SEM-14, LNK-4 (its "Open:" tail), and the files/environment/process/console/
    buffered-stdout slice of CG-11.
-2. **Memory-model correctness.** The backend's RC/arena stand-ins deliberately leak today; this
+2. **Memory-model correctness.** Real scoped arenas and RC allocation/drop paths are implemented;
+   remaining placement, normalization, and producer-specific allocation gaps still leak. This
    milestone retires that debt in phase 3's own internal order: complete heap-layout
    classification, then ownership/move analysis, then Perceus duplication/drop insertion (leading
-   with the three named highest-value bug-class ports), then real scoped arenas in place of the
-   `malloc` stand-ins, reuse, `--debug-disable-reuse` parity, and the four explain snapshots.
+   with the three named highest-value bug-class ports), then close the remaining `malloc`
+   stand-ins and region-lifetime gaps, reuse, `--debug-disable-reuse` parity, and the four explain
+   snapshots.
    Gate hard on the challenge benchmarks: this is where compile-time and RSS regressions would
    first appear.
    Gates: OPT-22..OPT-27, OPT-29, OPT-30, OPT-32..OPT-36, OPT-38..OPT-42, OPT-44..OPT-51,
-   CG-6, CG-10, CG-16, SEM-18, SEM-19, PKG-8, and CG-4's arena/drop tail.
+   CG-6, CG-10, CG-16, SEM-18, SEM-19, PKG-8, IR-5/CG-5's zero-cost classification tail,
+   OPT-59's enumerated-reach/consumed-input release, and CG-4's arena/drop tail.
 3. **Trait and capability physical lowering.** The one keystone decision — call-site dictionary
    forwarding via constraint-aware local type reconstruction, or a merged type-variable space —
    then dictionary construction/dispatch lowering, the standard trait ABI, `deriving`'s physical
@@ -173,8 +177,12 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    Gates: OPT-43, CG-12.
 5. **Optimizer and performance parity.** Optimization-level selection (`-O0`..`-O3`), the
    remaining `IrOptimizer` passes, and the mutual-recursion merge widening, benchmarked against
-   stage 0 on the standing phase benchmark and the challenge programs.
-   Gates: OPT-13, OPT-19, OPT-20, and CG-3's optimization-level tail.
+   stage 0 on the standing phase benchmark and the challenge programs. Repair the confirmed
+   fusion correctness defects first (OPT-61 and OPT-62), before porting map/fold fusion (OPT-58)
+   or treating stage-0 fusion output as the parity oracle. Track constructor-recursion's shipped
+   subset and cross-compiler coverage separately (OPT-63); generic-producer specialization
+   (OPT-60) depends on milestone 2's consumed-input release (OPT-59).
+   Gates: OPT-13, OPT-19, OPT-20, OPT-58, OPT-60..OPT-63, and CG-3's optimization-level tail.
 6. **Net and vendored bitcode.** Sockets/TLS/HTTP builtins, Mbed TLS/openlibm/PCRE2 bitcode
    selection and linking, `Ashes.Number.Math` transcendentals, BigInt, and Regex — the remaining
    builtin families, all behind the same declare-per-module/import-whitelist mechanism already in
@@ -188,7 +196,9 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
 8. **CLI completion.** `compile`/`run` option parity (`--target`, `-O`, `--debug`, `--emit-ir`,
    `--explain`, `--project` compile), the `test` command over the ported TestRunner, `install`,
    and the stateful `repl`.
-   Gates: CLI-4, CLI-9, and the "Open:" tails of CLI-1..CLI-3.
+   Gates: CLI-4, CLI-9..CLI-11, IR-9's compiler metadata collection, and the "Open:" tails
+   of CLI-1..CLI-3. IR-9's producers belong here even though their eventual LSP consumer is
+   outside this compiler-only roadmap.
 9. **Targets beyond linux-x64 and debug information.** Object-parsing generalization, then the
    three remaining image layouts in the documented order (linux-arm64 ELF, win-x64 PE with the
    Windows runtime builtins, win-arm64 PE structurally), plus DWARF debug information — kept in
@@ -257,9 +267,11 @@ same public behavior.
 - [x] **PKG-5** Document every production module's responsibility and load-bearing invariants, preserving
   behaviorally relevant stage-0 contracts without copying host-language API boilerplate.
 - [~] **PKG-6** Add cross-implementation parity fixtures as each self-hosted phase gains a stable serialized
-  public result. Versioned token-stream fixtures now compare every public token field between stage 0
-  and the pure-Ashes lexer; syntax, formatted source, diagnostics, inferred schemes, IR, and executable
-  parity formats remain.
+  public result. Done: versioned token streams, frontend and semantic diagnostics, whole-program
+  lowered IR, and ownership/RC/reuse/memory explanation fixtures, exercised by the corresponding
+  `selfhost/tests/*-parity` projects and `ExplainReportTests.ash`; formatter corpus comparison is
+  recorded under FMT-8. Open: broader syntax/inferred-scheme serialization and standing full-corpus
+  executable parity (TR-1..TR-6, BOOT-4), including the fusion regressions in OPT-61/OPT-62.
 - [x] **PKG-7** Make every self-hosted package buildable from a restored source-only dependency graph without
   undeclared checkout-relative inputs.
 - [x] **PKG-8** Run the three script-style project test files (`ProjectDiscoveryTests.ash`,
@@ -669,12 +681,16 @@ same public behavior.
   (recursive groups predeclare monomorphic member types and share one environment; tail-position
   recursive applications stay ordinary calls at this phase — the optimization milestone owns the
   back-edge transforms).
-- [x] **IR-5** Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field
+- [~] **IR-5** Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field
   access, patterns, and record updates with stage-0-compatible layouts (tuple words, two-word list
-  cells, interned strings, tagged cells, erased zero-cost wrappers). A field read through a
-  receiver whose type is still a variable at the access (a parameter read before any call
+  cells, interned strings, tagged cells, erased zero-cost wrappers). Done: ordinary structural
+  lowering and the zero-cost helper paths for layouts explicitly classified as zero-cost. A field
+  read through a receiver whose type is still a variable at the access (a parameter read before any call
   constrains it) resolves by the field's name when exactly one record type declares it, stage 0's
   `ResolveRecordReceiverByFieldName`; an ambiguous field leaves the receiver unresolved.
+  Reopened: production declaration-to-layout construction still sets `isZeroCost = false` in
+  `CoreLowering.ash`; wire real zero-cost classification and exercise erasure from parsed source,
+  not only supplied layouts. This is CG-5's existing zero-cost gap, owned by milestone 2.
 - [x] **IR-6** Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
 - [x] **IR-7** Lower external calls, resources/destructors, native ownership conventions, library/resource
@@ -689,9 +705,15 @@ same public behavior.
   (`UnsupportedOperationArmResume`) rather than lowering wrong. Covered by
   `CoreCapabilityLoweringTests.ash`. Open: trait-evidence physical lowering (tracked under the
   traits section) and the static `provide` capability-resolution pipeline.
-- [x] **IR-9** Retain source maps, definition/hover identities, diagnostic locations, function origins, and
+- [~] **IR-9** Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions (single- and multi-file source contexts,
   structured provenance, hover/public-authority collectors, compilation decision snapshots).
+  Done: source locations/origins, metadata models and helpers, and ownership/value-placement
+  snapshots. Reopened: wire lowering/inference to collect definition/reference hover records and
+  populate public/external authority records in real compilation snapshots. `HoverTypeInfo.ash`
+  currently supplies helpers without a lowering collector, and `captureDecisionSnapshot` leaves
+  the authority lists empty. Require source-driven tests rather than hand-built metadata; milestone
+  8 owns the compiler collection, with CLI-9 and IDE-2 consuming it.
 - [x] **IR-10** Resolve a dependency module's combined-source positions through stitched item regions — the
   self-hosted stitcher combines syntax trees, so a module's spans stay offsets into its own file,
   and every emitted instruction carries the innermost enclosing `ExprAt` span. Covered by
@@ -1835,15 +1857,15 @@ same public behavior.
   direct call, and `ExprLambda`'s own lowering reads that flag as `stackAllocate`; covered end to
   end by `CoreLoweringTests.ash`'s `expectStrictImmediateCall`/`expectPartialApplicationOrder`,
   which assert the exact `MakeClosureStack` instruction for a top-level helper called only
-  directly. Still open: the ADT form (`AllocAdtStack`) — stage 0's sibling proof
-  (`IsConstructorExpression`/`IsImmediateSingleArmAdtDestructuringMatch`, a `let` immediately
-  destructured by a single-arm match) has no self-hosted counterpart (grepped
-  `CoreLowering.ash` for a real `AllocAdtStack` emission site — none; only hand-built IR in the
-  backend test suite reaches it) — and the persistent regions — the lowering now produces the
-  to-space and blob forms through OPT-42's specialization materialization and the copiers
-  `ToSpaceCopiers.ash` synthesizes for it, while `AllocAdtToSpace` itself still reaches the backend
-  from hand-built IR only (see CG-4); and the task and capability regions, which
-  belong to milestone 4 (CG-12, OPT-43) and are not started.
+  directly. The ADT proof is also implemented: `constructorExpression`,
+  `immediateSingleArmDestructuringMatch`, and `stackAllocatableScrutineeCases` request
+  `AllocAdtStack` through `emitFreshConstructorCell`, with the conservative limits recorded in
+  OPT-24. Persistent placement is likewise reached from real lowering: OPT-42's specialization
+  materialization emits `AllocAdtToSpace` and blob/copy operations, including the copiers
+  synthesized by `ToSpaceCopiers.ash`. These are no longer hand-built-IR-only paths.
+  Open: the remaining backend region-lifetime parity under CG-4/OPT-42, and task/capability
+  regions under milestone 4 (CG-12, OPT-43); do not confuse emitted placement with complete
+  reclamation of those regions.
 - [x] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
   them. Done (2026-09-06): a generic callee's deep-copied list result shares nothing with the
   call's consumed arguments, so stage 0 releases them with their elements after the copy instead
@@ -2782,9 +2804,12 @@ same public behavior.
   which is only known after type inference. Needs a new hook inside `CoreLowering.ash`'s own
   call-lowering path instead, at whatever point a resolved `SemanticType` is available for a call's
   arguments (not yet surveyed for this purpose) — mirroring stage 0's placement of the check inside
-  `LowerCall`, after `LowerExpr` returns a type for `init`/`xs`. Comparable in size to stage 0's own
-  implementation, not a mechanical port; details in
-  `project_mapfold_fusion_selfhost_port_not_attempted` (session memory).
+  `LowerCall`, after `LowerExpr` returns a type for `init`/`xs`. Prerequisite: OPT-61 repairs
+  stage 0's lexical callback/callee identity proofs; do not port its current wrong-code behavior.
+  Acceptance includes effectful callbacks shadowing pure top-level declarations: all mapper
+  effects must precede all folder effects when fusion cannot prove the actual callbacks total.
+  Owned by milestone 5, after the correctness repairs; preserve the unfused fallback and its
+  single evaluation of arguments when any proof fails.
 - [ ] **OPT-59** Self-hosted mirror of stage 0's enumerated-reach split (`ResultReachCause.UnenumeratedInputs`
   plus `ReachExposed`/`UnknownCalleeReach` in `Lowering.MoveAnalysis.cs`, landed as #970). Stage 0
   separates "the result is not provably confined" from "the values that went into it were not
@@ -2822,6 +2847,42 @@ same public behavior.
   generic function when its copy still declines a cons or still reads the closure of a function being
   lowered — without that gate a concrete `filter` whose recursion survives goes quadratic. Details in
   `project_tmc_element_specialization_findings` (session memory).
+- [ ] **OPT-61** Repair fusion's lexical binding identity in stage 0 and use the corrected contract
+  in both compilers (milestone 5, before OPT-58). `TryResolveFusableCallbackBody` in
+  `Lowering.Fusion.cs` chooses a top-level lambda by source name even when a parameter shadows
+  it; an effectful mapper/folder pair then prints `map, fold, map, fold` instead of
+  `map, map, fold, fold`. `ResolveCalleeQualifiedName` also re-resolves a saved alias's AST in
+  the current scope: bind `operation` to identity, bind `saved = operation`, shadow `operation`
+  with `List.reverse`, then `Byte.fromList(saved([1u8, 2u8, 3u8]))` incorrectly starts with `3`
+  instead of `1`. Both defects reproduce at `-O0` and `-O2`. Resolve proofs against the actual
+  declaration and defining scope, not spelling or reinterpreted syntax. Acceptance: committed
+  source-driven regressions for alias chains, let/parameter/pattern shadowing, effect order,
+  and conservative decline of unknown callbacks/callees in both optimization modes.
+- [~] **OPT-62** Reverse-list/bytes fusion parity and compiler-private helper isolation
+  (milestone 5, sharing OPT-61's binding-identity contract). Done: both compilers carry the
+  reversed-fill flag through `BytesFromList` and fill the buffer backwards without constructing
+  a reversed list. Open: `ModuleReferenceRewriting.ash`'s `fusionCalleeResolvesTo` ignores local
+  bindings; after importing `List.reverse`, a function parameter named `reverse` passed identity
+  is wrongly removed by the fusion, changing the first byte of `[1u8, 2u8, 3u8]` from `1` to `3`.
+  Its generated `Ashes.Byte.fromReversedList` is also registered as a public builtin in
+  `CoreBuiltinLowering.ash`: stage 1 accepts a direct user call that stage 0 rejects. Preserve local
+  shadowing and keep generated helpers inaccessible to source programs, without adding a public
+  API. Require paired acceptance/rejection and output fixtures, including selector imports,
+  local shadows, aliases, shared inputs, and ownership/reuse modes. CG-4 retains the separate
+  allocation-placement/lifetime gaps of bytes producers.
+- [~] **OPT-63** Tail-modulo-constructor invariants and cross-compiler coverage (milestone 5).
+  Done: both compilers loop over a tail-position `head :: self(...)` with a saturated, resolved
+  self-call when the cell can be RC-managed; the partial spine is nil-terminated, the chain closes
+  before ownership finalization, and normal back-edge reclamation remains enabled. Source of truth:
+  `Lowering.cs`/`Lowering.Reuse.cs`, mirrored by `CoreLowering.ash`/`TcoAnalysis.ash`; invariants in
+  [Tail modulo constructor](../internals/architecture.md#ownership-placement). Stage 0 now also
+  specializes eligible generic producers at concrete call sites (#971); the stage-1 port belongs
+  to OPT-60, after OPT-59's consumed-input release. Open here: standing cross-compiler coverage
+  of both supported and declined shapes, retaining the sound element-ownership/placement proof
+  rather than retaining an arena spine across resets or disabling reclamation. Cover
+  cross-compiler tests: `tmc_constructor_recursion_semantics`, `tmc_constructor_recursion_stack`,
+  `tmc_filter_shape_interleaved`, and `tmc_map_shape_stack`, plus generic fallback, shared-tail,
+  stack-limit, effect-order, and repeated-run RSS cases.
 
 #### LLVM code generation and runtime integration
 
@@ -3207,9 +3268,11 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   optimization, and debug options.
 - [~] **CLI-2** `compile` for files, expressions, projects, output selection, IR dumps, and compiler reports.
   Done: the single-file form through the full self-hosted pipeline to a linux-x64 executable, with
-  `-o`/`--out`, default output naming, the `OK Wrote ...` confirmation, and stage 0's exit codes.
-  Open: `--expr`, `--project`, other targets, optimization/debug options, `--explain`, IR dumps,
-  elapsed time, and installed-layout library discovery.
+  `-o`/`--out`, default output naming, the `OK Wrote ...` confirmation, stage 0's exit codes,
+  `--explain` parsing/report dispatch (CLI-9), and `--debug-disable-reuse` (OPT-44).
+  Open: `--expr`, `--project`, other targets, optimization and the remaining debug options,
+  IR dumps (CLI-10), elapsed time, and installed-layout library discovery. Missing report data
+  remains under CLI-9/IR-9, not an unported `--explain` option.
 - [~] **CLI-3** `run` with argument forwarding, temporary outputs, and exit-status propagation. Done: the file
   form (temp output, `--` forwarding, line-relayed stdio, the program's own exit code). Open:
   `--expr`, `--project`, uniquely named temp outputs, and the compile options above.
