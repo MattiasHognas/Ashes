@@ -506,6 +506,15 @@ same public behavior.
   closed-row failure cannot be told from an ordinary type error. Add the fixture to
   `selfhost/tests/semantics-diagnostic-parity` once the diagnostic exists, since that corpus
   compares code, message text, and span.
+- [ ] **CAP-12** Carry the runtime-managed ownership fact on the temp a guarded arena copy-out
+  hands back. Stage 0's `TryEmitScopeCopyOut` routes both live-posts paths through a local and
+  returns a reloaded temp, so the ownership fact belongs on that temp rather than on the copy
+  destination; marking only the destination leaves nothing to release the copy and a loop grows
+  its resident set without bound. The self-hosted `beginLivePostsGuard` is currently used only by
+  `closeGuardedArmBracket`, which guards a restore and reclaim with no copy-out, so the shape does
+  not exist there yet -- port it with the fact on the reloaded temp. The skipped path needs no
+  special case: an arena value's header holds the immortal sentinel and a drop against it is a
+  no-op.
 
 #### Traits, implementations, and evidence
 

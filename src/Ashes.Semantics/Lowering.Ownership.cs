@@ -1996,6 +1996,14 @@ public sealed partial class Lowering
             EndLivePostsGuard(copySkipLabel);
             int guardedResultTemp = NewTemp();
             Emit(new IrInst.LoadLocal(guardedResultTemp, guardResultSlot));
+            if (normalizeToRuntimeOwnership)
+            {
+                // The guard's two paths yield the copy on one and the original arena pointer on
+                // the other, and the temp the caller receives is the one that must carry the
+                // ownership fact. Dropping the arena value is a no-op against its immortal header.
+                MarkRuntimeManagedTemp(guardedResultTemp);
+            }
+
             copiedResultTemp = guardedResultTemp;
             return true;
         }
