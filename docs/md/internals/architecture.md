@@ -859,6 +859,83 @@ values, scheduler state, OS-backed payload views, and a small number of
 specialized data-structure regions retain explicit region lifetimes. There is
 no tracing garbage collector and no ownership syntax in the source language.
 
+### The trade this model makes
+
+The absence of a tracing collector is a deliberate trade with a measurable cost and a measurable
+benefit, not an unfinished piece of work. This section records both, so the decision can be
+revisited on evidence rather than re-argued from first principles.
+
+**What the model buys.** Deterministic destruction, no collector to ship, no pauses, and resident
+memory that is a function of live data rather than of allocation rate. A compiled program has no
+runtime dependency at all.
+
+**What the model costs.** Every allocation must eventually answer an ownership question: is this
+value uniquely owned, so its cell may be overwritten or its memory reclaimed at a scope exit? When
+lowering can prove the answer, reuse rewrites the value in place and the allocation disappears.
+When it cannot, the value falls back to reference counting, which charges for every cell it touches
+whether or not that cell lives long enough to benefit.
+
+A tracing nursery never asks the question. Allocation is a pointer bump; a minor collection copies
+only survivors and resets the bump pointer, so unreachable cells are never visited. Its cost is
+proportional to what **survives**. Reference counting's cost is proportional to what is
+**allocated**. That single difference explains where each model wins.
+
+**Measured.** Against OCaml ports written inside Ashes' own rules -- lists and records, recursion
+and `match`, no arrays, no `ref`, no loops, no mutation -- with every output verified identical
+(the ports and harness live in `challenges/xlang/`):
+
+| Benchmark | Ashes | OCaml, immutable |
+|---|---|---|
+| spectral-norm 5,500 | **0.870 s** | 2.577 s |
+| binary-trees 21 | **1.216 s** | 2.453 s |
+| n-body 50,000,000 | **1.769 s** | 1.895 s |
+| fannkuch-redux 11 | 24.996 s | **3.733 s** |
+
+Ashes is faster on three of the four. Immutability alone costs OCaml 2.3x on spectral-norm and
+1.4x on binary-trees; this model pays neither, because those programs either allocate in bulk that
+one arena reset reclaims or build a structure once and then read it.
+
+fannkuch-redux is the shape that inverts the trade. It rewrites a small list at very high rate and
+almost nothing survives, which is the best case for a nursery and the worst case for reference
+counting. Its accumulator is a loop parameter carrying heap fields, so in-place reuse is refused
+(see [Drop specialization and reuse](#drop-specialization-and-reuse)), and the fallback charges per
+cell for cells that die immediately.
+
+**Why the refusal is not a gap.** Two independent declines put this shape permanently on the
+reference-counted path, and both were closed after real defects rather than left unimplemented:
+
+- In-place reuse of a tail-call accumulator whose constructor holds heap fields is declined because
+  the back-edge deferred drop re-reads the cell's fields, which the reusing allocation has already
+  overwritten.
+- A tail-modulo-constructor spine must be reference-counted; an arena spine was attempted twice and
+  is unsound in two independent ways -- the back edge frees cells above the watermark, and the
+  transformed cons publishes a borrowed head into a longer-lived structure.
+
+Both are recorded with their root causes in the
+[compiler changelog](changelog.md). An optimization that appears to close this gap
+should be treated as suspect until peak resident memory is measured at several input sizes: the
+usual failure is a change that stops reclaiming rather than starts being faster.
+
+**What adopting a nursery would require.** The bump allocator is not the hard part -- arena
+allocation is already an inline pointer bump of comparable cost. The collection is:
+
+- Precise root identification, so the compiler must emit stack maps naming which slots hold
+  pointers at every call site.
+- Relocation of survivors, which conflicts with the raw pointers this language hands to C through
+  `Ashes.Ffi`, external signatures returning `*u8`, memory-mapped file views, and TLS buffers. Each
+  would need pinning or an added indirection.
+- A write barrier on stores into older objects, which taxes every program -- including the three
+  above, where this model currently wins.
+- A third memory regime alongside arenas and reference counting, with a defined contract at every
+  boundary between them.
+- A runtime to ship, and the pauses and timing nondeterminism that come with it.
+
+So the benefit lands only on allocate-and-discard workloads while the cost lands on all code. That
+is the reasoning behind the current choice. It would be worth revisiting if a workload that matters
+in practice -- not a benchmark chosen to stress allocation -- showed the same profile as
+fannkuch-redux, or if the reuse refusals above were lifted by a sound redesign of the back-edge drop
+protocol, which would remove the allocation rather than make it cheaper.
+
 ### Ownership placement
 
 Lowering infers a `FunctionOwnershipSummary` for each visible function:
