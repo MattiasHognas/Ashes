@@ -1840,11 +1840,24 @@ There are two common ways to use standard library functions:
 
 #### Qualified access (no import required)
 
+A fully-qualified path resolves against **every** standard library module without an import. This
+holds equally for the modules the compiler implements directly and for the ones shipped as Ashes
+source (§13.5) — which of the two a member comes from is an implementation detail and never changes
+how it is referenced:
+
 ```ash
 Ashes.IO.print "hello"
 Ashes.IO.panic "boom"
 Ashes.IO.args
+Ashes.Collection.List.length([1, 2, 3])
+Ashes.Text.trim("  spaced  ")
 ```
+
+An `import` is what adds the **unqualified** surface and the short qualifier (see below). A
+qualified reference on its own never brings `length` or `List.length` into scope.
+
+This rule covers the standard library only. A user module is reachable only once it is imported,
+because a project's module graph is exactly its declared imports.
 
 #### Import and use unqualified names
 
@@ -2306,7 +2319,10 @@ Like other multi-argument calls in Ashes, `assertEqual(expected, actual)` is
 surface sugar for curried application.
 
 These helper modules are compiler-shipped and live under the reserved `Ashes.*`
-namespace. User projects cannot override them with project-local modules.
+namespace. User projects cannot override them with project-local modules. Being written in Ashes
+rather than built into the compiler changes nothing about how they are reached: a fully-qualified
+path resolves with no import (§13.1), and an import is still what adds the unqualified names and the
+short qualifier.
 
 ### 13.6 Future Standard Library Modules
 
