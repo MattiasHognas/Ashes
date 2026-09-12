@@ -3294,6 +3294,29 @@ public static partial class IrOptimizer
     /// Returns true if the instruction is removable dead code: its result is observed
     /// by no remaining use.
     /// </summary>
+    // A value producer with no effect beyond defining its target: safe to drop when nothing reads
+    // that target. Kept deliberately narrow -- only a load and the total integer operations.
+    private static bool IsDeadPureValue(IrInst inst, HashSet<int> usedTemps)
+        => inst switch
+        {
+            IrInst.LoadMemOffset load => !usedTemps.Contains(load.Target),
+            IrInst.AddInt add => !usedTemps.Contains(add.Target),
+            IrInst.SubInt sub => !usedTemps.Contains(sub.Target),
+            IrInst.MulInt mul => !usedTemps.Contains(mul.Target),
+            IrInst.AndInt and => !usedTemps.Contains(and.Target),
+            IrInst.OrInt or => !usedTemps.Contains(or.Target),
+            IrInst.XorInt xor => !usedTemps.Contains(xor.Target),
+            IrInst.ShlInt shl => !usedTemps.Contains(shl.Target),
+            IrInst.ShrInt shr => !usedTemps.Contains(shr.Target),
+            IrInst.CmpIntEq eq => !usedTemps.Contains(eq.Target),
+            IrInst.CmpIntNe ne => !usedTemps.Contains(ne.Target),
+            IrInst.CmpIntLt lt => !usedTemps.Contains(lt.Target),
+            IrInst.CmpIntLe le => !usedTemps.Contains(le.Target),
+            IrInst.CmpIntGt gt => !usedTemps.Contains(gt.Target),
+            IrInst.CmpIntGe ge => !usedTemps.Contains(ge.Target),
+            _ => false,
+        };
+
     private static bool IsDeadInstruction(IrInst inst, HashSet<int> usedTemps, HashSet<int> loadedSlots)
     {
         // Remove LoadConst* instructions whose target is never read
@@ -3322,6 +3345,18 @@ public static partial class IrOptimizer
         // allocation plus stores into that fresh allocation, observable by nothing once the
         // pointer is unused. Devirtualization routinely strands these.
         if (inst is IrInst.MakeClosure mc && !usedTemps.Contains(mc.Target))
+        {
+            return true;
+        }
+
+        // Remove pure value producers whose target is never read. A memory load at a valid address
+        // and the non-trapping integer operations below have no effect other than defining their
+        // target, so an unread target makes the whole instruction unobservable. Division and
+        // remainder are deliberately absent: they trap on a zero divisor, so removing one can
+        // change whether a program faults. Constant folding routinely strands these chains -- it
+        // rewrites the final consumer to a constant and leaves the operands feeding nothing, which
+        // also keeps a spurious use on the value the chain loaded from.
+        if (IsDeadPureValue(inst, usedTemps))
         {
             return true;
         }
