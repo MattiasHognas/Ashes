@@ -697,7 +697,13 @@ public sealed partial class Lowering
 
         var (funcTemp, funcType) = LowerExpr(pipe.Right);
         var returnType = NewTypeVar();
-        Unify(funcType, new TypeRef.TFun(successType, returnType));
+        // The expected arrow needs an OPEN row variable: a null row is the closed pure row, and
+        // unifying the continuation's own open row against it forces it to `{}`, rejecting every
+        // capability-performing continuation. The pipe applies the continuation, so its row is
+        // subsumed into the ambient row exactly as an ordinary call's is.
+        var continuationRow = NewTypeVar();
+        Unify(funcType, new TypeRef.TFun(successType, returnType) { Row = continuationRow });
+        SubsumeCalleeRow(continuationRow, GetSpan(pipe.Right));
 
         if (Prune(funcType) is not TypeRef.TFun and not TypeRef.TVar)
         {
@@ -781,7 +787,9 @@ public sealed partial class Lowering
 
         var (funcTemp, funcType) = LowerExpr(pipe.Right);
         var mappedErrorType = NewTypeVar();
-        Unify(funcType, new TypeRef.TFun(errorType, mappedErrorType));
+        var continuationRow = NewTypeVar();
+        Unify(funcType, new TypeRef.TFun(errorType, mappedErrorType) { Row = continuationRow });
+        SubsumeCalleeRow(continuationRow, GetSpan(pipe.Right));
 
         if (Prune(funcType) is not TypeRef.TFun and not TypeRef.TVar)
         {
@@ -789,6 +797,11 @@ public sealed partial class Lowering
         }
 
         TypeRef resultType = new TypeRef.TNamedType(resultSymbol, [Prune(mappedErrorType), Prune(successType)]);
+        return EmitResultMapErrorBranches(leftTemp, funcTemp, errorConstructor, resultType);
+    }
+
+    private (int, TypeRef) EmitResultMapErrorBranches(int leftTemp, int funcTemp, ConstructorSymbol errorConstructor, TypeRef resultType)
+    {
         var resultSlot = NewLocal();
         var errorLabel = NewLabel("result_map_error");
         var endLabel = NewLabel("result_map_error_end");
