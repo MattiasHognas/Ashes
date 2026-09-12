@@ -2898,6 +2898,33 @@ same public behavior.
   code generation receives. It is never gated on a report flag. The shared explain parity fixtures
   depend on that placement — they are built from `IrOptimizer.Optimize` directly, so they stay
   byte-identical until this port lands and can be compared across both compilers unchanged.
+- [ ] **OPT-65** Self-hosted mirror of stage 0's handed-over-argument release contract
+  (`ResolveHandedOverReleaseGuard` in `Lowering.cs`). A reference the caller hands over for the
+  callee's result to keep is stranded the moment the callee declines to adopt it, and stage 0 now
+  settles that from the callee's *compiled* result: a body verified to return a reference-counted
+  value owns every part it kept, so it strands the handed-over reference exactly as a copied result
+  does and needs no runtime result-ownership flag to guard the release — only the adoption flag,
+  which is still honoured. Until this lands, a statically reference-counted result suppresses the
+  release and leaks one argument list per call; stage 0 measured fannkuch N=9 going from 8,204 KiB
+  to 253,968 KiB, with N=11 no longer fitting in 1 GiB. This is the consumer half OPT-59 already
+  says needs surveying first — `CallOwnership.ash` models parameter ownership, not stage 0's
+  `ConsumedRuntimeArgument` hand-over under an adoption flag — so that survey is the prerequisite.
+  Mirror the contract rather than the symptom: unconditionally dropping a handed-over reference is
+  unsound, because other callees genuinely adopt it or keep it in their result.
+- [ ] **OPT-66** Self-hosted mirror of stage 0's let-bound tail-call argument facts. A tail self-call
+  whose argument is a `let`-bound name passes a value built earlier in the same iteration, and stage 0
+  read the loop's structural facts off that bare `Var`: the parameter was placed on the arena instead
+  of reference-counted, the back edge declined its reset, and the loop never released the parameter's
+  previous value — leaking the whole previous list every iteration (192,524 KiB over 2,000,000 rounds,
+  flat 8,204 KiB after). It is the let binding that matters, not the list length or the parameter
+  count. Two independent sites, and fixing either alone still leaks: the fact walker
+  (`TcoParamFactsWalkCall`) must carry the let-bound values alongside its tail-owner map and resolve
+  the argument only *after* the unchanged-passthrough and consumed-tail tests, which classify by which
+  binding the name refers to and so must keep seeing the name; and the lowering-time resolution
+  (`LowerCallTcoGatherResetFacts`) must accept both binding kinds, since a generalized `let` binds a
+  scheme rather than a local and the slot lives on both. The self-hosted equivalents are
+  `TcoAnalysis.ash` and `CoreLowering.ash`, neither audited for this. Details in
+  `project_let_bound_tail_call_argument_leak` (session memory).
 
 #### LLVM code generation and runtime integration
 
