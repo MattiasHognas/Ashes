@@ -578,6 +578,12 @@ If the left side evaluates to `Error(e)`, the error is propagated unchanged.
 If the left side evaluates to `Ok(v)`, the success value is preserved.
 If the left side evaluates to `Error(e)`, the function on the right is applied to `e` and the result is wrapped back in `Error`.
 
+Both operators *apply* the function on the right, so its capability row propagates to the enclosing
+expression exactly as an ordinary call's does (§20.3): a continuation that performs capabilities is
+accepted, and the enclosing function requires them in turn. A continuation whose type is *written*
+without a `needs` clause is pure, as everywhere else, so performing a capability inside that one is
+still rejected.
+
 `let?` is Result-binding syntax.
 
 It evaluates a `Result(E, A)` expression, binds the `Ok` payload inside the body, and propagates `Error(e)` unchanged.
