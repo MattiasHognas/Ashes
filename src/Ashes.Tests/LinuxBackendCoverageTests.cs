@@ -2756,6 +2756,27 @@ public sealed class LinuxBackendCoverageTests
     }
 
     /// <summary>
+    /// A call routed to an element specialization returns a result the compiler verified
+    /// reference-counted, and such a result owns every part it kept. The reference the caller handed
+    /// over for that result to keep must therefore be released once the callee declines to adopt it.
+    /// Treating a statically reference-counted result as though it might still hold the argument
+    /// stranded that retain, leaking one argument list per call: fannkuch N=9 went from 8,204 KiB to
+    /// 253,968 KiB and N=11 stopped fitting in 1 GiB.
+    /// </summary>
+    [Test]
+    public void Linux_backend_element_specialized_producer_releases_handed_over_argument()
+    {
+        IrProgram ir = LowerProgramWithImports(BuildElementSpecializedProducerProgram());
+
+        ir.Functions.Any(function => function.Label.EndsWith("__element", StringComparison.Ordinal))
+            .ShouldBeTrue("The generic producer should specialize at the call fixing its element type.");
+        AllInstructions(ir).Any(instruction =>
+            instruction is IrInst.Label label
+            && label.Name.StartsWith("rc_handed_over", StringComparison.Ordinal))
+            .ShouldBeTrue("The caller must settle the reference handed to the specialized producer.");
+    }
+
+    /// <summary>
     /// Root-cause probe for the leak above: the ADT shell built at the TCO loop's exit arm must be
     /// runtime-managed (RC) whenever it stores runtime-managed children, exactly like the equivalent
     /// tuple shape already is (see <see cref="AssertRuntimeRcTupleTcoProbe"/>'s sibling coverage).
@@ -7601,6 +7622,36 @@ public sealed class LinuxBackendCoverageTests
                     in loop(i - 1)(acc + list.length(entries))
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // A generic list producer whose tail-modulo-constructor cons the element type unblocks, called
+    // where that element type is fixed, with its own result threaded on as the next call's argument.
+    // The loop reads the threaded list on its exit arm, which is what keeps that list
+    // runtime-managed and so makes the call hand a reference over for the result to keep.
+    private static string BuildElementSpecializedProducerProgram()
+        => """
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let recursive run rounds xs =
+                if rounds == 0
+                then
+                    match xs with
+                        | [] -> 0
+                        | h :: _ -> h
+                else run(rounds - 1)(setAt(rounds % 3)(rounds)(xs))
+
+            match Ashes.IO.args with
+                | arg :: _ ->
+                    match Ashes.Text.parseInt(arg) with
+                        | Ok(rounds) -> Ashes.IO.print(Ashes.Text.fromInt(run(rounds)([1, 2, 3])))
+                        | Error(_) -> Ashes.IO.print("bad argument")
+                | [] -> Ashes.IO.print("missing argument")
             """;
 
     private static string BuildParallelWorkerMemoryProgram(int iterations)

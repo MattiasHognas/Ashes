@@ -11463,15 +11463,15 @@ public sealed partial class Lowering
             && !CanArenaReset(callResultType)
             && callResultCopyKind == CopyOutKind.List
             && callResultHeadCopy != IrInst.ListHeadCopyKind.Inline;
-        // A scalar result, or the copy branch of a list or shallow copy-out (the whole spine with
-        // its heads, or every byte of a value whose fields are all scalars, rebuilt here), holds no
-        // reference to any argument: a reference handed to the callee for its result to keep is
-        // orphaned there unless the callee adopted it.
-        bool resultCopySeversArgumentReferences = CanArenaReset(callResultType)
-            || (!runtimeManagedResult
-                && !stableReuseResult
-                && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List);
-        int resultCopyFlagTemp = CanArenaReset(callResultType) ? -1 : runtimeManagedResultFlagTemp;
+        bool calleeCompiledResultVerifiedRuntimeManaged =
+            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count);
+        (bool resultCopySeversArgumentReferences, int resultCopyFlagTemp) = ResolveHandedOverReleaseGuard(
+            callResultType,
+            callResultCopyKind,
+            runtimeManagedResult,
+            stableReuseResult,
+            calleeCompiledResultVerifiedRuntimeManaged,
+            runtimeManagedResultFlagTemp);
         currentTemp = LowerCallRestoreArena(
             callWmCursorSlot,
             callWmEndSlot,
@@ -11489,7 +11489,7 @@ public sealed partial class Lowering
         LowerCallDropConsumedRuntimeArguments(
             callResultType,
             consumedRuntimeArguments,
-            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count),
+            calleeCompiledResultVerifiedRuntimeManaged,
             resultNormalized,
             resultDeepCopied,
             GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false },
@@ -11501,6 +11501,45 @@ public sealed partial class Lowering
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
         return (currentTemp, currentType);
+    }
+
+    /// <summary>
+    /// Whether this call's result, once it reaches the caller, holds no reference to a consumed
+    /// argument — so a reference handed over for the result to keep is stranded unless the callee
+    /// adopted it — together with the runtime result-ownership flag that guards the release, or -1
+    /// when the result's independence is already settled at compile time.
+    /// </summary>
+    private (bool Severs, int FlagTemp) ResolveHandedOverReleaseGuard(
+        TypeRef callResultType,
+        CopyOutKind callResultCopyKind,
+        bool runtimeManagedResult,
+        bool stableReuseResult,
+        bool calleeCompiledResultVerifiedRuntimeManaged,
+        int runtimeManagedResultFlagTemp)
+    {
+        // A scalar result holds no reference to any argument at all.
+        if (CanArenaReset(callResultType))
+        {
+            return (true, -1);
+        }
+
+        // A callee whose compiled body is verified to return a reference-counted result owns every
+        // part of that result: its construction paths copied or retained whatever they kept of the
+        // arguments. Such a result strands the handed-over reference exactly as a copied one does,
+        // and needs no runtime ownership flag to say so — without this, a producer the compiler
+        // proved reference-counted (an element specialization, say) kept the caller's retain alive
+        // forever, leaking one argument root per call.
+        if (runtimeManagedResult)
+        {
+            return (!stableReuseResult && calleeCompiledResultVerifiedRuntimeManaged, -1);
+        }
+
+        // Otherwise the copy branch of a list or shallow copy-out (the whole spine with its heads,
+        // or every byte of a value whose fields are all scalars, rebuilt here) is what severs the
+        // references, and the result-ownership flag selects that branch at runtime.
+        return (
+            !stableReuseResult && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List,
+            runtimeManagedResultFlagTemp);
     }
 
     private (int Temp, TypeRef Type) LowerCallRoot(Expr rootExpr, IReadOnlyList<Expr> arguments)
