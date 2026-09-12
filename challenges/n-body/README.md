@@ -63,6 +63,11 @@ Against the same program in other languages at N=50,000,000 (see
 [`../xlang/`](../xlang/README.md)): Rust 1.19 s, **Ashes 1.80 s**, OCaml 1.80 s, .NET 10 1.92 s,
 Go 2.46 s. Every output is byte-identical.
 
+One caveat on that ranking: this program writes its ten pair interactions out, while those ports
+loop over a fixed array. An OCaml port unrolled the same way runs 1.61 s, so like-for-like Ashes
+is about 9% slower than OCaml rather than ahead of it -- third behind Rust and OCaml. That is
+still close for a program allocating a fresh record per step against one mutating five in place.
+
 Two changes took this from 14.3 s. The system is a fixed five-body `System` record instead of a
 `List(Body)`, and each pair is evaluated once rather than twice.
 
