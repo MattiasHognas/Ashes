@@ -252,7 +252,7 @@ public sealed partial class Lowering
     private int _maOverAppDepth;
 
     // Nested-rec-return (Map.set-shape) functions: a chain of outer-parameter lambdas whose innermost body
-    // is `let rec go = (given acc -> B) in go`, i.e. the function RETURNS a recursive single-accumulator
+    // is `let recursive go = (given acc -> B) in go`, i.e. the function RETURNS a recursive single-accumulator
     // function. Such a function is registered in _maFuncs with the FULL parameter list (outer params +
     // acc) and body B, so its saturated (outerCount+1)-arg application is analyzable; the inner recursive
     // self-call `go(x)` is resolved to the function's own growing summary (see _maSelfRecursive / CallReach) with
@@ -653,7 +653,7 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Recognizes the nested-rec-return (Map.set) shape: a chain of outer-parameter lambdas whose innermost
-    /// body is <c>let rec go = (given acc -&gt; B) in go</c> (the letrec binder returned bare, its value a
+    /// body is <c>let recursive go = (given acc -&gt; B) in go</c> (the letrec binder returned bare, its value a
     /// single-parameter lambda whose own body is not a further lambda). Outputs the outer parameter names,
     /// the accumulator parameter name, the recursive binder name, and the inner body B.
     /// </summary>
@@ -3121,7 +3121,7 @@ public sealed partial class Lowering
     /// (the <c>let</c> body, over which <paramref name="name"/> is live). Returns <c>(null, null)</c>
     /// when no such binding exists. Traverses control-flow structure but never descends into a nested
     /// <c>Lambda</c> body — a nested lambda is a separate function scope, so a binding inside it is not
-    /// local to this function. Recursive (<c>let rec</c>) bindings are excluded: their RHS is
+    /// local to this function. Recursive (<c>let recursive</c>) bindings are excluded: their RHS is
     /// self-referential and never a fresh construction. Returning the scope (not the whole enclosing
     /// body) is what lets the caller count uses correctly — a whole-body occurrence count would stop
     /// at this very definition (treating it as a shadow) and report zero uses.

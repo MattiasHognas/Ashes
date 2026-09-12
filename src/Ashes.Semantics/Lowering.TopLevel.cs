@@ -242,7 +242,7 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Counts every binder occurrence (let / let rec / lambda parameter / match-pattern variable)
+    /// Counts every binder occurrence (let / let recursive / lambda parameter / match-pattern variable)
     /// by name across an expression tree. Walks record properties reflectively so new Expr shapes
     /// are covered by default.
     /// </summary>
@@ -310,14 +310,14 @@ public sealed partial class Lowering
     /// Detects the nested-recursive-return shape and the parameter to specialize on. Two forms:
     /// <list type="bullet">
     /// <item><b>Bare</b> (<c>Map.set</c>): a chain of outer parameter lambdas whose innermost body is
-    /// <c>let rec go = (given m -> _) in go</c> — the recursive worker returned bare. The caller
+    /// <c>let recursive go = (given m -> _) in go</c> — the recursive worker returned bare. The caller
     /// applies the accumulator to the returned worker, so <c>argCount = outerParams + 1</c>.</item>
     /// <item><b>Eta-applied</b> (<c>HashMap.set</c>): the worker is instead returned as
     /// <c>… in go(map)</c>, where <c>map</c> is the last outer parameter. This just forwards a fresh
     /// outer accumulator straight into the worker, so the worker's own parameter is still the linear
     /// reuse root, but the accumulator is already an outer argument, so <c>argCount = outerParams</c>.</item>
     /// </list>
-    /// In both forms a chain of leading non-recursive <c>let</c> bindings before the <c>let rec</c>
+    /// In both forms a chain of leading non-recursive <c>let</c> bindings before the <c>let recursive</c>
     /// (e.g. <c>let target = hashKey(newKey)</c>) is peeled: those lower once in the outer function
     /// before the worker is created and do not affect the accumulator's linearity. Outputs the
     /// worker's parameter to specialize on and the total number of arguments the full application takes.
@@ -449,10 +449,10 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Desugars a mutual-recursion group (<c>let rec X = ... and Y = ...</c>) into a marker node that
+    /// Desugars a mutual-recursion group (<c>let recursive X = ... and Y = ...</c>) into a marker node that
     /// lowering handles directly. The parser only emits a <see cref="TopLevelItem.RecursiveGroup"/> for a
     /// genuine multi-binding <c>and</c> group (or a degenerate one-binding group), whose bindings must
-    /// all see one another — a property that nesting independent <c>let rec</c> forms cannot express.
+    /// all see one another — a property that nesting independent <c>let recursive</c> forms cannot express.
     /// The group's names are also in scope for the continuation (subsequent declarations and the
     /// trailing expression) under Model-A scoping; <paramref name="body"/> carries that continuation.
     /// </summary>
@@ -509,7 +509,7 @@ public sealed partial class Lowering
     /// Lowers a mutually-recursive binding group. All member names are introduced with fresh type
     /// variables before any right-hand side is inferred (so each body sees every member), every body is
     /// lowered against one shared environment, and the names then stay in scope — monomorphically, as
-    /// the single <c>let rec</c> form already does — for the continuation.
+    /// the single <c>let recursive</c> form already does — for the continuation.
     /// </summary>
     private (int, TypeRef) LowerRecursiveGroup(
         RecursiveGroupExpr group,
