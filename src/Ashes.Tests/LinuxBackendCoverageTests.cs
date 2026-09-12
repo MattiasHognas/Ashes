@@ -3935,8 +3935,12 @@ public sealed class LinuxBackendCoverageTests
         List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
             BuildTailModuloConstructorResultReleaseMemoryProgram,
             outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> projected = await MeasureMemoryGrowthAsync(
+            BuildProjectingProducerArgumentReleaseMemoryProgram,
+            outputPerIteration: 311).ConfigureAwait(false);
 
         AssertMemoryPlateaus("tail-modulo-constructor producer result released by its caller", samples);
+        AssertMemoryPlateaus("projecting producer's consumed argument released by its caller", projected);
     }
 
     // A map-shaped producer builds its spine in a loop, and a caller consumes and drops the result
@@ -3966,6 +3970,50 @@ public sealed class LinuxBackendCoverageTests
                     if sum(incAll(source))(0) > 0
                     then 1
                     else 0
+
+            let recursive loop remaining total =
+                if remaining == 0
+                then total
+                else loop(remaining - 1)(total + round(64))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // A producer applying a function parameter per element, whose result type holds none of its
+    // argument's own type: the rows go in, their labels come out. The callee's result is
+    // reference-counted and its summary is poisoned by the unknown call, so the argument is handed
+    // over under the adoption flag — and a result that cannot hold a value of the argument's type
+    // kept nothing of it, leaving the adoption flag alone to decide. Reading the callee's returns bit
+    // there instead keeps the reference on every reference-counted result, stranding the whole input
+    // list, its rows and their strings, once per round.
+    private static string BuildProjectingProducerArgumentReleaseMemoryProgram(int iterations)
+        => $$"""
+            type Row =
+                | label: Str
+                | weight: Int
+
+            let recursive rows count acc =
+                if count == 0
+                then acc
+                else rows(count - 1)(Row(label = "row" + Ashes.Text.fromInt(count), weight = count) :: acc)
+
+            let labelOf (row: Row) = row.label
+
+            let recursive mapWith (f: Row -> Str) (values: List(Row)) =
+                match values with
+                    | [] -> []
+                    | head :: tail -> f(head) :: mapWith(f)(tail)
+
+            let recursive sumLengths (values: List(Str)) (acc: Int) =
+                match values with
+                    | [] -> acc
+                    | head :: tail -> sumLengths(tail)(acc + Ashes.Text.byteLength(head))
+
+            let round size =
+                []
+                |> rows(size)
+                |> mapWith(labelOf)
+                |> (given (labels: List(Str)) -> sumLengths(labels)(0))
 
             let recursive loop remaining total =
                 if remaining == 0

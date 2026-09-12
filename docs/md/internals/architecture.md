@@ -1289,6 +1289,17 @@ fresh result can transfer its existing reference. Otherwise the entry
 defensively copies an arena graph. Curried parameters already captured in an
 environment do not advertise direct-argument adoption.
 
+A fresh reference handed over for the callee's result to keep is settled after the call. An adopting
+callee owns it outright; otherwise the caller releases it, consulting the callee's result-ownership
+bit only where a result of that type could hold a value of the argument's type at all. Structural
+containment answers that last question: the result type itself, everything under its type arguments,
+and a named type's constructor field types, with an unresolved variable, a rigid type parameter, or a
+function value — which can have captured anything — answering yes. A producer mapping records to
+their labels returns a list that cannot hold the list of records it consumed, so its adoption flag
+alone decides and the input is released. Reading the result-ownership bit unconditionally instead
+keeps the reference on every reference-counted result, stranding the whole consumed argument — its
+spine, its elements and their own children — once per call.
+
 ### Stacks
 
 Heap allocators serve values; call frames use the ordinary machine stack, and

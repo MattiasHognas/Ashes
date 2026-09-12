@@ -12689,7 +12689,9 @@ public sealed partial class Lowering
             {
                 if (resultCopySeversArgumentReferences)
                 {
-                    EmitHandedOverArgumentRelease(temp, valueType, argument.AdoptionFlagTemp, resultCopyFlagTemp);
+                    EmitHandedOverArgumentRelease(
+                        temp, valueType, argument.AdoptionFlagTemp,
+                        HandedOverArgumentResultFlag(resultType, valueType, resultCopyFlagTemp));
                 }
 
                 continue;
@@ -12773,6 +12775,82 @@ public sealed partial class Lowering
 
         EmitRuntimeManagedChildDrop(temp, valueType);
         Emit(new IrInst.Label(doneLabel));
+    }
+
+    // The result-ownership flag that decides whether a handed-over reference stays with the callee's
+    // reference-counted result, or -1 when a result of this type cannot hold a value of the
+    // argument's type at all — a value is only ever reachable as its own type, so such a result kept
+    // nothing of the argument and the callee's adoption of the reference is the whole question.
+    // Without this, the flag alone keeps every reference a reference-counted result could
+    // conceivably hold, which never releases the argument at all for a producer whose result shares
+    // none of it (a map from records to their labels, say).
+    private int HandedOverArgumentResultFlag(TypeRef resultType, TypeRef argumentType, int resultCopyFlagTemp)
+        => CallResultMayContainArgumentType(resultType, Prune(argumentType), new HashSet<string>(StringComparer.Ordinal))
+            ? resultCopyFlagTemp
+            : -1;
+
+    // Whether a value of `argumentType` could be reachable inside a result of `resultType`. An
+    // unresolved variable or a rigid type parameter stands for a type that could be anything, and a
+    // function value can have captured anything, so both answer yes.
+    private bool CallResultMayContainArgumentType(TypeRef resultType, TypeRef argumentType, HashSet<string> expandedTypeNames)
+    {
+        TypeRef pruned = Prune(resultType);
+        if (pruned is TypeRef.TVar or TypeRef.TTypeParam or TypeRef.TFun
+            || TypesStructurallyEqual(pruned, argumentType))
+        {
+            return true;
+        }
+
+        foreach (TypeRef component in StructuralComponentTypes(pruned))
+        {
+            if (CallResultMayContainArgumentType(component, argumentType, expandedTypeNames))
+            {
+                return true;
+            }
+        }
+
+        // A named type's fields are not visible in its type arguments, so expand its constructors —
+        // once per type name on this walk, which is what stops a recursive type unfolding forever.
+        // Its type arguments are walked above every time regardless, so the same generic type at two
+        // different instantiations still has both of them compared.
+        if (pruned is not TypeRef.TNamedType named || !expandedTypeNames.Add(named.Symbol.Name))
+        {
+            return false;
+        }
+
+        return named.Symbol.Constructors.Any(constructor =>
+            constructor.ParameterTypes.Any(field =>
+                CallResultMayContainArgumentType(field, argumentType, expandedTypeNames)));
+    }
+
+    // The types structurally reachable from a type without expanding a named type's declaration.
+    private static IEnumerable<TypeRef> StructuralComponentTypes(TypeRef type)
+    {
+        switch (type)
+        {
+            case TypeRef.TList list:
+                yield return list.Element;
+                break;
+            case TypeRef.TPtr pointer:
+                yield return pointer.Pointee;
+                break;
+            case TypeRef.TTuple tuple:
+                foreach (TypeRef element in tuple.Elements)
+                {
+                    yield return element;
+                }
+
+                break;
+            case TypeRef.TNamedType named:
+                foreach (TypeRef typeArgument in named.TypeArgs)
+                {
+                    yield return typeArgument;
+                }
+
+                break;
+            default:
+                break;
+        }
     }
 
     // The consumed argument's release chosen by the call's result branch: the owned branch (the
