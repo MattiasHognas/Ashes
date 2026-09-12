@@ -1845,12 +1845,19 @@ public sealed class OwnershipTests
                 | head :: _ -> Ashes.Text.byteLength(head)
             """);
 
-        IrFunction rebuild = ir.Functions.Single(function => function.Instructions.Any(inst => inst is IrInst.StoreMemOffset));
-        rebuild.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
-            "a cons cell whose tail is a recursive call result must stay arena-managed under this RC " +
-            "engine even though the arena/TCO side's own IsArenaSelfContainedListRebuildExpr treats a call result as " +
-            "safe to whole-clone -- the two questions (RC-promotion-safe vs. clone-cost-safe) are not " +
-            "the same question and must not share a terminal set.");
+        // The call fixes the element type, so the rebuild is compiled twice: the generic function and
+        // the element specialization the call routes to. Both copies owe the same invariant.
+        IReadOnlyList<IrFunction> rebuilds =
+            [.. ir.Functions.Where(function => function.Instructions.Any(inst => inst is IrInst.StoreMemOffset))];
+        rebuilds.ShouldNotBeEmpty();
+        foreach (IrFunction rebuild in rebuilds)
+        {
+            rebuild.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
+                "a cons cell whose tail is a recursive call result must stay arena-managed under this RC " +
+                "engine even though the arena/TCO side's own IsArenaSelfContainedListRebuildExpr treats a call result as " +
+                "safe to whole-clone -- the two questions (RC-promotion-safe vs. clone-cost-safe) are not " +
+                "the same question and must not share a terminal set.");
+        }
     }
 
     [Test]

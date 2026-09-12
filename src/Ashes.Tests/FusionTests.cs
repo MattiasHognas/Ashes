@@ -168,12 +168,16 @@ public sealed class FusionTests
     // whether any CallClosure's closure temp traces back to the target. A forward last-write-wins scan
     // is good enough here: it only needs to tell whether a specific stdlib function was ever actually
     // invoked, not perform general dataflow analysis.
+    // Every compiled function the named source function produced, not just the first: an element
+    // specialization is a copy of that same source lowered at one call site's concrete types, so a
+    // call to the copy is a call to this function exactly as much as a call to the generic original is.
     private static bool CallsQualifiedFunction(IrProgram program, string qualifiedName)
     {
-        string? targetLabel = program.Functions
-            .FirstOrDefault(f => string.Equals(f.Origin?.Source?.QualifiedName, qualifiedName, StringComparison.Ordinal))
-            ?.Label;
-        if (targetLabel is null)
+        HashSet<string> targetLabels = program.Functions
+            .Where(f => string.Equals(f.Origin?.Source?.QualifiedName, qualifiedName, StringComparison.Ordinal))
+            .Select(f => f.Label)
+            .ToHashSet(StringComparer.Ordinal);
+        if (targetLabels.Count == 0)
         {
             return false;
         }
@@ -202,7 +206,7 @@ public sealed class FusionTests
                         tempOrigin[ll.Target] = fromSlot;
                         break;
                     case IrInst.CallClosure cc when tempOrigin.TryGetValue(cc.ClosureTemp, out string? callee):
-                        if (string.Equals(callee, targetLabel, StringComparison.Ordinal))
+                        if (targetLabels.Contains(callee))
                         {
                             return true;
                         }

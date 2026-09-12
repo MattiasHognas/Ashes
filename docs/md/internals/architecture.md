@@ -965,7 +965,8 @@ cons is transformed only where the ordinary cell lowering would already place a 
 meaning the element either survives an arena reset outright (a scalar, a tuple of scalars) or is a
 runtime-managed pointer the cell can own (`Str`, `Bytes`, `BigInt`, a list, a named type). Every
 other producer — most importantly one whose element type is still a type variable, as in the shipped
-generic `List.map` — is declined and keeps recursing. An arena spine cannot be substituted, for two
+generic `List.map` — is declined in its own body and keeps recursing; a call that fixes the element
+type routes to a specialized copy instead, described below. An arena spine cannot be substituted, for two
 independent reasons. Its cells sit above the loop's per-iteration watermark, so the back edge frees
 them unless the loop stops reclaiming, and a loop that stops reclaiming strands every iteration's
 garbage for the whole traversal; re-saving the watermark past each cell fixes that, but not the
@@ -975,6 +976,23 @@ A reference-counted cell retains its head and is safe; an arena cell stores it r
 derived from the consumed input — a record field bound straight from the list being traversed, or a
 callback result that may simply return its argument — is left dangling. At an unresolved element type
 neither hazard can be ruled out, so the shape is declined rather than transformed.
+
+**Call-site element specialization** covers the producers that decline for that reason. A top-level
+function qualifies as a candidate when its own lowering declined a cons at an abstract element, its
+scheme quantifies at least one variable, it carries no trait constraints, and its closure environment
+is empty — a copy is lowered in an isolated scope, so anything it would have captured has nothing to
+resolve to there. A call that fixes every one of the callee's own curried parameters to concrete types
+lowers that function's source again with those types pinned, and routes the call to the copy through a
+synthetic local binding, so every call-site fact that resolves the root — its label, its ownership
+summary, whether its scheme leaves a position quantified — describes the copy actually called. Copies
+are cached on the function name plus the structural identity of the pinned types, and a depth limit
+bounds a chain of generic producers specializing one another.
+
+The copy is kept only on evidence that it bought something. If its body still declines a cons at the
+cell gate, or still reads the closure of a function being lowered — a recursion the loop did not
+absorb — the call stays generic and the rejection is cached against the same key. Without that check a
+concrete `filter` whose recursion survives specialization goes quadratic, which is worse than the
+generic call it replaced.
 
 `TcoParamReuseAffinity.SelfAppendOnly` independently records the affine ownership discipline used
 by string reservation reuse. Along every loop-continuing path, the parameter may occur only as the

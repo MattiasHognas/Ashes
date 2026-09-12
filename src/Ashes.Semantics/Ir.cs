@@ -187,6 +187,8 @@ public enum IrFunctionOriginKind
     ListDeepCopier,
     /// <summary>A structural release helper naming an owner's whole-value drop as one instruction.</summary>
     StructuralOwnerDropper,
+    /// <summary>A copy of a generic source function lowered at one call site's concrete element types.</summary>
+    ElementSpecialization,
 }
 
 /// <summary>The non-source namespace that owns a shared generated function.</summary>
