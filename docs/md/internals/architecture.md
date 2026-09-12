@@ -686,6 +686,11 @@ mask (CI runs `--pipeline both`). The `-O0..-O3` flags select the LLVM level
 only: at `-O0` no LLVM pass runs and the Ashes-optimized IR is emitted as-is;
 `-O1`+ hands the module to LLVM's full `default<Ox>` pipeline.
 
+Top-level lambda reachability pruning before lowering is not implemented. The
+[elision investigation](../future/UNREACHABLE_TOP_LEVEL_BINDINGS.md) records its measured benefits,
+diagnostic-preservation blocker, and a separate current element-specialization memory regression;
+it is not a shipped optimization or an RSS improvement.
+
 ```mermaid
 graph TD
     A["IrCompileTimeEval.Evaluate<br/>whole program: pure constant-argument calls become constants"] --> B["per-function pipeline<br/>entry + every function, in order"]

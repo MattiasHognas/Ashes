@@ -2847,6 +2847,11 @@ same public behavior.
   generic function when its copy still declines a cons or still reads the closure of a function being
   lowered — without that gate a concrete `filter` whose recursion survives goes quadratic. Details in
   `project_tmc_element_specialization_findings` (session memory).
+  Stage-0 prerequisite discovered 2026-09-12: specialized `setAt` strands a caller-retained input
+  reference when its independently copied RC result bypasses caller-side copy-out. Restore the
+  fannkuch memory gate before mirroring that call-ownership protocol; the
+  [elision investigation](UNREACHABLE_TOP_LEVEL_BINDINGS.md#current-leak-mechanism) includes the
+  isolated mechanism, revision comparisons, and a standalone churn reproduction.
 - [ ] **OPT-61** Repair fusion's lexical binding identity in stage 0 and use the corrected contract
   in both compilers (milestone 5, before OPT-58). `TryResolveFusableCallbackBody` in
   `Lowering.Fusion.cs` chooses a top-level lambda by source name even when a parameter shadows
