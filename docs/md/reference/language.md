@@ -2008,7 +2008,7 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
   this declaration position; it remains an ordinary identifier elsewhere.
 - **Members.** An optional leading `export` declaration, followed by `let`, `let recursive ... and ...`, `type`, and nested `module`
   declarations — the same forms a file may contain. A `module` block may **not**
-  contain a trailing expression or an `external` declaration.
+  contain a trailing expression, an `external` declaration, or an `import`.
 - **Identity.** An inline module is an **exported submodule** of its file:
   `File.Inner.member` is path-addressable from other files, so promoting an
   inline module to its own file (`File/Inner.ash`) leaves every `import` and call
@@ -2021,9 +2021,13 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
   holds: a declaration sees earlier declarations in the block, never later ones;
   self-recursion needs `let recursive`, mutual recursion `let recursive ... and`.
   Like a file module, an inline module does not implicitly capture the enclosing
-  file's unqualified bindings — it reaches other namespaces the same way any
-  module does, by qualified access or `import`. This is what keeps inline ↔ file
-  promotion transparent.
+  file's unqualified bindings, nor its imports. It reaches another namespace by
+  **qualified access** — the import header belongs to the file, and a `module`
+  block may not carry one of its own. This is what keeps inline ↔ file promotion
+  transparent: the block becomes a file whose imports are written in at that point.
+  Qualified access to a standard library module needs no import anywhere (§13.1),
+  so `Ashes.Collection.List.length(xs)` is available inside a block as it is
+  outside one.
 - **Access.** By qualified path (`Geometry.area`), or by bringing names in with
   the ordinary `import` machinery — whole-module (`import Geometry`), alias
   (`import Geometry as G`), or selector (`import Geometry.area as a`, including
