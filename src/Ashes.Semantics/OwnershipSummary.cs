@@ -61,6 +61,15 @@ internal enum ResultReachCause
     UnmodelledReach = 1 << 1,
     InternalSharing = 1 << 2,
     ConservativeUnknown = 1 << 3,
+
+    /// <summary>
+    /// The values the unproven construct could see were not enumerated, so the reach paths say
+    /// nothing about what it may have kept. Set alongside the cause that made the result unproven
+    /// wherever that construct's inputs are unknown (a lambda's captured environment, an unmodelled
+    /// node); left clear where they are known (an unknown callee applied to known arguments), which
+    /// is what keeps the whole-reach account complete under poison.
+    /// </summary>
+    UnenumeratedInputs = 1 << 4,
 }
 
 /// <param name="ParameterReach">Each parameter the result may alias (through any path), at presence.</param>
@@ -69,12 +78,28 @@ internal enum ResultReachCause
 /// through a destructured component (a list's head or tail, a record field). A callee that stores a
 /// parameter into the value it returns reaches it whole; one that rebuilds a value from the
 /// parameter's parts does not.</param>
+/// <param name="ExposedWholeParameterReach">The parameters handed whole to something this analysis
+/// cannot see through — an unknown callee, which may hand any of them straight back. Kept apart from
+/// <paramref name="ParameterReach"/> and <paramref name="WholeParameterReach"/>, which describe only
+/// what the analysis could follow and whose readers answer for a poisoned summary by consulting
+/// <see cref="Poisoned"/>.</param>
 internal sealed record FunctionResultReachFacts(
     IReadOnlyDictionary<string, int> ParameterReach,
     ResultReachCause Causes,
-    IReadOnlySet<string> WholeParameterReach)
+    IReadOnlySet<string> WholeParameterReach,
+    IReadOnlySet<string> ExposedWholeParameterReach)
 {
     public bool Poisoned => Causes != ResultReachCause.None;
+
+    /// <summary>
+    /// Every value the result could have been built from was accounted for, so the reach paths are a
+    /// complete account of which parameters the result may hold and at what depth — even where the
+    /// result is poisoned. Poison and enumeration are independent: a call to an unknown function
+    /// leaves the result unconfined (it may be a global or a fresh value) while its arguments are
+    /// right there to be walked, and a parameter handed to it only as a destructured component
+    /// therefore provably cannot come back whole.
+    /// </summary>
+    public bool ReachEnumerated => (Causes & ResultReachCause.UnenumeratedInputs) == ResultReachCause.None;
 }
 
 [Flags]
@@ -312,4 +337,16 @@ internal sealed record FunctionOwnershipSummary(
     /// returned whole), not merely through one of its destructured components.
     /// </summary>
     public bool ResultReachesWhole(string parameter) => ResultReachFacts.WholeParameterReach.Contains(parameter);
+
+    /// <summary>
+    /// True if the result provably never holds parameter <paramref name="parameter"/> as itself — it
+    /// may still hold the parameter's components. This is <see cref="ResultReachesWhole"/> read as a
+    /// proof rather than a possibility, so it additionally requires the reach account to be complete
+    /// (see <see cref="FunctionResultReachFacts.ReachEnumerated"/>): absence from an incomplete
+    /// account means unknown, not proven-absent.
+    /// </summary>
+    public bool ResultCannotKeepParameterWhole(string parameter)
+        => ResultReachFacts.ReachEnumerated
+            && !ResultReachesWhole(parameter)
+            && !ResultReachFacts.ExposedWholeParameterReach.Contains(parameter);
 }

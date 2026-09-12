@@ -845,6 +845,19 @@ flags for global or unmodelled reach and internal sharing. The existing
 `UniqueParameters`, `ResultFresh`, and `ResultPoisoned` values are compatibility
 projections of those facts.
 
+Result reach records the depth a parameter is reached at, so a result that embeds
+a parameter is distinguished from one rebuilt out of its destructured parts.
+Whether the result is confined and whether that account is complete are separate
+questions. A construct this analysis cannot see through still contributes the
+values it was given: an unknown callee — a parameter applied as a function, a
+call through a let-bound value — may return an argument, one of their sub-cells,
+a global, or a fresh value, and nothing else, because nothing mutates. Such a
+result is unconfined and its reach account is still complete, which is what lets
+a caller prove that a list handed to a map is never kept: the per-element call
+only ever sees a head. Only a construct whose inputs cannot be enumerated — a
+lambda's captured environment, an unmodelled node — sets `UnenumeratedInputs`,
+and there absence from the account means unknown rather than proven-absent.
+
 Resolved ordinary heap types are described once by a cycle-guarded
 `OrdinaryHeapLayoutCapability`. It records whether the graph can be copied,
 whether every owned child can be dropped, the constructor-specific child
@@ -1299,6 +1312,12 @@ their labels returns a list that cannot hold the list of records it consumed, so
 alone decides and the input is released. Reading the result-ownership bit unconditionally instead
 keeps the reference on every reference-counted result, stranding the whole consumed argument — its
 spine, its elements and their own children — once per call.
+
+Types cannot answer that question when the result's element type equals the argument's — a map from
+strings to strings — and the hand-over is what a caller falls back on whenever the callee's result
+reach is unproven. A complete reach account settles it without types: a callee that provably never
+holds the argument whole takes the ordinary consumed-argument release instead, giving up the spine it
+handed over while preserving the elements the result may still hold.
 
 ### Stacks
 
