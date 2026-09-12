@@ -541,7 +541,8 @@ same public behavior.
   resolution for an unconstrained caller, and the phase plan's keystone — constraint-aware local
   type reconstruction in `CoreLowering.ash`, or one merged type-variable space with inference
   (the local reconstruction and the external environment share no variable space; merging their
-  outputs into one scheme produced an infinite substitution cycle).- [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
+  outputs into one scheme produced an infinite substitution cycle).
+- [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
   ABI-ordered fields, and recursively constructed inherited evidence. Lower those values, default
   dispatch, method selection, and safe concrete specialization into IR without changing unoptimized
   behavior.
@@ -1821,7 +1822,10 @@ same public behavior.
   That recursion also overflowed the stack — the self-hosted `fmt` segfaulted on every source
   above roughly 90 KB, stage 0's own binaries above roughly 250 KB — so `Ashes.Text.length`,
   `take`, and `drop` now walk the bytes with an index (`countCodepoints`, `cpByteOffset`) and
-  slice; regression `tests/text_length_take_drop_large_string.ash`. What remained was the frame
+  slice; regression `tests/text_length_take_drop_large_string.ash`. That fix and the
+  optimization-level one below raised the threshold without removing it: `fmt` still segfaults on a
+  241 KB source, from a cause neither of them addressed. Tracked as OPT-67 — do not read this item
+  as having closed `fmt` on large files. What remained was the frame
   size: this backend emitted at LLVM optimization level none, so a call frame was about four
   times stage 0's, and `Collection.List.map`/`filter`/`append` (one frame per element by design,
   the shape the reuse optimizer relies on) overflowed the 8 MB machine stack at about 100000
@@ -2925,6 +2929,18 @@ same public behavior.
   scheme rather than a local and the slot lives on both. The self-hosted equivalents are
   `TcoAnalysis.ash` and `CoreLowering.ash`, neither audited for this. Details in
   `project_let_bound_tail_call_argument_leak` (session memory).
+- [ ] **OPT-67** The self-hosted `fmt` still segfaults on a large source. Two separate fixes each
+  raised the threshold and neither removed it: `Ashes.Text.length`/`take`/`drop` moved to an index
+  walk (OPT-39's entry above), and the backend began running LLVM's `default<O2>` pipeline instead
+  of emitting at optimization level none. With both in place `fmt` still crashes on
+  `TypeInference.ash` (241 KB), confirmed directly against the built self-hosted CLI. The symptom
+  was previously attributed entirely to the missing optimization pipeline; that attribution is now
+  wrong, because the underlying gap is fixed and the crash persists. The remaining cause is
+  uninvestigated and is most likely a stack cost specific to the parser/formatter's own
+  recursive-descent shape rather than the one-frame-per-element `List.map` pattern the
+  optimization-level work measured and closed — so start by measuring frame depth through
+  `fmt` on a large source, not by re-checking the pass pipeline. Details in
+  `project_selfhost_gaps_found_task3` (session memory).
 
 #### LLVM code generation and runtime integration
 
