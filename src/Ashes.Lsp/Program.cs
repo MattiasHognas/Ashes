@@ -32,19 +32,7 @@ internal static class Program
 
         while (TryReadMessage(input, out var payload))
         {
-            using var json = JsonDocument.Parse(payload);
-            var root = json.RootElement;
-
-            if (!root.TryGetProperty("method", out var methodElement))
-            {
-                continue;
-            }
-
-            var method = methodElement.GetString() ?? string.Empty;
-            var hasId = root.TryGetProperty("id", out var id);
-            root.TryGetProperty("params", out var parameters);
-
-            var exitCode = DispatchMessage(method, hasId, id, parameters, output, ref shutdownRequested);
+            var exitCode = ProcessMessage(payload, output, ref shutdownRequested);
             if (exitCode is not null)
             {
                 return exitCode.Value;
@@ -52,6 +40,52 @@ internal static class Program
         }
 
         return 0;
+    }
+
+    // A single malformed request or a bug in one handler (hover, completion, ...) must never
+    // take down the whole server: with no response ever sent, the client is left waiting on
+    // that request forever (e.g. a hover popup stuck on "Loading..."), and every later request
+    // fails too once the process has exited. Every message is therefore isolated here so one
+    // bad request degrades to a logged error and, for requests with an id, an error response —
+    // not a dead server.
+    private static int? ProcessMessage(string payload, Stream output, ref bool shutdownRequested)
+    {
+        var hasId = false;
+        JsonElement id = default;
+        try
+        {
+            using var json = JsonDocument.Parse(payload);
+            var root = json.RootElement;
+
+            if (!root.TryGetProperty("method", out var methodElement))
+            {
+                return null;
+            }
+
+            var method = methodElement.GetString() ?? string.Empty;
+            hasId = root.TryGetProperty("id", out id);
+            if (hasId)
+            {
+                // Cloned so `id` stays valid in the catch block below: JsonDocument's `using`
+                // disposes it (invalidating every JsonElement view into it) as the exception
+                // unwinds past this try, before control ever reaches the catch.
+                id = id.Clone();
+            }
+
+            root.TryGetProperty("params", out var parameters);
+
+            return DispatchMessage(method, hasId, id, parameters, output, ref shutdownRequested);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ashes-lsp] unhandled exception processing request: {ex}");
+            if (hasId)
+            {
+                SendErrorResponse(output, id, ex);
+            }
+
+            return null;
+        }
     }
 
     private static void PrintVersion()
@@ -645,6 +679,25 @@ internal static class Program
             method,
             @params
         });
+    }
+
+    private static void SendErrorResponse(Stream output, JsonElement id, Exception ex)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(ms))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("jsonrpc", "2.0");
+            writer.WritePropertyName("id");
+            id.WriteTo(writer);
+            writer.WriteStartObject("error");
+            writer.WriteNumber("code", -32603); // JSON-RPC "Internal error"
+            writer.WriteString("message", ex.Message);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        WritePayload(output, ms.ToArray());
     }
 
     private static void SendResponse(Stream output, JsonElement id, object? result)
