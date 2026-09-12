@@ -40,7 +40,7 @@ a trivial program measures ~8 MB — so figures at or near that are the floor, n
 | [binary-trees](binary-trees/README.md) | N=21 | 1.25 s | 196 MB | arena reclaims tens of millions of discarded nodes; RSS tracks the long-lived tree (was regressed to 2.34 s / 7.3 GB before CO-38) |
 | [mandelbrot](mandelbrot/README.md) | N=16,000 | 11.9 s | 1.7 GB | real P4 PBM output; RSS is the packed-bitmap cons list |
 | [fannkuch-redux](fannkuch-redux/README.md) | N=11 | 31.7 s | 8.0 MB | correct `556355 / 51` output at the resident floor; the retained-but-never-released successor state is fixed (below) |
-| [n-body](n-body/README.md) | N=50,000,000 | 14.3 s | 8.0 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
+| [n-body](n-body/README.md) | N=50,000,000 | 1.80 s | 8.0 MB | fixed five-body record, each pair evaluated once; the `List(Body)` formulation is kept as `n-body-list.ash` |
 | [spectral-norm](spectral-norm/README.md) | N=5,500 | 0.87 s | 8.0 MB | clean O(N^2) scaling, 9-dp output exact |
 | [fasta](fasta/README.md) | N=25,000,000 | 3.15 s | 447 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
 | [reverse-complement](reverse-complement/README.md) | fasta 25M input | 5.76 s | 3.73 GB | buffered line output; `List(Rune)` live set and byte-exact involution verified |

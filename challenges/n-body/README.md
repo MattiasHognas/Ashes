@@ -34,8 +34,8 @@ fixed-precision formatting) have both shipped — the benchmark is ready to impl
 ## Status
 
 **Implemented + benchmarked.** [`n-body.ash`](n-body.ash) is the intended pure solution: each body
-a record, the system a fixed 5-element `List(Body)` rebuilt by `advance` every step, energy printed
-to 9 dp via `Ashes.Number.Math.sqrt` + `Ashes.Text.formatFloat`. Output matches the reference
+a record, the system a fixed five-body `System` record rebuilt by `advance` every step, energy
+printed to 9 dp via `Ashes.Number.Math.sqrt` + `Ashes.Text.formatFloat`. Output matches the reference
 (`-0.169075164` / `-0.169059907` at the standard workload).
 
 ## Build & run
@@ -57,13 +57,28 @@ Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, L
 
 | N (steps) | Time | Peak RSS |
 |-----------|------|----------|
-| 1,000,000 | 0.29 s | 8.0 MB |
-| 10,000,000 | 2.83 s | 8.0 MB |
-| **50,000,000** (standard) | **14.3 s** | **8.0 MB** |
+| **50,000,000** (standard) | **1.80 s** | **8.0 MB** |
 
-**Constant resident memory at every N** — the `List(Body)` accumulator takes the whole-list deep
-clone across the fixed-watermark reset (changelog CO-32; licensed because `advance(dt)(bodies)`
-rebuilds the list every step), and the amortized compaction (CO-35) keeps the per-step copy cost
-sub-linear. Before that arc this loop grew 4.27 GB per 1e6 steps. Time is ~0.29 us/step of pure
-Float arithmetic; the mutable reference remains several times faster per step, the price of
-rebuilding an immutable 5-record list per iteration.
+Against the same program in other languages at N=50,000,000 (see
+[`../xlang/`](../xlang/README.md)): Rust 1.19 s, **Ashes 1.80 s**, OCaml 1.80 s, .NET 10 1.92 s,
+Go 2.46 s. Every output is byte-identical.
+
+Two changes took this from 14.3 s. The system is a fixed five-body `System` record instead of a
+`List(Body)`, and each pair is evaluated once rather than twice.
+
+The list cost more than its allocation. Rebuilding five cons cells and five records per step is
+the obvious part; the less obvious part is that computing accelerations needs the whole list live
+while the new one is being built, which is real aliasing, so in-place reuse could not fire on it
+(`--explain ownership` reported `updatePos.bodies` unique yes but `updateVel.remaining` unique no).
+Declining there was correct, not a compiler gap. A fixed record has neither problem.
+
+Evaluating each pair once halves the square roots, twenty per step to ten. In a pure setting this
+needs both bodies of a pair updated from one computed magnitude, which the fixed record makes
+natural — each velocity component is a sum of the four interactions that body takes part in.
+
+**Constant resident memory at every N**, unchanged by either change.
+
+The previous formulation is kept as `n-body-list.ash`. It is no longer the benchmark entry, but it
+is the shape that exercises the arena/reference-counted list path — the whole-list deep clone
+across the fixed-watermark reset (changelog CO-32) and the amortized compaction (CO-35), which
+before that arc grew 4.27 GB per 1e6 steps — so it stays runnable.

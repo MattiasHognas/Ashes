@@ -55,8 +55,10 @@ build_one () { # $1=benchmark; echoes nothing, sets BIN_<lang>
         && BIN_go="$BUILD/$b.go.bin" ;;
     ocaml)
       # The distro ocamlopt is often built without flambda, so -O3 is unavailable; -inline is not.
-      have ocamlopt && (cd "$BUILD" && ocamlopt -unsafe -inline 100 \
-        -o "$BUILD/$b.ml.bin" "$HERE/ml/$b.ml" >/dev/null 2>&1) \
+      # Compiled from a copy: ocamlopt writes .cmi/.cmx/.o beside the SOURCE, which would leave
+      # build outputs in the repository.
+      have ocamlopt && cp "$HERE/ml/$b.ml" "$BUILD/" && (cd "$BUILD" && ocamlopt -unsafe -inline 100 \
+        -o "$BUILD/$b.ml.bin" "$b.ml" >/dev/null 2>&1) \
         && BIN_ocaml="$BUILD/$b.ml.bin" ;;
   esac; done
 }
