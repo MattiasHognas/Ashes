@@ -2785,6 +2785,43 @@ same public behavior.
   `LowerCall`, after `LowerExpr` returns a type for `init`/`xs`. Comparable in size to stage 0's own
   implementation, not a mechanical port; details in
   `project_mapfold_fusion_selfhost_port_not_attempted` (session memory).
+- [ ] **OPT-59** Self-hosted mirror of stage 0's enumerated-reach split (`ResultReachCause.UnenumeratedInputs`
+  plus `ReachExposed`/`UnknownCalleeReach` in `Lowering.MoveAnalysis.cs`, landed as #970). Stage 0
+  separates "the result is not provably confined" from "the values that went into it were not
+  enumerated": a call it cannot resolve to a registered function — a parameter applied as a function,
+  the `f(head)` of every map — contributes the callee value's own reach plus each argument's, at the
+  depth it was handed over, on paths tagged so they stay out of the published may-alias set. A
+  parameter handed over only as a destructured component is then provably never kept whole even though
+  the summary is poisoned, which is what lets a caller release a consumed list whose element type
+  equals the result's (`List(Str) -> List(Str)`, where structural type containment cannot tell "the
+  result embeds the argument" from "the result shares nothing with it"). Until this lands, a program
+  compiled by the self-hosted compiler keeps that list: stage 0 measured 12.3 MB at 50 rounds growing
+  to 32.9 MB at 200 before the fix, and a flat 8.2 MB after. The analysis half is an increment rather
+  than new machinery — `ResultReachSummaries.ash` already carries whole-versus-component reach
+  (`isWholeName`, `recordRoot`, and `OwnershipSummary.ash`'s `wholeParameterReach`) — so the work is
+  adding the cause beside `UnmodelledReach` in `OwnershipSummary.ash`, having `reachPoisoned` set it at
+  every existing site, and adding the one enumerating site for an unresolved callee. The consumer half
+  has no namesake to mirror: `CallOwnership.ash` models parameter ownership, not stage 0's
+  `ConsumedRuntimeArgument` hand-over under a callee adoption flag, so that side needs surveying first.
+  Keep the published reach facts byte-identical the way stage 0 did, or the shared explain fixtures
+  move and `ExplainReportTests.ash` needs a `checkKnownDifference` entry. Details in
+  `project_whole_reach_survives_poison` (session memory).
+- [ ] **OPT-60** Self-hosted mirror of stage 0's call-site element specialization
+  (`Lowering.ElementSpecialization.cs`, landed as #971): a top-level generic function whose own
+  lowering declined a tail-modulo-constructor cons at an abstract element is lowered again with one
+  call site's concrete parameter types pinned, in an isolated scope, and the call is routed to that
+  copy, so the reference-counted cell gate on `CoreLowering.ash`'s `lowerConsTmc` passes where the
+  generic body could not. Until it lands, the self-hosted compiler keeps declining generic
+  `List.map`/`List.filter`, whose recursion stays bounded by the native stack at roughly 170000
+  elements. Depends on OPT-59: without the release that unlocks, routing the stdlib map into a
+  same-element-type copy strands the input list once per call — stage 0 measured 20 MB, 135 MB and
+  508 MB at 10, 100 and 400 rounds in exactly that configuration, against a flat 8.2 MB with both
+  halves in place. Not mechanical: it needs an isolated lowering-context save and restore (stage 0
+  saves and clears scopes, reuse tokens, the TCO context, annotation seeds and hover recording), a
+  lowering entry point that accepts a forced label, and the evidence gate that sends a call back to the
+  generic function when its copy still declines a cons or still reads the closure of a function being
+  lowered — without that gate a concrete `filter` whose recursion survives goes quadratic. Details in
+  `project_tmc_element_specialization_findings` (session memory).
 
 #### LLVM code generation and runtime integration
 
