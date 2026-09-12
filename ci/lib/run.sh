@@ -23,6 +23,15 @@ CI_IMAGE_TAG="${CI_IMAGE_TAG:-latest}"
 # --userns=keep-id, avoiding root-owned/unwritable cache permission issues.
 CI_CACHE_DIR="${CI_CACHE_DIR:-${CI_REPO_ROOT}/.ci-cache}"
 
+# Thread ceiling for the container. Podman defaults --pids-limit to 2048, and that cgroup counts
+# THREADS, not processes. The test suites spawn the compiled CLI as a subprocess per test, and each
+# one starts a .NET runtime whose Server GC opens a heap thread per core — roughly 18-36 threads on
+# a developer workstation, more as core count grows. A parallel suite therefore burns through 2048
+# in bursts (measured peak: 1933 on a 32-core host), and a runtime that loses the clone() race
+# blocks in startup waiting for GC threads it can never create. It never times out, so the suite
+# stalls on it indefinitely rather than failing. Keep a ceiling, well above what a burst needs.
+CI_PIDS_LIMIT="${CI_PIDS_LIMIT:-16384}"
+
 ci_image_for() {
   case "$1" in
     base | arm64 | win) printf '%s-%s:%s' "$CI_IMAGE_PREFIX" "$1" "$CI_IMAGE_TAG" ;;
@@ -56,6 +65,7 @@ run_in() {
   # (matrix/ext/release) bundle their own copies, so this is harmless for them.
   "$CI_ENGINE" run --rm \
     "${userns_args[@]}" \
+    --pids-limit "$CI_PIDS_LIMIT" \
     -v "${CI_REPO_ROOT}:/work:Z" \
     -v "${CI_CACHE_DIR}/nuget:/home/ci/.nuget:Z" \
     -v "${CI_CACHE_DIR}/pnpm:/home/ci/.local/share/pnpm:Z" \
