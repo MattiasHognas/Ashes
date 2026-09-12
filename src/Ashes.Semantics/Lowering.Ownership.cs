@@ -981,6 +981,13 @@ public sealed partial class Lowering
                 // last reference, then releases the environment and the closure cell.
                 Emit(new IrInst.RcDrop(valueTemp, "Function", RuntimeManaged: true));
                 break;
+            case TypeRef.TVar:
+            case TypeRef.TTypeParam:
+                // An element or field whose type inference never resolved holds nothing to release:
+                // a concrete value stored here would have unified the variable with its own type.
+                // `[] : List(a)` reaching a drop is the ordinary way this happens — an empty list
+                // literal merged at an if/match join, whose spine still drops around this.
+                break;
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed aggregate child.");
         }
