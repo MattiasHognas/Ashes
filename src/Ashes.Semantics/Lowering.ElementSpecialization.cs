@@ -112,10 +112,6 @@ public sealed partial class Lowering
             return;
         }
 
-        if (Environment.GetEnvironmentVariable("ASH_TMP_ELEMENT_SPEC_LOG") is not null)
-        {
-            Console.Error.WriteLine($"[element-spec] candidate {name}");
-        }
         _elementSpecializationCandidates[name] = new ElementSpecializationCandidate(
             name,
             reference.Label,
@@ -150,7 +146,6 @@ public sealed partial class Lowering
         int argumentCount)
     {
         if (_elementSpecializationCandidates.Count == 0
-            || Environment.GetEnvironmentVariable("ASH_TMP_DISABLE_ELEMENT_SPEC") is not null
             || _elementSpecializationDepth >= ElementSpecializationDepthLimit
             || ResolveSpecializableCalleeName(rootExpression) is not { } name
             || !_elementSpecializationCandidates.TryGetValue(name, out ElementSpecializationCandidate? candidate)
@@ -182,19 +177,10 @@ public sealed partial class Lowering
         if (parameterTypes.Count != candidate.ChainArity
             || parameterTypes.Any(ValueTypeRemainsAbstract))
         {
-            if (Environment.GetEnvironmentVariable("ASH_TMP_ELEMENT_SPEC_LOG") is not null)
-            {
-                Console.Error.WriteLine($"[element-spec] abstract {candidate.Name} {string.Join(",", parameterTypes.Select(Pretty))}");
-            }
             return -1;
         }
-        string? maybeLabel = GetOrCreateElementSpecialization(candidate, parameterTypes);
-        if (Environment.GetEnvironmentVariable("ASH_TMP_ELEMENT_SPEC_LOG") is not null)
-        {
-            Console.Error.WriteLine($"[element-spec] ground {(maybeLabel is null ? "rejected" : "accepted")} {candidate.Name} {string.Join(",", parameterTypes.Select(Pretty))}");
-        }
 
-        if (maybeLabel is not { } label)
+        if (GetOrCreateElementSpecialization(candidate, parameterTypes) is not { } label)
         {
             return -1;
         }
@@ -254,7 +240,6 @@ public sealed partial class Lowering
 
         return label;
     }
-
 
     private sealed record ElementSpecializationSavedContext(
         ImmutableSortedDictionary<string, Binding>[] Scopes,
@@ -322,10 +307,8 @@ public sealed partial class Lowering
                     originSeed: originSeed);
             }
 
-            if (Environment.GetEnvironmentVariable("ASH_TMP_ELEMENT_SPEC_LOG") is not null)
-            {
-                Console.Error.WriteLine($"[element-spec] evidence {label} declines={_elementSpecializationTmcDeclines} self={_elementSpecializationSelfReferences}");
-            }
+            // Evidence that the copy actually bought something: a cons the cell gate still declined, or a
+            // recursion the loop did not absorb, means the generic call was the better shape after all.
             return _elementSpecializationTmcDeclines == 0 && _elementSpecializationSelfReferences == 0;
         }
         finally

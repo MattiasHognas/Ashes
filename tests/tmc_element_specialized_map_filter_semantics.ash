@@ -34,33 +34,28 @@ let prependTwo (values: List(Int)) = 2 :: values
 let recursive people count acc =
     if count == 0
     then acc
-    else
-        people(count - 1)(Person(name = text.fromInt(count), age = count) :: acc)
+    else people(count - 1)(Person(name = text.fromInt(count), age = count) :: acc)
 
 let render parts = text.join(",")(parts)
 
-let names =
-    Person(name = "ann", age = 3) :: Person(name = "bob", age = 2) :: Person(name = "cy", age = 1) :: []
-    |> list.map(nameOf)
+let names = Person(name = "ann", age = 3) :: Person(name = "bob", age = 2) :: Person(name = "cy", age = 1) :: [] |> list.map(nameOf)
 
-let echoed =
-    names
-    |> list.map(same)
+let echoed = names |> list.map(same)
 
-let suffix = text.fromInt(0)
-    |> (given (zero) -> if zero == "0" then "!" else "?")
+let suffix =
+    0
+    |> text.fromInt
+    |> (given (zero) ->
+        if zero == "0"
+        then "!"
+        else "?")
 
 let shouted =
-    "x" :: "y" :: "z" :: []
-    |> list.map(given (value: Str) -> value + suffix)
+    "x" :: "y" :: "z" :: [] |> list.map(given (value: Str) -> value + suffix)
 
-let kept =
-    "" :: "b" :: "" :: "" :: "d" :: "" :: []
-    |> list.filter(nonEmpty)
+let kept = "" :: "b" :: "" :: "" :: "d" :: "" :: [] |> list.filter(nonEmpty)
 
-let described =
-    Person(name = "ann", age = 3) :: Person(name = "bob", age = 2) :: Person(name = "cy", age = 1) :: []
-    |> list.map(describe)
+let described = Person(name = "ann", age = 3) :: Person(name = "bob", age = 2) :: Person(name = "cy", age = 1) :: [] |> list.map(describe)
 
 let aged =
     Person(name = "p", age = 1) :: Person(name = "q", age = 2) :: Person(name = "r", age = 3) :: []
@@ -83,7 +78,10 @@ let nested =
 
 let showInt (value: Int) = text.fromInt(value)
 
-let renderInts values = values |> list.map(showInt) |> render
+let renderInts values =
+    values
+    |> list.map(showInt)
+    |> render
 
 let renderNested values =
     values
@@ -91,6 +89,8 @@ let renderNested values =
     |> render
 
 let total =
-    list.foldLeft(given (acc: Int) -> given (value: Int) -> acc + value)(0)(aged) + list.foldLeft(given (acc: Int) -> given (value: Int) -> acc + value)(0)(aged) + list.length(names) - list.length(echoed) + 0 - 6 + 0
+    list.foldLeft(given (acc: Int) ->
+        given (value: Int) -> acc + value)(0)(aged) + list.foldLeft(given (acc: Int) ->
+        given (value: Int) -> acc + value)(0)(aged) + list.length(names) - list.length(echoed) - 6
 
 render(names) + "|" + render(echoed) + "|" + render(shouted) + "|" + render(kept) + "|" + render(described) + "|" + renderInts(aged) + "|" + renderInts(small) + "|" + renderNested(nested) + "|" + text.fromInt(total) |> io.print
