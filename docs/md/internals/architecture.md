@@ -702,6 +702,16 @@ before the IR dumps and explain reports, so those keep describing the program th
 backend receives. It is never gated on a report flag, so asking for a report
 cannot select a different image.
 
+Reachability alone is not enough: the entry point materializes a closure for every
+top-level binding and cleans it up at scope exit, and that pair keeps the lifted
+function reachable even when nothing else names the binding. So the same pass
+first elides the bindings whose only readers are that cleanup — and whose
+environments capture nothing but other such bindings, which is what makes the
+removal ownership-neutral, stranding no live value. A reference-counted closure is
+released through RC rather than a cleanup pair and is left alone. On a program
+importing `Ashes.Collection.List` only for `length`, the two steps together emit 3
+functions where lowering produced 36.
+
 ```mermaid
 graph TD
     A["IrCompileTimeEval.Evaluate<br/>whole program: pure constant-argument calls become constants"] --> B["per-function pipeline<br/>entry + every function, in order"]

@@ -2646,6 +2646,79 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("TextByteLength must read a temp that is actually defined (LoadLocal or a kept Borrow).");
     }
 
+    // Unreachable top-level binding elision
+
+    [Test]
+    public void Prune_drops_the_closure_and_function_of_an_unread_top_level_binding()
+    {
+        var optimized = IrOptimizer.Optimize(LowerProgram("""
+            let unread = given (x) -> x + 1
+            Ashes.IO.print(Ashes.Text.fromInt(41))
+            """));
+        var pruned = IrOptimizer.PruneUnreachableFunctions(optimized);
+
+        pruned.Functions.Count.ShouldBeLessThan(optimized.Functions.Count);
+        pruned.EntryFunction.Instructions
+            .Any(i => i is IrInst.MakeClosure or IrInst.MakeClosureStack)
+            .ShouldBeFalse("The closure built for an unread top-level binding should be elided.");
+        pruned.EntryFunction.Instructions
+            .Any(i => i is IrInst.CleanupResource { TypeName: "Function" })
+            .ShouldBeFalse("The cleanup that was the binding's only reader should go with it.");
+    }
+
+    [Test]
+    public void Prune_drops_an_unread_binding_chain_through_the_environment_that_captures_it()
+    {
+        var optimized = IrOptimizer.Optimize(LowerProgram("""
+            let helper = given (x) -> x + 1
+            let unread = given (y) -> helper(y)
+            Ashes.IO.print(Ashes.Text.fromInt(41))
+            """));
+        var pruned = IrOptimizer.PruneUnreachableFunctions(optimized);
+
+        // `helper` is read only by the environment of `unread`, which is itself unread, so the
+        // elision has to reach a fixed point rather than stop at the outermost binding.
+        pruned.EntryFunction.Instructions
+            .Any(i => i is IrInst.MakeClosure or IrInst.MakeClosureStack)
+            .ShouldBeFalse("An unread binding captured only by another unread binding should be elided too.");
+    }
+
+    [Test]
+    public async Task Pruned_program_still_runs_a_top_level_binding_it_calls()
+    {
+        var pruned = IrOptimizer.PruneUnreachableFunctions(IrOptimizer.Optimize(LowerProgram("""
+            let increment = given (x) -> x + 1
+            Ashes.IO.print(Ashes.Text.fromInt(increment(41)))
+            """)));
+
+        (await RunAsync(pruned).ConfigureAwait(false)).Trim().ShouldBe("42");
+    }
+
+    [Test]
+    public async Task Pruned_program_still_runs_a_binding_reached_through_a_captured_environment()
+    {
+        var pruned = IrOptimizer.PruneUnreachableFunctions(IrOptimizer.Optimize(LowerProgram("""
+            let helper = given (x) -> x + 1
+            let caller = given (y) -> helper(y)
+            Ashes.IO.print(Ashes.Text.fromInt(caller(41)))
+            """)));
+
+        (await RunAsync(pruned).ConfigureAwait(false)).Trim().ShouldBe("42");
+    }
+
+    [Test]
+    public async Task Pruned_program_keeps_an_unread_binding_that_is_not_a_lambda()
+    {
+        // Ashes is strict, so a top-level binding that is not a lambda is evaluated at program
+        // start whether or not anything reads it; only a closure's construction is free of effect.
+        var pruned = IrOptimizer.PruneUnreachableFunctions(IrOptimizer.Optimize(LowerProgram("""
+            let unread = Ashes.IO.print("effect")
+            Ashes.IO.print("main")
+            """)));
+
+        (await RunAsync(pruned).ConfigureAwait(false)).Trim().ShouldBe("effect\nmain");
+    }
+
     private static IrProgram LowerAndOptimize(string source)
     {
         return IrOptimizer.Optimize(Lower(source));

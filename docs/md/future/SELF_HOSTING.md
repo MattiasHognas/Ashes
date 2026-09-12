@@ -2895,7 +2895,12 @@ same public behavior.
   constructions, the devirtualized call, and the two releases that carry a generated helper label —
   plus the `$env_normalize` helper the backend resolves by name suffix rather than through an
   operand. Measured on a program importing `Ashes.Collection.List` and calling only `list.length`:
-  35 emitted functions down to 17. Placement is part of the contract, not an implementation detail:
+  36 emitted functions down to 3. The prune is preceded by the elision of the
+  closures unread top-level bindings leave in the entry point (`ElideDeadTopLevelClosureBindings`
+  in `Ashes.Semantics/IrOptimizer.DeadBindings.cs`), without which the construct/cleanup pair keeps
+  every one of those functions reachable; a binding goes only when its every reader is that cleanup
+  or a capture into an environment being removed too, which is what keeps the removal
+  ownership-neutral. Placement is part of the contract, not an implementation detail:
   it runs over already-lowered IR, so binding, inference, and lowering have all happened and no
   diagnostic is affected; after the optimizer, whose own contract is that it never removes a
   function; and before the IR dumps and explain reports, so `--emit-ir final` keeps meaning what

@@ -27,6 +27,14 @@ public static partial class IrOptimizer
     /// </remarks>
     public static IrProgram PruneUnreachableFunctions(IrProgram program)
     {
+        // A binding the program never reads still holds its function live through the closure the
+        // entry point builds for it, so the dead bindings have to go before reachability is asked.
+        IrFunction entry = ElideDeadTopLevelClosureBindings(program.EntryFunction);
+        if (!ReferenceEquals(entry, program.EntryFunction))
+        {
+            program = program with { EntryFunction = entry };
+        }
+
         var functionsByLabel = new Dictionary<string, IrFunction>(StringComparer.Ordinal);
         foreach (IrFunction function in program.Functions)
         {
@@ -35,7 +43,7 @@ public static partial class IrOptimizer
 
         var reachable = new HashSet<string>(StringComparer.Ordinal);
         var pending = new Stack<IrFunction>();
-        pending.Push(program.EntryFunction);
+        pending.Push(entry);
         while (pending.Count > 0)
         {
             foreach (string label in ReferencedFunctionLabels(pending.Pop()))
