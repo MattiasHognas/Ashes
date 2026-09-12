@@ -4023,6 +4023,61 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})(0))
             """;
 
+    // The same producer with the strings staying strings: a list of strings in, a list of strings out.
+    // Structural containment cannot tell "the result embeds the argument" from "the result shares
+    // nothing with it" when both are the same type, so the handed-over reference survives on every
+    // reference-counted result and the input spine is stranded once per round. What settles it is the
+    // callee's reach account: the unknown per-element call only ever sees a destructured head, so the
+    // list itself provably never comes back, and the caller releases the spine it handed over while
+    // preserving the heads the result may still hold.
+    private static string BuildSameElementTypeProducerArgumentReleaseMemoryProgram(int iterations)
+        => $$"""
+            let recursive strs count acc =
+                if count == 0
+                then acc
+                else strs(count - 1)("row" + Ashes.Text.fromInt(count) :: acc)
+
+            let shout (value: Str) = value + "!"
+
+            let recursive mapWith (f: Str -> Str) (values: List(Str)) =
+                match values with
+                    | [] -> []
+                    | head :: tail -> f(head) :: mapWith(f)(tail)
+
+            let recursive sumLengths (values: List(Str)) (acc: Int) =
+                match values with
+                    | [] -> acc
+                    | head :: tail -> sumLengths(tail)(acc + Ashes.Text.byteLength(head))
+
+            let round size =
+                []
+                |> strs(size)
+                |> mapWith(shout)
+                |> (given (values: List(Str)) -> if sumLengths(values)(0) > 0 then 1 else 0)
+
+            let recursive loop remaining total =
+                if remaining == 0
+                then total
+                else loop(remaining - 1)(total + round(64))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_llvm_same_element_type_producer_argument_release_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildSameElementTypeProducerArgumentReleaseMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("same-element-type producer's consumed argument released by its caller", samples);
+    }
+
     [Test]
     public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
     {

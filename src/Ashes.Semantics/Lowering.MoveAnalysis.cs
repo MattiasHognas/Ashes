@@ -180,6 +180,14 @@ public sealed partial class Lowering
     // alias AS THEMSELVES — reached by a path with no field segment — as opposed to only through a
     // destructured sub-cell ("values/0"). A working (path-keyed) state carries that distinction in
     // its keys instead and leaves this null.
+    // Poison and the completeness of that account are independent. An unproven construct whose inputs
+    // this walk enumerated — an unknown callee applied to known arguments — contributes their reach on
+    // tagged paths (see ReachExposed): the result is still not provably confined, since it may be a
+    // global or a fresh value, but no parameter can be in it that was not handed over, and one only
+    // a destructured component cannot come back whole. A construct whose inputs are NOT enumerable (a
+    // lambda's captured environment, an unmodelled node) additionally sets ResultReachCause's
+    // UnenumeratedInputs, which is what tells a reader that absence from this state means unknown
+    // rather than proven-absent.
     private readonly record struct ResultReachState(
         Dictionary<string, int> Counts,
         ResultReachCause Causes,
@@ -219,6 +227,10 @@ public sealed partial class Lowering
 
     // Reach multiplicity cap: any count reaching this is folded into the poison flag (internal sharing).
     private const int ReachCap = 2;
+
+    // Marks a path as reaching its root only through a construct this analysis cannot see through (see
+    // ReachExposed). No identifier, and no synthetic token segment, contains it.
+    private const char ExposedTag = '~';
 
     // Per-binding synthetic identity token counter (reset at the start of each function's ResultReach
     // pass). Every locally-introduced binding (a `let`/let-result value, a `match` pattern variable) is
@@ -1098,17 +1110,44 @@ public sealed partial class Lowering
             callCensus,
             moveSafety,
             captures,
-            new FunctionResultReachFacts(
-                new SortedDictionary<string, int>(
-                    resultReach.Counts,
-                    StringComparer.Ordinal),
-                resultReach.Causes,
-                resultReach.WholeRoots),
+            BuildResultReachFacts(resultReach),
             expressionFreshness,
             _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function),
             provenance,
             tcoParamFacts,
             patternBindingOwnership);
+    }
+
+    // Splits the converged reach into the published contract: the may-alias set and the whole reach it
+    // has always carried, built from the paths this analysis could follow, and separately what was
+    // exposed to a construct it could not follow. Keeping the two apart is what lets the exposure
+    // record answer a question of its own without moving any answer that was already there.
+    private static FunctionResultReachFacts BuildResultReachFacts(ResultReachState reach)
+    {
+        var parameterReach = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach ((string root, int multiplicity) in reach.Counts)
+        {
+            if (!IsExposedRoot(root))
+            {
+                parameterReach[root] = multiplicity;
+            }
+        }
+
+        var whole = new HashSet<string>(StringComparer.Ordinal);
+        var exposedWhole = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string root in reach.WholeRoots)
+        {
+            if (IsExposedRoot(root))
+            {
+                exposedWhole.Add(UntagRoot(root));
+            }
+            else
+            {
+                whole.Add(root);
+            }
+        }
+
+        return new FunctionResultReachFacts(parameterReach, reach.Causes, whole, exposedWhole);
     }
 
     private (
@@ -3394,8 +3433,50 @@ public sealed partial class Lowering
     private static ResultReachState ReachBottom()
         => new(new Dictionary<string, int>(StringComparer.Ordinal), ResultReachCause.None);
 
+    // The fully conservative verdict: the result is not provably confined to the parameters, and the
+    // values the unproven construct could see were not enumerated either, so neither the reach nor the
+    // whole-reach account says anything about it. A site whose inputs ARE known reports them through
+    // ReachExposed instead and keeps its account complete.
     private static ResultReachState ReachPoisoned(ResultReachCause cause = ResultReachCause.UnmodelledReach)
-        => new(new Dictionary<string, int>(StringComparer.Ordinal), cause);
+        => new(
+            new Dictionary<string, int>(StringComparer.Ordinal),
+            cause | ResultReachCause.UnenumeratedInputs);
+
+    // An unproven result built only from values this walk enumerated, <paramref name="inputs"/> being
+    // their summed reach. The unknown construct may hand back any of them or one of their sub-cells,
+    // so each is reached at exactly the depth it was exposed at; it may equally hand back a global or
+    // a freshly allocated value, which is what <paramref name="cause"/> records.
+    // Exposure travels on tagged paths, which stay out of the published may-alias set. Answering
+    // "which parameters may the result alias" is what the poison flag is for, and every reader of
+    // that set already treats a poisoned summary as knowing nothing; changing it here would move
+    // decisions that have nothing to do with the question being asked. What the tagged paths add is
+    // the one thing poison cannot express — the depth the exposure happened at, which is what proves
+    // a parameter handed over in pieces never comes back whole.
+    private static ResultReachState ReachExposed(ResultReachState inputs, ResultReachCause cause)
+        => new(TagExposedPaths(inputs.Counts), inputs.Causes | cause, inputs.Whole);
+
+    // Re-tags a reach substituted for an exposed root of a callee's summary: what that callee exposed,
+    // this caller exposes too.
+    private static ResultReachState TagExposed(ResultReachState reach)
+        => new(TagExposedPaths(reach.Counts), reach.Causes, reach.Whole);
+
+    // Prefixes every path with the exposure tag, a character no identifier or synthetic token segment
+    // contains. An already tagged path stays as it is: exposing what an earlier exposure produced is
+    // still one exposure, and double tagging would lose the root's name.
+    private static Dictionary<string, int> TagExposedPaths(Dictionary<string, int> counts)
+    {
+        var tagged = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach ((string path, int multiplicity) in counts)
+        {
+            tagged[IsExposedRoot(path) ? path : ExposedTag + path] = multiplicity;
+        }
+
+        return tagged;
+    }
+
+    private static bool IsExposedRoot(string root) => root.Length > 0 && root[0] == ExposedTag;
+
+    private static string UntagRoot(string root) => IsExposedRoot(root) ? root[1..] : root;
 
     // Sequential composition (simultaneously-live heap positions — a constructor's heap fields, an
     // aggregate's elements): multiplicities add, so a parameter reachable through two positions reaches
@@ -3560,7 +3641,8 @@ public sealed partial class Lowering
     // surviving real parameter is recorded at presence (multiplicity 1) — a parameter reached through two
     // DISJOINT sub-cells ("map/1" and "map/2") is reached once, not twice; a genuine same-cell double
     // (which would be internal sharing) already set poison during the sum before this collapse. Poison is
-    // preserved. The result keys are exactly parameter names, so IsResultAliasMove/CallReach can map them.
+    // preserved. The result keys are exactly parameter names, each still carrying the exposure tag if it
+    // had one, so IsResultAliasMove/CallReach can map them back to the parameter either way.
     private static ResultReachState StripSyntheticTokens(
         ResultReachState r)
     {
@@ -3570,7 +3652,8 @@ public sealed partial class Lowering
         {
             int slash = k.IndexOf('/');
             string root = slash < 0 ? k : k.Substring(0, slash);
-            if (root.Length == 0 || root[0] == '#')
+            string name = UntagRoot(root);
+            if (name.Length == 0 || name[0] == '#')
             {
                 continue;
             }
@@ -4028,7 +4111,7 @@ public sealed partial class Lowering
             || TryResolveFunctionKey(head, name, scope) is not { } key
             || !_maFuncs.TryGetValue(key, out var info))
         {
-            return ReachPoisoned(ResultReachCause.UnmodelledReach);
+            return UnknownCalleeReach(head, args, env, scope);
         }
 
         // (CO-2d) Over-application: the callee returns a closure that is applied to the surplus
@@ -4046,6 +4129,53 @@ public sealed partial class Lowering
         return CallReachRegistered(key, info, args, env, scope);
     }
 
+    // A call this compiler cannot resolve to a registered function: a parameter applied as a function
+    // (the `f(head)` of every map), a builtin with no reach declaration of its own, a call through a
+    // let-bound value. What the callee does is unknown; what it was given is not. Nothing here mutates,
+    // so a value can only come out of that call if it went in — the callee value itself (a closure may
+    // return what it captured) or an argument — which leaves the reach paths a complete account even
+    // though the result is unconfined: a parameter handed over only as a destructured component is
+    // reached at that depth and provably never comes back whole. A callee this walk cannot place at
+    // all is the one case that breaks the account, since the value behind the name may be derived from
+    // a parameter in a way that was never bound.
+    private ResultReachState UnknownCalleeReach(
+        Expr head,
+        List<Expr> args,
+        Dictionary<string, ResultReachState> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+        => CalleeValueReach(head, env) is { } calleeReach
+            ? ReachExposed(
+                ReachSum(calleeReach, SumReach(args, env, scope)),
+                ResultReachCause.UnmodelledReach)
+            : ReachPoisoned(ResultReachCause.UnmodelledReach);
+
+    // The reach of the value standing in callee position: a bound name's own reach, or none at all for
+    // a name this analysis knows to be a top-level function, value or constructor — those close over
+    // top-level values, never over the parameters of the function being walked. Null for a name that
+    // is neither, and for any other callee expression.
+    private ResultReachState? CalleeValueReach(
+        Expr head,
+        Dictionary<string, ResultReachState> env)
+    {
+        switch (head)
+        {
+            case Expr.Var v when env.TryGetValue(v.Name, out ResultReachState bound):
+                return bound;
+            case Expr.Var v:
+                return _maNameIndex.ContainsKey(v.Name)
+                    || _maValueRhs.ContainsKey(v.Name)
+                    || _constructorSymbols.ContainsKey(v.Name)
+                        ? ReachBottom()
+                        : null;
+            case Expr.QualifiedVar qualified:
+                return env.ContainsKey(qualified.Module.Split('.')[0])
+                    ? ResultReachQualifiedVar(qualified, env)
+                    : ReachBottom();
+            default:
+                return null;
+        }
+    }
+
     private ResultReachState CallReachSelfRecursive(
         (FuncKey Func, FuncKey Recursive, string RecursiveName, List<string> Outer, string Acc) sr,
         List<Expr> args,
@@ -4061,8 +4191,9 @@ public sealed partial class Lowering
         var selfResult = new ResultReachState(
             new Dictionary<string, int>(StringComparer.Ordinal),
             selfSummary.Causes);
-        foreach (var (paramName, mult) in selfSummary.Counts)
+        foreach (var (root, mult) in selfSummary.Counts)
         {
+            string paramName = UntagRoot(root);
             ResultReachState paramReach;
             if (string.Equals(paramName, sr.Acc, StringComparison.Ordinal))
             {
@@ -4077,9 +4208,14 @@ public sealed partial class Lowering
                 return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
-            if (!selfSummary.WholeRoots.Contains(paramName))
+            if (!selfSummary.WholeRoots.Contains(root))
             {
                 paramReach = ExtendPathsComponent(paramReach);
+            }
+
+            if (IsExposedRoot(root))
+            {
+                paramReach = TagExposed(paramReach);
             }
 
             selfResult = ReachSum(selfResult, ReachScale(paramReach, mult));
@@ -4169,13 +4305,16 @@ public sealed partial class Lowering
             ov.Causes);
         foreach (var (marker, mult) in ov.Counts)
         {
-            int ai = ArgMarkerIndex(marker);
+            int ai = ArgMarkerIndex(UntagRoot(marker));
             if (ai < 0 || ai >= args.Count)
             {
                 return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
-            acc = ReachSum(acc, ReachScale(ResultReach(args[ai], env, scope), mult));
+            ResultReachState argumentReach = ResultReach(args[ai], env, scope);
+            acc = ReachSum(
+                acc,
+                ReachScale(IsExposedRoot(marker) ? TagExposed(argumentReach) : argumentReach, mult));
         }
 
         return acc;
@@ -4192,29 +4331,36 @@ public sealed partial class Lowering
         if (args.Count != info.Params.Count
             || !_maResultReach.TryGetValue(key, out var summary))
         {
-            RecordUncoveredCallArgumentsFreshness(args, env, scope, covered: null);
-            return ReachPoisoned(ResultReachCause.UnmodelledReach);
+            // Under-applied — the result is a closure holding the arguments given so far — or not yet
+            // summarized. The callee is a registered top-level function whose own captures are
+            // top-level values, so those arguments are the only values of this function's it can hold.
+            // Summing them visits each one, which is the freshness recording this arm owes its
+            // arguments (see RecordUncoveredCallArgumentsFreshness).
+            return ReachExposed(SumReach(args, env, scope), ResultReachCause.UnmodelledReach);
         }
 
         var result = new ResultReachState(
             new Dictionary<string, int>(StringComparer.Ordinal),
             summary.Causes);
         HashSet<int>? covered = _maExpressionFreshness is not null ? new HashSet<int>() : null;
-        foreach (var (paramName, mult) in summary.Counts)
+        foreach (var (root, mult) in summary.Counts)
         {
-            int idx = info.Params.IndexOf(paramName);
+            int idx = info.Params.IndexOf(UntagRoot(root));
             if (idx < 0 || idx >= args.Count)
             {
                 return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
             ResultReachState argumentReach = ResultReach(args[idx], env, scope);
-            if (!summary.WholeRoots.Contains(paramName))
+            if (!summary.WholeRoots.Contains(root))
             {
                 argumentReach = ExtendPathsComponent(argumentReach);
             }
 
-            result = ReachSum(result, ReachScale(argumentReach, mult));
+            // What the callee exposed to something it could not see through, this call exposes too.
+            result = ReachSum(
+                result,
+                ReachScale(IsExposedRoot(root) ? TagExposed(argumentReach) : argumentReach, mult));
             covered?.Add(idx);
         }
 

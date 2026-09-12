@@ -12122,6 +12122,17 @@ public sealed partial class Lowering
             && argumentIndex < summary.Parameters.Count
             && summary.ResultReachesWhole(summary.Parameters[argumentIndex]);
 
+    // The proof CalleeResultMayKeepParameterWhole is the possibility of: this callee's result never
+    // holds the argument itself, though it may hold parts of it. Where that one reads a may-alias set
+    // and so believes nothing a poisoned callee says, this one holds under poison too — which is
+    // where it earns its keep. An unknown callee applied to a parameter's destructured parts (the
+    // `f(head)` of every map) leaves the result unconfined while proving the list itself cannot be in
+    // it, so the caller may release the list it handed over instead of abandoning it to the callee.
+    private bool CalleeResultCannotKeepParameterWhole(Expr rootExpr, int argumentIndex)
+        => GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex < summary.Parameters.Count
+            && summary.ResultCannotKeepParameterWhole(summary.Parameters[argumentIndex]);
+
     // A fresh argument is released by the caller after the call unless it is transferred. An
     // entry-normalized callee adopts it through the ownership flag; for any other callee whose
     // result keeps the argument itself (a curry stage that stores it into the value it returns),
@@ -12246,9 +12257,12 @@ public sealed partial class Lowering
             // retain (disabled for a value with no second owner in the caller). Releasing it outright
             // would free what such a callee stored. Hand it over under the callee's own adoption flag
             // instead: an adopting callee owns it, and a non-adopting one only releases it where the
-            // result was copied out and so kept nothing of it.
+            // result was copied out and so kept nothing of it. A callee whose reach account is
+            // complete despite the poison is exempt: its result provably holds no more than this
+            // argument's components, which is the ordinary consumed-argument release below.
             if (runtimeManagedArgumentFlagTemp >= 0
-                && GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false })
+                && GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false }
+                && !CalleeResultCannotKeepParameterWhole(rootExpr, argumentIndex))
             {
                 consumedRuntimeArguments.Add(
                     new ConsumedRuntimeArgument(
