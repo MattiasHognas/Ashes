@@ -175,6 +175,26 @@ public sealed class CoverageExpansionTests
     }
 
     [Test]
+    public void EveryProfileGeneratesAFullRotationAtItsOwnNodeBudget()
+    {
+        var fixture = TestFixture.Create();
+        foreach (FuzzProfile profile in fixture.Profiles.Profiles)
+        {
+            int maximumNodes = profile.EffectiveDefaults.MaximumNodes;
+            int rotation = Math.Max(profile.EnabledCombinations.Count, profile.EnabledRules.Count);
+            for (int caseIndex = 0; caseIndex < rotation; caseIndex++)
+            {
+                GeneratedFuzzCase generated = fixture.Generator.Generate(5150, caseIndex, profile, maximumNodes);
+
+                generated.Source.ShouldNotBeNullOrWhiteSpace(
+                    $"profile '{profile.Id}' case {caseIndex} generated no source at {maximumNodes} nodes.");
+                generated.Trace.Entries.ShouldNotBeEmpty(
+                    $"profile '{profile.Id}' case {caseIndex} generated no trace at {maximumNodes} nodes.");
+            }
+        }
+    }
+
+    [Test]
     public void AllProfileCoversEveryStableProfileWithBoundedNativeWork()
     {
         var fixture = TestFixture.Create();

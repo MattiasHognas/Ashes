@@ -158,12 +158,14 @@ internal sealed class ProgramGenerator
                 .Where(type => template.CanApply(type, context, budget))
                 .OrderBy(type => type.ToString(), StringComparer.Ordinal)
                 .ToArray();
-            if (compatible.Length == 0)
+            if (compatible.Length != 0)
             {
-                throw new InvalidOperationException(
-                    $"Profile '{profile.Id}' cannot supply a compatible type for preferred combination '{preferredCombination}'.");
+                return compatible[random.Next(compatible.Length)];
             }
-            return compatible[random.Next(compatible.Length)];
+            // The registry validates every profile combination against a generous budget, but this
+            // case's remaining node budget is whatever the measured prelude left behind. A template
+            // that no longer fits degrades to ordinary type selection, like any other exceeded
+            // generation dimension, instead of failing the whole campaign.
         }
         return profile.Types[random.Next(profile.Types.Count)];
     }
