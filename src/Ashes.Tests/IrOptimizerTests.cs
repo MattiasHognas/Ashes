@@ -8,6 +8,23 @@ public sealed class IrOptimizerTests
 {
     // Constant folding tests
 
+    // Dead pure-value sweeping. Constant folding rewrites the final consumer of an operand chain
+    // to a constant and leaves the chain feeding nothing. Before those strays were swept, the
+    // load at the head of such a chain also kept a spurious use on the value it read from, which
+    // was enough to stop currying-stage inlining from collapsing a saturated call chain.
+    [Test]
+    public void Dead_pure_value_chain_is_swept_after_its_consumer_folds()
+    {
+        IrProgram ir = LowerAndOptimize("Ashes.IO.print((4 & 1) + 41)");
+
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.AndInt)
+            .ShouldBeFalse("A folded AndInt should leave no stray operand chain behind.");
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Value: 41 })
+            .ShouldBeTrue("The surviving constant should still be present.");
+    }
+
     [Test]
     public void Constant_folding_folds_int_addition()
     {
