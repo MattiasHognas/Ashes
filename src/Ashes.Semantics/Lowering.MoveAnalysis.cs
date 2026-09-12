@@ -4001,6 +4001,22 @@ public sealed partial class Lowering
             return ReachBottom();
         }
 
+        if (head is Expr.Lambda applied)
+        {
+            return CallReachAppliedLambda(applied, args, env, scope);
+        }
+
+        return CallReachNamed(head, args, env, scope);
+    }
+
+    // The named-callee tail of CallReach: resolve the head to a registered function and substitute
+    // its own summary, or poison where the callee cannot be resolved at all.
+    private ResultReachState CallReachNamed(
+        Expr head,
+        List<Expr> args,
+        Dictionary<string, ResultReachState> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
         string? name = head switch
         {
             Expr.Var v => v.Name,
@@ -4097,6 +4113,42 @@ public sealed partial class Lowering
         }
 
         return acc;
+    }
+
+    // A lambda literal in callee position — what every `x |> (given (y) -> ...)` stage desugars to —
+    // has no name to resolve, so the call dispatcher above would otherwise poison the enclosing
+    // function's whole reach and lose every "the result keeps this argument" fact with it. The body
+    // is right there, so the application is modelled by evaluating that body one level down with each
+    // parameter bound to its argument's reach: a value the body stores into its result is then
+    // reached exactly as it would be had the body been written in place, including through the
+    // captures it reads — and those captures are the enclosing function's own parameters, which is
+    // precisely what a caller needs to know before releasing what it handed over.
+    //
+    // Anything other than an exactly saturating application — a partial one, whose result is a
+    // closure holding the arguments, or a surplus one applied to whatever that closure returns —
+    // keeps the conservative verdict it had before.
+    private ResultReachState CallReachAppliedLambda(
+        Expr.Lambda lambda,
+        List<Expr> args,
+        Dictionary<string, ResultReachState> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        var bound = new Dictionary<string, ResultReachState>(env, StringComparer.Ordinal);
+        Expr body = lambda;
+        foreach (Expr argument in args)
+        {
+            if (body is not Expr.Lambda stage)
+            {
+                return ReachPoisoned(ResultReachCause.ConservativeUnknown);
+            }
+
+            bound[stage.ParamName] = ResultReach(argument, env, scope);
+            body = stage.Body;
+        }
+
+        return body is Expr.Lambda
+            ? ReachPoisoned(ResultReachCause.ConservativeUnknown)
+            : ResultReach(body, bound, scope);
     }
 
     private ResultReachState CallReachOverApplied(

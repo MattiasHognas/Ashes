@@ -188,10 +188,13 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
         return ir;
     }
 
-    // A string-element result takes the conditional list copy-out instead of the deep copy: its
-    // arena branch copies the heads too, so on that branch the consumed first argument shares
-    // nothing with the result and is released with its strings, while the owned branch keeps the
-    // spine-only release. Releasing spine-only on both leaked one string per element.
+    // `append`'s own result reach is unknown (its summary is poisoned), so the map result handed to
+    // it is handed over under the callee's adoption flag rather than released outright: releasing a
+    // value such a callee may have stored frees memory its result still points at. The release that
+    // remains is the one the flags prove safe — nothing where the callee adopted the reference, and,
+    // where it did not adopt and the caller copied its result out, the consumed list released with
+    // its strings, since the copy kept nothing of it. Releasing the strings on both branches leaked
+    // one string per element.
     [Test]
     public void Consumed_string_map_result_is_released_with_its_strings_on_the_copied_branch()
     {
@@ -200,14 +203,18 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
         IReadOnlyList<string> lines = IrTextFormatter.Format(ir, IrDumpStage.Lowered, filter: null);
         string dump = string.Join('\n', lines);
 
-        int copied = dump.IndexOf("rc_consumed_copied_", StringComparison.Ordinal);
-        copied.ShouldBeGreaterThanOrEqualTo(
-            0, $"the consumed first argument's release should branch on the appended result's ownership; dump:\n{dump}");
-        string branches = dump[copied..];
-        branches.IndexOf("rcdrop_list_spine", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(
-            0, $"the owned branch keeps the spine-only release; dump:\n{dump}");
-        int copiedLabel = branches.IndexOf("rc_consumed_copied_", branches.IndexOf('\n', StringComparison.Ordinal), StringComparison.Ordinal);
+        int handedOver = dump.IndexOf("rc_handed_over_not_adopted_", StringComparison.Ordinal);
+        handedOver.ShouldBeGreaterThanOrEqualTo(
+            0, $"the consumed first argument should be handed over under the callee's adoption flag; dump:\n{dump}");
+        string branches = dump[handedOver..];
+
+        int copiedLabel = branches.IndexOf("rc_handed_over_copied_", StringComparison.Ordinal);
         copiedLabel.ShouldBeGreaterThanOrEqualTo(0, $"expected the copied branch's label; dump:\n{dump}");
+        branches[..copiedLabel].ShouldNotContain(
+            "rcdrop_list_",
+            Case.Sensitive,
+            $"an adopting callee owns the reference, so that branch releases nothing; dump:\n{dump}");
+
         string copiedBranch = branches[copiedLabel..];
         int deepRelease = copiedBranch.IndexOf("rcdrop_list_", StringComparison.Ordinal);
         deepRelease.ShouldBeGreaterThanOrEqualTo(
