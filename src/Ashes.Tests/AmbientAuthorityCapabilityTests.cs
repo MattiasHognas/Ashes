@@ -254,6 +254,26 @@ public sealed class AmbientAuthorityCapabilityTests
         }
     }
 
+    [Test]
+    public void Closed_row_violation_in_a_recursive_binding_points_at_the_binding()
+    {
+        const string source = """
+            let recursive loop : Int -> Int =
+                given (remaining: Int) ->
+                    if remaining == 0
+                    then 0
+                    else let _ = Ashes.IO.Environment.get("PATH") in loop(remaining - 1)
+            0
+            """;
+
+        (_, Diagnostics diagnostics) = Lower(source);
+
+        DiagnosticEntry error = diagnostics.StructuredErrors.ShouldHaveSingleItem();
+        error.Code.ShouldBe("ASH018");
+        error.Message.ShouldContain("EnvironmentRead");
+        source.Substring(error.Span.Start, error.Span.Length).ShouldStartWith("given (remaining: Int)");
+    }
+
     private static (Lowering Lowering, Diagnostics Diagnostics) Lower(string source)
     {
         var diagnostics = new Diagnostics();

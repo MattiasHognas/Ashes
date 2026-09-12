@@ -6169,16 +6169,20 @@ public sealed partial class Lowering
         int hiddenDictionaryCount,
         bool needsLateTraitTypeHint)
     {
-        Unify(recursiveType, valueAndType.valType);
-        TypeRef schemeType = recursiveType;
-        if (exposedType is not null)
+        TypeRef schemeType;
+        using (PushDiagnosticSpan(GetSpan(letRecursive.Value)))
         {
-            TypeRef cursor = PeelRecursiveTraitDictionaryParameters(
-                letRecursive,
-                recursiveType,
-                hiddenDictionaryCount);
-            Unify(exposedType, cursor);
-            schemeType = exposedType;
+            Unify(recursiveType, valueAndType.valType);
+            schemeType = recursiveType;
+            if (exposedType is not null)
+            {
+                TypeRef cursor = PeelRecursiveTraitDictionaryParameters(
+                    letRecursive,
+                    recursiveType,
+                    hiddenDictionaryCount);
+                Unify(exposedType, cursor);
+                schemeType = exposedType;
+            }
         }
         IReadOnlyList<TraitConstraint> requirements = SelectBindingConstraints(
             IsInferredTraitBinding(letRecursive) ? writtenRequirements : inferredRequirements,
