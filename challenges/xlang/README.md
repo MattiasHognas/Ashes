@@ -48,9 +48,13 @@ Reading these honestly:
   column measures `malloc`, not Rust — the Benchmarks Game Rust entry uses a typed arena and is far
   faster. The fair reading is that the Ashes arena beats .NET's gen0 bump allocator and Go's
   allocator, and beats naive per-node `malloc` by 6x.
-- **n-body** now sits second, ahead of OCaml, .NET and Go. It got there by dropping the
-  `List(Body)` for a fixed five-body record and evaluating each pair once (14.3 s to 1.8 s); see
-  that challenge's README.
+- **n-body** went from last to competitive by dropping the `List(Body)` for a fixed five-body
+  record and evaluating each pair once (14.3 s to 1.8 s); see that challenge's README. Read its
+  row with the caveat below: the Ashes program writes its ten pair interactions out, while these
+  ports loop, and that is worth about 10%. Measured against an OCaml port unrolled the same way
+  (1.61 s), Ashes is 9% slower rather than 3% faster -- third behind Rust and OCaml, not second.
+  Still a good result for a program allocating a fresh record per step against one mutating in
+  place.
 - **fannkuch-redux** is the remaining gap, and the cause is measured, not guessed: at N=10 Ashes executes 46.9
   billion instructions against Rust's 1.25 billion, with cache misses negligible in both, and
   `--explain reuse` shows in-place reuse firing nowhere in the program. Growth per N is identical
@@ -66,3 +70,9 @@ Reading these honestly:
   spectral-norm.
 - Every port is single-threaded, as are the Ashes programs. Any parallel result belongs in a
   separate column, not this table.
+- **Loop shape is not matched across the table.** The Ashes n-body writes out its ten pairwise
+  interactions while every port loops over a fixed array. Unrolling is worth ~10% here (an
+  unrolled OCaml n-body runs 1.61 s against 1.78 s looped), so that row flatters Ashes by roughly
+  that much. The other three benchmarks use the same loop structure on both sides. That
+  unrolled port is checked in as `ml/nbody_unrolled.ml` so the figure can be reproduced; it is not
+  part of the default run.
