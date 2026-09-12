@@ -17,4 +17,7 @@ let advance (state: Ball) =
                 then state with ballX = 31.0, ballY = 8.5
                 else state with ballX = nx, ballY = ny, velY = vy)
 
-let wrap state _ignored = advance(identity(state))
+let wrap state _ignored =
+    state
+    |> identity
+    |> advance

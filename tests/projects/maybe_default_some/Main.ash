@@ -1,3 +1,5 @@
 // expect: 7
 import Ashes.Core.Maybe
-Ashes.IO.print(Maybe.default(0)(Some(7)))
+Some(7)
+|> Maybe.default(0)
+|> Ashes.IO.print

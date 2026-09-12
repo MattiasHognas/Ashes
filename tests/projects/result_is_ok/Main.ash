@@ -1,3 +1,5 @@
 // expect: true
 import Ashes.Core.Result
-Ashes.IO.print(Result.isOk(Ok(1)))
+Ok(1)
+|> Result.isOk
+|> Ashes.IO.print

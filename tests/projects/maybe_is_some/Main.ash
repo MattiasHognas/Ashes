@@ -1,3 +1,5 @@
 // expect: true
 import Ashes.Core.Maybe
-Ashes.IO.print(Maybe.isSome(Some(1)))
+Some(1)
+|> Maybe.isSome
+|> Ashes.IO.print

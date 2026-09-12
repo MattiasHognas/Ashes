@@ -1,4 +1,7 @@
 // expect: 30
 import Geom.Vec
 import Ashes.IO
-Ashes.IO.print(Vec.scale(3)(Vec.add(4)(6)))
+6
+|> Vec.add(4)
+|> Vec.scale(3)
+|> Ashes.IO.print
