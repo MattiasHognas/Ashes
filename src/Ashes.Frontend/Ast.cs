@@ -178,9 +178,9 @@ public abstract record Expr
     /// <param name="Body">The expression in which the binding is visible.</param>
     public sealed record LetRecursive(string Name, Expr Value, Expr Body) : Expr
     {
-        /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let rec f x y = ...</c> instead of <c>let rec f = given (x) -> given (y) -> ...</c>.</summary>
+        /// <summary>ML-style sugar parameters. When non-empty, the formatter prints <c>let recursive f x y = ...</c> instead of <c>let recursive f = given (x) -> given (y) -> ...</c>.</summary>
         public IReadOnlyList<string> SugarParams { get; init; } = [];
-        /// <summary>Optional user-supplied type annotation: <c>let rec f : Int -> Int = ...</c>.</summary>
+        /// <summary>Optional user-supplied type annotation: <c>let recursive f : Int -> Int = ...</c>.</summary>
         public TypeExpr? TypeAnnotation { get; init; }
         /// <summary>Written trait constraints on the complete annotated type scheme.</summary>
         public IReadOnlyList<TraitConstraintSyntax> Requires { get; init; } = [];
@@ -565,7 +565,7 @@ public abstract record TopLevelItem
     /// <summary>A top-level coherent trait implementation declaration.</summary>
     public sealed record Implementation(TraitImplementationDecl Decl) : TopLevelItem;
 
-    /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let rec</c> when <see cref="IsRecursive"/>.</summary>
+    /// <summary>A top-level value binding: <c>let Name = Value</c>, or <c>let recursive</c> when <see cref="IsRecursive"/>.</summary>
     public sealed record LetDecl(string Name, Expr Value, bool IsRecursive) : TopLevelItem
     {
         /// <summary>
@@ -582,7 +582,7 @@ public abstract record TopLevelItem
     }
 
     /// <summary>
-    /// A mutual-recursion group: <c>let rec A = ... and B = ...</c>. Every binding is implicitly
+    /// A mutual-recursion group: <c>let recursive A = ... and B = ...</c>. Every binding is implicitly
     /// recursive within the group and visible to the others regardless of order.
     /// </summary>
     public sealed record RecursiveGroup(IReadOnlyList<(string Name, Expr Value)> Bindings) : TopLevelItem

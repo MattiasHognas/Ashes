@@ -79,7 +79,7 @@ public sealed class Parser
     public Program ParseProgram()
     {
         // A file is `declaration* expr?` (imports are stripped upstream). Declarations are `type`,
-        // `external`, flat `let [rec] name = value` (no `in`), and `let rec ... and ...` groups,
+        // `external`, flat `let [recursive] name = value` (no `in`), and `let recursive ... and ...` groups,
         // freely interleaved and ordered. A `let ... in ...` is an ordinary expression, not a
         // declaration, so it terminates the loop and becomes the (optional) trailing body.
         var items = new List<TopLevelItem>();
@@ -275,7 +275,7 @@ public sealed class Parser
     /// <summary>
     /// Parses the remainder of a mutual-recursion group given its first binding's header: while the
     /// current token is <c>and</c>, consumes <c>and name = value</c> bindings. Reports a parse error
-    /// if the group is not introduced by <c>let rec</c>.
+    /// if the group is not introduced by <c>let recursive</c>.
     /// </summary>
     private TopLevelItem.RecursiveGroup ParseRecursiveGroup(LetHeader header)
     {
@@ -1455,7 +1455,7 @@ public sealed class Parser
         bool ValueLeadsWithLet);
 
     /// <summary>
-    /// Parses <c>let [rec] name [params] [: type] = value</c>, stopping before <c>in</c>. When
+    /// Parses <c>let [recursive] name [params] [: type] = value</c>, stopping before <c>in</c>. When
     /// <paramref name="topLevel"/> is set, a following <c>let</c> terminates the value (it begins the
     /// next declaration) rather than being absorbed as a whitespace-application argument.
     /// </summary>
@@ -1475,7 +1475,7 @@ public sealed class Parser
 
     /// <summary>
     /// Parses the <c>name [params] [: type] = value</c> portion of a binding (the part after
-    /// <c>let [rec]</c> or after <c>and</c>), desugaring ML-style parameters into nested lambdas.
+    /// <c>let [recursive]</c> or after <c>and</c>), desugaring ML-style parameters into nested lambdas.
     /// </summary>
     private (Token NameToken, string Name, Expr Value, List<string> SugarParams, TypeExpr? TypeAnnotation, IReadOnlyList<TraitConstraintSyntax> Requires, bool ValueLeadsWithLet) ParseLetBinding(int start, bool topLevel)
     {
@@ -1643,7 +1643,7 @@ public sealed class Parser
         // We need to peek past 'let' to see if a pattern follows.
         // 'let (' → tuple pattern.
         // 'let ident ::' or 'let _ ::' → cons pattern.
-        // 'let rec' or 'let ident =' → normal let.
+        // 'let recursive' or 'let ident =' → normal let.
         if (_current.Kind != TokenKind.Let) return false;
 
         // Save state — the lexer is forward-only, so we use lookahead
@@ -2567,7 +2567,7 @@ public sealed class Parser
 
     /// <summary>
     /// Parses the body of a parenthesized expression, which may be a flat-declaration block: a
-    /// sequence of <c>let [rec] name = value</c> declarations (no <c>in</c>) followed by a trailing
+    /// sequence of <c>let [recursive] name = value</c> declarations (no <c>in</c>) followed by a trailing
     /// expression, folded into nested <c>let</c> expressions. The combined-source stitcher emits the
     /// flat top-level entry expression in exactly this form (<c>(decl decl ... trailingExpr)</c>) when
     /// the program imports a flat module, so parentheses must accept it just as the file top level
@@ -2591,7 +2591,7 @@ public sealed class Parser
         // that is a (possibly qualified) application does not absorb the next declaration.
         var header = ParseLetHeaderAndValue(topLevel: true);
 
-        // `let ... in ...` (and a `let rec ... and ...` group, which has no nested-expression form and
+        // `let ... in ...` (and a `let recursive ... and ...` group, which has no nested-expression form and
         // must report the missing `in`) is the ordinary nested-let expression.
         if (_current.Kind is TokenKind.In or TokenKind.And)
         {

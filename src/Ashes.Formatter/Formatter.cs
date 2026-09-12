@@ -507,7 +507,7 @@ public static class Formatter
 
     private static void WriteRecursiveGroup(StringBuilder sb, TopLevelItem.RecursiveGroup group, FormattingOptions options)
     {
-        // `let rec NAME0 = <value0>` followed by one `and NAMEi = <valuei>` line per remaining
+        // `let recursive NAME0 = <value0>` followed by one `and NAMEi = <valuei>` line per remaining
         // binding, each at the same indentation column as `let`. The whole group is one block with
         // no blank lines between members.
         for (int i = 0; i < group.Bindings.Count; i++)
@@ -525,7 +525,7 @@ public static class Formatter
                 }
             }
 
-            // ML-style sugar: let rec f x y = <value>, unwrapping one lambda layer per parameter.
+            // ML-style sugar: let recursive f x y = <value>, unwrapping one lambda layer per parameter.
             var value = group.Bindings[i].Value;
             if (i < group.SugarParams.Count)
             {
@@ -1050,7 +1050,7 @@ public static class Formatter
         sb.Append("let recursive ");
         sb.Append(l.Name);
 
-        // Type annotation: let rec x : Type = ...
+        // Type annotation: let recursive x : Type = ...
         if (l.TypeAnnotation is { } letRecursiveTypeAnnotation)
         {
             sb.Append(" : ");
@@ -1058,7 +1058,7 @@ public static class Formatter
             WriteRequiresClause(sb, l.Requires);
         }
 
-        // ML-style sugar: let rec f x y = <value>
+        // ML-style sugar: let recursive f x y = <value>
         var value = l.Value;
         if (l.SugarParams.Count > 0)
         {

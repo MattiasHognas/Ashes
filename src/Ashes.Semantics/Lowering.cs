@@ -414,7 +414,7 @@ public sealed partial class Lowering
     // Non-recursive top-level functions, by name → (param names, body). When such a function is
     // called saturated inside a reuse arm (a token is live), the call is inlined so its constructor
     // becomes local and can reuse the dead cell — extending in-place reuse across a helper rebuild
-    // like loop(...)(mk(l)(v+n)(r)). Recursion (let rec / RecursiveGroup) is excluded.
+    // like loop(...)(mk(l)(v+n)(r)). Recursion (let recursive / RecursiveGroup) is excluded.
     private readonly Dictionary<string, (IReadOnlyList<string> Params, Expr Body)> _inlinableFunctions = new(StringComparer.Ordinal);
 
     // Non-recursive let-bound functions that perform a parameterized capability operation whose
@@ -424,8 +424,8 @@ public sealed partial class Lowering
     private readonly HashSet<string> _capabilityGenericInline = new(StringComparer.Ordinal);
 
     // Top-level functions specializable for in-place reuse, by name. Two shapes:
-    //   • single-parameter recursion: let rec f = given p -> body (LinearParam = p, ArgCount = 1);
-    //   • nested-rec-returning: let f = given a -> ... -> (let rec go = given m -> _ in go) — f isn't
+    //   • single-parameter recursion: let recursive f = given p -> body (LinearParam = p, ArgCount = 1);
+    //   • nested-rec-returning: let f = given a -> ... -> (let recursive go = given m -> _ in go) — f isn't
     //     itself recursive but returns a recursive single-param function (LinearParam = m, ArgCount =
     //     outer params + 1, the accumulator being the last applied argument), e.g. Map.set.
     // Applied to a uniquely-owned accumulator (the last arg), f is specialized into an f$reuse clone
@@ -961,7 +961,7 @@ public sealed partial class Lowering
             Console.Error.WriteLine($"[reuse] inlinable funcs: {string.Join(", ", _inlinableFunctions.Keys.Where(k => k.Contains("Map", StringComparison.Ordinal)))}");
         }
 
-        // Desugar the ordered value declarations into the existing nested let / let rec forms so
+        // Desugar the ordered value declarations into the existing nested let / let recursive forms so
         // Model-A sequential scoping falls out for free: each binding's body sees the just-bound
         // name and all enclosing ones, never a later sibling.
         var body = DesugarTopLevel(valueItems, program.Body);
@@ -972,7 +972,7 @@ public sealed partial class Lowering
     /// <summary>
     /// Records non-recursive top-level functions (a plain <c>let</c> whose value is a lambda chain)
     /// so a saturated call to one inside a reuse arm can be inlined, letting the helper's constructor
-    /// reuse a dead cell. <c>let rec</c> / mutually-recursive groups are excluded — they can't be
+    /// reuse a dead cell. <c>let recursive</c> / mutually-recursive groups are excluded — they can't be
     /// inlined, and self-reference would loop.
     /// </summary>
     // True if the expression can produce a heap allocation (a constructor application or aggregate
@@ -3077,7 +3077,7 @@ public sealed partial class Lowering
         if (_topLevelBindingNames.Contains(v.Name))
         {
             // Out of scope but declared later in the file: a forward reference under Model-A
-            // sequential scoping. Self/mutual recursion needs 'let rec' / 'let rec ... and ...'.
+            // sequential scoping. Self/mutual recursion needs 'let recursive' / 'let recursive ... and ...'.
             if (Environment.GetEnvironmentVariable("ASH_DBG_REUSE") is not null)
             {
                 Console.Error.WriteLine($"[reuse] ASH014 on '{v.Name}' inSpec={_inSpecialization} inlinable={_inlinableFunctions.ContainsKey(v.Name)} depth={_lambdaDepth}");
@@ -8544,7 +8544,7 @@ public sealed partial class Lowering
     // and emit a loop start label so tail self-calls can jump back.
     // A lambda only belongs to the recursive chain while we are still descending the binding's
     // curried lambda chain. A nested let-bound lambda inside the body (e.g.
-    // `let rec f n = let helper x = x + n in ...`) is a separate frame: if treated as the
+    // `let recursive f n = let helper x = x + n in ...`) is a separate frame: if treated as the
     // innermost chain lambda it would emit the loop label into its own frame while the outer
     // self-call jumps to a label that frame never contains (KeyNotFoundException in codegen).
     // Returns reuseInsertIndex — the instruction index (before the loop body label) where the

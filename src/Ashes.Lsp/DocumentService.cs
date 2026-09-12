@@ -996,7 +996,7 @@ public static partial class DocumentService
     }
 
     /// <summary>
-    /// Enumerates the names a program's top-level declarations bind: <c>let</c>/<c>let rec</c>
+    /// Enumerates the names a program's top-level declarations bind: <c>let</c>/<c>let recursive</c>
     /// bindings, every member of a mutual-recursion group, and <c>type</c> names.
     /// </summary>
     private static IEnumerable<string> CollectTopLevelDeclNames(Frontend.Program program)

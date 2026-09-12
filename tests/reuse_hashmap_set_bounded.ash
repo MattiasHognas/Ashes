@@ -1,8 +1,8 @@
 // expect: 200000|6813315380
 // Ashes.Collection.HashMap.set is now in-place-reuse specialized like Ashes.Collection.Map.set. HashMap.set has
-// the eta-applied nested-recursive shape (`let target = hashKey(k) in let rec go tree = ... in
+// the eta-applied nested-recursive shape (`let target = hashKey(k) in let recursive go tree = ... in
 // go(map)`) rather than Map.set's bare `... in go`, and its per-node composite-key descent inlines
-// strCompare's own `let rec go i = ... in go(0)` helper — a closure that is stored to a slot and
+// strCompare's own `let recursive go i = ... in go(0)` helper — a closure that is stored to a slot and
 // immediately called, which used to make IsFullyReusing reject the whole spec (so a HashMap-keyed
 // fold leaked ~10 GB at 1M inserts vs Map's constant memory). This inserts 200k distinct growing
 // string keys k<i> -> i*3, updates every 7th key by +1000000, then reads back a spread of keys and

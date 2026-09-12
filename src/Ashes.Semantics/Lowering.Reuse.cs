@@ -1076,7 +1076,7 @@ public sealed partial class Lowering
     // A closure temp is CONSUMED AS A CALL TARGET (so it never escapes into a returned cell) when
     // every reader either calls it directly (a CallClosure with it as the CALLEE, not an argument)
     // or moves it through a single-store local slot / Borrow whose loads are themselves consumed as
-    // call targets. This admits a `let rec go = … in go(x)` helper inlined per node (e.g.
+    // call targets. This admits a `let recursive go = … in go(x)` helper inlined per node (e.g.
     // HashMap's strCompare on the composite-key descent): go's closure is MakeClosure'd, stored to
     // a slot, loaded, and immediately called — transient scratch under an arena bracket that
     // produces a scalar, never captured into the rebuilt tree. Passing the closure as an ARGUMENT

@@ -2686,7 +2686,7 @@ public static class ProjectSupport
     }
 
     /// <summary>
-    /// The full export set of a module — top-level <c>let</c>/<c>let rec</c> bindings <em>and</em>
+    /// The full export set of a module — top-level <c>let</c>/<c>let recursive</c> bindings <em>and</em>
     /// <c>type</c> and <c>trait</c> declarations, plus legacy pyramid bindings — used to validate selector imports
     /// (mirrors the built-in export tables). Returns an empty set for sources the parser rejects.
     /// </summary>
@@ -3040,7 +3040,7 @@ public static class ProjectSupport
             usedBindingNames[generatedBindingName] = module.ModuleName;
         }
 
-        // Within a `let rec ... and ...` group every member is visible to the others, so each
+        // Within a `let recursive ... and ...` group every member is visible to the others, so each
         // member value resolves sibling references to the group's generated names.
         string[] recursiveBindings = group.Bindings
             .Where(binding => group.IsRecursiveGroup || binding.IsRecursive)
@@ -3061,7 +3061,7 @@ public static class ProjectSupport
                 originIndex, anchors, appendSeparator: i > 0);
         }
 
-        // Flat modules are stitched as genuine top-level declarations (no `in`): a `let rec ... and
+        // Flat modules are stitched as genuine top-level declarations (no `in`): a `let recursive ... and
         // ...` group cannot be expressed in the nested expression pyramid the legacy form uses, and
         // top-level declarations keep mutual recursion intact while staying visible to the body.
         prefix.Append(flat ? "\n" : " in ");
@@ -3374,7 +3374,7 @@ public static class ProjectSupport
 
     /// <summary>
     /// Applies aliases by renaming matching identifier tokens in place rather than wrapping the
-    /// expression in <c>let ... in</c> bindings. Used for <c>let rec</c> values, which must remain
+    /// expression in <c>let ... in</c> bindings. Used for <c>let recursive</c> values, which must remain
     /// bare function literals so mutual/self references stay deferred to call time.
     /// </summary>
     private static string ApplyAliasesByRenaming(string source, IReadOnlyList<KeyValuePair<string, string>> aliases)
@@ -3861,7 +3861,7 @@ public static class ProjectSupport
 
     /// <summary>
     /// Shapes a module written in the flat top-level declaration form (a sequence of
-    /// <c>let</c> / <c>let rec ... and ...</c> / <c>type</c> / <c>external</c> declarations followed by
+    /// <c>let</c> / <c>let recursive ... and ...</c> / <c>type</c> / <c>external</c> declarations followed by
     /// an optional trailing expression). The export set is exactly the top-level <c>let</c>/recgroup
     /// names; <c>external</c> declarations and the trailing expression are dropped. Returns
     /// <see langword="false"/> for the legacy nested <c>let ... in</c> pyramid (no top-level items)
@@ -3910,7 +3910,7 @@ public static class ProjectSupport
             }
         }
 
-        // Without a genuine top-level `let`/`let rec` declaration there is normally nothing flat to
+        // Without a genuine top-level `let`/`let recursive` declaration there is normally nothing flat to
         // export, so a module keeps the legacy text-based shaping (which extracts pyramid bindings from
         // Program.Body and preserves the entry expression). The one exception: a module that hoists a
         // capability or provider but has no value bindings is still genuinely flat — shape it here (with
@@ -4265,7 +4265,7 @@ public static class ProjectSupport
     }
 
     /// <summary>
-    /// Scans a flat <c>let [rec] name [params] [: type] =</c> (or <c>and name [params] =</c>) header
+    /// Scans a flat <c>let [recursive] name [params] [: type] =</c> (or <c>and name [params] =</c>) header
     /// starting at <paramref name="from"/>, returning any ML-style sugar parameters and the source
     /// position immediately after the value-introducing <c>=</c>.
     /// </summary>
