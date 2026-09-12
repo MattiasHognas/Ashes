@@ -498,6 +498,14 @@ same public behavior.
   live-posts guard with neither, so `tests/consumed_argument_through_handler.ash` peaks at
   60.7 MB through the self-hosted compiler against 28.7 MB through stage 0. OPT-49a's mirror
   (the perform site adopting the arm's reference-counted result) needs the returns bit first.
+- [ ] **CAP-11** Report a closed-row capability violation as stage 0's `ASH018` at the offending
+  binding's span. Stage 0's `ReportRowMissingCapabilities` names every capability the written
+  `needs` row omits and reports it at the value span pushed by `LowerLetAnnotatedValue` and
+  `LowerLetRecursiveFinalizeValue`; the self-hosted `unifyRows` rejects the same program as an
+  undifferentiated `TypeMismatch` between the two rows, with neither the code nor a span, so a
+  closed-row failure cannot be told from an ordinary type error. Add the fixture to
+  `selfhost/tests/semantics-diagnostic-parity` once the diagnostic exists, since that corpus
+  compares code, message text, and span.
 
 #### Traits, implementations, and evidence
 
