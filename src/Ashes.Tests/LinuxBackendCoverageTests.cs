@@ -2756,6 +2756,27 @@ public sealed class LinuxBackendCoverageTests
     }
 
     /// <summary>
+    /// A tail self-call whose argument is a let-bound name passes a value built earlier in the same
+    /// iteration. Reading the loop's structural facts off that bare variable left the parameter
+    /// placed on the arena, which declined the back-edge reset and with it the release of the
+    /// parameter's previous value, leaking the whole previous list every iteration.
+    /// </summary>
+    [Test]
+    public async Task Linux_backend_llvm_let_bound_tail_call_argument_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureImportedMemoryGrowthAsync(
+            BuildLetBoundTailCallArgumentMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("let-bound tail call argument", samples);
+    }
+
+    /// <summary>
     /// A call routed to an element specialization returns a result the compiler verified
     /// reference-counted, and such a result owns every part it kept. The reference the caller handed
     /// over for that result to keep must therefore be released once the callee declines to adopt it.
@@ -7622,6 +7643,34 @@ public sealed class LinuxBackendCoverageTests
                     in loop(i - 1)(acc + list.length(entries))
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // The rebuilt list reaches the tail call through a let binding rather than directly. Thirty
+    // elements make the previous list, leaked once per iteration, exceed the plateau budget well
+    // before the largest sample.
+    private static string BuildLetBoundTailCallArgumentMemoryProgram(int iterations)
+        => $$"""
+            let recursive iota i n =
+                if i > n
+                then []
+                else i :: iota(i + 1)(n)
+
+            let recursive setAt i v xs =
+                match xs with
+                    | [] -> []
+                    | h :: t ->
+                        if i == 0
+                        then v :: t
+                        else h :: setAt(i - 1)(v)(t)
+
+            let recursive loop i acc xs =
+                if i == 0
+                then acc
+                else
+                    let updated = setAt(i % 30)(i)(xs)
+                    in loop(i - 1)(acc + 1)(updated)
+
+            Ashes.IO.print(loop({{iterations}})(0)(iota(1)(30)))
             """;
 
     // A generic list producer whose tail-modulo-constructor cons the element type unblocks, called

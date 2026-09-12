@@ -1232,6 +1232,7 @@ public sealed partial class Lowering
             CreateTcoParameterScope(paramNames),
             paramNames,
             expressionFreshness,
+            new Dictionary<string, Expr>(StringComparer.Ordinal),
             state);
 
         var result = new List<TcoParamStructuralFacts>(paramNames.Count);
@@ -2223,50 +2224,44 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, int> parameterScope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
+        IReadOnlyDictionary<string, Expr> letValues,
         TcoParamFactsState state)
     {
         switch (expression)
         {
             case Expr.If iff:
                 TcoParamFactsWalk(
-                    iff.Then, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness, state);
+                    iff.Then, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness,
+                    letValues, state);
                 TcoParamFactsWalk(
-                    iff.Else, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness, state);
+                    iff.Else, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness,
+                    letValues, state);
                 return;
             case Expr.Match match:
                 TcoParamFactsWalkMatch(
-                    match, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness, state);
+                    match, tailOwners, function, scope, parameterScope, paramNames, expressionFreshness,
+                    letValues, state);
                 return;
             case Expr.Let let:
-                TcoParamFactsWalk(
-                    let.Body,
-                    RemoveTailOwnerNames(tailOwners, [let.Name]),
-                    function,
+                TcoParamFactsWalkBinding(
+                    let.Body, let.Name,
                     ExtendTcoFuncScope(scope, let, let.Name, let.Value),
-                    RemoveTcoParameterNames(parameterScope, [let.Name]),
-                    paramNames,
-                    expressionFreshness,
-                    state);
+                    SetLetValue(letValues, let.Name, let.Value),
+                    tailOwners, function, parameterScope, paramNames, expressionFreshness, state);
                 return;
             case Expr.LetResult letResult:
-                TcoParamFactsWalk(
-                    letResult.Body,
-                    RemoveTailOwnerNames(tailOwners, [letResult.Name]),
-                    function,
+                TcoParamFactsWalkBinding(
+                    letResult.Body, letResult.Name,
                     ExtendFuncScope(scope, letResult, letResult.Name),
-                    RemoveTcoParameterNames(parameterScope, [letResult.Name]),
-                    paramNames,
-                    expressionFreshness, state);
+                    RemoveLetValueNames(letValues, [letResult.Name]),
+                    tailOwners, function, parameterScope, paramNames, expressionFreshness, state);
                 return;
             case Expr.LetRecursive letRecursive:
-                TcoParamFactsWalk(
-                    letRecursive.Body,
-                    RemoveTailOwnerNames(tailOwners, [letRecursive.Name]),
-                    function,
+                TcoParamFactsWalkBinding(
+                    letRecursive.Body, letRecursive.Name,
                     ExtendFuncScope(scope, letRecursive, letRecursive.Name),
-                    RemoveTcoParameterNames(parameterScope, [letRecursive.Name]),
-                    paramNames,
-                    expressionFreshness, state);
+                    RemoveLetValueNames(letValues, [letRecursive.Name]),
+                    tailOwners, function, parameterScope, paramNames, expressionFreshness, state);
                 return;
             case Expr.Call:
                 TcoParamFactsWalkCall(
@@ -2277,9 +2272,61 @@ public sealed partial class Lowering
                     parameterScope,
                     paramNames,
                     expressionFreshness,
+                    letValues,
                     state);
                 return;
         }
+    }
+
+    // Every binding form shadows its name in its own body, whatever else it changes.
+    private void TcoParamFactsWalkBinding(
+        Expr body,
+        string name,
+        IReadOnlyDictionary<string, FuncKey> scope,
+        IReadOnlyDictionary<string, Expr> letValues,
+        IReadOnlyDictionary<string, int> tailOwners,
+        FuncKey function,
+        IReadOnlyDictionary<string, int> parameterScope,
+        IReadOnlyList<string> paramNames,
+        IReadOnlyDictionary<Expr, bool> expressionFreshness,
+        TcoParamFactsState state)
+        => TcoParamFactsWalk(
+            body,
+            RemoveTailOwnerNames(tailOwners, [name]),
+            function,
+            scope,
+            RemoveTcoParameterNames(parameterScope, [name]),
+            paramNames,
+            expressionFreshness,
+            letValues,
+            state);
+
+    // A `let` whose body tail-calls the loop passes the bound NAME, so every structural fact below
+    // would be read off a bare Var and collapse to false. Recording the bound value lets the call
+    // site classify the argument by what it was bound to.
+    private static IReadOnlyDictionary<string, Expr> SetLetValue(
+        IReadOnlyDictionary<string, Expr> letValues,
+        string name,
+        Expr value)
+    {
+        var next = new Dictionary<string, Expr>(letValues, StringComparer.Ordinal)
+        {
+            [name] = value,
+        };
+        return next;
+    }
+
+    private static IReadOnlyDictionary<string, Expr> RemoveLetValueNames(
+        IReadOnlyDictionary<string, Expr> letValues,
+        IEnumerable<string> names)
+    {
+        var next = new Dictionary<string, Expr>(letValues, StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            next.Remove(name);
+        }
+
+        return next;
     }
 
     private void TcoParamFactsWalkMatch(
@@ -2290,6 +2337,7 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, int> parameterScope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
+        IReadOnlyDictionary<string, Expr> letValues,
         TcoParamFactsState state)
     {
         foreach (MatchCase matchCase in match.Cases)
@@ -2317,6 +2365,7 @@ public sealed partial class Lowering
                 RemoveTcoParameterNames(parameterScope, binders),
                 paramNames,
                 expressionFreshness,
+                RemoveLetValueNames(letValues, binders),
                 state);
         }
     }
@@ -2408,6 +2457,7 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, int> parameterScope,
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
+        IReadOnlyDictionary<string, Expr> letValues,
         TcoParamFactsState state)
     {
         var arguments = new List<Expr>();
@@ -2425,27 +2475,24 @@ public sealed partial class Lowering
         for (int i = 0; i < paramNames.Count; i++)
         {
             Expr argument = arguments[i];
+            // A let-bound argument names a value built earlier in this iteration. Its own binding
+            // is the structural fact; the Var is only how the tail call spells it. Resolved only
+            // after the two tests that must see the name itself: an unchanged parameter and a
+            // consumed tail are both classified by WHICH binding the name refers to.
+            bool passesParameterItself = argument is Expr.Var passVar
+                && (parameterScope.ContainsKey(passVar.Name) || tailOwners.ContainsKey(passVar.Name));
+            Expr structural = !passesParameterItself
+                && argument is Expr.Var letVar
+                && letValues.TryGetValue(letVar.Name, out Expr? boundValue)
+                    ? boundValue
+                    : argument;
             bool arenaSelfContainedListRebuild =
-                IsArenaSelfContainedListRebuildExpr(argument);
-            bool freshClosureRebuild = IsFreshClosureRebuildExpr(argument);
+                IsArenaSelfContainedListRebuildExpr(structural);
+            bool freshClosureRebuild = IsFreshClosureRebuildExpr(structural);
             bool bytesProvenanceSafeListRebuild =
-                IsBytesProvenanceSafeListRebuildExpr(argument);
-            TcoSelfCallArgumentShape local =
-                argument is Expr.Var argVar
-                    && parameterScope.TryGetValue(argVar.Name, out int parameterOrdinal)
-                    && parameterOrdinal == i
-                    ? TcoSelfCallArgumentShape.UnchangedPassthrough
-                : argument is Expr.Var tailVar
-                    && tailOwners.TryGetValue(tailVar.Name, out int ownerOrdinal)
-                    && ownerOrdinal == i
-                    ? TcoSelfCallArgumentShape.ConsumedTail
-                : argument is Expr.Cons { Tail: Expr.Var consTail }
-                    && parameterScope.TryGetValue(consTail.Name, out int tailParameterOrdinal)
-                    && tailParameterOrdinal == i
-                    ? TcoSelfCallArgumentShape.GrownCons
-                : expressionFreshness.TryGetValue(argument, out bool fresh) && fresh
-                    ? TcoSelfCallArgumentShape.FreshRebuilt
-                : TcoSelfCallArgumentShape.Mixed;
+                IsBytesProvenanceSafeListRebuildExpr(structural);
+            TcoSelfCallArgumentShape local = ClassifyTcoSelfCallArgument(
+                argument, structural, i, parameterScope, tailOwners, expressionFreshness);
 
             state.Observed[i] = state.Observed[i] is { } already && already != local
                 ? TcoSelfCallArgumentShape.Mixed
@@ -2461,6 +2508,31 @@ public sealed partial class Lowering
                 && bytesProvenanceSafeListRebuild;
         }
     }
+
+    // `argument` is how the tail call spells the value; `structural` is what it was bound to. The
+    // first two shapes ask which binding the name refers to, so they read the spelling.
+    private static TcoSelfCallArgumentShape ClassifyTcoSelfCallArgument(
+        Expr argument,
+        Expr structural,
+        int ordinal,
+        IReadOnlyDictionary<string, int> parameterScope,
+        IReadOnlyDictionary<string, int> tailOwners,
+        IReadOnlyDictionary<Expr, bool> expressionFreshness)
+        => argument is Expr.Var argVar
+            && parameterScope.TryGetValue(argVar.Name, out int parameterOrdinal)
+            && parameterOrdinal == ordinal
+            ? TcoSelfCallArgumentShape.UnchangedPassthrough
+        : argument is Expr.Var tailVar
+            && tailOwners.TryGetValue(tailVar.Name, out int ownerOrdinal)
+            && ownerOrdinal == ordinal
+            ? TcoSelfCallArgumentShape.ConsumedTail
+        : structural is Expr.Cons { Tail: Expr.Var consTail }
+            && parameterScope.TryGetValue(consTail.Name, out int tailParameterOrdinal)
+            && tailParameterOrdinal == ordinal
+            ? TcoSelfCallArgumentShape.GrownCons
+        : expressionFreshness.TryGetValue(structural, out bool fresh) && fresh
+            ? TcoSelfCallArgumentShape.FreshRebuilt
+        : TcoSelfCallArgumentShape.Mixed;
 
     private bool IsBytesProvenanceSafeListRebuildExpr(Expr expression)
     {

@@ -10744,13 +10744,7 @@ public sealed partial class Lowering
             // The single-cell list copy-outs preserve only the TOP cons cell, assuming the
             // tail already lives below the watermark — which holds only for literally
             // `head :: <loop accumulator param>` (through one level of let-binding).
-            var argExpr = collectedArgs[i];
-            if (argExpr is Expr.Var v
-                && Lookup(v.Name) is Binding.Local local
-                && _letBindingValues.TryGetValue(local.Slot, out var bound))
-            {
-                argExpr = bound;
-            }
+            var argExpr = TryGetLetBoundValue(collectedArgs[i]) ?? collectedArgs[i];
 
             singleFreshCons[i] = argExpr is Expr.Cons cons
                 && cons.Tail is Expr.Var tailVar
@@ -10772,6 +10766,28 @@ public sealed partial class Lowering
         }
 
         return (passThrough, singleFreshCons, freshListRebuild, stableAccArg);
+    }
+
+    /// <summary>
+    /// The value a let-bound name was bound to, or null when the name is not one. A tail call spells
+    /// a value built earlier in the iteration by its name, so the structural facts below have to read
+    /// the binding, not the spelling. The slot is held by either binding kind — a generalized let
+    /// binds a scheme — which is the same pairing <c>IsRecursiveProducerResult</c> resolves.
+    /// </summary>
+    private Expr? TryGetLetBoundValue(Expr expression)
+    {
+        if (expression is not Expr.Var variable)
+        {
+            return null;
+        }
+
+        int slot = Lookup(variable.Name) switch
+        {
+            Binding.Local local => local.Slot,
+            Binding.Scheme scheme => scheme.Slot,
+            _ => -1,
+        };
+        return slot >= 0 && _letBindingValues.TryGetValue(slot, out Expr? bound) ? bound : null;
     }
 
     private void LowerCallTcoEmitReset(
