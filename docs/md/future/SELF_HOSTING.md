@@ -2883,6 +2883,21 @@ same public behavior.
   cross-compiler tests: `tmc_constructor_recursion_semantics`, `tmc_constructor_recursion_stack`,
   `tmc_filter_shape_interleaved`, and `tmc_map_shape_stack`, plus generic fallback, shared-tail,
   stack-limit, effect-order, and repeated-run RSS cases.
+- [ ] **OPT-64** Self-hosted mirror of stage 0's unreachable-function prune
+  (`IrOptimizer.PruneUnreachableFunctions` in `Ashes.Semantics/IrOptimizer.Reachability.cs`). Every
+  top-level binding of an imported module is lowered whether or not the importing program uses it,
+  so importing one standard library function compiles in that module's whole surface; stage 0 drops
+  the functions the entry point cannot reach, following the labels instructions name — the closure
+  constructions, the devirtualized call, and the two releases that carry a generated helper label —
+  plus the `$env_normalize` helper the backend resolves by name suffix rather than through an
+  operand. Measured on a program importing `Ashes.Collection.List` and calling only `list.length`:
+  35 emitted functions down to 17. Placement is part of the contract, not an implementation detail:
+  it runs over already-lowered IR, so binding, inference, and lowering have all happened and no
+  diagnostic is affected; after the optimizer, whose own contract is that it never removes a
+  function; and before the IR dumps and explain reports, so `--emit-ir final` keeps meaning what
+  code generation receives. It is never gated on a report flag. The shared explain parity fixtures
+  depend on that placement — they are built from `IrOptimizer.Optimize` directly, so they stay
+  byte-identical until this port lands and can be compared across both compilers unchanged.
 
 #### LLVM code generation and runtime integration
 

@@ -686,6 +686,22 @@ mask (CI runs `--pipeline both`). The `-O0..-O3` flags select the LLVM level
 only: at `-O0` no LLVM pass runs and the Ashes-optimized IR is emitted as-is;
 `-O1`+ hands the module to LLVM's full `default<Ox>` pipeline.
 
+Every top-level binding of an imported module is lowered whether or not the
+importing program uses it, so importing one standard library function compiles in
+that module's whole surface. `IrOptimizer.PruneUnreachableFunctions`
+(`Ashes.Semantics/IrOptimizer.Reachability.cs`) drops the functions the entry
+point cannot reach. It follows the labels instructions name — the closure
+constructions, the devirtualized call, and the two releases that delegate to a
+generated helper — plus the `$env_normalize` helper the backend resolves by name
+suffix rather than through an operand. Because it runs over already-lowered IR,
+binding, type inference, and lowering have all happened and every diagnostic they
+raise is unaffected; pruning before those phases would instead silence the
+diagnostics inside an unused declaration. The compile and test drivers apply it
+after `Optimize` — whose own contract is that it never removes a function — and
+before the IR dumps and explain reports, so those keep describing the program the
+backend receives. It is never gated on a report flag, so asking for a report
+cannot select a different image.
+
 ```mermaid
 graph TD
     A["IrCompileTimeEval.Evaluate<br/>whole program: pure constant-argument calls become constants"] --> B["per-function pipeline<br/>entry + every function, in order"]
