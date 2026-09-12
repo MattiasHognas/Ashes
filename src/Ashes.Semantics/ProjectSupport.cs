@@ -1079,9 +1079,16 @@ public static class ProjectSupport
         // (`Ashes.IO`'s bare `print`), which a qualified reference must not turn on. The scan covers
         // authored modules only — the shipped library declares its own dependencies as imports, and
         // scanning it would reorder `Ashes.Trait` behind the modules whose implementations it carries.
+        // The inline modules lifted out of this file are scanned with it, since `AppendPlannedModule`
+        // plans them immediately ahead of it and qualified access is their only route to another
+        // namespace: a `module` block may not carry an `import` (ASH021) and does not inherit the
+        // file's.
         if (!IsStdModule(module.ModuleName))
         {
-            foreach (var qualifiedReference in CollectQualifiedStdModuleReferences(module.Source))
+            IEnumerable<string> ownSources = inlineChildrenByPath.TryGetValue(module.FilePath, out var inlineChildren)
+                ? inlineChildren.Select(child => child.Source).Append(module.Source)
+                : [module.Source];
+            foreach (var qualifiedReference in ownSources.SelectMany(CollectQualifiedStdModuleReferences))
             {
                 if (NeedsStandardLibrarySource(qualifiedReference, out ProjectModule referencedStdModule)
                     && !IsVisitInProgress(referencedStdModule, states))
@@ -1666,6 +1673,22 @@ public static class ProjectSupport
         return BuildCompilationLayoutCore(orderedModules, entryModule, entryModule.Source);
     }
 
+    private static List<ProjectModule> LiftStandaloneInlineModules(
+        IReadOnlyList<InlineModuleInfo> inlineModules,
+        string entryFilePath)
+    {
+        return inlineModules
+            .Select(inline => new ProjectModule(
+                inline.ModuleName,
+                $"{entryFilePath}#{inline.ModuleName}",
+                inline.Source,
+                [],
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                [])
+            { PackageId = "standalone" })
+            .ToList();
+    }
+
     /// <summary>
     /// Builds a combined compilation layout for a single standalone file (no <c>ashes.json</c>),
     /// pulling in only the standard-library modules named by <paramref name="importNames"/>.
@@ -1686,23 +1709,13 @@ public static class ProjectSupport
 
         var entrySelectors = selectors ?? [];
 
-        // Lift inline `module Name = ...` blocks out of the entry source into synthetic submodules,
-        // ordered before the entry, and use the rewritten outer as the entry source. The entry file's
-        // own inline modules keep their bare names (nothing imports the entry across files), so
-        // same-file imports/aliases/selectors of them need no path rewriting.
+        // Lift inline `module Name = ...` blocks out of the entry source into synthetic submodules and
+        // use the rewritten outer as the entry source. The entry file's own inline modules keep their
+        // bare names (nothing imports the entry across files), so same-file imports/aliases/selectors
+        // of them need no path rewriting.
         var (entryOuter, entryInlineModules) = ExpandInlineModules(sourceWithoutImports, "", entryFilePath);
         var inlineModuleNames = new HashSet<string>(entryInlineModules.Select(m => m.ModuleName), StringComparer.Ordinal);
-        foreach (var inline in entryInlineModules)
-        {
-            orderedModules.Add(new ProjectModule(
-                inline.ModuleName,
-                $"{entryFilePath}#{inline.ModuleName}",
-                inline.Source,
-                [],
-                new Dictionary<string, string>(StringComparer.Ordinal),
-                [])
-            { PackageId = "standalone" });
-        }
+        List<ProjectModule> inlineModules = LiftStandaloneInlineModules(entryInlineModules, entryFilePath);
 
         var entryModule = new ProjectModule(
             "Main",
@@ -1713,7 +1726,6 @@ public static class ProjectSupport
             entrySelectors)
         { PackageId = "standalone" };
         orderedModules.Add(entryModule);
-        ProjectModule[] entrySideModules = orderedModules.ToArray();
 
         if (TryLoadStandardLibraryModule("Ashes.Trait", out ProjectModule traitModule))
         {
@@ -1724,11 +1736,19 @@ public static class ProjectSupport
         // lifted out of it) names that way are stitched in alongside the imported ones. They are not
         // added to the import list: an import additionally brings the module's exports into scope
         // unqualified and under its short qualifier, which a qualified reference must not do.
-        foreach (ProjectModule entrySide in entrySideModules)
+        ResolveStandaloneQualifiedStdReferences(
+            entryModule.Source, states, traversal, seenModules, orderedModules);
+        foreach (ProjectModule inline in inlineModules)
         {
             ResolveStandaloneQualifiedStdReferences(
-                entrySide.Source, states, traversal, seenModules, orderedModules);
+                inline.Source, states, traversal, seenModules, orderedModules);
         }
+
+        // The lifted inline modules are declared immediately before the entry, after everything they
+        // can reach. Qualified access is their only route to another namespace — an inline module may
+        // not carry an `import` (ASH021) and does not inherit the file's — so placing them ahead of the
+        // stitched library, as they used to be, left every such reference a forward reference.
+        orderedModules.InsertRange(orderedModules.Count - 1, inlineModules);
 
         // Use the entry module's selector-rewritten source (intrinsic and aliased-type selectors are
         // realized by in-place renaming) rather than the raw imports-stripped source, so single-file

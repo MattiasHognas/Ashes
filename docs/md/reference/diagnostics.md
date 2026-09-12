@@ -173,10 +173,12 @@ same path as file modules, so unknown-member, unknown-selector, and import-colli
 reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the surface.
 
 - `ASH021` — **Disallowed form in an inline module.** A `module` block contains a trailing
-  expression or an `external` declaration — neither is permitted (a module block is
-  declarations only, and `external` is a file-level FFI concern that is never exported).
-  Message: `Inline module 'Name' may not contain a trailing expression.` /
-  `Inline module 'Name' may not contain an 'external' declaration.`
+  expression, an `external` declaration, or an `import` — none is permitted (a module block is
+  declarations only, `external` is a file-level FFI concern that is never exported, and an import
+  header belongs to the file, which is why an inline module reaches another namespace by qualified
+  access). Message: `Inline module 'Name' may not contain a trailing expression.` /
+  `Inline module 'Name' may not contain an 'external' declaration.` /
+  `Inline module 'Name' may not contain an 'import'.`
 
 - `ASH022` — **Inline/file module collision.** An inline module and a project file resolve to
   the same module path (e.g. `module Vec` inside `Geom.ash` and a file `Geom/Vec.ash`). A
