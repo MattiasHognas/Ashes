@@ -26,7 +26,8 @@ data), `Ashes.Ffi` (trusted foreign-memory conversion), `Ashes.Task` (concurrenc
 (core value helpers), `Ashes.Trait` (standard traits), `Ashes.Test` (assertions), and the
 internal-only `Ashes.Internal`. Some modules are compiler intrinsics, some are shipped
 Ashes code from `lib/Ashes/`, and some are both; that distinction is an implementation detail —
-imports work identically for all of them.
+imports work identically for all of them, and every member is reachable by its fully-qualified path
+with no import at all (an import is what adds the unqualified names and the short qualifier).
 
 ## `Ashes.IO` — console, file, and process I/O
 

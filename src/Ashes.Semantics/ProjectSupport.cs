@@ -1073,6 +1073,26 @@ public static class ProjectSupport
                 states, traversal, ordered, importedStdModules, inlineChildrenByPath);
         }
 
+        // A fully-qualified reference to a standard-library module needs no import, so the modules
+        // reached that way are planned alongside the imported ones. They stay out of
+        // `importedStdModules`: that set is what gates the unqualified surface an `import` adds
+        // (`Ashes.IO`'s bare `print`), which a qualified reference must not turn on. The scan covers
+        // authored modules only — the shipped library declares its own dependencies as imports, and
+        // scanning it would reorder `Ashes.Trait` behind the modules whose implementations it carries.
+        if (!IsStdModule(module.ModuleName))
+        {
+            foreach (var qualifiedReference in CollectQualifiedStdModuleReferences(module.Source))
+            {
+                if (NeedsStandardLibrarySource(qualifiedReference, out ProjectModule referencedStdModule)
+                    && !IsVisitInProgress(referencedStdModule, states))
+                {
+                    VisitModuleForPlan(
+                        referencedStdModule, project, searchRoots, resolvedByModuleName, resolvedByPath,
+                        states, traversal, ordered, importedStdModules, inlineChildrenByPath);
+                }
+            }
+        }
+
         traversal.Pop();
         states[module.FilePath] = 2;
         AppendPlannedModule(module, states, ordered, inlineChildrenByPath);
@@ -1505,6 +1525,76 @@ public static class ProjectSupport
     }
 
     /// <summary>
+    /// Returns the standard-library members <paramref name="source"/> reaches by fully-qualified
+    /// reference (<c>Ashes.Collection.List.length</c>), which the language reference makes valid
+    /// without an import. The scan runs over the token stream rather than the parsed tree so it sees
+    /// every position a module path may occupy — expressions, type annotations, and patterns alike —
+    /// while string literals and comments are filtered out by the lexer. Each dotted run starting at
+    /// <c>Ashes</c> contributes its longest prefix that names a standard-library module, so
+    /// <c>Ashes.Text.Json.parse</c> selects <c>Ashes.Text.Json</c> rather than <c>Ashes.Text</c>; the
+    /// segment that follows the module is reported as the member, since a module can carry both
+    /// intrinsic and shipped members and only the latter need the module's source.
+    /// </summary>
+    private static IReadOnlyList<QualifiedReference> CollectQualifiedStdModuleReferences(string source)
+    {
+        var referenced = new List<QualifiedReference>();
+        var lexer = new Lexer(source, new Diagnostics());
+        var path = new StringBuilder();
+        string? longestModule = null;
+        var afterDot = false;
+
+        for (Token token = lexer.Next(); token.Kind != TokenKind.EOF; token = lexer.Next())
+        {
+            if (afterDot && token.Kind == TokenKind.Ident)
+            {
+                path.Append('.').Append(token.Text);
+                afterDot = false;
+                var candidate = path.ToString();
+                if (KnownStdModules.Contains(candidate))
+                {
+                    longestModule = candidate;
+                }
+
+                continue;
+            }
+
+            if (!afterDot && path.Length > 0 && token.Kind == TokenKind.Dot)
+            {
+                afterDot = true;
+                continue;
+            }
+
+            AddQualifiedStdModuleReference(referenced, path, longestModule);
+            path.Clear();
+            longestModule = null;
+            afterDot = false;
+            if (token.Kind == TokenKind.Ident && string.Equals(token.Text, "Ashes", StringComparison.Ordinal))
+            {
+                path.Append(token.Text);
+            }
+        }
+
+        AddQualifiedStdModuleReference(referenced, path, longestModule);
+        return referenced;
+    }
+
+    private static void AddQualifiedStdModuleReference(
+        List<QualifiedReference> referenced,
+        StringBuilder path,
+        string? longestModule)
+    {
+        if (longestModule is null)
+        {
+            return;
+        }
+
+        var full = path.ToString();
+        var memberStart = longestModule.Length + 1;
+        var member = memberStart < full.Length ? full[memberStart..].Split('.')[0] : string.Empty;
+        referenced.Add(new QualifiedReference(longestModule, member));
+    }
+
+    /// <summary>
     /// Convenience wrapper over <see cref="BuildCompilationLayout(ProjectCompilationPlan, string)"/>
     /// that returns only the stitched combined source text for <paramref name="plan"/>.
     /// </summary>
@@ -1623,12 +1713,22 @@ public static class ProjectSupport
             entrySelectors)
         { PackageId = "standalone" };
         orderedModules.Add(entryModule);
+        ProjectModule[] entrySideModules = orderedModules.ToArray();
 
         if (TryLoadStandardLibraryModule("Ashes.Trait", out ProjectModule traitModule))
         {
             VisitStandaloneModule(traitModule, states, traversal, seenModules, orderedModules);
         }
         ResolveStandaloneImports(importNames, inlineModuleNames, states, traversal, seenModules, orderedModules);
+        // A fully-qualified reference needs no import, so the modules the entry (and any inline module
+        // lifted out of it) names that way are stitched in alongside the imported ones. They are not
+        // added to the import list: an import additionally brings the module's exports into scope
+        // unqualified and under its short qualifier, which a qualified reference must not do.
+        foreach (ProjectModule entrySide in entrySideModules)
+        {
+            ResolveStandaloneQualifiedStdReferences(
+                entrySide.Source, states, traversal, seenModules, orderedModules);
+        }
 
         // Use the entry module's selector-rewritten source (intrinsic and aliased-type selectors are
         // realized by in-place renaming) rather than the raw imports-stripped source, so single-file
@@ -1672,6 +1772,51 @@ public static class ProjectSupport
             throw new InvalidOperationException(
                 $"Could not resolve module '{importName}'. User-defined module imports require project mode via ashes.json.");
         }
+    }
+
+    private static void ResolveStandaloneQualifiedStdReferences(
+        string source,
+        Dictionary<string, int> states,
+        Stack<ProjectModule> traversal,
+        HashSet<string> seenModules,
+        List<ProjectModule> orderedModules)
+    {
+        foreach (var reference in CollectQualifiedStdModuleReferences(source))
+        {
+            if (NeedsStandardLibrarySource(reference, out ProjectModule stdModule)
+                && !IsVisitInProgress(stdModule, states))
+            {
+                VisitStandaloneModule(stdModule, states, traversal, seenModules, orderedModules);
+            }
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="reference"/> can only be satisfied by stitching the standard-library
+    /// module's <c>.ash</c> source. A member the builtin registry resolves intrinsically
+    /// (<c>Ashes.Text.fromInt</c>) already lowers without it, so a module that carries both intrinsic
+    /// and shipped members is pulled in only for the shipped ones.
+    /// </summary>
+    private static bool NeedsStandardLibrarySource(QualifiedReference reference, out ProjectModule module)
+    {
+        if (IsBuiltinIntrinsicMember(reference.ModuleName, reference.ExportName))
+        {
+            module = null!;
+            return false;
+        }
+
+        return TryLoadStandardLibraryModule(reference.ModuleName, out module);
+    }
+
+    /// <summary>
+    /// True while <paramref name="module"/> is on the traversal stack — it is either the module being
+    /// visited or one of its ancestors. A qualified reference back into such a module is a module
+    /// referring to itself or to something already being stitched ahead of it, neither of which is the
+    /// declared-dependency cycle an <c>import</c> would be, so it is skipped rather than reported.
+    /// </summary>
+    private static bool IsVisitInProgress(ProjectModule module, Dictionary<string, int> states)
+    {
+        return states.TryGetValue(module.FilePath, out var state) && state == 1;
     }
 
     private static void VisitStandaloneModule(
