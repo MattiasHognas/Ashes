@@ -1,12 +1,8 @@
 import Resp
-import Ashes.Byte as bytes
 import Ashes.Text as text
-import Ashes.Number.UInt as uint
+import Ashes.Rune as rune
 let lowerCode c =
-    (let code =
-        0
-        |> bytes.get(bytes.fromText(c))
-        |> uint.toInt
+    (let code = rune.toInt(c)
     in
         if code >= 65
         then
