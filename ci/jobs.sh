@@ -299,8 +299,10 @@ _matrix_fmt() {
     CLI='./artifacts/ashes/linux-x64/ashes'
     echo '--- Verifying fmt...'
     \$CLI fmt examples -w > /dev/null
-    \$CLI fmt tests/imports -w > /dev/null
-    for test in tests/*.ash; do
+    # Every .ash under tests/, at any depth. The old form reached tests/imports and
+    # the top level only, so a fixture nested in a test project could drift
+    # indefinitely without the diff below ever seeing it.
+    find tests -name '*.ash' -type f | sort | while read -r test; do
       if grep -Eq '^//[[:space:]]*fmt-skip:' \"\$test\"; then continue; fi
       \$CLI fmt \"\$test\" -w > /dev/null
     done
