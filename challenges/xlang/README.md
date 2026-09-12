@@ -37,7 +37,7 @@ Go 1.27.1; `ocamlopt -unsafe -inline 100` 5.5.0. All outputs matched.
 |---|---|---|---|---|---|
 | spectral-norm 5,500 | **0.874s** | 0.902s | **0.870s** | 0.893s | 1.110s |
 | binary-trees 21 | **1.219s** | 2.310s | 7.698s | 2.925s | 2.481s |
-| n-body 50,000,000 | 13.370s | 1.924s | **1.186s** | 2.461s | 1.800s |
+| n-body 50,000,000 | 1.80s | 1.924s | **1.186s** | 2.461s | 1.800s |
 | fannkuch-redux 11 | 25.294s | 2.045s | 1.853s | **1.687s** | 2.023s |
 
 Reading these honestly:
@@ -48,8 +48,10 @@ Reading these honestly:
   column measures `malloc`, not Rust — the Benchmarks Game Rust entry uses a typed arena and is far
   faster. The fair reading is that the Ashes arena beats .NET's gen0 bump allocator and Go's
   allocator, and beats naive per-node `malloc` by 6x.
-- **n-body** and **fannkuch-redux** are the two programs that repeatedly *update* a structure, and
-  both lose by 11-15x. The cause is measured, not guessed: at fannkuch N=10 Ashes executes 46.9
+- **n-body** now sits second, ahead of OCaml, .NET and Go. It got there by dropping the
+  `List(Body)` for a fixed five-body record and evaluating each pair once (14.3 s to 1.8 s); see
+  that challenge's README.
+- **fannkuch-redux** is the remaining gap, and the cause is measured, not guessed: at N=10 Ashes executes 46.9
   billion instructions against Rust's 1.25 billion, with cache misses negligible in both, and
   `--explain reuse` shows in-place reuse firing nowhere in the program. Growth per N is identical
   to Rust and Go (12.5x vs 12.3x vs 12.1x from N=10 to N=11), so it is a constant factor rather
