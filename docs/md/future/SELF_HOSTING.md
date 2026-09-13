@@ -2936,7 +2936,13 @@ same public behavior.
   says needs surveying first — `CallOwnership.ash` models parameter ownership, not stage 0's
   `ConsumedRuntimeArgument` hand-over under an adoption flag — so that survey is the prerequisite.
   Mirror the contract rather than the symptom: unconditionally dropping a handed-over reference is
-  unsound, because other callees genuinely adopt it or keep it in their result.
+  unsound, because other callees genuinely adopt it or keep it in their result. Since #1002 the
+  port covers the ordinary call site; a self call in operand position (`"a" + go(n - 1)`,
+  `1 + countLeft(n - 1)`) still lowers without the adoption flag stage 0 passes it, which is what
+  keeps `selfhost/tests/ir-program-parity` red on main at `self_call_operand_string_result` and
+  `tco_non_tail_self_call_in_operator_operand` (2026-09-13; the runner stops at its first
+  mismatch, so every fixture after them goes unchecked until this closes).
+  `pattern_head_read_under_operator` differs only by OPT-25's pattern-head borrow.
 - [ ] **OPT-66** Self-hosted mirror of stage 0's let-bound tail-call argument facts. A tail self-call
   whose argument is a `let`-bound name passes a value built earlier in the same iteration, and stage 0
   read the loop's structural facts off that bare `Var`: the parameter was placed on the arena instead
@@ -2963,17 +2969,33 @@ same public behavior.
   optimization-level work measured and closed — so start by measuring frame depth through
   `fmt` on a large source, not by re-checking the pass pipeline. Details in
   `project_selfhost_gaps_found_task3` (session memory).
-- [ ] **OPT-68** The self-hosted semantics suite is red on main (found 2026-09-13 while landing
+- [x] **OPT-68** The self-hosted semantics suite was red on main (found 2026-09-13 while landing
   LNK-2's qualified-reference port, reproduced on a baseline build of main itself):
-  `CallWindowLoweringTests.ash`'s "generic list result deep copy program entry" check differs
+  `CallWindowLoweringTests.ash`'s "generic list result deep copy program entry" check differed
   from stage 0's `generic_list_result_deep_copy.ir` fixture by exactly five label numbers
   (`rc_normalize_list_13` versus `_18` and every label after it) with every instruction
-  otherwise identical, in both the reuse-enabled and `--debug-disable-reuse` builds. The fixture
-  is current for stage 0 (`SelfhostIrParityTests` guards it in the C# suite), so the self-hosted
-  lowering started allocating five more labels in a function numbered before the entry between
-  #896 and #1002 (#1002's handed-over-argument release is the likely site); decide whether those
-  labels are a genuine new emission stage 0 lacks or a drift, and make the check green either
-  way.
+  otherwise identical. Not an emission drift in the entry: label numbers are allocated
+  program-wide, and `mapAll`'s closure helper is lowered with tail-modulo-constructor by the
+  self-hosted compiler and without it by stage 0 (OPT-63's cross-compiler coverage gap), so its
+  extra labels (two `tmc_close_*`, three `rc_call_argument_not_retained_*` since #1002) shift
+  the entry's numbering. The check now compares labels renumbered by their order within the
+  entry (`withFunctionLocalLabels` in `LoweredIrFixtures.ash`); the helper's own divergence
+  stays OPT-63's. The suite's second red check was a real regression from #962's port: the
+  transformed `stamp` (`bang(head) :: stamp(tail)`) lost its `ReturnsRuntimeManaged` bit and
+  result-ownership epilogue, so a caller wanting an arena result copied the reference-counted
+  spine out and reclaimed only the arena, stranding every cell. Two facts stage 0 keeps were
+  missing: the back-edge dummy is a reference-counted value (`LowerCallTcoBackEdgeDummy`'s
+  `MarkRuntimeManagedTemp`, so a join of reachable reference-counted arms and the back-edge arm
+  stays reference-counted), and the closed spine carries the body value's representation
+  (`RecordControlFlowJoinTemp` at `LowerLambdaCoreCloseTmcChain`); both ported, and the check
+  rewritten to the transformed shape (`expectConstructorRecursiveProducerKeepsRuntimeManagedSpine`).
+  That program now matches stage 0's `non_tail_self_call_list_result` fixture byte for byte, the
+  exit-transfer selection slot stage 0 reserves for any loop with a reference-counted result
+  included (`reserveTcoExitTransferSlot`). `ResultReachTests.ash`'s three entry-normalization
+  expectations had also drifted, since #996 located every instruction a binding's finalization
+  emits at the binding's declaration; regenerated from the (main-identical) output. The suite
+  now runs green in both modes up to `TcoLoopLoweringTests.ash`'s `countLeft` check, which is
+  OPT-65's open self-call-in-operand gap and stays red until that closes.
 
 #### LLVM code generation and runtime integration
 

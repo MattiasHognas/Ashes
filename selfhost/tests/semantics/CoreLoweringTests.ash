@@ -555,6 +555,9 @@ let recursiveExpression =
         []
     )
 
+// The body is the back edge itself: its synthetic zero is a reference-counted value, as in stage
+// 0, so the closure carries the returns bit and the loop reserves the exit-transfer selection
+// slot before returning.
 let expectRecursiveSelfReference unit =
     ((given (_) ->
         recursiveExpression
@@ -564,7 +567,7 @@ let expectRecursiveSelfReference unit =
             "============",
             "",
             "function lambda_0  [SourceFunction from loop]",
-            "  locals=11 temps=4",
+            "  locals=12 temps=5",
             "    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3",
             "    LoadConstInt          Target=0 Value=0",
             "    StoreLocal            Slot=4 Source=0",
@@ -579,12 +582,14 @@ let expectRecursiveSelfReference unit =
             "    RestoreStackPointer   Slot=9",
             "    Jump                  Target=lambda_0_body",
             "    LoadConstInt          Target=3 Value=0",
+            "    LoadConstInt          Target=4 Value=0",
+            "    StoreLocal            Slot=10 Source=4",
             "    Return                Source=3",
             "",
             "function _start_main  [ProgramEntry]",
             "  locals=1 temps=3",
             "    LoadConstInt          Target=0 Value=0",
-            "    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0",
+            "    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true",
             "    StoreLocal            Slot=0 Source=1",
             "    LoadLocal             Target=2 Slot=0",
             "    Return                Source=2",

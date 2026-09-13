@@ -8,6 +8,7 @@ import LoweredIrFixtures.loweredFixtureLines
 import LoweredIrFixtures.stageZeroFixtureLines
 import LoweredIrFixtures.functionLines
 import LoweredIrFixtures.withoutLocations
+import LoweredIrFixtures.withFunctionLocalLabels
 import LoweredIrFixtures.expectSameLines
 export (
     value runCallWindowLoweringTests,
@@ -175,40 +176,34 @@ let expectCurriedSelfCallKeepsWindowOpen unit =
     |> expectNoInstructionText("call_copy_arena_result")
     |> (given (_) -> Unit)
 
-let recursive hasProtectedCall instructions =
-    match instructions with
-        | IrInstruction { instruction = RcDup(_target, source, _managed, _empty) } :: IrInstruction { instruction = CallClosure(_result, _closure, argument, _flag) } :: rest -> source == argument || hasProtectedCall(rest)
-        | _ :: rest -> hasProtectedCall(rest)
-        | [] -> false
+let constructorRecursiveProducerProgram = "let bang (n: Str) = n + \"!\"\n\nlet recursive stamp xs =\n    match xs with\n        | [] -> []\n        | head :: tail -> bang(head) :: stamp(tail)\n\nmatch stamp([\"a\"]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
 
-let recursive hasProtectedFunctionCall (functions: List(IrFunction)) =
-    match functions with
-        | [] -> false
-        | function :: rest -> hasProtectedCall(function.instructions) || hasProtectedFunctionCall(rest)
-
-let expectProtectedCall (program: IrProgram) =
-    if hasProtectedFunctionCall(program.functions)
-    then program
-    else test.fail("expected a protective duplicate of the recursive call argument")
-
-// A self call outside tail position is an ordinary call: its string-list result crosses the
-// window through the returns-bit copy-out, and placement keeps the pattern-owned tail alive
-// across it with a protective duplicate. The cons cell built around that result is itself the
-// spine of a non-tail recursive producer, so it is placed on the reference-counted heap rather
-// than the arena — the call site's copy-out above is already conditional on the very bit this
-// cell's own closure now reports correctly (`ReturnsRuntimeManaged=true`), so nothing above this
-// cell needs to change for the placement to be sound.
-let expectNonTailSelfCallReadsReturnsBit unit =
-    "let bang (n: Str) = n + \"!\"\n\nlet recursive stamp xs =\n    match xs with\n        | [] -> []\n        | head :: tail -> bang(head) :: stamp(tail)\n\nmatch stamp([\"a\"]) with\n    | [] -> Ashes.IO.print(\"empty\")\n    | _ -> Ashes.IO.print(\"full\")"
-    |> loweredProgramSource
-    |> expectProtectedCall
-    |> (given (program) -> formatIr(program)(LoweredIr)(None))
+// A producer whose cons tail is its own saturated self call (`bang(head) :: stamp(tail)`) is
+// built in a loop: each iteration allocates its cell on the reference-counted heap (the spine
+// must be reference-counted, the transform's own eligibility gate), links it into the
+// predecessor's tail, and takes the loop's back edge, so no self call and no call window remain
+// inside the function. The chain closes at the single return, and the closed spine keeps the
+// body's reference-counted representation: the closure carries `ReturnsRuntimeManaged=true`
+// and the function ends in the result-ownership epilogue that copies the spine out for a caller
+// that wants an arena result and releases the original. The call site reads that bit and
+// normalizes the result only when it is clear, exactly as stage 0 lowers the same program; the
+// only remaining difference is a dead zero store stage 0 emits before its epilogue.
+let expectConstructorRecursiveProducerKeepsRuntimeManagedSpine unit =
+    constructorRecursiveProducerProgram
+    |> dumpSource
+    |> expectInstruction("MakeClosure           Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true")
+    |> expectInstruction("LoadConstInt          Target=11 Value=63")
+    |> expectInstruction("JumpIfFalse           CondTemp=12 Target=call_copy_arena_result_17")
+    |> expectInstruction("CopyOutList           DestTemp=14 SrcTemp=13 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization")
     |> liftedFunctionLines
-    |> expectInstruction("MakeClosure           Target=12 FuncLabel=lambda_1 EnvPtrTemp=13 EnvSizeBytes=8 ReturnsRuntimeManaged=true")
-    |> expectInstruction("LoadConstInt          Target=17 Value=63")
-    |> expectInstruction("JumpIfFalse           CondTemp=18 Target=call_copy_arena_result_7")
-    |> expectInstruction("CopyOutList           DestTemp=20 SrcTemp=19 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization")
-    |> expectInstruction("Alloc                 Target=22 SizeBytes=16 RuntimeManaged=true")
+    |> expectInstruction("Alloc                 Target=21 SizeBytes=16 RuntimeManaged=true")
+    |> expectInstruction("JumpIfFalse           CondTemp=24 Target=tmc_first_8")
+    |> expectInstruction("Jump                  Target=lambda_1_body")
+    |> expectInstruction("JumpIfFalse           CondTemp=34 Target=tmc_close_empty_10")
+    |> expectInstruction("JumpIfFalse           CondTemp=40 Target=rc_result_owned_12")
+    |> expectInstruction("CopyOutList           DestTemp=41 SrcTemp=36 HeadCopy=String Purpose=ArenaResultBoundary")
+    |> expectNoInstructionText("Value=63")
+    |> expectNoInstructionText("call_copy_arena_result")
     |> (given (_) -> Unit)
 
 // The control for the rule above: this cons's tail is an ordinary parameter, not a call to a
@@ -278,16 +273,20 @@ let expectConcatCarriesRuntimeFlag unit =
 // instruction. Locations are left out: stage 0 tags the closure construction of a top-level
 // `let` with its declaration span, which the self-hosted lowering does not attach yet, and the
 // same gap keeps the whole program (the synthesized copier and epilogue of `toItem`) out of the
-// parity runner.
+// parity runner. Labels are compared by their order within the entry: `mapAll`'s helper is
+// lowered with tail-modulo-constructor here and without it by stage 0 (OPT-63), and its extra
+// labels shift the program-wide numbering of every label after it.
 let expectGenericListResultDeepCopyMatchesStageZero unit =
     "generic_list_result_deep_copy"
     |> loweredFixtureLines
     |> functionLines("[ProgramEntry]")
     |> withoutLocations
+    |> withFunctionLocalLabels
     |> expectSameLines("generic list result deep copy program entry")("generic_list_result_deep_copy"
     |> stageZeroFixtureLines
     |> functionLines("[ProgramEntry]")
-    |> withoutLocations)
+    |> withoutLocations
+    |> withFunctionLocalLabels)
 
 let runCallWindowLoweringTests unit =
     Unit
@@ -300,7 +299,7 @@ let runCallWindowLoweringTests unit =
     |> expectKnownRuntimeManagedResultResetsWithoutFlag
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
-    |> expectNonTailSelfCallReadsReturnsBit
+    |> expectConstructorRecursiveProducerKeepsRuntimeManagedSpine
     |> expectPlainConsTailStaysInTheArena
     |> expectGroupSiblingTailCallKeepsWindowOpen
     |> expectCurriedKnownResultResetsWithoutFlag
