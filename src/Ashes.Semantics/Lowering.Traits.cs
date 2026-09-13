@@ -203,10 +203,10 @@ public sealed partial class Lowering
         foreach (TraitConstraint missing in canonicalInferred.Where(constraint =>
                      !writtenKeys.Contains(ConstraintBoundaryKey(constraint, variableRanks))))
         {
-            ReportDiagnostic(
+            ReportConstraintBoundaryDiagnostic(
                 span,
                 $"Written requires clause does not include inferred requirement '{FormatTraitConstraint(missing)}'.",
-                InvalidTraitDeclarationCode);
+                allowRedundantWritten);
         }
         HashSet<string> inferredKeys = canonicalInferred
             .Select(constraint => ConstraintBoundaryKey(constraint, variableRanks))
@@ -216,12 +216,27 @@ public sealed partial class Lowering
                      && _traitImplementationValidationDepth == 0
                      && !inferredKeys.Contains(ConstraintBoundaryKey(constraint, variableRanks))))
         {
-            ReportDiagnostic(
+            ReportConstraintBoundaryDiagnostic(
                 span,
                 $"Written requires clause includes unjustified requirement '{FormatTraitConstraint(extra)}'.",
-                InvalidTraitDeclarationCode);
+                allowRedundantWritten);
         }
         return canonicalWritten;
+    }
+
+    /// <summary>
+    /// Reports a written-versus-inferred requirement mismatch, and remembers the ones that came from a
+    /// source binding so a pass that still sees unelaborated evidence can hand them to a pass that does
+    /// not (see <see cref="ElaborateInferredTraitBindings"/>).
+    /// </summary>
+    private void ReportConstraintBoundaryDiagnostic(TextSpan span, string message, bool allowRedundantWritten)
+    {
+        ReportDiagnostic(span, message, InvalidTraitDeclarationCode);
+        if (!allowRedundantWritten)
+        {
+            _sourceConstraintBoundaryDiagnostics.Add(
+                new DiagnosticEntry(span, message, InvalidTraitDeclarationCode));
+        }
     }
 
     private bool SuppressSourceConstraintDiagnostics(string bindingName) =>

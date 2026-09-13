@@ -3522,7 +3522,7 @@ public sealed partial class Lowering
             hasInferredElaboration ? writtenRequirements : inferredRequirements,
             writtenRequirements,
             valueType,
-            GetSpan(binding),
+            GetBindingSpan(binding),
             binding.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal),
             SuppressSourceConstraintDiagnostics(binding.Name));
         TypeScheme scheme = GeneralizeBindingType(Prune(valueType), schemeRequirements);
@@ -6188,7 +6188,7 @@ public sealed partial class Lowering
             IsInferredTraitBinding(letRecursive) ? writtenRequirements : inferredRequirements,
             writtenRequirements,
             schemeType,
-            GetSpan(letRecursive),
+            GetBindingSpan(letRecursive),
             letRecursive.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal)
                 || letRecursive.Name.StartsWith("__trait_impl_", StringComparison.Ordinal),
             SuppressSourceConstraintDiagnostics(letRecursive.Name));
