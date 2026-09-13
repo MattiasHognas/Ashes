@@ -1,0 +1,83 @@
+RC report
+=========
+
+Function: build [lambda_1]
+  Operations
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: build
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: findLong [lambda_3]
+  Operations
+    dup:                  3
+    drop:                 12
+    uniqueness checks:    3
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               3
+
+Function: findLong
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: run [lambda_5]
+  Operations
+    dup:                  1
+    drop:                 4
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: run
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: findLong [lambda_3__scalarenv0]
+  Operations
+    dup:                  3
+    drop:                 12
+    uniqueness checks:    3
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               3
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+

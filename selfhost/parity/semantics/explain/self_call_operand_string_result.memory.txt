@@ -1,0 +1,17 @@
+Memory report
+=============
+
+Function: go
+  ownership
+    n: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+  representation [lambda_0]
+    conservative unknown: 3
+    region:               2
+    runtime rc:           3
+    copy value:           6
+

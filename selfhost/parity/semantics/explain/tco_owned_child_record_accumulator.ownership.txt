@@ -1,0 +1,19 @@
+Ownership report
+================
+
+Function: step
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    s
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - s
+

@@ -36,9 +36,16 @@ export (
     value tagItemInstruction,
 )
 
+// The starts of every line after the first as a balanced search tree, each node carrying its line
+// number, so an offset resolves to its line in logarithmic time however long the file is.
+type LineTree =
+    | LineLeaf
+    | LineNode(LineTree, Int, Int, LineTree)
+    deriving {Eq, Show}
+
 type SourceTextIndex =
     | sourceText: Str
-    | lineStarts: List(Int)
+    | lineTree: LineTree
     deriving {Eq, Show}
 
 type ModuleRegion =
@@ -93,37 +100,54 @@ let recursive scanLineStarts (bytes: Bytes) (limit: Int) (i: Int) (acc: List(Int
                     else scanLineStarts(bytes)(limit)(i + 1)(i + 1 :: acc)
                 else scanLineStarts(bytes)(limit)(i + 1)(acc)
 
+// A balanced tree over the first `count` of the ascending `starts`, numbered from `firstLine`, with
+// the starts left over after them.
+let recursive buildLineTree (starts: List(Int)) (firstLine: Int) (count: Int) =
+    if count <= 0
+    then (LineLeaf, starts)
+    else
+        let leftCount = count / 2
+        in
+            match buildLineTree(starts)(firstLine)(leftCount) with
+                | (left, start :: afterLeft) ->
+                    match buildLineTree(afterLeft)(firstLine + leftCount + 1)(count - leftCount - 1) with
+                        | (right, afterRight) -> (LineNode(left)(firstLine + leftCount)(start)(right), afterRight)
+                | (left, []) -> (left, [])
+
 let buildSourceTextIndex (source: Str) =
     (let bytes = Ashes.Byte.fromText(source)
     in
         let limit = Ashes.Byte.length(bytes)
         in
-            let lineStarts = scanLineStarts(bytes)(limit)(0)([0])
-            in SourceTextIndex(sourceText = source, lineStarts = lineStarts))
+            match scanLineStarts(bytes)(limit)(0)([]) with
+                | laterStarts ->
+                    match laterStarts
+                    |> length
+                    |> buildLineTree(laterStarts)(2) with
+                        | (tree, _remaining) -> SourceTextIndex(sourceText = source, lineTree = tree))
 
-let recursive findLine (lineStarts: List(Int)) (targetOffset: Int) (currentLine: Int) (lastStart: Int) =
-    match lineStarts with
-        | [] -> (currentLine, lastStart)
-        | head :: tail ->
-            if head > targetOffset
-            then (currentLine, lastStart)
-            else findLine(tail)(targetOffset)(currentLine + 1)(head)
+// The line whose start is the greatest at or below `targetOffset`, with that start; the first line
+// from offset 0 when no later line starts at or before it.
+let recursive findLine (tree: LineTree) (targetOffset: Int) (currentLine: Int) (lastStart: Int) =
+    match tree with
+        | LineLeaf -> (currentLine, lastStart)
+        | LineNode(left, line, start, right) ->
+            if start > targetOffset
+            then findLine(left)(targetOffset)(currentLine)(lastStart)
+            else findLine(right)(targetOffset)(line)(start)
 
 let resolvePositionInIndex (sourceIndex: SourceTextIndex) (offset: Int) =
     match sourceIndex with
-        | SourceTextIndex(_sourceText, lineStarts) ->
+        | SourceTextIndex(_sourceText, tree) ->
             let normalizedOffset =
                 if offset < 0
                 then 0
                 else offset
             in
-                match lineStarts with
-                    | [] -> (1, normalizedOffset + 1)
-                    | _ :: tail ->
-                        match findLine(tail)(normalizedOffset)(1)(0) with
-                            | (line, lineStart) ->
-                                let col = normalizedOffset - lineStart + 1
-                                in (line, col)
+                match findLine(tree)(normalizedOffset)(1)(0) with
+                    | (line, lineStart) ->
+                        let col = normalizedOffset - lineStart + 1
+                        in (line, col)
 
 let createSourceContext (filePath: Str) (source: Str) =
     (let index = buildSourceTextIndex(source)

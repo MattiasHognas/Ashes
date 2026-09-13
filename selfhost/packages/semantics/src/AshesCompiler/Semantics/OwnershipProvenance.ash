@@ -6,18 +6,20 @@
 // - Forwarding calls inherit their callee's provenance.
 // - Strongly-connected components are solved as a least fixpoint: productive recursion with a fresh
 //   base converges, while pure forwarding cycles and non-RC paths fail closed.
+//
+// Names are looked up in balanced maps (Ashes.Collection.Map) so a program with thousands of
+// functions is analysed in near-linear time; every map keeps the FIRST node of a name, as the
+// association lists it replaces answered their first match, and the traversal orders (node order,
+// forward-target order, Kosaraju's post order) are the ones stage 0 walks.
 
 import AshesCompiler.Semantics.OwnershipSummary
-import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
-import Ashes.Collection.List.length
+import Ashes.Collection.Map.MapTree
 export (
     type ProvenanceFunctionNode(..),
     type ProvenanceComponent(..),
     value buildProvenanceNode,
     value computeStronglyConnectedComponents,
-    value buildComponents,
-    value solveRcEligibilityFixpoint,
     value resolveResultProvenances,
 )
 
@@ -43,13 +45,34 @@ type ProvenanceComponent =
     | hasUnknownBytesResult: Bool
     deriving {Eq, Show}
 
-let recursive listContainsStr (list: List(Str)) (target: Str) =
-    match list with
-        | [] -> false
-        | head :: tail ->
-            if head == target
-            then true
-            else listContainsStr(tail)(target)
+// The per-function facts a component aggregates over its members.
+type NodeFacts =
+    | factDirect: Bool
+    | factRejected: Bool
+    | factArms: Int
+    | factBytes: List(BytesOwnershipProvenance)
+    | factUnknownBytes: Bool
+
+type alias NameSet = MapTree(Str, Bool)
+
+type alias Adjacency = MapTree(Str, List(Str))
+
+let emptyFacts = NodeFacts(factDirect = false, factRejected = false, factArms = 0, factBytes = [], factUnknownBytes = false)
+
+let containsName (name: Str) (names: NameSet) =
+    match Ashes.Collection.Map.getStr(name)(names) with
+        | Some(_present) -> true
+        | None -> false
+
+let addName (name: Str) (names: NameSet) = Ashes.Collection.Map.setStr(name)(true)(names)
+
+let keepFirst (key: Str) value map =
+    Ashes.Collection.Map.upsertStr(key)(value)(given (existing) -> existing)(map)
+
+let targetsOf (adj: Adjacency) (name: Str) =
+    match Ashes.Collection.Map.getStr(name)(adj) with
+        | Some(targets) -> targets
+        | None -> []
 
 let recursive listContainsInt (list: List(Int)) (target: Int) =
     match list with
@@ -95,124 +118,153 @@ let buildProvenanceNode (name: Str) (hasDirect: Bool) (hasRejected: Bool) (armCo
         hasUnknownBytesResult = unknownBytes
     )
 
-let recursive lookupStrList (map: List((Str, List(Str)))) (key: Str) =
-    match map with
-        | [] -> []
-        | pair :: rest ->
-            match pair with
-                | (k, v) ->
-                    if k == key
-                    then v
-                    else lookupStrList(rest)(key)
-
-let recursive getNodeNames (nodes: List(ProvenanceFunctionNode)) =
+// The list builders below accumulate and reverse once rather than cons around a recursive call:
+// stage 0 copies the partial list out at every return of a builder whose element is a string or
+// list borrowed from a record, which made each of them quadratic in memory.
+let recursive getNodeNamesInto (nodes: List(ProvenanceFunctionNode)) (names: List(Str)) =
     match nodes with
-        | [] -> []
-        | head :: tail ->
-            match head with
-                | ProvenanceFunctionNode { functionName = name } -> name :: getNodeNames(tail)
+        | [] -> reverse(names)
+        | ProvenanceFunctionNode { functionName = name } :: tail -> getNodeNamesInto(tail)(name :: names)
 
-let recursive getNodeAdj (nodes: List(ProvenanceFunctionNode)) =
-    match nodes with
-        | [] -> []
-        | head :: tail ->
-            match head with
-                | ProvenanceFunctionNode { functionName = name, forwardTargets = fwd } -> (name, fwd) :: getNodeAdj(tail)
+let getNodeNames (nodes: List(ProvenanceFunctionNode)) = getNodeNamesInto(nodes)([])
 
-let recursive getNodeFacts (nodes: List(ProvenanceFunctionNode)) =
+let recursive adjacencyOf (nodes: List(ProvenanceFunctionNode)) (adj: Adjacency) =
     match nodes with
-        | [] -> []
-        | head :: tail ->
-            match head with
-                | ProvenanceFunctionNode { functionName = name, hasDirectEligibleResult = d, hasRejectedResult = r, consideredArmCount = a, directBytesProvenances = b, hasUnknownBytesResult = u } -> (name, d, r, a, b, u) :: getNodeFacts(tail)
+        | [] -> adj
+        | ProvenanceFunctionNode { functionName = name, forwardTargets = targets } :: tail ->
+            adj
+            |> keepFirst(name)(targets)
+            |> adjacencyOf(tail)
 
-let recursive getNodeUnambiguous (nodes: List(ProvenanceFunctionNode)) =
+let recursive factsOf (nodes: List(ProvenanceFunctionNode)) (facts: MapTree(Str, NodeFacts)) =
     match nodes with
-        | [] -> []
-        | head :: tail ->
-            match head with
-                | ProvenanceFunctionNode { functionName = name, unambiguousForwardTarget = unam } -> (name, unam) :: getNodeUnambiguous(tail)
+        | [] -> facts
+        | ProvenanceFunctionNode { functionName = name, hasDirectEligibleResult = d, hasRejectedResult = r, consideredArmCount = a, directBytesProvenances = b, hasUnknownBytesResult = u } :: tail ->
+            facts
+            |> keepFirst(name)(NodeFacts(factDirect = d, factRejected = r, factArms = a, factBytes = b, factUnknownBytes = u))
+            |> factsOf(tail)
+
+let recursive unambiguousOf (nodes: List(ProvenanceFunctionNode)) (targets: MapTree(Str, Maybe(Str))) =
+    match nodes with
+        | [] -> targets
+        | ProvenanceFunctionNode { functionName = name, unambiguousForwardTarget = unambiguous } :: tail ->
+            targets
+            |> keepFirst(name)(unambiguous)
+            |> unambiguousOf(tail)
+
+// The reverse adjacency Kosaraju's second pass walks: every function naming `target` among its
+// forward targets, in node order and once per node. Built once over the nodes in reverse, so
+// consing yields node order, rather than by scanning every node at each visit.
+let recursive addPredecessor (name: Str) (targets: List(Str)) (added: NameSet) (predecessors: Adjacency) =
+    match targets with
+        | [] -> predecessors
+        | target :: rest ->
+            if containsName(target)(added)
+            then addPredecessor(name)(rest)(added)(predecessors)
+            else
+                predecessors
+                |> Ashes.Collection.Map.upsertStr(target)([name])(given (existing) -> name :: existing)
+                |> addPredecessor(name)(rest)(addName(target)(added))
+
+let recursive predecessorsOf (reversedNodes: List(ProvenanceFunctionNode)) (predecessors: Adjacency) =
+    match reversedNodes with
+        | [] -> predecessors
+        | ProvenanceFunctionNode { functionName = name, forwardTargets = targets } :: tail ->
+            predecessors
+            |> addPredecessor(name)(targets)(Ashes.Collection.Map.empty)
+            |> predecessorsOf(tail)
 
 // --- Graph operations & SCC via Kosaraju's algorithm ---
-let recursive dfsPostOrder (worklist: List(Str)) (adj: List((Str, List(Str)))) (visited: List(Str)) (postOrder: List(Str)) =
-    match worklist with
-        | [] -> (visited, postOrder)
-        | current :: rest ->
-            if listContainsStr(visited)(current)
-            then dfsPostOrder(rest)(adj)(visited)(postOrder)
+// Both passes walk with an explicit stack in one loop, so a visit neither recurses nor hands a
+// `(visited, ...)` pair back per node: a pair returned out of a call clones the visited map it
+// carries, which made the walk quadratic in memory. The stack holds whole worklists rather than
+// one name per frame, so pushing a node's targets is one cons and never rebuilds the stack (a
+// helper returning a list that extends its borrowed argument copies the whole list out). `Visit`
+// carries the names still to enter at one level and `Exit` records a name once every target of
+// its level is done, so the post order is exactly the recursive walk's; the reverse walk records a
+// name on entry, so its stack needs no exit frames.
+type DfsFrame =
+    | Visit(List(Str))
+    | Exit(Str)
+
+// The post order of the whole graph: every root in `roots` is walked in turn, a name an earlier
+// root's walk already visited skipped.
+let recursive computePostOrder (roots: List(Str)) (stack: List(DfsFrame)) (adj: Adjacency) (visited: NameSet) (postOrder: List(Str)) =
+    match stack with
+        | Visit([]) :: rest -> computePostOrder(roots)(rest)(adj)(visited)(postOrder)
+        | Visit(name :: more) :: rest ->
+            if containsName(name)(visited)
+            then computePostOrder(roots)(Visit(more) :: rest)(adj)(visited)(postOrder)
             else
-                let newVisited = current :: visited
-                in
-                    let targets = lookupStrList(adj)(current)
-                    in
-                        match dfsPostOrder(targets)(adj)(newVisited)(postOrder) with
-                            | (vAfter, poAfter) -> dfsPostOrder(rest)(adj)(vAfter)(current :: poAfter)
+                computePostOrder(roots)(Visit(targetsOf(adj)(name)) :: Exit(name) :: Visit(more) :: rest)(adj)(addName(name)(visited))(postOrder)
+        | Exit(name) :: rest -> computePostOrder(roots)(rest)(adj)(visited)(name :: postOrder)
+        | [] ->
+            match roots with
+                | [] -> postOrder
+                | root :: rest -> computePostOrder(rest)([Visit([root])])(adj)(visited)(postOrder)
 
-let recursive computePostOrder (names: List(Str)) (adj: List((Str, List(Str)))) (visited: List(Str)) (postOrder: List(Str)) =
-    match names with
-        | [] -> postOrder
-        | name :: rest ->
-            match dfsPostOrder([name])(adj)(visited)(postOrder) with
-                | (newVisited, newPo) -> computePostOrder(rest)(adj)(newVisited)(newPo)
-
-let recursive collectPredecessors (adj: List((Str, List(Str)))) (target: Str) =
-    match adj with
-        | [] -> []
-        | pair :: rest ->
-            match pair with
-                | (name, targets) ->
-                    if listContainsStr(targets)(target)
-                    then name :: collectPredecessors(rest)(target)
-                    else collectPredecessors(rest)(target)
-
-let recursive dfsReverse (worklist: List(Str)) (adj: List((Str, List(Str)))) (visited: List(Str)) (componentAcc: List(Str)) =
-    match worklist with
-        | [] -> (visited, componentAcc)
-        | current :: rest ->
-            if listContainsStr(visited)(current)
-            then dfsReverse(rest)(adj)(visited)(componentAcc)
+// The components in the order the post order yields them, each member list in the order the
+// reverse walk records it, most recently visited first.
+let recursive computeSccs (order: List(Str)) (stack: List(List(Str))) (predecessors: Adjacency) (visited: NameSet) (component: List(Str)) (components: List(List(Str))) =
+    match stack with
+        | [] :: rest -> computeSccs(order)(rest)(predecessors)(visited)(component)(components)
+        | (name :: more) :: rest ->
+            if containsName(name)(visited)
+            then computeSccs(order)(more :: rest)(predecessors)(visited)(component)(components)
             else
-                let newVisited = current :: visited
-                in
-                    let preds = collectPredecessors(adj)(current)
-                    in
-                        match dfsReverse(preds)(adj)(newVisited)(current :: componentAcc) with
-                            | (vAfter, compAfter) -> dfsReverse(rest)(adj)(vAfter)(compAfter)
+                computeSccs(order)(targetsOf(predecessors)(name) :: more :: rest)(predecessors)(addName(name)(visited))(name :: component)(components)
+        | [] ->
+            let finished =
+                match component with
+                    | [] -> components
+                    | _ -> component :: components
+            in
+                match order with
+                    | [] -> finished
+                    | head :: tail ->
+                        if containsName(head)(visited)
+                        then computeSccs(tail)([])(predecessors)(visited)([])(finished)
+                        else computeSccs(tail)([[head]])(predecessors)(visited)([])(finished)
 
-let recursive computeSccs (order: List(Str)) (adj: List((Str, List(Str)))) (visited: List(Str)) (components: List(List(Str))) =
-    match order with
-        | [] -> components
-        | head :: tail ->
-            if listContainsStr(visited)(head)
-            then computeSccs(tail)(adj)(visited)(components)
-            else
-                match dfsReverse([head])(adj)(visited)([]) with
-                    | (newVisited, comp) -> computeSccs(tail)(adj)(newVisited)(comp :: components)
+let sccsOf (nodes: List(ProvenanceFunctionNode)) (adj: Adjacency) =
+    computeSccs(computePostOrder(getNodeNames(nodes))([])(adj)(Ashes.Collection.Map.empty)([]))([])(predecessorsOf(reverse(nodes))(Ashes.Collection.Map.empty))(Ashes.Collection.Map.empty)([])([])
 
 let computeStronglyConnectedComponents (nodes: List(ProvenanceFunctionNode)) =
-    (let names = getNodeNames(nodes)
-    in
-        let adj = getNodeAdj(nodes)
-        in
-            let postOrder = computePostOrder(names)(adj)([])([])
-            in computeSccs(postOrder)(adj)([])([]))
+    Ashes.Collection.Map.empty
+    |> adjacencyOf(nodes)
+    |> sccsOf(nodes)
 
 // --- Component building and fixpoint solver ---
-let recursive findComponentIdOf (components: List(List(Str))) (func: Str) (currentId: Int) =
-    match components with
-        | [] -> -1
-        | members :: tail ->
-            if listContainsStr(members)(func)
-            then currentId
-            else findComponentIdOf(tail)(func)(currentId + 1)
+// Each function's component id, the first component listing it winning as the positional search
+// it replaces did.
+let recursive addMemberIds (members: List(Str)) (currentId: Int) (ids: MapTree(Str, Int)) =
+    match members with
+        | [] -> ids
+        | member :: rest ->
+            ids
+            |> keepFirst(member)(currentId)
+            |> addMemberIds(rest)(currentId)
 
-let recursive collectDependenciesFromTargets (targets: List(Str)) (components: List(List(Str))) (selfId: Int) =
+let recursive componentIdsOf (components: List(List(Str))) (currentId: Int) (ids: MapTree(Str, Int)) =
+    match components with
+        | [] -> ids
+        | members :: tail ->
+            ids
+            |> addMemberIds(members)(currentId)
+            |> componentIdsOf(tail)(currentId + 1)
+
+let componentIdOf (ids: MapTree(Str, Int)) (func: Str) =
+    match Ashes.Collection.Map.getStr(func)(ids) with
+        | Some(id) -> id
+        | None -> -1
+
+let recursive collectDependenciesFromTargets (targets: List(Str)) (ids: MapTree(Str, Int)) (selfId: Int) =
     match targets with
         | [] -> []
         | target :: rest ->
-            let targetCompId = findComponentIdOf(components)(target)(0)
+            let targetCompId = componentIdOf(ids)(target)
             in
-                let restDeps = collectDependenciesFromTargets(rest)(components)(selfId)
+                let restDeps = collectDependenciesFromTargets(rest)(ids)(selfId)
                 in
                     if targetCompId >= 0
                     then
@@ -224,198 +276,135 @@ let recursive collectDependenciesFromTargets (targets: List(Str)) (components: L
                         else restDeps
                     else restDeps
 
-let recursive collectComponentDependencies (members: List(Str)) (adj: List((Str, List(Str)))) (components: List(List(Str))) (selfId: Int) =
+let recursive collectComponentDependencies (members: List(Str)) (adj: Adjacency) (ids: MapTree(Str, Int)) (selfId: Int) =
     match members with
         | [] -> []
         | func :: rest ->
-            let targets = lookupStrList(adj)(func)
+            let deps =
+                collectDependenciesFromTargets(targetsOf(adj)(func))(ids)(selfId)
             in
-                let deps = collectDependenciesFromTargets(targets)(components)(selfId)
-                in
-                    let restDeps = collectComponentDependencies(rest)(adj)(components)(selfId)
-                    in unionIntLists(deps)(restDeps)
+                let restDeps = collectComponentDependencies(rest)(adj)(ids)(selfId)
+                in unionIntLists(deps)(restDeps)
 
-let recursive aggregateSingleFact (func: Str) (facts: List((Str, Bool, Bool, Int, List(BytesOwnershipProvenance), Bool))) =
-    match facts with
-        | [] -> (false, false, 0, [], false)
-        | fact :: rest ->
-            match fact with
-                | (name, d, r, a, b, u) ->
-                    if name == func
-                    then (d, r, a, b, u)
-                    else aggregateSingleFact(func)(rest)
+let factOf (facts: MapTree(Str, NodeFacts)) (func: Str) =
+    match Ashes.Collection.Map.getStr(func)(facts) with
+        | Some(fact) -> fact
+        | None -> emptyFacts
 
-let recursive aggregateComponentFacts (members: List(Str)) (facts: List((Str, Bool, Bool, Int, List(BytesOwnershipProvenance), Bool))) =
+let recursive aggregateComponentFacts (members: List(Str)) (facts: MapTree(Str, NodeFacts)) =
     match members with
-        | [] -> (false, false, 0, [], false)
+        | [] -> emptyFacts
         | func :: rest ->
-            match aggregateSingleFact(func)(facts) with
-                | (d1, r1, a1, b1, u1) ->
-                    match aggregateComponentFacts(rest)(facts) with
-                        | (d2, r2, a2, b2, u2) ->
-                            let d =
-                                if d1
-                                then true
-                                else d2
-                            in
-                                let r =
-                                    if r1
-                                    then true
-                                    else r2
-                                in
-                                    let a = a1 + a2
-                                    in
-                                        let b = unionBytesProvenances(b1)(b2)
-                                        in
-                                            let u =
-                                                if u1
-                                                then true
-                                                else u2
-                                            in (d, r, a, b, u)
+            match (factOf(facts)(func), aggregateComponentFacts(rest)(facts)) with
+                | (first, others) ->
+                    NodeFacts(
+                        factDirect = first.factDirect || others.factDirect,
+                        factRejected = first.factRejected || others.factRejected,
+                        factArms = first.factArms + others.factArms,
+                        factBytes = unionBytesProvenances(first.factBytes)(others.factBytes),
+                        factUnknownBytes = first.factUnknownBytes || others.factUnknownBytes
+                    )
 
-let recursive buildComponentsAux (sccs: List(List(Str))) (allSccs: List(List(Str))) (adj: List((Str, List(Str)))) (facts: List((Str, Bool, Bool, Int, List(BytesOwnershipProvenance), Bool))) (currentId: Int) =
+let recursive buildComponentsInto (sccs: List(List(Str))) (adj: Adjacency) (ids: MapTree(Str, Int)) (facts: MapTree(Str, NodeFacts)) (currentId: Int) (built: List(ProvenanceComponent)) =
     match sccs with
-        | [] -> []
+        | [] -> reverse(built)
         | members :: tail ->
             match aggregateComponentFacts(members)(facts) with
-                | (direct, rejected, arms, bProv, unkBytes) ->
-                    let deps = collectComponentDependencies(members)(adj)(allSccs)(currentId)
+                | NodeFacts { factDirect = direct, factRejected = rejected, factArms = arms, factBytes = bProv, factUnknownBytes = unkBytes } ->
+                    let deps = collectComponentDependencies(members)(adj)(ids)(currentId)
                     in
-                        let compRejected =
-                            if rejected
-                            then true
-                            else arms == 0
-                        in
-                            let comp =
-                                ProvenanceComponent(
-                                    componentId = currentId,
-                                    memberFunctions = members,
-                                    hasDirectEligibleResult = direct,
-                                    hasRejectedResult = compRejected,
-                                    consideredArmCount = arms,
-                                    dependencies = deps,
-                                    directBytesProvenances = bProv,
-                                    hasUnknownBytesResult = unkBytes
-                                )
-                            in comp :: buildComponentsAux(tail)(allSccs)(adj)(facts)(currentId + 1)
+                        let comp =
+                            ProvenanceComponent(
+                                componentId = currentId,
+                                memberFunctions = members,
+                                hasDirectEligibleResult = direct,
+                                hasRejectedResult = rejected || arms == 0,
+                                consideredArmCount = arms,
+                                dependencies = deps,
+                                directBytesProvenances = bProv,
+                                hasUnknownBytesResult = unkBytes
+                            )
+                        in buildComponentsInto(tail)(adj)(ids)(facts)(currentId + 1)(comp :: built)
 
-let buildComponents (sccs: List(List(Str))) (nodes: List(ProvenanceFunctionNode)) =
-    (let adj = getNodeAdj(nodes)
-    in
-        let facts = getNodeFacts(nodes)
-        in buildComponentsAux(sccs)(sccs)(adj)(facts)(0))
+let buildComponents (sccs: List(List(Str))) (adj: Adjacency) (ids: MapTree(Str, Int)) (facts: MapTree(Str, NodeFacts)) = buildComponentsInto(sccs)(adj)(ids)(facts)(0)([])
 
-let recursive allDependenciesEligible (deps: List(Int)) (eligible: List(Int)) =
+let isEligible (compId: Int) (eligible: MapTree(Int, Bool)) =
+    match Ashes.Collection.Map.get(compId)(eligible) with
+        | Some(_present) -> true
+        | None -> false
+
+let recursive allDependenciesEligible (deps: List(Int)) (eligible: MapTree(Int, Bool)) =
     match deps with
         | [] -> true
         | depId :: rest ->
-            if listContainsInt(eligible)(depId)
+            if isEligible(depId)(eligible)
             then allDependenciesEligible(rest)(eligible)
             else false
 
-let recursive anyDependencyEligible (deps: List(Int)) (eligible: List(Int)) =
+let recursive anyDependencyEligible (deps: List(Int)) (eligible: MapTree(Int, Bool)) =
     match deps with
         | [] -> false
         | depId :: rest ->
-            if listContainsInt(eligible)(depId)
+            if isEligible(depId)(eligible)
             then true
             else anyDependencyEligible(rest)(eligible)
 
-let recursive solveRcEligibilityStep (comps: List(ProvenanceComponent)) (eligible: List(Int)) (changed: Bool) =
+let recursive solveRcEligibilityStep (comps: List(ProvenanceComponent)) (eligible: MapTree(Int, Bool)) (changed: Bool) =
     match comps with
         | [] -> (eligible, changed)
-        | comp :: rest ->
-            match comp with
-                | ProvenanceComponent { componentId = compId, hasDirectEligibleResult = hasDirect, hasRejectedResult = hasRejected, dependencies = deps } ->
-                    if listContainsInt(eligible)(compId)
-                    then solveRcEligibilityStep(rest)(eligible)(changed)
-                    else
-                        let grounded =
-                            if hasDirect
-                            then true
-                            else anyDependencyEligible(deps)(eligible)
-                        in
-                            let allDepsOk = allDependenciesEligible(deps)(eligible)
-                            in
-                                if hasRejected
-                                then solveRcEligibilityStep(rest)(eligible)(changed)
-                                else
-                                    if grounded
-                                    then
-                                        if allDepsOk
-                                        then solveRcEligibilityStep(rest)(compId :: eligible)(true)
-                                        else solveRcEligibilityStep(rest)(eligible)(changed)
-                                    else solveRcEligibilityStep(rest)(eligible)(changed)
+        | ProvenanceComponent { componentId = compId, hasDirectEligibleResult = hasDirect, hasRejectedResult = hasRejected, dependencies = deps } :: rest ->
+            if isEligible(compId)(eligible) || hasRejected
+            then solveRcEligibilityStep(rest)(eligible)(changed)
+            else
+                if (hasDirect || anyDependencyEligible(deps)(eligible)) && allDependenciesEligible(deps)(eligible)
+                then
+                    solveRcEligibilityStep(rest)(Ashes.Collection.Map.set(compId)(true)(eligible))(true)
+                else solveRcEligibilityStep(rest)(eligible)(changed)
 
-let recursive solveRcEligibilityFixpoint (comps: List(ProvenanceComponent)) (eligible: List(Int)) =
+let recursive solveRcEligibilityFixpoint (comps: List(ProvenanceComponent)) (eligible: MapTree(Int, Bool)) =
     match solveRcEligibilityStep(comps)(eligible)(false) with
         | (newEligible, changed) ->
             if changed
             then solveRcEligibilityFixpoint(comps)(newEligible)
             else newEligible
 
-let recursive lookupUnambiguous (map: List((Str, Maybe(Str)))) (key: Str) =
-    match map with
-        | [] -> None
-        | pair :: rest ->
-            match pair with
-                | (k, v) ->
-                    if k == key
-                    then v
-                    else lookupUnambiguous(rest)(key)
-
-let recursive lookupDirectBytes (facts: List((Str, Bool, Bool, Int, List(BytesOwnershipProvenance), Bool))) (key: Str) =
-    match facts with
-        | [] -> []
-        | fact :: rest ->
-            match fact with
-                | (name, _, _, _, b, _) ->
-                    if name == key
-                    then b
-                    else lookupDirectBytes(rest)(key)
-
-let recursive resolveNodeProvenances (names: List(Str)) (sccs: List(List(Str))) (eligibleCompIds: List(Int)) (facts: List((Str, Bool, Bool, Int, List(BytesOwnershipProvenance), Bool))) (unambiguousMap: List((Str, Maybe(Str)))) =
+let recursive resolveNodeProvenancesInto (names: List(Str)) (ids: MapTree(Str, Int)) (eligible: MapTree(Int, Bool)) (facts: MapTree(Str, NodeFacts)) (unambiguousMap: MapTree(Str, Maybe(Str))) (resolved: List((Str, FunctionResultProvenance))) =
     match names with
-        | [] -> []
+        | [] -> reverse(resolved)
         | name :: tail ->
-            let compId = findComponentIdOf(sccs)(name)(0)
+            let unambiguous =
+                match Ashes.Collection.Map.getStr(name)(unambiguousMap) with
+                    | Some(target) -> target
+                    | None -> None
             in
-                let isRc = listContainsInt(eligibleCompIds)(compId)
+                let bProv =
+                    match factOf(facts)(name) with
+                        | NodeFacts { factBytes = single :: [] } -> single
+                        | _ -> BytesProvenanceUnknown
                 in
-                    let unambiguous = lookupUnambiguous(unambiguousMap)(name)
-                    in
-                        let directBytes = lookupDirectBytes(facts)(name)
-                        in
-                            let bProv =
-                                match directBytes with
-                                    | [] -> BytesProvenanceUnknown
-                                    | single :: rest ->
-                                        match rest with
-                                            | [] -> single
-                                            | _ -> BytesProvenanceUnknown
-                            in
-                                let prov =
-                                    FunctionResultProvenance(
-                                        rcEligible = isRc,
-                                        forwardsTo = unambiguous,
-                                        bytesProvenance = bProv
-                                    )
-                                in (name, prov) :: resolveNodeProvenances(tail)(sccs)(eligibleCompIds)(facts)(unambiguousMap)
+                    let prov =
+                        FunctionResultProvenance(
+                            rcEligible = isEligible(componentIdOf(ids)(name))(eligible),
+                            forwardsTo = unambiguous,
+                            bytesProvenance = bProv
+                        )
+                    in resolveNodeProvenancesInto(tail)(ids)(eligible)(facts)(unambiguousMap)((name, prov) :: resolved)
+
+let resolveNodeProvenances (names: List(Str)) (ids: MapTree(Str, Int)) (eligible: MapTree(Int, Bool)) (facts: MapTree(Str, NodeFacts)) (unambiguousMap: MapTree(Str, Maybe(Str))) = resolveNodeProvenancesInto(names)(ids)(eligible)(facts)(unambiguousMap)([])
 
 let resolveResultProvenances (nodes: List(ProvenanceFunctionNode)) =
-    (let names = getNodeNames(nodes)
+    (let adj = adjacencyOf(nodes)(Ashes.Collection.Map.empty)
     in
-        let adj = getNodeAdj(nodes)
+        let facts = factsOf(nodes)(Ashes.Collection.Map.empty)
         in
-            let facts = getNodeFacts(nodes)
+            let sccs = sccsOf(nodes)(adj)
             in
-                let unambiguousMap = getNodeUnambiguous(nodes)
+                let ids = componentIdsOf(sccs)(0)(Ashes.Collection.Map.empty)
                 in
-                    let postOrder = computePostOrder(names)(adj)([])([])
+                    let comps = buildComponents(sccs)(adj)(ids)(facts)
                     in
-                        let sccs = computeSccs(postOrder)(adj)([])([])
+                        let eligibleComps = solveRcEligibilityFixpoint(comps)(Ashes.Collection.Map.empty)
                         in
-                            let comps = buildComponentsAux(sccs)(sccs)(adj)(facts)(0)
-                            in
-                                let eligibleComps = solveRcEligibilityFixpoint(comps)([])
-                                in resolveNodeProvenances(names)(sccs)(eligibleComps)(facts)(unambiguousMap))
+                            Ashes.Collection.Map.empty
+                            |> unambiguousOf(nodes)
+                            |> resolveNodeProvenances(getNodeNames(nodes))(ids)(eligibleComps)(facts))

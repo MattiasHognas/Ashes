@@ -1,0 +1,40 @@
+Ownership report
+================
+
+Function: carry
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    s
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    pair
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - s
+      - pair
+
+Function: walk
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    pair
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - pair
+

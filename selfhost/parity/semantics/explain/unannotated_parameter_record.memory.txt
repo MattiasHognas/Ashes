@@ -1,0 +1,30 @@
+Memory report
+=============
+
+Function: describe
+  ownership
+    item: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+  representation [lambda_2]
+    conservative unknown: 3
+    region:               1
+    runtime rc:           2
+
+Function: toEntry
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  representation [lambda_0]
+    conservative unknown: 2
+    region:               4
+    runtime rc:           2
+    copy value:           1
+

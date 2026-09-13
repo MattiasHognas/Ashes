@@ -1,0 +1,32 @@
+Memory report
+=============
+
+Function: total
+  ownership
+    items: consumed, move-safe yes
+    sum: consumed, move-safe yes
+    labels: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  2
+    drop:                 14
+    uniqueness checks:    6
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_2]
+    region:               1
+    runtime rc:           15
+    copy value:           10
+  representation [lambda_1]
+    region:               2
+    copy value:           1
+  representation [lambda_0]
+    conservative unknown: 1
+    region:               3
+

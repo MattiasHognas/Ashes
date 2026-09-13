@@ -1,0 +1,63 @@
+RC report
+=========
+
+Function: go
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: go
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: loop [lambda_4]
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: loop
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: loop [lambda_4__scalarenv0]
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+

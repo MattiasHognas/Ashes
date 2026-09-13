@@ -1,0 +1,173 @@
+RC report
+=========
+
+Function: collect [lambda_2]
+  Operations
+    dup:                  4
+    drop:                 9
+    uniqueness checks:    4
+    allocations:          4
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               6
+
+Function: __rc_cdrop_3
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: collect [lambda_2$env_normalize]
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: collect [lambda_1]
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: collect
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: total [lambda_6]
+  Operations
+    dup:                  2
+    drop:                 14
+    uniqueness checks:    6
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: total [lambda_5]
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: total
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: firstLabels [lambda_8]
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               4
+
+Function: firstLabels
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_structural_11
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_13
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_list_12
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: reversed [lambda_10]
+  Operations
+    dup:                  2
+    drop:                 21
+    uniqueness checks:    10
+    allocations:          4
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               6
+
+Function: reversed
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: reversed [lambda_10__scalarenv0]
+  Operations
+    dup:                  2
+    drop:                 21
+    uniqueness checks:    10
+    allocations:          4
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               6
+
+Function: _start_main
+  Operations
+    dup:                  1
+    drop:                 7
+    uniqueness checks:    2
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+

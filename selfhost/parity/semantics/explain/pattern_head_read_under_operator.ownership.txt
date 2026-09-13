@@ -1,0 +1,25 @@
+Ownership report
+================
+
+Function: count
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: stamp
+  Parameters
+    xs
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+

@@ -1,0 +1,64 @@
+Memory report
+=============
+
+Function: carry
+  ownership
+    n: consumed, move-safe yes
+    s: consumed, move-safe yes
+    pair: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_6]
+    dup:                  2
+    drop:                 24
+    uniqueness checks:    13
+  perceus [lambda_6$env_normalize]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_5]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_4]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_6]
+    conservative unknown: 2
+    region:               5
+    runtime rc:           14
+    copy value:           10
+  representation [lambda_5]
+    conservative unknown: 1
+    region:               2
+    runtime rc:           2
+  representation [lambda_4]
+    region:               3
+    copy value:           1
+
+Function: walk
+  ownership
+    n: consumed, move-safe yes
+    pair: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  2
+    drop:                 18
+    uniqueness checks:    10
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1__scalarenv0]
+    dup:                  2
+    drop:                 18
+    uniqueness checks:    10
+  representation [lambda_1]
+    conservative unknown: 4
+    region:               12
+    runtime rc:           10
+    copy value:           9
+  representation [lambda_0]
+    region:               3
+    copy value:           1
+

@@ -1,0 +1,114 @@
+Memory report
+=============
+
+Function: collect
+  ownership
+    n: consumed, move-safe yes
+    s: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  4
+    drop:                 9
+    uniqueness checks:    4
+  perceus [lambda_2$env_normalize]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_2]
+    conservative unknown: 2
+    region:               4
+    runtime rc:           16
+    copy value:           9
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               2
+    runtime rc:           2
+  representation [lambda_0]
+    region:               3
+    copy value:           1
+
+Function: firstLabels
+  ownership
+    items: consumed, move-safe yes
+    k: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_8]
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+  perceus [lambda_7]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_8]
+    conservative unknown: 10
+    region:               2
+    runtime rc:           5
+    copy value:           6
+  representation [lambda_7]
+    conservative unknown: 1
+    region:               3
+
+Function: reversed
+  ownership
+    items: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_10]
+    dup:                  2
+    drop:                 21
+    uniqueness checks:    10
+  perceus [lambda_9]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_10__scalarenv0]
+    dup:                  2
+    drop:                 21
+    uniqueness checks:    10
+  representation [lambda_10]
+    conservative unknown: 3
+    region:               7
+    runtime rc:           25
+  representation [lambda_9]
+    conservative unknown: 1
+    region:               3
+
+Function: total
+  ownership
+    items: consumed, move-safe yes
+    sum: consumed, move-safe yes
+    labels: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_6]
+    dup:                  2
+    drop:                 14
+    uniqueness checks:    6
+  perceus [lambda_5]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_4]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_6]
+    region:               1
+    runtime rc:           15
+    copy value:           10
+  representation [lambda_5]
+    region:               2
+    copy value:           1
+  representation [lambda_4]
+    conservative unknown: 1
+    region:               3
+

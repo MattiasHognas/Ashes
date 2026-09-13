@@ -20,6 +20,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
+import Ashes.Collection.Map.MapTree
 export (
     type ResultReachState(..),
     type ReachConstructor(..),
@@ -378,6 +379,12 @@ type ReachNestedShape =
 
 // A registered function: its parameters and innermost body (the nested shape's outer parameters
 // plus accumulator over the inner body), and the functions in scope of that body by name.
+// The names in scope at a point of the program, each mapped to the key of the function it names.
+type alias ReachScope = MapTree(Str, Str)
+
+// The summaries so far, keyed by function key.
+type alias ReachTable = MapTree(Str, ResultReachState)
+
 type ReachFunction =
     | key: Str
     | name: Str
@@ -386,12 +393,16 @@ type ReachFunction =
     | parameters: List(Str)
     | body: Expr
     | nested: Maybe(ReachNestedShape)
-    | scope: List((Str, Str))
+    | scope: ReachScope
 
+// `byKey` and `byIdentity` index `functions` by their key and by `name@identity`, so a call site
+// and a binding find their function without a walk over every function of the program.
 type ReachRegistry =
     | functions: List(ReachFunction)
     | constructors: List(ReachConstructor)
-    | valueNames: List(Str)
+    | valueNames: MapTree(Str, Bool)
+    | byKey: MapTree(Str, ReachFunction)
+    | byIdentity: MapTree(Str, ReachFunction)
 
 type ReachSummary =
     | function: ReachFunction
@@ -439,23 +450,22 @@ let functionKeyOf (enclosing: Maybe(Str)) (name: Str) (identity: Int) =
         | Some(parent) -> parent + "." + name + "@" + Ashes.Text.fromInt(identity)
         | None -> name + "@" + Ashes.Text.fromInt(identity)
 
-let recursive lookupScope (name: Str) (scope: List((Str, Str))) =
-    match scope with
-        | [] -> None
-        | (candidate, key) :: rest ->
-            if candidate == name
-            then Some(key)
-            else lookupScope(name)(rest)
+// The names in scope, each mapped to the key of the function it names. A name a parameter or
+// pattern shadows maps to the empty key, which no function has, so a shadowed entry reads as
+// absent without the map needing a removal.
+let emptyReachScope = Ashes.Collection.Map.empty
 
-let recursive removeScopeName (name: Str) (scope: List((Str, Str))) =
-    match scope with
-        | [] -> []
-        | ((candidate, _key) as entry) :: rest ->
-            if candidate == name
-            then removeScopeName(name)(rest)
-            else entry :: removeScopeName(name)(rest)
+let lookupScope (name: Str) (scope: ReachScope) =
+    match Ashes.Collection.Map.getStr(name)(scope) with
+        | Some(key) ->
+            if key == ""
+            then None
+            else Some(key)
+        | None -> None
 
-let recursive removeScopeNames (names: List(Str)) (scope: List((Str, Str))) =
+let removeScopeName (name: Str) (scope: ReachScope) = Ashes.Collection.Map.setStr(name)("")(scope)
+
+let recursive removeScopeNames (names: List(Str)) (scope: ReachScope) =
     match names with
         | [] -> scope
         | name :: rest ->
@@ -463,29 +473,27 @@ let recursive removeScopeNames (names: List(Str)) (scope: List((Str, Str))) =
             |> removeScopeName(name)
             |> removeScopeNames(rest)
 
-let setScopeName (name: Str) (key: Str) (scope: List((Str, Str))) = (name, key) :: removeScopeName(name)(scope)
+let setScopeName (name: Str) (key: Str) (scope: ReachScope) = Ashes.Collection.Map.setStr(name)(key)(scope)
 
-let recursive containsName (name: Str) (names: List(Str)) =
-    match names with
-        | [] -> false
-        | candidate :: rest -> candidate == name || containsName(name)(rest)
+// The let-bound value names, as a map so a program's thousands of bindings register and resolve
+// in logarithmic time; a name bound more than once is marked ambiguous and no longer a value.
+let containsName (name: Str) (names: MapTree(Str, Bool)) =
+    match Ashes.Collection.Map.getStr(name)(names) with
+        | Some(present) -> present
+        | None -> false
 
-let recursive withoutName (name: Str) (names: List(Str)) =
-    match names with
-        | [] -> []
-        | candidate :: rest ->
-            if candidate == name
-            then withoutName(name)(rest)
-            else candidate :: withoutName(name)(rest)
+let addName (name: Str) (names: MapTree(Str, Bool)) = Ashes.Collection.Map.setStr(name)(true)(names)
+
+let withoutName (name: Str) (names: MapTree(Str, Bool)) = Ashes.Collection.Map.setStr(name)(false)(names)
 
 // The registration in progress: the functions found so far (latest first), the let-bound names
 // bound exactly once, and the names bound more than once.
 type ReachRegistration =
     | functions: List(ReachFunction)
-    | valueNames: List(Str)
-    | ambiguous: List(Str)
+    | valueNames: MapTree(Str, Bool)
+    | ambiguous: MapTree(Str, Bool)
 
-let emptyRegistration = ReachRegistration(functions = [], valueNames = [], ambiguous = [])
+let emptyRegistration = ReachRegistration(functions = [], valueNames = Ashes.Collection.Map.empty, ambiguous = Ashes.Collection.Map.empty)
 
 let recordValueName (name: Str) (registration: ReachRegistration) =
     match registration with
@@ -494,8 +502,8 @@ let recordValueName (name: Str) (registration: ReachRegistration) =
             then registration
             else
                 if containsName(name)(valueNames)
-                then ReachRegistration(functions = functions, valueNames = withoutName(name)(valueNames), ambiguous = name :: ambiguous)
-                else ReachRegistration(functions = functions, valueNames = name :: valueNames, ambiguous = ambiguous)
+                then ReachRegistration(functions = functions, valueNames = withoutName(name)(valueNames), ambiguous = addName(name)(ambiguous))
+                else ReachRegistration(functions = functions, valueNames = addName(name)(valueNames), ambiguous = ambiguous)
 
 let addFunction (function: ReachFunction) (registration: ReachRegistration) = registration with functions = function :: registration.functions
 
@@ -539,7 +547,7 @@ let recursive patternsBinders (patterns: List(Pattern)) (binders: List(Str)) =
 // The function a binding declares, when its value is a lambda: the nested shape's outer
 // parameters and accumulator over the inner body with the recursive name in scope, otherwise the
 // parameter chain over the innermost body with the parameters out of scope.
-let registeredFunctionOf (key: Str) (name: Str) (enclosing: Maybe(Str)) (identity: Int) (value: Expr) (parameters: List(Str)) (innerBody: Expr) (scope: List((Str, Str))) =
+let registeredFunctionOf (key: Str) (name: Str) (enclosing: Maybe(Str)) (identity: Int) (value: Expr) (parameters: List(Str)) (innerBody: Expr) (scope: ReachScope) =
     match nestedShapeOf(value)([]) with
         | Some((outer, accumulator, recursiveName, recursiveValue, nestedBody)) ->
             let recursiveKey =
@@ -572,7 +580,7 @@ let registeredFunctionOf (key: Str) (name: Str) (enclosing: Maybe(Str)) (identit
                 scope = removeScopeNames(parameters)(scope)
             )
 
-let recursive registerExpr (expr: Expr) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+let recursive registerExpr (expr: Expr) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match expr with
         | ExprAt(_span, inner) -> registerExpr(inner)(enclosing)(scope)(registration)
         | ExprLet(name, value, body, _parameters, _annotation, _requirements) -> registerBinding(false)(name)(value)(Some(body))(enclosing)(scope)(registration)
@@ -627,25 +635,25 @@ let recursive registerExpr (expr: Expr) (enclosing: Maybe(Str)) (scope: List((St
         | ExprResultPipe(left, right) -> registerPair(left)(right)(enclosing)(scope)(registration)
         | ExprResultMapErrorPipe(left, right) -> registerPair(left)(right)(enclosing)(scope)(registration)
         | _ -> registration
-and registerPair (left: Expr) (right: Expr) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerPair (left: Expr) (right: Expr) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     registration
     |> registerExpr(left)(enclosing)(scope)
     |> registerExpr(right)(enclosing)(scope)
-and registerList (elements: List(Expr)) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerList (elements: List(Expr)) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match elements with
         | [] -> registration
         | element :: rest ->
             registration
             |> registerExpr(element)(enclosing)(scope)
             |> registerList(rest)(enclosing)(scope)
-and registerFields (fields: List((Str, Expr))) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerFields (fields: List((Str, Expr))) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match fields with
         | [] -> registration
         | (_field, value) :: rest ->
             registration
             |> registerExpr(value)(enclosing)(scope)
             |> registerFields(rest)(enclosing)(scope)
-and registerArms (arms: List((Pattern, Expr, Maybe(Expr)))) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerArms (arms: List((Pattern, Expr, Maybe(Expr)))) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match arms with
         | [] -> registration
         | (pattern, body, guard) :: rest ->
@@ -656,25 +664,25 @@ and registerArms (arms: List((Pattern, Expr, Maybe(Expr)))) (enclosing: Maybe(St
                 |> registerGuard(guard)(enclosing)(armScope)
                 |> registerExpr(body)(enclosing)(armScope)
                 |> registerArms(rest)(enclosing)(scope)
-and registerGuard (guard: Maybe(Expr)) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerGuard (guard: Maybe(Expr)) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match guard with
         | Some(expr) -> registerExpr(expr)(enclosing)(scope)(registration)
         | None -> registration
-and registerHandlerArms (arms: List((Maybe(Str), Str, List(Pattern), Expr))) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerHandlerArms (arms: List((Maybe(Str), Str, List(Pattern), Expr))) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match arms with
         | [] -> registration
         | (_capability, _operation, parameters, body) :: rest ->
             registration
             |> registerExpr(body)(enclosing)(removeScopeNames(patternsBinders(parameters)([]))(scope))
             |> registerHandlerArms(rest)(enclosing)(scope)
-and registerBody (body: Maybe(Expr)) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerBody (body: Maybe(Expr)) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match body with
         | Some(expr) -> registerExpr(expr)(enclosing)(scope)(registration)
         | None -> registration
 // A binding registers its function when its value is a lambda, walks the value for the functions
 // nested in it (a recursive binding visible to its own value), and continues into the body with
 // the name bound to the function or, for a plain value, shadowing any function of that name.
-and registerBinding (isRecursive: Bool) (name: Str) (value: Expr) (body: Maybe(Expr)) (enclosing: Maybe(Str)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+and registerBinding (isRecursive: Bool) (name: Str) (value: Expr) (body: Maybe(Expr)) (enclosing: Maybe(Str)) (scope: ReachScope) (registration: ReachRegistration) =
     match lambdaChainOf(value)([]) with
         | ([], _innerBody) ->
             registration
@@ -698,7 +706,7 @@ and registerBinding (isRecursive: Bool) (name: Str) (value: Expr) (body: Maybe(E
                         |> registerBody(body)(enclosing)(setScopeName(name)(key)(scope))
 
 // The scope after a top-level binding: the name bound to its function, or shadowing one.
-let scopeAfterBinding (name: Str) (value: Expr) (scope: List((Str, Str))) =
+let scopeAfterBinding (name: Str) (value: Expr) (scope: ReachScope) =
     match lambdaChainOf(value)([]) with
         | ([], _innerBody) -> removeScopeName(name)(scope)
         | _ ->
@@ -706,7 +714,7 @@ let scopeAfterBinding (name: Str) (value: Expr) (scope: List((Str, Str))) =
             |> lambdaIdentityOf
             |> functionKeyOf(None)(name))(scope)
 
-let recursive groupScopeOf (bindings: List(LetBindingSyntax)) (scope: List((Str, Str))) =
+let recursive groupScopeOf (bindings: List(LetBindingSyntax)) (scope: ReachScope) =
     match bindings with
         | [] -> scope
         | LetBindingSyntax { name = name, value = value } :: rest ->
@@ -714,7 +722,7 @@ let recursive groupScopeOf (bindings: List(LetBindingSyntax)) (scope: List((Str,
             |> scopeAfterBinding(name)(value)
             |> groupScopeOf(rest)
 
-let recursive registerGroup (bindings: List(LetBindingSyntax)) (groupScope: List((Str, Str))) (registration: ReachRegistration) =
+let recursive registerGroup (bindings: List(LetBindingSyntax)) (groupScope: ReachScope) (registration: ReachRegistration) =
     match bindings with
         | [] -> registration
         | LetBindingSyntax { name = name, value = value } :: rest ->
@@ -724,7 +732,7 @@ let recursive registerGroup (bindings: List(LetBindingSyntax)) (groupScope: List
 
 // Registers the top-level declarations in order under sequential scoping, yielding the scope
 // the trailing expression sees.
-let recursive registerItems (items: List(TopLevelItem)) (scope: List((Str, Str))) (registration: ReachRegistration) =
+let recursive registerItems (items: List(TopLevelItem)) (scope: ReachScope) (registration: ReachRegistration) =
     match items with
         | [] -> (scope, registration)
         | TopLevelAt(_span, inner) :: rest -> registerItems(inner :: rest)(scope)(registration)
@@ -740,13 +748,27 @@ let recursive registerItems (items: List(TopLevelItem)) (scope: List((Str, Str))
                 |> registerItems(rest)(groupScope)
         | _ :: rest -> registerItems(rest)(scope)(registration)
 
+let recursive indexFunctions (functions: List(ReachFunction)) (byKey: MapTree(Str, ReachFunction)) (byIdentity: MapTree(Str, ReachFunction)) =
+    match functions with
+        | [] -> (byKey, byIdentity)
+        | (ReachFunction { key = key, name = name, identity = identity } as function) :: rest ->
+            byIdentity
+            |> Ashes.Collection.Map.setStr(name + "@" + Ashes.Text.fromInt(identity))(function)
+            |> indexFunctions(rest)(Ashes.Collection.Map.setStr(key)(function)(byKey))
+
+// A registry with its two function indexes built once over its functions.
+let indexedRegistry (functions: List(ReachFunction)) (constructors: List(ReachConstructor)) (valueNames: MapTree(Str, Bool)) =
+    match indexFunctions(functions)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty) with
+        | (byKey, byIdentity) -> ReachRegistry(functions = functions, constructors = constructors, valueNames = valueNames, byKey = byKey, byIdentity = byIdentity)
+
 let buildReachRegistry (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
-            match registerItems(items)([])(emptyRegistration) with
+            match registerItems(items)(emptyReachScope)(emptyRegistration) with
                 | (scope, registered) ->
                     match registerBody(body)(None)(scope)(registered) with
-                        | ReachRegistration { functions = functions, valueNames = valueNames } -> ReachRegistry(functions = reverse(functions), constructors = reachConstructorsOf(program), valueNames = valueNames)
+                        | ReachRegistration { functions = functions, valueNames = valueNames } ->
+                            indexedRegistry(reverse(functions))(reachConstructorsOf(program))(valueNames)
 
 let recursive lookupFunction (key: Str) (functions: List(ReachFunction)) =
     match functions with
@@ -764,27 +786,19 @@ let recursive functionByIdentity (name: Str) (identity: Int) (functions: List(Re
             then Some(function)
             else functionByIdentity(name)(identity)(rest)
 
-let recursive lookupTable (key: Str) (table: List((Str, ResultReachState))) =
-    match table with
-        | [] -> reachBottom(Unit)
-        | (candidate, reach) :: rest ->
-            if candidate == key
-            then reach
-            else lookupTable(key)(rest)
+// The summaries so far, keyed by function key; a function not yet swept reads as bottom.
+let lookupTable (key: Str) (table: ReachTable) =
+    match Ashes.Collection.Map.getStr(key)(table) with
+        | Some(reach) -> reach
+        | None -> reachBottom(Unit)
 
-let recursive setTable (key: Str) (reach: ResultReachState) (table: List((Str, ResultReachState))) =
-    match table with
-        | [] -> [(key, reach)]
-        | ((candidate, _previous) as entry) :: rest ->
-            if candidate == key
-            then (key, reach) :: rest
-            else entry :: setTable(key)(reach)(rest)
+let setTable (key: Str) (reach: ResultReachState) (table: ReachTable) = Ashes.Collection.Map.setStr(key)(reach)(table)
 
 // One function's walk: the registry and the summaries so far, the function whose body is walked
 // (its nested shape resolves the inner self-call), and the nesting of over-applications inlined.
 type ReachContext =
     | registry: ReachRegistry
-    | table: List((Str, ResultReachState))
+    | table: ReachTable
     | current: ReachFunction
     | overDepth: Int
 
@@ -815,6 +829,14 @@ let constructorsOf (context: ReachContext) =
 let functionsOf (context: ReachContext) =
     match context with
         | ReachContext { registry = ReachRegistry { functions = functions } } -> functions
+
+let lookupFunctionIn (context: ReachContext) (key: Str) =
+    match context with
+        | ReachContext { registry = ReachRegistry { byKey = byKey } } -> Ashes.Collection.Map.getStr(key)(byKey)
+
+let functionByIdentityIn (context: ReachContext) (name: Str) (identity: Int) =
+    match context with
+        | ReachContext { registry = ReachRegistry { byIdentity = byIdentity } } -> Ashes.Collection.Map.getStr(name + "@" + Ashes.Text.fromInt(identity))(byIdentity)
 
 let isCapitalized (name: Str) =
     Ashes.Text.length(name) > 0 && Ashes.Text.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ")(Ashes.Text.substring(name)(0)(1))
@@ -868,13 +890,13 @@ let qualifiedReach (env: List((Str, ResultReachState))) (qualifier: Str) (name: 
         | [] -> reachPoisoned(GlobalOrTopLevelReach)
 
 // The scope inside a binding's body: the name resolves to its registered function, or shadows one.
-let bindingScope (context: ReachContext) (scope: List((Str, Str))) (name: Str) (value: Expr) =
+let bindingScope (context: ReachContext) (scope: ReachScope) (name: Str) (value: Expr) =
     match lambdaChainOf(value)([]) with
         | ([], _innerBody) -> removeScopeName(name)(scope)
         | _ ->
-            match context
-            |> functionsOf
-            |> functionByIdentity(name)(lambdaIdentityOf(value)) with
+            match value
+            |> lambdaIdentityOf
+            |> functionByIdentityIn(context)(name) with
                 | Some(ReachFunction { key = key }) -> setScopeName(name)(key)(scope)
                 | None -> removeScopeName(name)(scope)
 
@@ -918,14 +940,14 @@ let recursive markerEnv (parameters: List(Str)) (index: Int) =
         | [] -> []
         | parameter :: rest -> (parameter, reachOfToken("@" + Ashes.Text.fromInt(index))) :: markerEnv(rest)(index + 1)
 
-let selfRecursiveCall (context: ReachContext) (scope: List((Str, Str))) (name: Str) (arguments: List(Expr)) =
+let selfRecursiveCall (context: ReachContext) (scope: ReachScope) (name: Str) (arguments: List(Expr)) =
     match context with
         | ReachContext { current = ReachFunction { nested = Some(ReachNestedShape { recursiveKey = recursiveKey }) } } -> lookupScope(name)(scope) == Some(recursiveKey) && length(arguments) == 1
         | _ -> false
 
 let deeper (context: ReachContext) = context with overDepth = context.overDepth + 1
 
-let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (expr: Expr) =
+let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> reachOf(context)(env)(scope)(token)(inner)
         | ExprInt(_value) ->
@@ -1018,19 +1040,19 @@ let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState)
                     |> sumFields(context)(env)(scope)(afterTarget)(None)(fields)
         | _ ->
             stepOf(reachPoisoned(UnmodelledReach))(token)
-and joinReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (left: Expr) (right: Expr) =
+and joinReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (left: Expr) (right: Expr) =
     match reachOf(context)(env)(scope)(token)(left) with
         | ReachStep { reach = leftReach, token = afterLeft } ->
             match reachOf(context)(env)(scope)(afterLeft)(right) with
                 | ReachStep { reach = rightReach, token = afterRight } ->
                     stepOf(reachJoin(leftReach)(rightReach))(afterRight)
-and sumPair (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (left: Expr) (right: Expr) =
+and sumPair (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (left: Expr) (right: Expr) =
     match reachOf(context)(env)(scope)(token)(left) with
         | ReachStep { reach = leftReach, token = afterLeft } ->
             match reachOf(context)(env)(scope)(afterLeft)(right) with
                 | ReachStep { reach = rightReach, token = afterRight } ->
                     stepOf(reachSum(leftReach)(rightReach))(afterRight)
-and sumList (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (elements: List(Expr)) (acc: ResultReachState) =
+and sumList (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (elements: List(Expr)) (acc: ResultReachState) =
     match elements with
         | [] -> stepOf(acc)(token)
         | element :: rest ->
@@ -1040,7 +1062,7 @@ and sumList (context: ReachContext) (env: List((Str, ResultReachState))) (scope:
                     |> reachSum(acc)
                     |> sumList(context)(env)(scope)(next)(rest)
 // A record's fields sum, except the copy-typed ones its constructor declares inline.
-and sumFields (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (constructor: Maybe(ReachConstructor)) (fields: List((Str, Expr))) (acc: ResultReachState) =
+and sumFields (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (constructor: Maybe(ReachConstructor)) (fields: List((Str, Expr))) (acc: ResultReachState) =
     match fields with
         | [] -> stepOf(acc)(token)
         | (field, value) :: rest ->
@@ -1058,14 +1080,14 @@ and isCopyField (constructor: Maybe(ReachConstructor)) (field: Str) =
             copyFieldAt(indexOfName(field)(fieldNames)(0))(copyFields)
         | None -> false
 // A binding's value reach plus a fresh identity token, so the name used twice reads as shared.
-and letReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (name: Str) (value: Expr) (body: Expr) =
+and letReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (name: Str) (value: Expr) (body: Expr) =
     match reachOf(context)(env)(scope)(token)(value) with
         | ReachStep { reach = valueReach, token = afterValue } ->
             reachOf(context)((name, afterValue
             |> tokenReach
             |> reachSum(valueReach)) :: env)(bindingScope(context)(scope)(name)(value))(afterValue + 1)(body)
 // The arms of a match join; each arm's pattern binders take the scrutinee's reach by component.
-and armsReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (scrutineeReach: ResultReachState) (arms: List((Pattern, Expr, Maybe(Expr)))) (acc: Maybe(ResultReachState)) =
+and armsReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (scrutineeReach: ResultReachState) (arms: List((Pattern, Expr, Maybe(Expr)))) (acc: Maybe(ResultReachState)) =
     match arms with
         | [] ->
             match acc with
@@ -1130,7 +1152,7 @@ and bindRecordPatterns (context: ReachContext) (fieldNames: List(Str)) (fields: 
 // A call: the enclosing function's own inner self-call, a saturated constructor over its heap
 // fields, or a function in scope, over-applied past its parameters or applied exactly; anything
 // else is not modelled and poisons.
-and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (expr: Expr) =
+and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (expr: Expr) =
     match callSpineOf(expr)([]) with
         | (ExprVar(name), arguments) ->
             if selfRecursiveCall(context)(scope)(name)(arguments)
@@ -1143,9 +1165,7 @@ and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
                     | None ->
                         match lookupScope(name)(scope) with
                             | Some(key) ->
-                                match context
-                                |> functionsOf
-                                |> lookupFunction(key) with
+                                match lookupFunctionIn(context)(key) with
                                     | Some(function) ->
                                         if length(arguments) > length(function.parameters)
                                         then overAppliedReach(context)(env)(scope)(token)(function)(arguments)
@@ -1164,7 +1184,7 @@ and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
                 stepOf(reachPoisoned(UnmodelledReach))(token)
         | _ ->
             stepOf(reachPoisoned(UnmodelledReach))(token)
-and constructorReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (constructor: ReachConstructor) (arguments: List(Expr)) =
+and constructorReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (constructor: ReachConstructor) (arguments: List(Expr)) =
     match constructor with
         | ReachConstructor { arity = arity, copyFields = copyFields } ->
             if length(arguments) != arity
@@ -1174,7 +1194,7 @@ and constructorReach (context: ReachContext) (env: List((Str, ResultReachState))
                 Unit
                 |> reachBottom
                 |> sumConstructorFields(context)(env)(scope)(token)(copyFields)(arguments)
-and sumConstructorFields (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (copyFields: List(Bool)) (arguments: List(Expr)) (acc: ResultReachState) =
+and sumConstructorFields (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (copyFields: List(Bool)) (arguments: List(Expr)) (acc: ResultReachState) =
     match arguments with
         | [] -> stepOf(acc)(token)
         | argument :: rest ->
@@ -1199,7 +1219,7 @@ and sumConstructorFields (context: ReachContext) (env: List((Str, ResultReachSta
 // A saturated call to a registered function substitutes, for every parameter its summary reaches,
 // the argument's reach (through an unspecified component when the callee keeps only parts of the
 // parameter), scaled by the multiplicity, under the callee's causes; an under-application poisons.
-and registeredReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (function: ReachFunction) (arguments: List(Expr)) =
+and registeredReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (function: ReachFunction) (arguments: List(Expr)) =
     match function with
         | ReachFunction { key = key, parameters = parameters } ->
             if length(arguments) != length(parameters)
@@ -1211,7 +1231,7 @@ and registeredReach (context: ReachContext) (env: List((Str, ResultReachState)))
                         causes
                         |> withCounts([])
                         |> substituteEntries(context)(env)(scope)(token)(parameters)(arguments)(counts)
-and substituteEntries (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (parameters: List(Str)) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
+and substituteEntries (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (parameters: List(Str)) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
     match entries with
         | [] -> stepOf(acc)(token)
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
@@ -1231,7 +1251,7 @@ and placedReach (name: Str) (argumentReach: ResultReachState) =
     else extendPathsComponent(argumentReach)
 // The inner self-call of the nested shape: the enclosing function applied to the same outer
 // parameters with the accumulator set to the argument, against its own growing summary.
-and selfRecursiveReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (arguments: List(Expr)) =
+and selfRecursiveReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (arguments: List(Expr)) =
     match context with
         | ReachContext { current = ReachFunction { key = key, nested = Some(ReachNestedShape { accumulator = accumulator }) }, table = table } ->
             match lookupTable(key)(table) with
@@ -1241,7 +1261,7 @@ and selfRecursiveReach (context: ReachContext) (env: List((Str, ResultReachState
                     |> substituteSelfEntries(context)(env)(scope)(token)(accumulator)(arguments)(counts)
         | _ ->
             stepOf(reachPoisoned(ConservativeUnknownReach))(token)
-and substituteSelfEntries (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (accumulator: Str) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
+and substituteSelfEntries (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (accumulator: Str) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
     match entries with
         | [] -> stepOf(acc)(token)
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
@@ -1269,7 +1289,7 @@ and substituteSelfEntries (context: ReachContext) (env: List((Str, ResultReachSt
 // An over-application inlines the callee's body one level, binding each surplus argument to the
 // parameter of the lambda the body returns; the symbolic reach over argument-position markers is
 // then substituted with the arguments' reaches.
-and overAppliedReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (function: ReachFunction) (arguments: List(Expr)) =
+and overAppliedReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (function: ReachFunction) (arguments: List(Expr)) =
     if context.overDepth >= maxOverApplicationDepth
     then
         stepOf(reachPoisoned(ConservativeUnknownReach))(token)
@@ -1290,7 +1310,7 @@ and overAppliedReach (context: ReachContext) (env: List((Str, ResultReachState))
                                     |> substituteMarkers(context)(env)(scope)(afterInline)(arguments
                                     |> length
                                     |> markerList(0))(arguments)(counts)
-and substituteMarkers (context: ReachContext) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (markers: List(Str)) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
+and substituteMarkers (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (markers: List(Str)) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
     match entries with
         | [] -> stepOf(acc)(token)
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
@@ -1304,7 +1324,7 @@ and substituteMarkers (context: ReachContext) (env: List((Str, ResultReachState)
                             |> reachScale(argumentReach)
                             |> reachSum(acc)
                             |> substituteMarkers(context)(env)(scope)(next)(markers)(arguments)(rest)
-and overApplyReach (context: ReachContext) (body: Expr) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) =
+and overApplyReach (context: ReachContext) (body: Expr) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) =
     match argumentMarker(index)(markers) with
         | None -> reachOf(context)(env)(scope)(token)(body)
         | Some(marker) ->
@@ -1334,13 +1354,13 @@ and argumentMarker (index: Int) (markers: List(Str)) =
             if index == 0
             then Some(marker)
             else argumentMarker(index - 1)(rest)
-and overApplyLet (context: ReachContext) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (name: Str) (value: Expr) (letBody: Expr) =
+and overApplyLet (context: ReachContext) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (name: Str) (value: Expr) (letBody: Expr) =
     match reachOf(context)(env)(scope)(token)(value) with
         | ReachStep { reach = valueReach, token = afterValue } ->
             overApplyReach(context)(letBody)(markers)(index)((name, afterValue
             |> tokenReach
             |> reachSum(valueReach)) :: env)(bindingScope(context)(scope)(name)(value))(afterValue + 1)
-and overApplyArms (context: ReachContext) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: List((Str, Str))) (token: Int) (scrutineeReach: ResultReachState) (arms: List((Pattern, Expr, Maybe(Expr)))) (acc: Maybe(ResultReachState)) =
+and overApplyArms (context: ReachContext) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (scrutineeReach: ResultReachState) (arms: List((Pattern, Expr, Maybe(Expr)))) (acc: Maybe(ResultReachState)) =
     match arms with
         | [] ->
             match acc with
@@ -1363,13 +1383,13 @@ let recursive parameterEnv (parameters: List(Str)) =
         | parameter :: rest -> (parameter, reachParam(parameter)) :: parameterEnv(rest)
 
 // One function's stored summary under the summaries so far.
-let functionReach (registry: ReachRegistry) (table: List((Str, ResultReachState))) (function: ReachFunction) =
+let functionReach (registry: ReachRegistry) (table: ReachTable) (function: ReachFunction) =
     match function with
         | ReachFunction { parameters = parameters, body = body, scope = scope } ->
             match reachOf(ReachContext(registry = registry, table = table, current = function, overDepth = 0))(parameterEnv(parameters))(scope)(0)(body) with
                 | ReachStep { reach = reach } -> stripSyntheticTokens(reach)
 
-let recursive sweepFunctions (registry: ReachRegistry) (functions: List(ReachFunction)) (table: List((Str, ResultReachState))) (changed: Bool) =
+let recursive sweepFunctions (registry: ReachRegistry) (functions: List(ReachFunction)) (table: ReachTable) (changed: Bool) =
     match functions with
         | [] -> (table, changed)
         | (ReachFunction { key = key } as function) :: rest ->
@@ -1385,7 +1405,7 @@ let recursive sweepFunctions (registry: ReachRegistry) (functions: List(ReachFun
                     else
                         sweepFunctions(registry)(rest)(setTable(key)(merged)(table))(true)
 
-let recursive sweepUntilStable (registry: ReachRegistry) (table: List((Str, ResultReachState))) (fuel: Int) =
+let recursive sweepUntilStable (registry: ReachRegistry) (table: ReachTable) (fuel: Int) =
     if fuel <= 0
     then table
     else
@@ -1393,12 +1413,17 @@ let recursive sweepUntilStable (registry: ReachRegistry) (table: List((Str, Resu
             | (next, true) -> sweepUntilStable(registry)(next)(fuel - 1)
             | (next, false) -> next
 
-let recursive initialTable (functions: List(ReachFunction)) =
+let recursive initialTableInto (functions: List(ReachFunction)) (table: ReachTable) =
     match functions with
-        | [] -> []
-        | ReachFunction { key = key } :: rest -> (key, reachBottom(Unit)) :: initialTable(rest)
+        | [] -> table
+        | ReachFunction { key = key } :: rest ->
+            table
+            |> setTable(key)(reachBottom(Unit))
+            |> initialTableInto(rest)
 
-let summaryOf (table: List((Str, ResultReachState))) (function: ReachFunction) = ReachSummary(function = function, reach = lookupTable(function.key)(table))
+let initialTable (functions: List(ReachFunction)) = initialTableInto(functions)(Ashes.Collection.Map.empty)
+
+let summaryOf (table: ReachTable) (function: ReachFunction) = ReachSummary(function = function, reach = lookupTable(function.key)(table))
 
 // The least fixpoint over every registered function: each starts at bottom, and every sweep
 // recomputes each body under the summaries so far, joining the growth in, until a sweep changes
@@ -1415,8 +1440,11 @@ let programReachSummaries (program: ProgramSyntax) =
 
 // The summaries of the functions a bare expression binds, for a lowering without a program.
 let expressionReachSummaries (expr: Expr) =
-    match registerExpr(expr)(None)([])(emptyRegistration) with
-        | ReachRegistration { functions = functions, valueNames = valueNames } -> computeReachSummaries(ReachRegistry(functions = reverse(functions), constructors = builtinReachConstructors, valueNames = valueNames))
+    match registerExpr(expr)(None)(emptyReachScope)(emptyRegistration) with
+        | ReachRegistration { functions = functions, valueNames = valueNames } ->
+            valueNames
+            |> indexedRegistry(reverse(functions))(builtinReachConstructors)
+            |> computeReachSummaries
 
 let recursive lookupReachSummary (key: Str) (summaries: List(ReachSummary)) =
     match summaries with
@@ -1467,10 +1495,11 @@ let singleFunctionReach (parameters: List(Str)) (body: Expr) =
             parameters = parameters,
             body = body,
             nested = None,
-            scope = []
+            scope = emptyReachScope
         )
     in
-        ReachRegistry(functions = [function], constructors = builtinReachConstructors, valueNames = [])
+        Ashes.Collection.Map.empty
+        |> indexedRegistry([function])(builtinReachConstructors)
         |> computeReachSummaries
         |> (given (summaries) ->
             match summaries with

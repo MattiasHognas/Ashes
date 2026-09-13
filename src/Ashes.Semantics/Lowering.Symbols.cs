@@ -1301,8 +1301,14 @@ public sealed partial class Lowering
         ReuseToken reuseToken,
         SourceLocation? location)
     {
-        // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf), keeping the rebuilt result
-        // below the watermark so the enclosing loop can reset the arena.
+        // In-place reuse of a dead nullary cell (e.g. Leaf -> Leaf). The result is deliberately NOT
+        // registered in _reuseResultTemps: a nullary reuse is speculative — PrepareDirectReuseBody
+        // reverts it to a fresh arena AllocAdt when the body turns out to have no structural reuse —
+        // and a registered reuse result lets PopOwnershipScope reset the arm's arena under the
+        // result (the cell was assumed to sit below the watermark). Once reverted, that reset frees
+        // the fresh cell the arm returns: a lookup's `| Empty -> None` handed its caller a `None`
+        // in a reclaimed chunk whenever the allocation happened to open one. A nullary cell is
+        // cheap to keep above the watermark, so the scope treats it like any fresh allocation.
         EmitRuntimeReuseTokenChildrenDrop(
             reuseToken.Temp,
             reuseToken.RuntimeCleanup);
@@ -1312,7 +1318,6 @@ public sealed partial class Lowering
             0,
             reuseToken.Temp,
             reuseToken.RuntimeManaged));
-        _reuseResultTemps.Add(ptrTemp);
         RecordReuseTokenDisposition(
             reuseToken,
             ReuseDecisionOutcome.Consumed,

@@ -1,0 +1,133 @@
+RC report
+=========
+
+Function: __deepcopy_3
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_list_2
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: build [lambda_1]
+  Operations
+    dup:                  1
+    drop:                 8
+    uniqueness checks:    4
+    allocations:          4
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               4
+
+Function: build
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_structural_6
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_7
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: heaviest [lambda_5]
+  Operations
+    dup:                  5
+    drop:                 36
+    uniqueness checks:    19
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               8
+
+Function: heaviest
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: run [lambda_9]
+  Operations
+    dup:                  1
+    drop:                 7
+    uniqueness checks:    4
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: run
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: build [lambda_1__scalarenv0]
+  Operations
+    dup:                  1
+    drop:                 8
+    uniqueness checks:    4
+    allocations:          4
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               4
+
+Function: heaviest [lambda_5__scalarenv1]
+  Operations
+    dup:                  5
+    drop:                 36
+    uniqueness checks:    19
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               8
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+

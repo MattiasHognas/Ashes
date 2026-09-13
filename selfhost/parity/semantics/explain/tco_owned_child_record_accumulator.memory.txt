@@ -1,0 +1,29 @@
+Memory report
+=============
+
+Function: step
+  ownership
+    n: consumed, move-safe yes
+    s: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 7
+    uniqueness checks:    3
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1__scalarenv0]
+    dup:                  0
+    drop:                 7
+    uniqueness checks:    3
+  representation [lambda_1]
+    conservative unknown: 2
+    region:               6
+    runtime rc:           6
+    copy value:           10
+  representation [lambda_0]
+    region:               3
+    copy value:           1
+

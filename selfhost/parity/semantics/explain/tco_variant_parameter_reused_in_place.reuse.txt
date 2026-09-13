@@ -1,0 +1,45 @@
+Reuse report
+============
+
+Function: _start_main
+  specialization candidate qualification: rejected [Empty]
+    reason: accumulator not proven unique (tco_variant_parameter_reused_in_place.ash:25:35)
+
+Function: step [step]
+  entry copy: elided [s]
+    reason: ownership move safe (tco_variant_parameter_reused_in_place.ash:11:30)
+  runtime uniqueness check: omitted [s]
+    reason: statically unique reuse candidate (tco_variant_parameter_reused_in_place.ash:15:15)
+  runtime uniqueness check: omitted [s]
+    reason: statically unique reuse candidate (tco_variant_parameter_reused_in_place.ash:16:15)
+  runtime uniqueness check: omitted [s]
+    reason: statically unique reuse candidate (tco_variant_parameter_reused_in_place.ash:19:15)
+  runtime uniqueness check: omitted [s]
+    reason: statically unique reuse candidate (tco_variant_parameter_reused_in_place.ash:20:15)
+  constructor layout compatibility: rejected [s]
+    reason: constructor field count mismatch (tco_variant_parameter_reused_in_place.ash:19:36)
+  constructor layout compatibility: rejected [s]
+    reason: constructor field count mismatch (tco_variant_parameter_reused_in_place.ash:22:22)
+  constructor layout compatibility: accepted [s]
+    reason: compatible constructor layout (tco_variant_parameter_reused_in_place.ash:23:22)
+  token production: produced [s]
+    reason: matched cell became dead (tco_variant_parameter_reused_in_place.ash:15:15)
+  token production: produced [s]
+    reason: matched cell became dead (tco_variant_parameter_reused_in_place.ash:16:15)
+  token production: produced [s]
+    reason: matched cell became dead (tco_variant_parameter_reused_in_place.ash:19:15)
+  token production: produced [s]
+    reason: matched cell became dead (tco_variant_parameter_reused_in_place.ash:20:15)
+  token disposition: discarded [s]
+    reason: unconsumed arena token discarded (tco_variant_parameter_reused_in_place.ash:15:15)
+  token disposition: discarded [s]
+    reason: unconsumed arena token discarded (tco_variant_parameter_reused_in_place.ash:16:15)
+  token disposition: discarded [s]
+    reason: unconsumed arena token discarded (tco_variant_parameter_reused_in_place.ash:19:15)
+  token disposition: consumed [s]
+    reason: compatible token consumed (tco_variant_parameter_reused_in_place.ash:23:22)
+  fallback allocation: allocated
+    reason: no compatible reuse token (tco_variant_parameter_reused_in_place.ash:19:36)
+  fallback allocation: allocated
+    reason: no compatible reuse token (tco_variant_parameter_reused_in_place.ash:22:22)
+

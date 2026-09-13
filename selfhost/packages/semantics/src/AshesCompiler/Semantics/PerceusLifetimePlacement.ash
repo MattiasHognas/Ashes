@@ -115,12 +115,11 @@ let recursive ownerSlots (instructions: List(IrInstruction)) (acc: List(Int)) =
     match instructions with
         | [] -> reverse(acc)
         | head :: rest ->
-            head
-            |> anchorSlot
-            |> (given (slot) ->
+            let slot = anchorSlot(head)
+            in
                 if slot >= 0 && containsInt(slot)(acc) == false
                 then ownerSlots(rest)(slot :: acc)
-                else ownerSlots(rest)(acc))
+                else ownerSlots(rest)(acc)
 
 let recursive anchorIndices (instructions: List(IrInstruction)) (slot: Int) (index: Int) =
     match instructions with
@@ -145,15 +144,14 @@ let recursive collectArenaAdtCells (instructions: List(IrInstruction)) (acc: Lis
     match instructions with
         | [] -> acc
         | head :: rest ->
-            head
-            |> arenaAdtCellTarget
-            |> (given (target) ->
+            let target = arenaAdtCellTarget(head)
+            in
                 if target >= 0
                 then
                     acc
                     |> sortedSetInsert(target)
                     |> collectArenaAdtCells(rest)
-                else collectArenaAdtCells(rest)(acc))
+                else collectArenaAdtCells(rest)(acc)
 
 // The first `StoreLocal` into `slot`, as `(index, source temp)`.
 let recursive ownerDefinition (instructions: List(IrInstruction)) (slot: Int) (index: Int) =

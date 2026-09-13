@@ -1,0 +1,76 @@
+Memory report
+=============
+
+Function: build
+  ownership
+    n: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  1
+    drop:                 8
+    uniqueness checks:    4
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1__scalarenv0]
+    dup:                  1
+    drop:                 8
+    uniqueness checks:    4
+  representation [lambda_1]
+    conservative unknown: 3
+    region:               9
+    runtime rc:           12
+    copy value:           9
+  representation [lambda_0]
+    region:               3
+    copy value:           1
+
+Function: findHeavy
+  ownership
+    items: consumed, move-safe yes
+    limit: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_5]
+    dup:                  3
+    drop:                 16
+    uniqueness checks:    7
+  perceus [lambda_4]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_5__scalarenv1]
+    dup:                  3
+    drop:                 16
+    uniqueness checks:    7
+  representation [lambda_5]
+    conservative unknown: 2
+    region:               3
+    runtime rc:           19
+    copy value:           5
+  representation [lambda_4]
+    conservative unknown: 1
+    region:               3
+
+Function: run
+  ownership
+    round: consumed, move-safe yes
+    best: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_8]
+    dup:                  1
+    drop:                 6
+    uniqueness checks:    3
+  perceus [lambda_7]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_8]
+    conservative unknown: 7
+    runtime rc:           6
+    copy value:           20
+  representation [lambda_7]
+    region:               3
+    copy value:           1
+

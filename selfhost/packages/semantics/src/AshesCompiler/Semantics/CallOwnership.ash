@@ -10,6 +10,7 @@
 //   its result reaches nothing, and its result ownership is never statically known.
 
 import Ashes.Collection.List.length
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
 import AshesCompiler.Semantics.IrInstructions
@@ -86,19 +87,13 @@ let recursive innermostStageLabel (hops: Int) (label: Str) (labels: List((Str, S
             | Some(next) -> innermostStageLabel(hops - 1)(next)(labels)
             | None -> None
 
-let recursive lookupBodyPlacement (label: Str) (placements: List((Str, Bool))) =
-    match placements with
-        | [] -> None
-        | (candidate, runtimeManaged) :: rest ->
-            if candidate == label
-            then Some(runtimeManaged)
-            else lookupBodyPlacement(label)(rest)
+let lookupBodyPlacement (label: Str) (placements: MapTree(Str, Bool)) = Ashes.Collection.Map.getStr(label)(placements)
 
 // Stage 0's `TryGetCompiledFunctionResultRuntimeManaged`: whether the lowered body of the stage
 // the spine's applications reach produced a reference-counted result, following the
 // returned-closure chain one hop per application past the first; `None` while that body is not
 // lowered or the chain is not recorded.
-let compiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (returnedClosureLabels: List((Str, Str))) (bodyPlacements: List((Str, Bool))) =
+let compiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (returnedClosureLabels: List((Str, Str))) (bodyPlacements: MapTree(Str, Bool)) =
     match facts with
         | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
             match innermostStageLabel(count - 1)(label)(returnedClosureLabels) with

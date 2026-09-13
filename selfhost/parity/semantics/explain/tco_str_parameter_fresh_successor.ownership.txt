@@ -1,0 +1,23 @@
+Ownership report
+================
+
+Function: collect
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    text
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    count
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - text
+
