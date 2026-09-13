@@ -711,16 +711,30 @@ same public behavior.
   nullary `List(Str)` value. Tests: `expectTypeAliasAnnotationKeepsArguments` (an alias chain
   over a generic tree) and `expectStandardProgramArgsValue` in the semantics suite; the
   reduced programs compile with the stage-1 CLI and run correctly.
-- [ ] **MOD-15** The stage-1 lowering of the CLI package fails with
+- [x] **MOD-15** The stage-1 lowering of the CLI package failed with
   `UnknownLoweringBinding("__ashes_private_external_AshesCompiler_Backend_Llvm_LLVMContextCreate")`,
-  reached once MOD-14 closed (2026-09-13, 24 s and 13.8 GiB): a stitched private module's
-  `external` function, renamed by the stitcher, is not a binding the core lowering knows. The
-  program-mode entry (`lowerCoreProgramWithSourceAndReuse`) builds its state with
-  `initialStateWithContext` and never registers the stitched program's external function
-  declarations as callable bindings the way stage 0's `RegisterExternalFunctions` does. Register
-  every `TopLevelExternal(ExternalFunction ...)` of the stitched program under its compiler name
-  before the items are lowered; a reduced two-module repro with an `external` function belongs
-  in `selfhost/tests/projects`.
+  reached once MOD-14 closed (2026-09-13). Three causes, all fixed: the core lowering never
+  registered a program's `external` declarations (every program-mode entry built its state
+  with no external layouts), so `registerProgramExternals` now types them with
+  `validateExternalProgramAbi` against a resolution context naming the program's own types,
+  the compiler-provided `Maybe`, `Result` and `Unit`, and the opaque external types, and
+  installs a `CoreExternalFunctionLayout` per function under its declared name (stage 0's
+  `RegisterExternalFunctions`); the stitcher renamed a private module's `external` function
+  `__ashes_private_external_...` while a native-string destructor reference
+  (`FfiStr(owned LLVMDisposeMessage)`) kept the source name, where stage 0 hoists an external
+  program-wide under its own name, so the stitcher now keeps it bare like an opaque type; and a
+  nullary external called as `f(Unit)` with a spanned argument fell off the direct-call path
+  into the first-class reference and its `CoreExternalDirectOnlyViolation`. Test:
+  `expectExternalFunctionDeclarationLowers` (opaque type, string and nullary externals) in the
+  semantics suite; the projects and cli suites are green.
+- [ ] **MOD-16** The stage-1 compile of the CLI package fails with `ASH002 Type mismatch: Str vs
+  Result<a, b>` reported at `Main.ash:3:24433`, reached once MOD-15 closed (2026-09-13, 24 s
+  and 13.8 GiB). The location is borrowed from the entry file (the stitched line-mapping gap)
+  and the column is a stitched offset, so find the real module first (a scan of every stitched
+  source at that offset, as for MOD-14). Stage 0 compiles the package. Likely an external whose
+  native-string result the stage-1 typing gives as `Result` where the source expects `Str`, or
+  a `Result` pipe the self-hosted inference resolves differently; a reduced repro belongs in
+  `selfhost/tests/semantics`.
 
 #### IR model and lowering
 
@@ -3830,10 +3844,13 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   OPT-74 (the builder head copies) brought it to MOD-14's diagnostic in 25 s and 28 GiB, and
   OPT-77 (the specialization entry copies) to 21 s and 12.9 GiB, against the 9 GiB stage 0
   itself needs for the same package. MOD-14 (type aliases and the program-arguments value)
-  moved the stop to MOD-15's diagnostic at 24 s and 13.8 GiB, so MOD-15 (stitched external
-  functions) is the next blocker; a single-file program that reads `Ashes.IO.args` now lowers
-  but stops in the stage-1 backend, which has no `LoadProgramArgs` codegen yet (CG-11's open
-  program-arguments item). The remaining memory (whatever the next gdb `mmap` sampling names:
+  moved the stop to MOD-15's diagnostic, and MOD-15 (external functions registered, kept
+  unrenamed, nullary calls) to MOD-16's `ASH002 Type mismatch: Str vs Result<a, b>`, still at
+  24 s and 13.8 GiB, so MOD-16 is the next blocker; a single-file program that reads
+  `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
+  codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
+  codegen either, which the CLI package's LLVM bindings will need before its binary links. The
+  remaining memory (whatever the next gdb `mmap` sampling names:
   the `constructorInferenceDefinitionsFromLayouts` record builder, the curried `Ashes.Trait`
   operator closures behind linear name scans) comes after. The measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
