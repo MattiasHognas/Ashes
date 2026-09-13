@@ -1,0 +1,59 @@
+Ownership report
+================
+
+Function: allDeps
+  Parameters
+    nodes
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - nodes
+
+Function: countLists
+  Parameters
+    lists
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - n
+
+Function: countNames
+  Parameters
+    names
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - n
+
+Function: getNodeNames
+  Parameters
+    nodes
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - nodes
+

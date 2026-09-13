@@ -1,0 +1,77 @@
+Memory report
+=============
+
+Function: allDeps
+  ownership
+    nodes: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 4
+    uniqueness checks:    2
+  representation [lambda_1]
+    conservative unknown: 6
+    region:               1
+    runtime rc:           5
+
+Function: countLists
+  ownership
+    lists: consumed, move-safe yes
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_5]
+    dup:                  1
+    drop:                 12
+    uniqueness checks:    6
+  perceus [lambda_4]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_5__scalarenv1]
+    dup:                  1
+    drop:                 12
+    uniqueness checks:    6
+  representation [lambda_5]
+    runtime rc:           5
+    copy value:           6
+  representation [lambda_4]
+    conservative unknown: 1
+    region:               3
+
+Function: countNames
+  ownership
+    names: consumed, move-safe yes
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_3]
+    dup:                  1
+    drop:                 9
+    uniqueness checks:    3
+  perceus [lambda_2]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_3__scalarenv0]
+    dup:                  1
+    drop:                 9
+    uniqueness checks:    3
+  representation [lambda_3]
+    runtime rc:           5
+    copy value:           6
+  representation [lambda_2]
+    conservative unknown: 1
+    region:               3
+
+Function: getNodeNames
+  ownership
+    nodes: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  1
+    drop:                 4
+    uniqueness checks:    1
+  representation [lambda_0]
+    conservative unknown: 4
+    region:               1
+    runtime rc:           9
+

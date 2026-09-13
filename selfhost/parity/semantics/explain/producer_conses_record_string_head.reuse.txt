@@ -1,0 +1,9 @@
+Reuse report
+============
+
+Function: _start_main
+  specialization candidate qualification: rejected [nodes]
+    reason: accumulator not proven unique (producer_conses_record_string_head.ash:34:109)
+  specialization candidate qualification: rejected [nodes]
+    reason: accumulator not proven unique (producer_conses_record_string_head.ash:34:46)
+

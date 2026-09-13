@@ -172,9 +172,13 @@ public sealed partial class Lowering
 
     private int DuplicatePerceusPatternOwnerForAggregate(Expr argument, int argumentTemp)
     {
+        // A head the element lowering copied out of its pattern owner into an owned
+        // reference-counted value carries its own reference; a marker on top of it would retain
+        // twice.
         if (argument is not Expr.Var variable
             || LookupOwnedValue(variable.Name) is not
-            { PerceusPatternOwner: true, IsDropped: false })
+            { PerceusPatternOwner: true, IsDropped: false }
+            || _patternOwnerNormalizedTemps.Contains(argumentTemp))
         {
             return argumentTemp;
         }

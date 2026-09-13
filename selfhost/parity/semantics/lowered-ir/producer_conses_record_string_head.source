@@ -1,0 +1,34 @@
+// expect: 3 3
+// A non-tail producer that conses a string bound out of a record pattern, and one that conses a
+// list of scalars bound the same way, keep their spines on the reference-counted heap: the
+// borrowed head is copied to an owned string or list once per cell, so no level copies its whole
+// partial result out of its own arena window, and the pattern owner still releases its own
+// reference at the end of its arm.
+
+type Node =
+    | functionName: Str
+    | deps: List(Int)
+
+let recursive getNodeNames (nodes: List(Node)) =
+    match nodes with
+        | [] -> []
+        | Node { functionName = name } :: rest -> name :: getNodeNames(rest)
+
+let recursive allDeps (nodes: List(Node)) =
+    match nodes with
+        | [] -> []
+        | Node { deps = deps } :: rest -> deps :: allDeps(rest)
+
+let recursive countNames (names: List(Str)) (n: Int) =
+    match names with
+        | [] -> n
+        | _ :: rest -> countNames(rest)(n + 1)
+
+let recursive countLists (lists: List(List(Int))) (n: Int) =
+    match lists with
+        | [] -> n
+        | _ :: rest -> countLists(rest)(n + 1)
+
+let nodes = [Node(functionName = "f1", deps = [1]), Node(functionName = "f2", deps = [2, 3]), Node(functionName = "f3", deps = [4])]
+
+Ashes.IO.print(Ashes.Text.fromInt(countNames(getNodeNames(nodes))(0)) + " " + Ashes.Text.fromInt(countLists(allDeps(nodes))(0)))

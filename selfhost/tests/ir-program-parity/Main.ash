@@ -265,7 +265,8 @@ let fixtures =
         "tco_consumed_record_list_tuple_result",
         "tco_returned_record_head",
         "tco_record_head_stored_into_copy_adt_successor",
-        "tco_variant_parameter_reused_in_place"
+        "tco_variant_parameter_reused_in_place",
+        "producer_conses_record_string_head"
     ]
 
 // The fixtures whose stage-0 dump comes from a lowering that registers no trait declarations:
