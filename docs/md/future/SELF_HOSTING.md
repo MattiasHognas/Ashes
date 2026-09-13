@@ -1290,8 +1290,7 @@ same public behavior.
   resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
-  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the deferred call-result copy-out for a result whose layout is still
-  unresolved at the call (`CallResultCopyOutPending`), the provenance classification's
+  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the provenance classification's
   `IsFreshRuntimeManageableAdtExpressionCore` fallback and its fresh `Bytes`/`BigInt` builtin
   producers (only the fresh-string builtins ground a node; a `let recursive` binding is not a
   forwarding target), the runtime flag on a deferred add that seals to `ConcatStr`, the
@@ -2937,12 +2936,21 @@ same public behavior.
   `ConsumedRuntimeArgument` hand-over under an adoption flag — so that survey is the prerequisite.
   Mirror the contract rather than the symptom: unconditionally dropping a handed-over reference is
   unsound, because other callees genuinely adopt it or keep it in their result. Since #1002 the
-  port covers the ordinary call site; a self call in operand position (`"a" + go(n - 1)`,
-  `1 + countLeft(n - 1)`) still lowers without the adoption flag stage 0 passes it, which is what
-  keeps `selfhost/tests/ir-program-parity` red on main at `self_call_operand_string_result` and
-  `tco_non_tail_self_call_in_operator_operand` (2026-09-13; the runner stops at its first
-  mismatch, so every fixture after them goes unchecked until this closes).
-  `pattern_head_read_under_operator` differs only by OPT-25's pattern-head borrow.
+  port covers the ordinary call site, and since the self-call port the operand-position self call
+  too (`"a" + go(n - 1)`, `1 + countLeft(n - 1)`): stage 0 lowers a recursive binding's body
+  against a lowering-local arrow whose result stays unresolved until the body is done, so such a
+  call asks for an arena result (the ownership word's bit 1) and defers its copy-out; the
+  self-hosted lowering, which resolves as it goes, gives the self call's last application a
+  fresh result type (`deferSelfCallResultType`) unified with the binding's own once the body is
+  finished (`unifySelfCallResults`) and no longer lowers the body a second time for it. The
+  deferred copy-out itself is now real (`deferCallCopyOut`, resolved with the pending resets by
+  `splicePendingBlocks`: the copy-out block ahead of the reload, or the store and reload removed
+  and the reload's temp renamed when the resolved type needs none), which also closed OPT-25's
+  `CallResultCopyOutPending` tail. `self_call_operand_string_result`,
+  `tco_non_tail_self_call_in_operator_operand`, `tco_record_head_consed_into_sibling_accumulator`,
+  and `parameter_reaches_result_record_update` (a lowered-ir fixture no runner listed, stale
+  since #887 and regenerated) match stage 0 byte for byte; a recursive group's sibling call is
+  left to OPT-19's merged dispatch.
 - [ ] **OPT-66** Self-hosted mirror of stage 0's let-bound tail-call argument facts. A tail self-call
   whose argument is a `let`-bound name passes a value built earlier in the same iteration, and stage 0
   read the loop's structural facts off that bare `Var`: the parameter was placed on the arena instead
@@ -2994,8 +3002,15 @@ same public behavior.
   included (`reserveTcoExitTransferSlot`). `ResultReachTests.ash`'s three entry-normalization
   expectations had also drifted, since #996 located every instruction a binding's finalization
   emits at the binding's declaration; regenerated from the (main-identical) output. The suite
-  now runs green in both modes up to `TcoLoopLoweringTests.ash`'s `countLeft` check, which is
-  OPT-65's open self-call-in-operand gap and stays red until that closes.
+  now runs green in both modes; its last red check, `TcoLoopLoweringTests.ash`'s `countLeft`,
+  closed with OPT-65's self-call port.
+- [ ] **OPT-69** `selfhost/tests/ir-program-parity` stops at its first mismatch, so a red fixture
+  hides every fixture after it: `tco_consumed_list_parameter_borrowed_head` has been red on main
+  behind OPT-65's fixtures for an unknown time (found 2026-09-13; only local slot numbering
+  differs: the runtime-managed list parameter's active-flag slot is allocated before the loop's
+  arena and stack-pointer slots by the self-hosted entry normalization, and after them by stage
+  0), and `pattern_head_read_under_operator` behind it differs by OPT-25's pattern-head borrow.
+  Make the runner report every mismatch in one run, then fix the active-slot allocation order.
 
 #### LLVM code generation and runtime integration
 
