@@ -1059,6 +1059,23 @@ let programUsesConcat program =
     match program with
         | IrProgram { usesConcatStr = value } -> value
 
+// The program-arguments value is a standard builtin: a bare `Ashes.IO.args` lowers to a
+// `LoadProgramArgs` under the standard layouts, without a test-provided layout table.
+let expectStandardProgramArgsValue unit =
+    unit
+    |> (given (_) ->
+        "args"
+        |> ExprQualifiedVar("Ashes.IO")
+        |> loweredProgram
+        |> entryInstructions
+        |> containsCoreOperation(LoadProgramArgsClass)
+        |> test.assertEqual(true))
+    |> (given (_) ->
+        "args"
+        |> ExprQualifiedVar("Ashes.IO")
+        |> loweredType
+        |> test.assertEqual(SemList(SemString)))
+
 let expectBuiltinIntegration unit =
     unit
     |> (given (_) ->
@@ -1524,6 +1541,7 @@ let runCoreLoweringTests unit =
     |> expectRecordAsAndOrPatterns
     |> expectOperatorCases(operatorCases)
     |> expectBuiltinIntegration
+    |> expectStandardProgramArgsValue
     |> (given (_) -> expectDeadCapturesPrunedAndRenumbered(Unit))
     |> (given (_) -> expectAllLiveCapturesUntouched(Unit))
     |> (given (_) -> expectRepeatedReadsCountOnce(Unit))

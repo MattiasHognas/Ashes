@@ -390,6 +390,9 @@ type CoreLoweringState =
     | externalFunctions: List(ExternalFunctionAbi)
     | externalOpaqueTypes: List(Str)
     | declaredTypeNames: MapTree(Str, Bool)
+    // Stage 0's `_typeAliases`: every type alias of the program by name, with its parameter names
+    // and target, expanded wherever a type expression is converted.
+    | typeAliases: MapTree(Str, (List(Str), TypeExpr))
     | capabilityLayouts: List(CoreCapabilityLayout)
     | staticProviders: List(CoreStaticProviderLayout)
     | capabilityGlobalCount: Int
@@ -794,6 +797,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         externalFunctions = externalFunctions,
         externalOpaqueTypes = externalOpaqueTypes,
         declaredTypeNames = Ashes.Collection.Map.empty,
+        typeAliases = Ashes.Collection.Map.empty,
         capabilityLayouts = capabilityLayouts,
         staticProviders = staticProviders,
         capabilityGlobalCount = capabilityGlobalCount,
@@ -6280,6 +6284,101 @@ let recursive lookupTypeParameter (name: Str) (parameterTypes: List((Str, Semant
             then Some(semanticType)
             else lookupTypeParameter(name)(rest)
 
+// Stage 0's `ResolveTypeAlias`: a type expression with every alias replaced by its target, the
+// alias's parameters substituted by the written arguments. An alias applied with the wrong number
+// of arguments, or a name that is no alias, is left as written; the fuel bounds an alias cycle.
+let recursive lookupBoundTypeExpr (name: Str) (bindings: List((Str, TypeExpr))) =
+    match bindings with
+        | [] -> None
+        | (candidateName, bound) :: rest ->
+            if candidateName == name
+            then Some(bound)
+            else lookupBoundTypeExpr(name)(rest)
+
+let recursive substituteTypeParameters (bindings: List((Str, TypeExpr))) (typeExpr: TypeExpr) =
+    match typeExpr with
+        | TypeAt(span, inner) ->
+            inner
+            |> substituteTypeParameters(bindings)
+            |> TypeAt(span)
+        | TypeNamed(name) ->
+            match lookupBoundTypeExpr(name)(bindings) with
+                | Some(bound) -> bound
+                | None -> typeExpr
+        | TypeApplied(name, arguments) ->
+            arguments
+            |> substituteTypeParametersList(bindings)
+            |> TypeApplied(name)
+        | TypeArrow(argument, result, capabilities, tail) ->
+            TypeArrow(substituteTypeParameters(bindings)(argument))(substituteTypeParameters(bindings)(result))(capabilities)(tail)
+        | TypeTuple(elements) ->
+            elements
+            |> substituteTypeParametersList(bindings)
+            |> TypeTuple
+        | TypeUnit -> TypeUnit
+and substituteTypeParametersList (bindings: List((Str, TypeExpr))) (typeExprs: List(TypeExpr)) =
+    match typeExprs with
+        | [] -> []
+        | head :: rest -> substituteTypeParameters(bindings)(head) :: substituteTypeParametersList(bindings)(rest)
+
+let recursive bindTypeParameters (names: List(Str)) (arguments: List(TypeExpr)) =
+    match (names, arguments) with
+        | (name :: restNames, argument :: restArguments) -> (name, argument) :: bindTypeParameters(restNames)(restArguments)
+        | _ -> []
+
+let recursive expandTypeAliases (aliases: MapTree(Str, (List(Str), TypeExpr))) (fuel: Int) (typeExpr: TypeExpr) =
+    if fuel <= 0
+    then typeExpr
+    else
+        match typeExpr with
+            | TypeAt(span, inner) ->
+                inner
+                |> expandTypeAliases(aliases)(fuel)
+                |> TypeAt(span)
+            | TypeNamed(name) ->
+                match Ashes.Collection.Map.getStr(name)(aliases) with
+                    | Some(([], target)) -> expandTypeAliases(aliases)(fuel - 1)(target)
+                    | _ -> typeExpr
+            | TypeApplied(name, arguments) ->
+                let expandedArguments = expandTypeAliasesList(aliases)(fuel)(arguments)
+                in
+                    match Ashes.Collection.Map.getStr(name)(aliases) with
+                        | Some((parameters, target)) ->
+                            if length(parameters) == length(expandedArguments)
+                            then
+                                target
+                                |> substituteTypeParameters(bindTypeParameters(parameters)(expandedArguments))
+                                |> expandTypeAliases(aliases)(fuel - 1)
+                            else TypeApplied(name)(expandedArguments)
+                        | None -> TypeApplied(name)(expandedArguments)
+            | TypeArrow(argument, result, capabilities, tail) ->
+                TypeArrow(expandTypeAliases(aliases)(fuel)(argument))(expandTypeAliases(aliases)(fuel)(result))(capabilities)(tail)
+            | TypeTuple(elements) ->
+                elements
+                |> expandTypeAliasesList(aliases)(fuel)
+                |> TypeTuple
+            | TypeUnit -> TypeUnit
+and expandTypeAliasesList (aliases: MapTree(Str, (List(Str), TypeExpr))) (fuel: Int) (typeExprs: List(TypeExpr)) =
+    match typeExprs with
+        | [] -> []
+        | head :: rest -> expandTypeAliases(aliases)(fuel)(head) :: expandTypeAliasesList(aliases)(fuel)(rest)
+
+let recursive typeParameterNames (parameters: List(TypeParameter)) =
+    match parameters with
+        | [] -> []
+        | TypeParameter { name = name } :: rest -> name :: typeParameterNames(rest)
+
+// Every type alias of the program, collected before any declaration is registered.
+let recursive typeAliasesOf (items: List(TopLevelItem)) (aliases: MapTree(Str, (List(Str), TypeExpr))) =
+    match items with
+        | [] -> aliases
+        | TopLevelAt(_span, inner) :: rest -> typeAliasesOf(inner :: rest)(aliases)
+        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = typeParameters, target = target }) :: rest ->
+            aliases
+            |> Ashes.Collection.Map.setStr(name)((typeParameterNames(typeParameters), target))
+            |> typeAliasesOf(rest)
+        | _ :: rest -> typeAliasesOf(rest)(aliases)
+
 let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List((Str, SemanticType))) =
     match typeExpr with
         | TypeAt(_span, inner) -> typeExprToSemanticType(inner)(parameterTypes)
@@ -6348,7 +6447,7 @@ let lowerLambdaParameterType annotation parameterType state =
     match annotation with
         | None -> (state, None)
         | Some(typeExpr) ->
-            match typeExprToSemanticType(typeExpr)([]) with
+            match typeExprToSemanticType(expandTypeAliases(state.typeAliases)(32)(typeExpr))([]) with
                 | None -> (state, None)
                 | Some(annotationType) -> bindType(parameterType)(annotationType)(state)
 
@@ -17964,16 +18063,17 @@ let recursive isDeclaringTypeReference (typeExpr: TypeExpr) (selfName: Str) =
         | TypeNamed(name) -> name == selfName
         | _ -> false
 
-let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) (selfName: Str) (selfType: SemanticType) =
+let recursive constructorFieldSemanticTypes (aliases: MapTree(Str, (List(Str), TypeExpr))) (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) (selfName: Str) (selfType: SemanticType) =
     match parameters with
         | [] -> Some([])
         | parameter :: rest ->
             match if isDeclaringTypeReference(parameter)(selfName)
             then Some(selfType)
-            else typeExprToSemanticType(parameter)(parameterTypes) with
+            else
+                typeExprToSemanticType(expandTypeAliases(aliases)(32)(parameter))(parameterTypes) with
                 | None -> None
                 | Some(fieldType) ->
-                    match constructorFieldSemanticTypes(rest)(parameterTypes)(selfName)(selfType) with
+                    match constructorFieldSemanticTypes(aliases)(rest)(parameterTypes)(selfName)(selfType) with
                         | None -> None
                         | Some(restTypes) -> Some(fieldType :: restTypes)
 
@@ -18048,7 +18148,7 @@ and typeExprArityErrorsList (typeExprs: List(TypeExpr)) (layouts: List(CoreConst
 
 let arityMismatchMessage name expected actual = "Type '" + name + "' expects " + Ashes.Text.fromInt(expected) + " type argument(s) but got " + Ashes.Text.fromInt(actual) + "."
 
-let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (tag: Int) (layouts: List(CoreConstructorLayout)) (constructor: TypeConstructor) =
+let buildUserConstructorLayout (aliases: MapTree(Str, (List(Str), TypeExpr))) (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (tag: Int) (layouts: List(CoreConstructorLayout)) (constructor: TypeConstructor) =
     match constructor with
         | TypeConstructor { name = name, parameters = parameters, fieldNames = fieldNames } ->
             match typeExprArityErrorsList(parameters)(layouts) with
@@ -18058,7 +18158,7 @@ let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int
                     |> UnsupportedTypeDeclaration
                     |> Error
                 | None ->
-                    match constructorFieldSemanticTypes(parameters)(parameterTypes)(declaringTypeName(resultType))(resultType) with
+                    match constructorFieldSemanticTypes(aliases)(parameters)(parameterTypes)(declaringTypeName(resultType))(resultType) with
                         | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, one of the type's own type parameters, or a pure function over those)"))
                         | Some(fieldTypes) ->
                             Ok(CoreConstructorLayout(
@@ -18070,14 +18170,14 @@ let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int
                                 tagless = false
                             ))
 
-let recursive buildUserConstructorLayoutsFromIndex (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (index: Int) (layouts: List(CoreConstructorLayout)) (constructors: List(TypeConstructor)) =
+let recursive buildUserConstructorLayoutsFromIndex (aliases: MapTree(Str, (List(Str), TypeExpr))) (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (index: Int) (layouts: List(CoreConstructorLayout)) (constructors: List(TypeConstructor)) =
     match constructors with
         | [] -> Ok([])
         | constructor :: rest ->
-            match buildUserConstructorLayout(resultType)(quantified)(parameterTypes)(index)(layouts)(constructor) with
+            match buildUserConstructorLayout(aliases)(resultType)(quantified)(parameterTypes)(index)(layouts)(constructor) with
                 | Error(error) -> Error(error)
                 | Ok(layout) ->
-                    match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(index + 1)(layouts)(rest) with
+                    match buildUserConstructorLayoutsFromIndex(aliases)(resultType)(quantified)(parameterTypes)(index + 1)(layouts)(rest) with
                         | Error(error) -> Error(error)
                         | Ok(restLayouts) -> Ok(layout :: restLayouts)
 
@@ -18267,7 +18367,7 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                         in
                                             let parameterTypes = typeParameterResolutionTable(namedIds)
                                             in
-                                                match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
+                                                match buildUserConstructorLayoutsFromIndex(state.typeAliases)(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
                                                     | Error(error) -> Error(error)
                                                     | Ok(newLayouts) ->
                                                         Ok((state with constructorLayouts = append(existingLayouts)(decideTaglessLayouts(state)(existingLayouts)(newLayouts)), typeSupply = nextSupply))
@@ -18306,16 +18406,16 @@ let recursive capabilityOperationLayouts (capabilityName: Str) (operations: List
 // An operation's declared signature as a scheme quantified over the capability's own type
 // parameters; an unsigned operation, or one whose signature this resolver cannot express, gets no
 // scheme and is typed by a fresh variable at each perform site.
-let recursive capabilityOperationSchemes (capabilityName: Str) (operations: List(CapabilityOperation)) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) =
+let recursive capabilityOperationSchemes (aliases: MapTree(Str, (List(Str), TypeExpr))) (capabilityName: Str) (operations: List(CapabilityOperation)) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) =
     match operations with
         | [] -> []
         | CapabilityOperation { name = name, signature = signature } :: rest ->
             match signature with
-                | None -> capabilityOperationSchemes(capabilityName)(rest)(quantified)(parameterTypes)
+                | None -> capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
                 | Some(typeExpr) ->
-                    match typeExprToSemanticType(typeExpr)(parameterTypes) with
-                        | None -> capabilityOperationSchemes(capabilityName)(rest)(quantified)(parameterTypes)
-                        | Some(operationType) -> (capabilityName, name, TypeScheme(quantified = quantified, body = operationType, constraints = [])) :: capabilityOperationSchemes(capabilityName)(rest)(quantified)(parameterTypes)
+                    match typeExprToSemanticType(expandTypeAliases(aliases)(32)(typeExpr))(parameterTypes) with
+                        | None -> capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
+                        | Some(operationType) -> (capabilityName, name, TypeScheme(quantified = quantified, body = operationType, constraints = [])) :: capabilityOperationSchemes(aliases)(capabilityName)(rest)(quantified)(parameterTypes)
 
 // Registers one `CoreCapabilityLayout` per top-level `capability` declaration, numbered in
 // declaration order: the number is the capability's handler-evidence global, and the operations
@@ -18338,7 +18438,7 @@ let registerTopLevelCapabilityDeclaration (declaration: CapabilityDecl) (state: 
                                         let schemes =
                                             namedIds
                                             |> typeParameterResolutionTable
-                                            |> capabilityOperationSchemes(name)(operations)(typeParameterQuantified(namedIds))
+                                            |> capabilityOperationSchemes(state.typeAliases)(name)(operations)(typeParameterQuantified(namedIds))
                                         in Ok((state with capabilityLayouts = append(state.capabilityLayouts)([CoreCapabilityLayout(name = name, index = state.capabilityGlobalCount, operations = operationLayouts)]), capabilityGlobalCount = state.capabilityGlobalCount + 1, capabilityOperationSchemes = append(state.capabilityOperationSchemes)(schemes), typeSupply = nextSupply))
 
 // Every capability declaration is registered before any value is lowered: a perform site sizes
@@ -18481,7 +18581,7 @@ let recursive registerDeclaredTypes (items: List(TopLevelItem)) (state: CoreLowe
                 | Ok(registered) -> registerDeclaredTypes(rest)(registered)
         | _ :: rest -> registerDeclaredTypes(rest)(state)
 
-let registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) = registerDeclaredTypes(items)((state with declaredTypeNames = declaredTypeNamesOf(items)(Ashes.Collection.Map.empty)))
+let registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) = registerDeclaredTypes(items)((state with declaredTypeNames = declaredTypeNamesOf(items)(Ashes.Collection.Map.empty), typeAliases = typeAliasesOf(items)(Ashes.Collection.Map.empty)))
 
 let lowerProgramWithCapabilities items trailingBody environment state =
     match registerProgramCapabilities(items)(state) with

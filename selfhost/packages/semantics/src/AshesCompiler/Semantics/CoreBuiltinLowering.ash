@@ -524,6 +524,9 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.IO")("readLine")(
             TypeScheme(quantified = [], body = SemFunction(unitType)(SemNamed(0)("Maybe")([SemString]))(None), constraints = [])
         ),
+        standardBuiltinLayout("Ashes.IO")("args")(
+            TypeScheme(quantified = [], body = SemList(SemString), constraints = [])
+        ),
         standardBuiltinLayout("Ashes.IO")("writeBuffered")(
             TypeScheme(quantified = [], body = SemFunction(SemString)(unitType)(None), constraints = [])
         ),
