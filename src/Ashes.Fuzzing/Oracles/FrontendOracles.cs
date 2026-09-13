@@ -20,7 +20,7 @@ internal sealed class ParseOracle : IFuzzOracle
         }
         catch (Exception exception)
         {
-            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, exception.ToString()));
+            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, FuzzExceptionDescription.Describe(exception)));
         }
     }
 }
@@ -61,7 +61,7 @@ internal sealed class FormatOracle : IFuzzOracle
         }
         catch (Exception exception)
         {
-            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, exception.ToString()));
+            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, FuzzExceptionDescription.Describe(exception)));
         }
     }
 }
@@ -79,7 +79,7 @@ internal sealed class SemanticOracle : IFuzzOracle
         }
         catch (Exception exception)
         {
-            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, exception.ToString()));
+            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, FuzzExceptionDescription.Describe(exception)));
         }
     }
 }
@@ -110,7 +110,7 @@ internal sealed class IrVerificationOracle : IFuzzOracle
         }
         catch (Exception exception)
         {
-            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, exception.ToString()));
+            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, FuzzExceptionDescription.Describe(exception)));
         }
     }
 }
@@ -161,7 +161,7 @@ internal sealed class InvalidSemanticOracle : IFuzzOracle
         }
         catch (Exception exception)
         {
-            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, exception.ToString()));
+            return ValueTask.FromResult(FuzzOracleResult.Failed(Id, FuzzExceptionDescription.Describe(exception)));
         }
     }
 }
