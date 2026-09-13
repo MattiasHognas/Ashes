@@ -7530,6 +7530,43 @@ let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(Core
 
 // Whether the rebuild's constructor-site materialization can relocate a field of this type into
 // to-space through a synthesized copier — the half of the persistence question that needs the type
+// Stage 0's `StructuralComponentTypes`: what a value of this type structurally contains as far as the
+// type itself says. A named type's fields are not among its type arguments, which the walk below
+// expands separately.
+let structuralComponentTypes (semanticType: SemanticType) =
+    match semanticType with
+        | SemList(element) -> [element]
+        | SemPointer(pointee) -> [pointee]
+        | SemTuple(elements) -> elements
+        | SemNamed(_id, _name, arguments) -> arguments
+        | SemCapability(_name, arguments) -> arguments
+        | _ -> []
+
+// Stage 0's `CallResultMayContainArgumentType`: whether a value of the argument's type could be
+// reachable inside the result. An unresolved variable, a rigid type parameter, and a function value
+// (which can have captured anything) all answer yes, and a yes only ever keeps a handed-over reference
+// where it is, so erring this way leaks at worst. A named type is expanded once per type name on a
+// walk, which is what stops a recursive type unfolding forever; its type arguments are walked every
+// time regardless, so the same generic type at two instantiations still has both compared.
+let recursive callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemFunction(_parameter, _result, _row) -> true
+        | resolved ->
+            resolved == argumentType || anyTypeMayContainArgumentType(structuralComponentTypes(resolved))(argumentType)(expanded)(state) || (match resolved with
+                | SemNamed(_id, name, _arguments) ->
+                    if containsName(name)(expanded)
+                    then false
+                    else
+                        match namedTypeConstructorFieldTypes(name)(state.constructorLayouts)(state)(false)([]) with
+                            | (_found, fieldTypes) -> anyTypeMayContainArgumentType(fieldTypes)(argumentType)(name :: expanded)(state)
+                | _ -> false)
+and anyTypeMayContainArgumentType (candidates: List(SemanticType)) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    match candidates with
+        | [] -> false
+        | candidate :: rest -> callResultMayContainArgumentType(candidate)(argumentType)(expanded)(state) || anyTypeMayContainArgumentType(rest)(argumentType)(expanded)(state)
+
 // environment, so `ReuseResetSafety.ash` takes it as a parameter.
 let specializationFieldRelocatable (fieldType: SemanticType) (state: CoreLoweringState) =
     state
@@ -8170,6 +8207,10 @@ type CoreConsumedArgument =
     | temp: Int
     | semanticType: SemanticType
     | preserveEscapedChildren: Bool
+    // The callee's own adoption bit when this reference was handed over for its result to keep, or -1 for
+    // an ordinary fresh argument the caller releases outright. An adopting callee owns the reference; a
+    // non-adopting one gives it up only where the result kept nothing of it.
+    | adoptionFlagTemp: Int
 
 // One spine stage's result with the fresh arguments applied so far and the returns-bit flag
 // temp the last application read (`-1` for none).
@@ -8492,14 +8533,26 @@ let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp
                     match retainCallArgument(handOff)(argumentType)(argumentTemp)(flagTemp)(flagged) with
                         | (retained, passedTemp) -> (retained, passedTemp, flagTemp)
 
+// Stage 0 hands a fresh argument over under the callee's adoption bit when the callee's result reach is
+// unknown, so the result may be keeping it: releasing it here would free what such a callee stored.
+// Stage 0 additionally exempts an argument whose reach account rules out keeping the parameter whole,
+// which needs the whole-reach and exposed-parameter facts these reach summaries do not carry yet; until
+// they do, a callee with a complete reach account keeps the ordinary release below.
+let handedOverAdoptionFlag (context: CoreCallContext) (flagTemp: Int) =
+    match context.facts with
+        | Some(CoreCalleeFacts { reach = ResultReachState { isPoisoned = true } }) -> flagTemp
+        | Some(_facts) -> -1
+        | None -> flagTemp
+
 // The fresh arguments the callee does not take, in argument order.
-let consumedArgumentsWith (handOff: CoreArgumentHandOff) (argumentTemp: Int) (argumentType: SemanticType) (consumed: List(CoreConsumedArgument)) =
+let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: CoreArgumentHandOff) (argumentTemp: Int) (argumentType: SemanticType) (consumed: List(CoreConsumedArgument)) =
     match handOff with
         | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = false, mayReach = mayReach } ->
             append(consumed)([CoreConsumedArgument(
                 temp = argumentTemp,
                 semanticType = argumentType,
-                preserveEscapedChildren = mayReach
+                preserveEscapedChildren = mayReach,
+                adoptionFlagTemp = handedOverAdoptionFlag(context)(flagTemp)
             )])
         | _ -> consumed
 
@@ -8603,7 +8656,7 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                         lowered = wordState
                                         |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
                                         |> success(target)(resolveType(unifiedState)(resultType)),
-                                        consumedArguments = consumedArgumentsWith(handOff)(argumentTemp)(argumentType)(consumed),
+                                        consumedArguments = consumedArgumentsWith(context)(argumentFlagTemp)(handOff)(argumentTemp)(argumentType)(consumed),
                                         resultFlagTemp = resultFlagTemp,
                                         resultNormalized = false,
                                         resultDeepCopied = false
@@ -8940,6 +8993,46 @@ let emitConsumedArgumentDropByResultBranch (temp: Int) (valueType: SemanticType)
                     |> emitRuntimeChildDrop(temp)(valueType)
                     |> emit(Label(doneLabel))
 
+// Stage 0's `EmitHandedOverArgumentRelease`: releases a reference handed to the callee for its result to
+// keep, now that the caller has copied the result outright and the copy holds none of it. An adopting
+// callee (the adoption bit reads true) consumed the reference itself, and on the owned branch of a
+// conditional copy-out (the result bit reads true) the callee's reference-counted result may still hold
+// it, so both leave the reference where it is.
+let emitHandedOverArgumentRelease (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (resultCopyFlagTemp: Int) (state: CoreLoweringState) =
+    match freshLabel("rc_handed_over_not_adopted")(state) with
+        | FreshLabel { state = notAdoptedState, label = notAdoptedLabel } ->
+            match freshLabel("rc_handed_over_done")(notAdoptedState) with
+                | FreshLabel { state = doneState, label = doneLabel } ->
+                    match doneState
+                    |> emit(JumpIfFalse(adoptionFlagTemp)(notAdoptedLabel))
+                    |> emit(Jump(doneLabel))
+                    |> emit(Label(notAdoptedLabel)) with
+                        | adoptionTested ->
+                            match if resultCopyFlagTemp >= 0
+                            then
+                                match freshLabel("rc_handed_over_copied")(adoptionTested) with
+                                    | FreshLabel { state = copiedState, label = copiedLabel } ->
+                                        copiedState
+                                        |> emit(JumpIfFalse(resultCopyFlagTemp)(copiedLabel))
+                                        |> emit(Jump(doneLabel))
+                                        |> emit(Label(copiedLabel))
+                            else adoptionTested with
+                                | resultTested ->
+                                    resultTested
+                                    |> emitRuntimeChildDrop(temp)(valueType)
+                                    |> emit(Label(doneLabel))
+
+// Stage 0's `HandedOverArgumentResultFlag`: the result-ownership bit that decides whether a handed-over
+// reference stays with the callee's reference-counted result, or -1 when a result of this type cannot
+// hold a value of the argument's type at all — a value is only ever reachable as its own type, so such a
+// result kept nothing and the callee's adoption is the whole question. Without this, the bit alone keeps
+// every reference a reference-counted result could conceivably hold, which never releases the argument
+// at all for a producer whose result shares none of it.
+let handedOverArgumentResultFlag (resultType: SemanticType) (argumentType: SemanticType) (resultCopyFlagTemp: Int) (state: CoreLoweringState) =
+    if callResultMayContainArgumentType(resultType)(argumentType)([])(state)
+    then resultCopyFlagTemp
+    else -1
+
 // What the release of a call's consumed arguments knows of the call: whether the callee's
 // lowered body produced a reference-counted result, the flag of the result's conditional list
 // copy-out when that copy-out copies the heads on its arena branch (-1 otherwise), whether the
@@ -8951,6 +9044,13 @@ type CoreConsumedReleasePolicy =
     | resultNormalized: Bool
     | resultDeepCopied: Bool
     | calleeResultPoisoned: Bool
+    // Stage 0's `ResolveHandedOverReleaseGuard`: whether copying the result out severs every reference it
+    // held to the arguments, which is where a reference handed over for the result to keep is released,
+    // and the result-ownership bit selecting the copy branch (-1 when the copy is unconditional or the
+    // result cannot hold the argument's type at all). The result type narrows that bit per argument.
+    | resultCopySevers: Bool
+    | resultCopyFlagTemp: Int
+    | resultType: SemanticType
 
 // Stage 0's `ConsumedDeepCopiedListStaysWithCallee`: a consumed list that an earlier call's
 // generic deep copy produced is left with a callee whose result was neither copied out here
@@ -8966,6 +9066,15 @@ let consumedDeepCopiedListStaysWithCallee (temp: Int) (policy: CoreConsumedRelea
 // children; a deep-copied result shares nothing with the arguments, so their parts go with them.
 let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
+        | CoreConsumedArgument { temp = temp, semanticType = semanticType, adoptionFlagTemp = adoptionFlagTemp } when adoptionFlagTemp >= 0 ->
+            if policy.resultCopySevers
+            then
+                match resolveType(state)(semanticType) with
+                    | valueType ->
+                        emitHandedOverArgumentRelease(temp)(valueType)(adoptionFlagTemp)(
+                            handedOverArgumentResultFlag(policy.resultType)(valueType)(policy.resultCopyFlagTemp)(state)
+                        )(state)
+            else state
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
                 | SemFunction(_parameter, _result, _row) ->
@@ -9002,18 +9111,43 @@ let calleeResultPoisoned (context: CoreCallContext) =
         | Some(CoreCalleeFacts { reach = ResultReachState { isPoisoned = isPoisoned } }) -> isPoisoned
         | None -> true
 
+// Stage 0's `ResolveHandedOverReleaseGuard`. A result a reset reclaims holds no reference to any
+// argument, so copying it out severs everything. A callee whose compiled body is verified to return a
+// reference-counted result owns every part of it — its construction paths copied or retained whatever
+// they kept — so such a result strands the handed-over reference exactly as a copied one does, and needs
+// no runtime bit to say so. Otherwise the copy branch of a shallow or list copy-out is what severs the
+// references, and the result-ownership bit selects that branch at runtime. A specialization's self reuse
+// call keeps its result in place, so nothing is severed there.
+let handedOverReleaseGuard (context: CoreCallContext) (resultType: SemanticType) (resultFlagTemp: Int) (state: CoreLoweringState) =
+    (let stableReuse =
+        context.selfCallee && (match state.specializingReuseLabel with
+            | Some(_label) -> true
+            | None -> false)
+    in
+        if resultSurvivesReset(resolveType(state)(resultType))(state)
+        then (true, -1)
+        else
+            if knownResultRuntimeManaged(context.facts)(resultType)(state)
+            then (!stableReuse && calleeCompiledResultRuntimeManaged(context.facts)(state), -1)
+            else (!stableReuse && hasCallCopyOut(resultType)(state), resultFlagTemp))
+
 // A partial application keeps its fresh arguments alive in the returned closure.
 let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (elementCopyingFlagTemp: Int) (stage: CoreCallStage) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            emitConsumedArgumentDrops(CoreConsumedReleasePolicy(
-                verifiedRuntimeResult = calleeCompiledResultRuntimeManaged(context.facts)(state),
-                elementCopyingFlagTemp = elementCopyingFlagTemp,
-                resultNormalized = stage.resultNormalized,
-                resultDeepCopied = stage.resultDeepCopied,
-                calleeResultPoisoned = calleeResultPoisoned(context)
-            ))([])(stage.consumedArguments)(state)
+            match handedOverReleaseGuard(context)(resultType)(stage.resultFlagTemp)(state) with
+                | (resultCopySevers, resultCopyFlagTemp) ->
+                    emitConsumedArgumentDrops(CoreConsumedReleasePolicy(
+                        verifiedRuntimeResult = calleeCompiledResultRuntimeManaged(context.facts)(state),
+                        elementCopyingFlagTemp = elementCopyingFlagTemp,
+                        resultNormalized = stage.resultNormalized,
+                        resultDeepCopied = stage.resultDeepCopied,
+                        calleeResultPoisoned = calleeResultPoisoned(context),
+                        resultCopySevers = resultCopySevers,
+                        resultCopyFlagTemp = resultCopyFlagTemp,
+                        resultType = resultType
+                    ))([])(stage.consumedArguments)(state)
 
 let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if callResultRuntimeManaged(context.facts)(resultType)(state)
