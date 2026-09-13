@@ -794,13 +794,15 @@ same public behavior.
   pattern). Done (2026-09-14): `addTypeSelectorImport` imports the module wholesale beside
   the selector unless the scope already imports it; the language reference states the rule;
   `tests/import_type_selector_project` and a stitching test cover it.
-- [ ] **MOD-19** The stage-1 compile of the CLI package fails with
+- [x] **MOD-19** The stage-1 compile of the CLI package failed with
   `UnsupportedCoreLoweringPattern("unknown record AshesPrivateType_AshesCompiler_Semantics_TypeInference_HandlerOperationArmDefinition")`,
-  reached once MOD-18 closed (2026-09-14, 41.5 s and 14.1 GiB): a record pattern on a type
-  the stitcher renamed as private (`AshesPrivateType_` prefix) that the lowering does not
-  know under that name. Find where the record pattern's type name and the registered type's
-  name diverge (the pattern rewrite, the type registration, or a private type reached through
-  a selector), mirror stage 0, and add the reduced program as a test.
+  reached once MOD-18 closed (2026-09-14, 41.5 s and 14.1 GiB). A private type and its
+  record constructor carry different stitched compiler names (`AshesPrivateType_` and
+  `AshesPrivateConstructor_`), while an exported record's coincide; the stitcher rewrote a
+  record literal's and a record pattern's name as the type, and the lowering looks both up by
+  constructor name. Done (2026-09-14): `rewriteRecordName` resolves them as the constructor;
+  `tests/private_record_pattern_project` (a private record built and matched in its own
+  module) and a reference-rewriting test cover it.
 
 #### IR model and lowering
 
@@ -3328,6 +3330,24 @@ same public behavior.
   binding is retained into the aggregate. Regression
   `tests/rc_child_of_call_argument_kept_by_callee_result.ash`, oracle fixture of the same
   name (the retain and release sequence of `addImpl` matches exactly in both compilers).
+- [ ] **OPT-80** The stage-1 lowering of the semantics package alone outgrows the probe's
+  address space: once MOD-19 closed (2026-09-14) the compile of
+  `selfhost/packages/semantics/ashes.json` under the stage-1 CLI died with `failed to allocate
+  heap memory from OS` after 15 s at 22.7 GiB resident under a 50 GiB cap (the arena reserves
+  roughly twice what it touches, so the cap is the address space, not one request: a gdb
+  catchpoint on any `mmap` over 4 GiB never fired, and the cap-bound runs pass once the cap is
+  raised). The growth follows the amount of code lowered, not one item: a scratch entry
+  importing only `Types` costs 0.7 s and 2.9 GiB, `TypeResolution` 1.9 s and 7 GiB, a private
+  copy of `TypeInference` with its four dependencies truncated to 1353 lines 12 s and
+  16.7 GiB, to 1994 lines 18 s and 23.9 GiB, to 2265 lines 20 s and 25.7 GiB, and the whole
+  module does not fit in 50 GiB, against the 9 GiB stage 0 needs for the entire CLI package.
+  Two suspects, to be confirmed by the phase driver and a gdb `mmap` sampling of the
+  `--debug` build: the deriving expansion registers an `Ord` implementation whose body is
+  quadratic in the constructor count for every stitched type at program registration,
+  whether or not the type is compared, and the per-item lowering state (trait method
+  closures cached by label, the provenance and reach tables) is carried forward across items
+  in the arena instead of being released behind each top-level binding. The blocker for
+  BOOT-2 now; measure first, then fix the dominator.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
@@ -3643,6 +3663,16 @@ same public behavior.
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
+- [ ] **CG-18** The stage-1 backend panics with `codegen: unknown index 27` on a program
+  importing `AshesCompiler.Semantics.DerivingExpansion` (found 2026-09-14 while bisecting
+  OPT-80: a scratch entry `import AshesCompiler.Semantics.DerivingExpansion` followed by one
+  `print` lowers and optimizes, then the codegen reads an IR temporary its block environment
+  never bound). `lookupIndexed` in `IrCodegen.Support.ash` serves temporaries, labels, and
+  string literal globals alike, so the message names neither the function nor the kind of
+  index; make the panic name the function and the instruction, dump that function's final IR
+  under stage 0 and stage 1 (`--emit-ir final`), and either mirror the missing definition
+  order (a temporary defined in a predecessor block the codegen visits later) or the lowering
+  divergence that produced the use.
 
 #### Object parsing and executable linking
 
@@ -3938,13 +3968,17 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   evidence) to MOD-18's `UnsupportedCoreLoweringPattern("unknown constructor TypeAt")` at
   31.6 s and 13.9 GiB, and MOD-18 (type selector imports bring their module in) to MOD-19's
   `unknown record AshesPrivateType_..._HandlerOperationArmDefinition` at 41.5 s and 14.1 GiB,
-  so MOD-19 is the next blocker; a single-file program that reads
+  and MOD-19 (private record names resolved as constructors) past every diagnostic into the
+  memory wall: the lowering of the semantics package alone no longer fits in 50 GiB of address
+  space (OPT-80, the next blocker, with its per-module measurements); a single-file program that reads
   `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
   codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
-  codegen either, which the CLI package's LLVM bindings will need before its binary links. The
-  remaining memory (whatever the next gdb `mmap` sampling names:
-  the `constructorInferenceDefinitionsFromLayouts` record builder, the curried `Ashes.Trait`
-  operator closures behind linear name scans) comes after. The measurement tool is a
+  codegen either, which the CLI package's LLVM bindings will need before its binary links, and
+  a program importing `DerivingExpansion` stops in the backend at CG-18. The suspects for
+  OPT-80 (whatever the next gdb `mmap` sampling names: the deriving expansion's `Ord` bodies
+  at registration, the `constructorInferenceDefinitionsFromLayouts` record builder, the
+  curried `Ashes.Trait` operator closures behind linear name scans) are listed there. The
+  measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker

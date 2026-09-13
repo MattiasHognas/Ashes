@@ -155,10 +155,32 @@ let expectMainRewriting units =
             |> (given (_) -> units)
         | _ -> test.fail("imports, qualifiers, types, spans, and lexical shadows should rewrite deterministically")
 
+// A private record type keeps different compiler names for its type and its constructor; a
+// record literal and a record pattern name the constructor, which the lowering looks up.
+let privateProgram =
+    ProgramSyntax(items = [TopLevelType(
+        TypeDecl(name = "Cfg", typeParameters = [], constructors = [TypeConstructor(name = "Cfg", parameters = [TypeNamed("Int")], fieldNames = ["width"])], isRecord = true, derivingTraits = [])
+    ), TopLevelLet(false
+    |> ExprRecord("Cfg")([("width", ExprInt(1))])
+    |> binding("make"))(false), TopLevelLet(
+        None
+        |> ExprMatch(ExprVar("make"))([(PatternRecord("Cfg")([("width", PatternVar("w"))]), ExprVar("w"), None)])
+        |> binding("widthOf"),
+        false
+    )], body = None)
+
+let privateUnit = SemanticStitchUnit(name = "Priv", packageId = "dep", sourcePath = "/dep/Priv.ash", imports = [], interface = ModuleImportInterface(name = "Priv", exports = [ImportValueExport("make"), ImportValueExport("widthOf")]), program = privateProgram, isEntry = false)
+
+let expectPrivateRecordRewriting units =
+    match requireProgram("Priv")(units) with
+        | ProgramSyntax { items = TopLevelType(TypeDecl { name = "AshesPrivateType_Priv_Cfg", constructors = TypeConstructor { name = "AshesPrivateConstructor_Priv_Cfg" } :: [] }) :: TopLevelLet(LetBindingSyntax { value = ExprRecord("AshesPrivateConstructor_Priv_Cfg", _fields, _multiline) }, false) :: TopLevelLet(LetBindingSyntax { value = ExprMatch(_scrutinee, (PatternRecord("AshesPrivateConstructor_Priv_Cfg", _patternFields), _body, None) :: [], _fallback) }, false) :: [] } -> units
+        | _ -> test.fail("a private record literal and pattern should name the private constructor")
+
 let runModuleReferenceRewritingTests unit =
-    [utilUnit, intrinsicUnit, mainUnit]
+    [utilUnit, intrinsicUnit, mainUnit, privateUnit]
     |> buildStitchedSemanticProject
     |> requireProject
-    |> (given (project) -> rewriteStitchedProjectReferences(project)([utilUnit, intrinsicUnit, mainUnit]))
+    |> (given (project) -> rewriteStitchedProjectReferences(project)([utilUnit, intrinsicUnit, mainUnit, privateUnit]))
     |> expectUtilRewriting
     |> (given (units) -> expectMainRewriting(units))
+    |> (given (units) -> expectPrivateRecordRewriting(units))

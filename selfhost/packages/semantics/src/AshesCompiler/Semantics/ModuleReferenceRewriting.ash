@@ -83,6 +83,21 @@ let rewriteTypeName project moduleName boundary typeParameters name =
                 )
             | None -> resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedType)(name)
 
+// A record literal or record pattern names the record's constructor, which the lowering looks
+// up by constructor name; a private record's type and constructor carry different compiler
+// names, so the name is resolved as a constructor rather than as the type.
+let rewriteRecordName project moduleName boundary name =
+    match parentAndLeaf(name) with
+        | Some((qualifier, leaf)) ->
+            resolveQualifiedCompilerName(
+                project,
+                moduleName,
+                qualifier,
+                StitchedConstructor,
+                leaf
+            )
+        | None -> resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name)
+
 let recursive rewriteTypes project moduleName boundary typeParameters types =
     match types with
         | [] -> []
@@ -267,7 +282,7 @@ and rewritePattern project moduleName boundary pattern =
         | PatternRecord(name, fields) ->
             fields
             |> rewritePatternFields(project)(moduleName)(boundary)
-            |> PatternRecord(rewriteTypeName(project)(moduleName)(boundary)([])(name))
+            |> PatternRecord(rewriteRecordName(project)(moduleName)(boundary)(name))
         | PatternAs(inner, name) ->
             PatternAs(rewritePattern(project)(moduleName)(boundary)(inner))(name)
         | PatternOr(alternatives) ->
@@ -670,7 +685,7 @@ and rewriteExpression project moduleName boundary locals expression =
             |> rewriteExpressionFields(project)(moduleName)(boundary)(locals)
             |> (given (rewrittenFields) ->
                 ExprRecord(
-                    rewriteTypeName(project)(moduleName)(boundary)([])(name)
+                    rewriteRecordName(project)(moduleName)(boundary)(name)
                 )(rewrittenFields)(isMultiline))
         | ExprRecordUpdate(value, fields) ->
             fields
