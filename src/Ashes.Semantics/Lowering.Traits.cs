@@ -47,6 +47,89 @@ public sealed partial class Lowering
         return TraitConstraint.Canonicalize(scope.Constraints.Select(PruneTraitConstraint));
     }
 
+    // A goal's use site, stable across the discovery and emitting passes: the two lower the same source,
+    // so the span plus what is being asked for identifies the same site in both.
+    private static string AmbiguousTraitGoalKey(TraitConstraint constraint, TextSpan span, string method)
+        => $"{span.Start}:{span.End}:{constraint.Trait.Name}:{method}";
+
+    private void RecordAmbiguousTraitGoal(TraitConstraint constraint, TextSpan span, string method)
+    {
+        _pendingAmbiguousTraitGoals.Add((AmbiguousTraitGoalKey(constraint, span, method), constraint));
+    }
+
+    // The discovery pass threads no real dictionaries, so a site it cannot resolve yet emits a value it
+    // will never read: its IR is discarded and only its inferred constraints are read back.
+    private (int, TypeRef) EmitDiscoveryTraitEvidencePlaceholder(TypeRef current)
+    {
+        int placeholder = NewTemp();
+        Emit(new IrInst.LoadConstInt(placeholder, 0));
+        return (placeholder, Prune(current));
+    }
+
+    /// <summary>
+    /// The plan the discovery pass's proof unlocks for this site, or null when the goal is ambiguous to
+    /// that pass too. Pinning the type first means inference lands where it would have anyway, so the
+    /// evidence and the rest of the program agree on what was chosen.
+    /// </summary>
+    private TraitEvidencePlan? ResolvePinnedTraitEvidence(
+        TraitConstraint constraint,
+        TraitConstraint prunedConstraint,
+        TextSpan span,
+        string method)
+    {
+        if (!PinProvenAmbiguousTraitGoal(prunedConstraint, span, method))
+        {
+            return null;
+        }
+
+        return ResolveTraitEvidence(PruneTraitConstraint(constraint), span, [], 0) is
+        { } plan and not TraitEvidencePlan.Parameter
+            ? plan
+            : null;
+    }
+
+    /// <summary>
+    /// The plan for an operator's goal whose type is still a variable at this site: the discovery pass
+    /// records the goal for later proof, and the emitting pass pins whatever that proof settled on. Null
+    /// when the site is ambiguous to both passes, which is the only case that is genuinely ambiguous.
+    /// </summary>
+    private TraitEvidencePlan? DeferAmbiguousOperatorTraitGoal(
+        TraitConstraint constraint,
+        TextSpan span,
+        string method)
+    {
+        TraitConstraint prunedConstraint = PruneTraitConstraint(constraint);
+        if (!_emitTraitDictionaries)
+        {
+            RecordAmbiguousTraitGoal(prunedConstraint, span, method);
+            return null;
+        }
+
+        return ResolvePinnedTraitEvidence(constraint, prunedConstraint, span, method);
+    }
+
+    /// <summary>
+    /// Unifies this goal's type arguments with the concrete ones the discovery pass proved for the same
+    /// site, and reports whether anything was pinned. Unifying rather than substituting only for the
+    /// evidence keeps the rest of inference consistent with the choice.
+    /// </summary>
+    private bool PinProvenAmbiguousTraitGoal(TraitConstraint constraint, TextSpan span, string method)
+    {
+        if (!_provenAmbiguousTraitGoalTypes.TryGetValue(
+                AmbiguousTraitGoalKey(constraint, span, method), out TraitConstraint? proven)
+            || proven.TypeArgs.Count != constraint.TypeArgs.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < constraint.TypeArgs.Count; index++)
+        {
+            Unify(constraint.TypeArgs[index], proven.TypeArgs[index]);
+        }
+
+        return true;
+    }
+
     private void RequireLateTraitTypeHint()
     {
         if (_traitConstraintScopes.Count > 0)
@@ -616,15 +699,24 @@ public sealed partial class Lowering
             if (active is null)
             {
                 RequireLateTraitTypeHint();
-                if (_emitTraitDictionaries)
+                if (!_emitTraitDictionaries)
+                {
+                    RecordAmbiguousTraitGoal(prunedConstraint, span, method.Name);
+                    return EmitDiscoveryTraitEvidencePlaceholder(current);
+                }
+
+                if (ResolvePinnedTraitEvidence(constraint, prunedConstraint, span, method.Name) is not
+                    { } pinnedPlan)
                 {
                     return ReportUnresolvableTraitConstraint(prunedConstraint, span);
                 }
-                int placeholder = NewTemp();
-                Emit(new IrInst.LoadConstInt(placeholder, 0));
-                return (placeholder, Prune(current));
+
+                plan = pinnedPlan;
             }
-            return (ApplyTraitMethodArguments(active.Value.Temp, argumentTemps), Prune(current));
+            else
+            {
+                return (ApplyTraitMethodArguments(active.Value.Temp, argumentTemps), Prune(current));
+            }
         }
         (int methodTemp, _) = SelectTraitDictionaryMethod(
             BuildTraitDictionary(plan, span),
@@ -725,13 +817,14 @@ public sealed partial class Lowering
             && FindActiveTraitDictionaryParameter(constraint) is null)
         {
             RequireLateTraitTypeHint();
-            if (_emitTraitDictionaries)
+            if (DeferAmbiguousOperatorTraitGoal(constraint, span, methodName) is not { } deferred)
             {
-                return ReportUnresolvableTraitConstraint(constraint, span);
+                return _emitTraitDictionaries
+                    ? ReportUnresolvableTraitConstraint(constraint, span)
+                    : EmitDiscoveryTraitEvidencePlaceholder(
+                        returnsBool ? new TypeRef.TBool() : operandType);
             }
-            int placeholder = NewTemp();
-            Emit(new IrInst.LoadConstInt(placeholder, 0));
-            return (placeholder, returnsBool ? new TypeRef.TBool() : operandType);
+            plan = deferred;
         }
         (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
@@ -775,13 +868,13 @@ public sealed partial class Lowering
             && FindActiveTraitDictionaryParameter(constraint) is null)
         {
             RequireLateTraitTypeHint();
-            if (_emitTraitDictionaries)
+            if (DeferAmbiguousOperatorTraitGoal(constraint, span, methodName) is not { } deferred)
             {
-                return ReportUnresolvableTraitConstraint(constraint, span);
+                return _emitTraitDictionaries
+                    ? ReportUnresolvableTraitConstraint(constraint, span)
+                    : EmitDiscoveryTraitEvidencePlaceholder(pruned);
             }
-            int placeholder = NewTemp();
-            Emit(new IrInst.LoadConstInt(placeholder, 0));
-            return (placeholder, pruned);
+            plan = deferred;
         }
         (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
