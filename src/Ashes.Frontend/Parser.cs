@@ -268,6 +268,7 @@ public sealed class Parser
             Requires = header.Requires
         };
         AstSpans.Set(declaration, header.NameToken.Span);
+        AstSpans.SetLetDeclExtent(declaration, TextSpan.FromBounds(header.Start, LastConsumedEnd));
         items.Add(declaration);
         return null;
     }
@@ -308,6 +309,7 @@ public sealed class Parser
             Requires = requirements
         };
         AstSpans.Set(group, header.NameToken.Span);
+        AstSpans.SetRecursiveGroupExtent(group, TextSpan.FromBounds(header.Start, LastConsumedEnd));
         AstSpans.SetRecursiveGroupBindingNames(group, bindingNameSpans);
         return group;
     }

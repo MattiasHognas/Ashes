@@ -1,11 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
-
 function lambda_0  [SourceFunction from double]
   locals=4 temps=15
     LoadConstInt          Target=0 Value=0   (inlined_helper_chain_under_back_edge.ash:1:23)
@@ -17,34 +12,34 @@ function lambda_0  [SourceFunction from double]
     Alloc                 Target=4 SizeBytes=16 RuntimeManaged=true   (inlined_helper_chain_under_back_edge.ash:1:23)
     StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=3   (inlined_helper_chain_under_back_edge.ash:1:23)
     StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=2   (inlined_helper_chain_under_back_edge.ash:1:23)
-    LoadArgumentOwnership Target=5
-    LoadConstInt          Target=6 Value=1
-    ShrInt                Target=7 Left=5 Right=6
-    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0
-    CopyOutList           DestTemp=8 SrcTemp=4 HeadCopy=Inline Purpose=ArenaResultBoundary
-    StoreLocal            Slot=3 Source=4
+    LoadArgumentOwnership Target=5   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadConstInt          Target=6 Value=1   (inlined_helper_chain_under_back_edge.ash:1:1)
+    ShrInt                Target=7 Left=5 Right=6   (inlined_helper_chain_under_back_edge.ash:1:1)
+    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0   (inlined_helper_chain_under_back_edge.ash:1:1)
+    CopyOutList           DestTemp=8 SrcTemp=4 HeadCopy=Inline Purpose=ArenaResultBoundary   (inlined_helper_chain_under_back_edge.ash:1:1)
+    StoreLocal            Slot=3 Source=4   (inlined_helper_chain_under_back_edge.ash:1:1)
   rcdrop_list_2:
-    LoadLocal             Target=9 Slot=3
-    LoadConstInt          Target=10 Value=0
-    CmpIntNe              Target=11 Left=9 Right=10
-    JumpIfFalse           CondTemp=11 Target=rcdrop_list_end_4
+    LoadLocal             Target=9 Slot=3   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadConstInt          Target=10 Value=0   (inlined_helper_chain_under_back_edge.ash:1:1)
+    CmpIntNe              Target=11 Left=9 Right=10   (inlined_helper_chain_under_back_edge.ash:1:1)
+    JumpIfFalse           CondTemp=11 Target=rcdrop_list_end_4   (inlined_helper_chain_under_back_edge.ash:1:1)
     RcIsUnique            Target=12 SourceTemp=9
-    JumpIfFalse           CondTemp=12 Target=rcdrop_list_shared_3
-    LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=8
+    JumpIfFalse           CondTemp=12 Target=rcdrop_list_shared_3   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=8   (inlined_helper_chain_under_back_edge.ash:1:1)
     RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=3 Source=13
-    Jump                  Target=rcdrop_list_2
+    StoreLocal            Slot=3 Source=13   (inlined_helper_chain_under_back_edge.ash:1:1)
+    Jump                  Target=rcdrop_list_2   (inlined_helper_chain_under_back_edge.ash:1:1)
   rcdrop_list_shared_3:
     RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_4
+    Jump                  Target=rcdrop_list_end_4   (inlined_helper_chain_under_back_edge.ash:1:1)
   rcdrop_list_end_4:
-    StoreLocal            Slot=2 Source=8
-    Jump                  Target=rc_result_done_1
+    StoreLocal            Slot=2 Source=8   (inlined_helper_chain_under_back_edge.ash:1:1)
+    Jump                  Target=rc_result_done_1   (inlined_helper_chain_under_back_edge.ash:1:1)
   rc_result_owned_0:
-    StoreLocal            Slot=2 Source=4
+    StoreLocal            Slot=2 Source=4   (inlined_helper_chain_under_back_edge.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=14 Slot=2
-    Return                Source=14
+    LoadLocal             Target=14 Slot=2   (inlined_helper_chain_under_back_edge.ash:1:1)
+    Return                Source=14   (inlined_helper_chain_under_back_edge.ash:1:1)
 
 function lambda_3  [ClosureHelper from go]
   locals=22 temps=21
@@ -138,7 +133,7 @@ function lambda_1  [SourceFunction from count]
     CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (inlined_helper_chain_under_back_edge.ash:8:8)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Return                Source=6
+    Return                Source=6   (inlined_helper_chain_under_back_edge.ash:3:1)
 
 function lambda_7  [ClosureHelper from go]
   locals=22 temps=21
@@ -313,27 +308,27 @@ function lambda_4  [SourceFunction from loop]
     Borrow                Target=7 SourceTemp=6
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=7   (inlined_helper_chain_under_back_edge.ash:10:1)
     MakeClosure           Target=8 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=16   (inlined_helper_chain_under_back_edge.ash:10:1)
-    Return                Source=8
+    Return                Source=8   (inlined_helper_chain_under_back_edge.ash:10:1)
 
 function _start_main  [ProgramEntry]
   locals=14 temps=21
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (inlined_helper_chain_under_back_edge.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (inlined_helper_chain_under_back_edge.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (inlined_helper_chain_under_back_edge.ash:1:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
-    LoadConstInt          Target=2 Value=0
-    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
-    StoreLocal            Slot=5 Source=3
-    Alloc                 Target=4 SizeBytes=16
-    LoadLocal             Target=5 Slot=5
+    LoadConstInt          Target=2 Value=0   (inlined_helper_chain_under_back_edge.ash:3:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0   (inlined_helper_chain_under_back_edge.ash:3:1)
+    StoreLocal            Slot=5 Source=3   (inlined_helper_chain_under_back_edge.ash:3:1)
+    Alloc                 Target=4 SizeBytes=16   (inlined_helper_chain_under_back_edge.ash:10:1)
+    LoadLocal             Target=5 Slot=5   (inlined_helper_chain_under_back_edge.ash:10:1)
     Borrow                Target=6 SourceTemp=5
-    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=6
-    LoadLocal             Target=7 Slot=2
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=6   (inlined_helper_chain_under_back_edge.ash:10:1)
+    LoadLocal             Target=7 Slot=2   (inlined_helper_chain_under_back_edge.ash:10:1)
     Borrow                Target=8 SourceTemp=7
-    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=8
-    MakeClosure           Target=9 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=16
-    StoreLocal            Slot=6 Source=9
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=8   (inlined_helper_chain_under_back_edge.ash:10:1)
+    MakeClosure           Target=9 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=16   (inlined_helper_chain_under_back_edge.ash:10:1)
+    StoreLocal            Slot=6 Source=9   (inlined_helper_chain_under_back_edge.ash:10:1)
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadLocal             Target=10 Slot=6   (inlined_helper_chain_under_back_edge.ash:15:35)
     LoadConstInt          Target=11 Value=3   (inlined_helper_chain_under_back_edge.ash:15:40)
@@ -345,17 +340,17 @@ function _start_main  [ProgramEntry]
     TextFromInt           Target=15 ValueTemp=14   (inlined_helper_chain_under_back_edge.ash:15:16)
     PrintStr              Source=15   (inlined_helper_chain_under_back_edge.ash:15:1)
     AllocAdt              Target=16 Tag=0 FieldCount=0   (inlined_helper_chain_under_back_edge.ash:15:1)
-    StoreLocal            Slot=10 Source=16
-    LoadLocal             Target=17 Slot=5
+    StoreLocal            Slot=10 Source=16   (inlined_helper_chain_under_back_edge.ash:3:1)
+    LoadLocal             Target=17 Slot=5   (inlined_helper_chain_under_back_edge.ash:3:1)
     CleanupResource       SourceTemp=17 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=11
     CopyOutArena          DestTemp=18 SrcTemp=16 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=11
-    StoreLocal            Slot=12 Source=18
-    LoadLocal             Target=19 Slot=2
+    StoreLocal            Slot=12 Source=18   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadLocal             Target=19 Slot=2   (inlined_helper_chain_under_back_edge.ash:1:1)
     CleanupResource       SourceTemp=19 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=13
-    LoadLocal             Target=20 Slot=12
+    LoadLocal             Target=20 Slot=12   (inlined_helper_chain_under_back_edge.ash:1:1)
     Return                Source=20
 

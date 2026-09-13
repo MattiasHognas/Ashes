@@ -144,7 +144,9 @@ public sealed class TraitInferenceTests
             .Where(error => error.Message.Contains("includes unjustified requirement", StringComparison.Ordinal))
             .ToArray();
         unjustified.Length.ShouldBe(1, string.Join(" | ", diagnostics.Errors));
-        source[unjustified[0].Span.Start..].ShouldStartWith("unjustified", Case.Sensitive);
+        // The declaration now carries its full extent, so the blame span opens at its `let` — the same
+        // anchor a `let ... in` form has always reported.
+        source[unjustified[0].Span.Start..].ShouldStartWith("let unjustified", Case.Sensitive);
     }
 
     [Test]

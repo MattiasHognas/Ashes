@@ -11,7 +11,7 @@ function _start_main  [ProgramEntry]
     SetAdtField           Ptr=2 FieldIndex=1 Source=1 Tagless=true   (match_list_scrutinee_drop.ash:9:17)
     AllocAdt              Target=3 Tag=1 FieldCount=1   (match_list_scrutinee_drop.ash:9:13)
     SetAdtField           Ptr=3 FieldIndex=0 Source=2   (match_list_scrutinee_drop.ash:9:13)
-    StoreLocal            Slot=2 Source=3
+    StoreLocal            Slot=2 Source=3   (match_list_scrutinee_drop.ash:9:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=4 Slot=2   (match_list_scrutinee_drop.ash:12:18)
     Borrow                Target=5 SourceTemp=4
@@ -141,11 +141,11 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=15 Source=49   (match_list_scrutinee_drop.ash:12:5)
   match_end_5:
     LoadLocal             Target=50 Slot=15   (match_list_scrutinee_drop.ash:12:5)
-    StoreLocal            Slot=29 Source=50
+    StoreLocal            Slot=29 Source=50   (match_list_scrutinee_drop.ash:11:1)
     LoadLocal             Target=51 Slot=29   (match_list_scrutinee_drop.ash:18:16)
     PrintInt              Source=51   (match_list_scrutinee_drop.ash:18:1)
     AllocAdt              Target=52 Tag=0 FieldCount=0   (match_list_scrutinee_drop.ash:18:1)
-    StoreLocal            Slot=31 Source=52
+    StoreLocal            Slot=31 Source=52   (match_list_scrutinee_drop.ash:9:1)
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=32
     CopyOutArena          DestTemp=54 SrcTemp=52 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=32

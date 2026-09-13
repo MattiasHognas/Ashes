@@ -1,125 +1,153 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9348)
-
 function lambda_0  [SourceFunction from bang]
   locals=3 temps=8
     LoadLocal             Target=0 Slot=1   (non_tail_self_call_list_result.ash:1:21)
     LoadConstStr          Target=1 StrLabel=str_0   (non_tail_self_call_list_result.ash:1:25)
     ConcatStr             Target=2 Left=0 Right=1 RuntimeManaged=true   (non_tail_self_call_list_result.ash:1:21)
-    LoadArgumentOwnership Target=3
-    LoadConstInt          Target=4 Value=1
-    ShrInt                Target=5 Left=3 Right=4
-    JumpIfFalse           CondTemp=5 Target=rc_result_owned_0
+    LoadArgumentOwnership Target=3   (non_tail_self_call_list_result.ash:1:1)
+    LoadConstInt          Target=4 Value=1   (non_tail_self_call_list_result.ash:1:1)
+    ShrInt                Target=5 Left=3 Right=4   (non_tail_self_call_list_result.ash:1:1)
+    JumpIfFalse           CondTemp=5 Target=rc_result_owned_0   (non_tail_self_call_list_result.ash:1:1)
     CopyOutArena          DestTemp=6 SrcTemp=2 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=2 Source=6
-    Jump                  Target=rc_result_done_1
+    StoreLocal            Slot=2 Source=6   (non_tail_self_call_list_result.ash:1:1)
+    Jump                  Target=rc_result_done_1   (non_tail_self_call_list_result.ash:1:1)
   rc_result_owned_0:
-    StoreLocal            Slot=2 Source=2
+    StoreLocal            Slot=2 Source=2   (non_tail_self_call_list_result.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=7 Slot=2
-    Return                Source=7
+    LoadLocal             Target=7 Slot=2   (non_tail_self_call_list_result.ash:1:1)
+    Return                Source=7   (non_tail_self_call_list_result.ash:1:1)
 
 function lambda_1  [SourceFunction from stamp]
-  locals=22 temps=38
-    LoadLocal             Target=0 Slot=1   (non_tail_self_call_list_result.ash:4:11)
-    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
-    LoadConstInt          Target=1 Value=0   (non_tail_self_call_list_result.ash:4:5)
-    CmpIntEq              Target=2 Left=0 Right=1   (non_tail_self_call_list_result.ash:4:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_5   (non_tail_self_call_list_result.ash:4:5)
-    LoadConstInt          Target=3 Value=0   (non_tail_self_call_list_result.ash:5:17)
-    StoreLocal            Slot=2 Source=3   (non_tail_self_call_list_result.ash:4:5)
+  locals=30 temps=49
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=4 Source=0   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=5 Source=0   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=6 Source=0   (non_tail_self_call_list_result.ash:3:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (non_tail_self_call_list_result.ash:3:1)
+    LoadLocal             Target=1 Slot=1   (non_tail_self_call_list_result.ash:4:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=2 Value=0   (non_tail_self_call_list_result.ash:4:5)
+    CmpIntEq              Target=3 Left=1 Right=2   (non_tail_self_call_list_result.ash:4:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_5   (non_tail_self_call_list_result.ash:4:5)
+    LoadConstInt          Target=4 Value=0   (non_tail_self_call_list_result.ash:5:17)
+    StoreLocal            Slot=10 Source=4   (non_tail_self_call_list_result.ash:4:5)
     Jump                  Target=match_end_2   (non_tail_self_call_list_result.ash:4:5)
   match_arm_cleanup_5:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
     Jump                  Target=match_next_4   (non_tail_self_call_list_result.ash:4:5)
   match_next_4:
-    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
-    LoadConstInt          Target=4 Value=0   (non_tail_self_call_list_result.ash:4:5)
-    CmpIntNe              Target=5 Left=0 Right=4   (non_tail_self_call_list_result.ash:4:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_6   (non_tail_self_call_list_result.ash:4:5)
-    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (non_tail_self_call_list_result.ash:4:5)
-    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (non_tail_self_call_list_result.ash:4:5)
-    StoreLocal            Slot=9 Source=6   (non_tail_self_call_list_result.ash:4:5)
-    StoreLocal            Slot=10 Source=7   (non_tail_self_call_list_result.ash:4:5)
-    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
-    LoadEnv               Target=8 Index=0   (non_tail_self_call_list_result.ash:6:27)
-    Borrow                Target=9 SourceTemp=8
-    LoadLocal             Target=10 Slot=9   (non_tail_self_call_list_result.ash:6:32)
-    CallClosure           Target=11 ClosureTemp=9 ArgTemp=10   (non_tail_self_call_list_result.ash:6:27)
-    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
-    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
-    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
-    LoadLocal             Target=13 Slot=0   (non_tail_self_call_list_result.ash:6:41)
-    MakeClosure           Target=12 FuncLabel=lambda_1 EnvPtrTemp=13 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (non_tail_self_call_list_result.ash:6:41)
-    LoadLocal             Target=14 Slot=10   (non_tail_self_call_list_result.ash:6:47)
-    Borrow                Target=15 SourceTemp=14
-    LoadMemOffset         Target=16 BasePtr=12 OffsetBytes=16   (non_tail_self_call_list_result.ash:6:41)
-    LoadConstInt          Target=17 Value=63   (non_tail_self_call_list_result.ash:6:41)
-    ShrInt                Target=18 Left=16 Right=17   (non_tail_self_call_list_result.ash:6:41)
-    RcDup                 Target=37 SourceTemp=15   (non_tail_self_call_list_result.ash:6:41)
-    CallClosure           Target=19 ClosureTemp=12 ArgTemp=15   (non_tail_self_call_list_result.ash:6:41)
-    StoreLocal            Slot=17 Source=19   (non_tail_self_call_list_result.ash:6:41)
-    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
-    JumpIfFalse           CondTemp=18 Target=call_copy_arena_result_7   (non_tail_self_call_list_result.ash:6:41)
-    Jump                  Target=call_reclaim_owned_result_8   (non_tail_self_call_list_result.ash:6:41)
-  call_copy_arena_result_7:
-    CopyOutList           DestTemp=20 SrcTemp=19 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (non_tail_self_call_list_result.ash:6:41)
-    StoreLocal            Slot=17 Source=20   (non_tail_self_call_list_result.ash:6:41)
-  call_reclaim_owned_result_8:
-    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
-    LoadLocal             Target=21 Slot=17   (non_tail_self_call_list_result.ash:6:41)
-    Alloc                 Target=22 SizeBytes=16 RuntimeManaged=true   (non_tail_self_call_list_result.ash:6:27)
-    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=11   (non_tail_self_call_list_result.ash:6:27)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=5 Value=0   (non_tail_self_call_list_result.ash:4:5)
+    CmpIntNe              Target=6 Left=1 Right=5   (non_tail_self_call_list_result.ash:4:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_6   (non_tail_self_call_list_result.ash:4:5)
+    LoadMemOffset         Target=7 BasePtr=1 OffsetBytes=0   (non_tail_self_call_list_result.ash:4:5)
+    LoadMemOffset         Target=8 BasePtr=1 OffsetBytes=8   (non_tail_self_call_list_result.ash:4:5)
+    StoreLocal            Slot=17 Source=7   (non_tail_self_call_list_result.ash:4:5)
+    StoreLocal            Slot=18 Source=8   (non_tail_self_call_list_result.ash:4:5)
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    LoadEnv               Target=9 Index=0   (non_tail_self_call_list_result.ash:6:27)
+    Borrow                Target=10 SourceTemp=9
+    LoadLocal             Target=11 Slot=17   (non_tail_self_call_list_result.ash:6:32)
+    LoadMemOffset         Target=12 BasePtr=10 OffsetBytes=16   (non_tail_self_call_list_result.ash:6:27)
+    LoadConstInt          Target=13 Value=62   (non_tail_self_call_list_result.ash:6:27)
+    ShrInt                Target=14 Left=12 Right=13   (non_tail_self_call_list_result.ash:6:27)
+    LoadConstInt          Target=15 Value=1   (non_tail_self_call_list_result.ash:6:27)
+    LoadConstInt          Target=16 Value=0   (non_tail_self_call_list_result.ash:6:27)
+    StoreLocal            Slot=21 Source=11   (non_tail_self_call_list_result.ash:6:27)
+    JumpIfFalse           CondTemp=16 Target=rc_call_argument_not_retained_7   (non_tail_self_call_list_result.ash:6:27)
+    RcDup                 Target=17 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=17   (non_tail_self_call_list_result.ash:6:27)
+  rc_call_argument_not_retained_7:
+    LoadLocal             Target=18 Slot=21   (non_tail_self_call_list_result.ash:6:27)
+    CallClosure           Target=19 ClosureTemp=10 ArgTemp=18 RuntimeManagedArgumentFlagTemp=16   (non_tail_self_call_list_result.ash:6:27)
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=22
+    LoadConstInt          Target=20 Value=0   (non_tail_self_call_list_result.ash:6:27)
+    Alloc                 Target=21 SizeBytes=16 RuntimeManaged=true   (non_tail_self_call_list_result.ash:6:27)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=19   (non_tail_self_call_list_result.ash:6:27)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=20   (non_tail_self_call_list_result.ash:6:27)
+    LoadLocal             Target=22 Slot=5   (non_tail_self_call_list_result.ash:6:27)
+    LoadConstInt          Target=23 Value=0   (non_tail_self_call_list_result.ash:6:27)
+    CmpIntNe              Target=24 Left=22 Right=23   (non_tail_self_call_list_result.ash:6:27)
+    JumpIfFalse           CondTemp=24 Target=tmc_first_8   (non_tail_self_call_list_result.ash:6:27)
     StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=21   (non_tail_self_call_list_result.ash:6:27)
-    StoreLocal            Slot=2 Source=22   (non_tail_self_call_list_result.ash:4:5)
-    RcDrop                SourceTemp=7 TypeName=List OwnerSlot=10
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=18
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=18
+    Jump                  Target=tmc_link_done_9   (non_tail_self_call_list_result.ash:6:27)
+  tmc_first_8:
+    StoreLocal            Slot=6 Source=21   (non_tail_self_call_list_result.ash:6:27)
+  tmc_link_done_9:
+    StoreLocal            Slot=5 Source=21   (non_tail_self_call_list_result.ash:6:27)
+    LoadLocal             Target=25 Slot=18   (non_tail_self_call_list_result.ash:6:47)
+    Borrow                Target=26 SourceTemp=25
+    LoadLocal             Target=27 Slot=1   (non_tail_self_call_list_result.ash:6:27)
+    StoreLocal            Slot=1 Source=26   (non_tail_self_call_list_result.ash:6:27)
+    RcDrop                SourceTemp=8 TypeName=List OwnerSlot=18
+    RestoreStackPointer   Slot=9   (non_tail_self_call_list_result.ash:6:27)
+    Jump                  Target=lambda_1_body   (non_tail_self_call_list_result.ash:6:27)
+    LoadConstInt          Target=28 Value=0   (non_tail_self_call_list_result.ash:6:27)
+    StoreLocal            Slot=10 Source=28   (non_tail_self_call_list_result.ash:4:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=23
     Jump                  Target=match_end_2   (non_tail_self_call_list_result.ash:4:5)
   match_arm_cleanup_6:
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=19
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=19
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=24
     Jump                  Target=match_none_3   (non_tail_self_call_list_result.ash:4:5)
   match_none_3:
-    LoadConstInt          Target=24 Value=0   (non_tail_self_call_list_result.ash:4:5)
-    StoreLocal            Slot=2 Source=24   (non_tail_self_call_list_result.ash:4:5)
+    LoadConstInt          Target=30 Value=0   (non_tail_self_call_list_result.ash:4:5)
+    StoreLocal            Slot=10 Source=30   (non_tail_self_call_list_result.ash:4:5)
   match_end_2:
-    LoadLocal             Target=25 Slot=2   (non_tail_self_call_list_result.ash:4:5)
-    LoadArgumentOwnership Target=26
-    LoadConstInt          Target=27 Value=1
-    ShrInt                Target=28 Left=26 Right=27
-    JumpIfFalse           CondTemp=28 Target=rc_result_owned_9
-    CopyOutList           DestTemp=29 SrcTemp=25 HeadCopy=String Purpose=ArenaResultBoundary
-    StoreLocal            Slot=21 Source=25
-  rcdrop_list_11:
-    LoadLocal             Target=30 Slot=21
-    LoadConstInt          Target=31 Value=0
-    CmpIntNe              Target=32 Left=30 Right=31
-    JumpIfFalse           CondTemp=32 Target=rcdrop_list_end_13
-    RcIsUnique            Target=33 SourceTemp=30
-    JumpIfFalse           CondTemp=33 Target=rcdrop_list_shared_12
-    LoadMemOffset         Target=34 BasePtr=30 OffsetBytes=0
-    RcDrop                SourceTemp=34 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=35 BasePtr=30 OffsetBytes=8
-    RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=21 Source=35
-    Jump                  Target=rcdrop_list_11
-  rcdrop_list_shared_12:
-    RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_13
-  rcdrop_list_end_13:
-    StoreLocal            Slot=20 Source=29
-    Jump                  Target=rc_result_done_10
-  rc_result_owned_9:
-    StoreLocal            Slot=20 Source=25
-  rc_result_done_10:
-    LoadLocal             Target=36 Slot=20
-    Return                Source=36
+    LoadLocal             Target=31 Slot=10   (non_tail_self_call_list_result.ash:4:5)
+    LoadLocal             Target=32 Slot=5   (non_tail_self_call_list_result.ash:3:1)
+    LoadConstInt          Target=33 Value=0   (non_tail_self_call_list_result.ash:3:1)
+    CmpIntNe              Target=34 Left=32 Right=33   (non_tail_self_call_list_result.ash:3:1)
+    JumpIfFalse           CondTemp=34 Target=tmc_close_empty_10   (non_tail_self_call_list_result.ash:3:1)
+    StoreMemOffset        BasePtr=32 OffsetBytes=8 Source=31   (non_tail_self_call_list_result.ash:3:1)
+    LoadLocal             Target=35 Slot=6   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=25 Source=35   (non_tail_self_call_list_result.ash:3:1)
+    Jump                  Target=tmc_close_done_11   (non_tail_self_call_list_result.ash:3:1)
+  tmc_close_empty_10:
+    StoreLocal            Slot=25 Source=31   (non_tail_self_call_list_result.ash:3:1)
+  tmc_close_done_11:
+    LoadLocal             Target=36 Slot=25   (non_tail_self_call_list_result.ash:3:1)
+    LoadConstInt          Target=37 Value=0   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=26 Source=37   (non_tail_self_call_list_result.ash:3:1)
+    LoadArgumentOwnership Target=38   (non_tail_self_call_list_result.ash:3:1)
+    LoadConstInt          Target=39 Value=1   (non_tail_self_call_list_result.ash:3:1)
+    ShrInt                Target=40 Left=38 Right=39   (non_tail_self_call_list_result.ash:3:1)
+    JumpIfFalse           CondTemp=40 Target=rc_result_owned_12   (non_tail_self_call_list_result.ash:3:1)
+    CopyOutList           DestTemp=41 SrcTemp=36 HeadCopy=String Purpose=ArenaResultBoundary   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=28 Source=36   (non_tail_self_call_list_result.ash:3:1)
+  rcdrop_list_14:
+    LoadLocal             Target=42 Slot=28   (non_tail_self_call_list_result.ash:3:1)
+    LoadConstInt          Target=43 Value=0   (non_tail_self_call_list_result.ash:3:1)
+    CmpIntNe              Target=44 Left=42 Right=43   (non_tail_self_call_list_result.ash:3:1)
+    JumpIfFalse           CondTemp=44 Target=rcdrop_list_end_16   (non_tail_self_call_list_result.ash:3:1)
+    RcIsUnique            Target=45 SourceTemp=42
+    JumpIfFalse           CondTemp=45 Target=rcdrop_list_shared_15   (non_tail_self_call_list_result.ash:3:1)
+    LoadMemOffset         Target=46 BasePtr=42 OffsetBytes=0   (non_tail_self_call_list_result.ash:3:1)
+    RcDrop                SourceTemp=46 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=47 BasePtr=42 OffsetBytes=8   (non_tail_self_call_list_result.ash:3:1)
+    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=47   (non_tail_self_call_list_result.ash:3:1)
+    Jump                  Target=rcdrop_list_14   (non_tail_self_call_list_result.ash:3:1)
+  rcdrop_list_shared_15:
+    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_16   (non_tail_self_call_list_result.ash:3:1)
+  rcdrop_list_end_16:
+    StoreLocal            Slot=27 Source=41   (non_tail_self_call_list_result.ash:3:1)
+    Jump                  Target=rc_result_done_13   (non_tail_self_call_list_result.ash:3:1)
+  rc_result_owned_12:
+    StoreLocal            Slot=27 Source=36   (non_tail_self_call_list_result.ash:3:1)
+  rc_result_done_13:
+    LoadLocal             Target=48 Slot=27   (non_tail_self_call_list_result.ash:3:1)
+    Return                Source=48   (non_tail_self_call_list_result.ash:3:1)
 
 function lambda_2  [SourceFunction from count]
   locals=11 temps=11
@@ -127,55 +155,55 @@ function lambda_2  [SourceFunction from count]
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (non_tail_self_call_list_result.ash:9:5)
     CmpIntEq              Target=2 Left=0 Right=1   (non_tail_self_call_list_result.ash:9:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_17   (non_tail_self_call_list_result.ash:9:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_20   (non_tail_self_call_list_result.ash:9:5)
     LoadConstInt          Target=3 Value=0   (non_tail_self_call_list_result.ash:10:17)
     StoreLocal            Slot=2 Source=3   (non_tail_self_call_list_result.ash:9:5)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Jump                  Target=match_end_14   (non_tail_self_call_list_result.ash:9:5)
-  match_arm_cleanup_17:
+    Jump                  Target=match_end_17   (non_tail_self_call_list_result.ash:9:5)
+  match_arm_cleanup_20:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
-    Jump                  Target=match_next_16   (non_tail_self_call_list_result.ash:9:5)
-  match_next_16:
+    Jump                  Target=match_next_19   (non_tail_self_call_list_result.ash:9:5)
+  match_next_19:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=4 Value=0   (non_tail_self_call_list_result.ash:9:5)
     CmpIntNe              Target=5 Left=0 Right=4   (non_tail_self_call_list_result.ash:9:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_18   (non_tail_self_call_list_result.ash:9:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_21   (non_tail_self_call_list_result.ash:9:5)
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (non_tail_self_call_list_result.ash:9:5)
     LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (non_tail_self_call_list_result.ash:9:5)
     LoadConstInt          Target=8 Value=1   (non_tail_self_call_list_result.ash:11:21)
     StoreLocal            Slot=2 Source=8   (non_tail_self_call_list_result.ash:9:5)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
-    Jump                  Target=match_end_14   (non_tail_self_call_list_result.ash:9:5)
-  match_arm_cleanup_18:
+    Jump                  Target=match_end_17   (non_tail_self_call_list_result.ash:9:5)
+  match_arm_cleanup_21:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
-    Jump                  Target=match_none_15   (non_tail_self_call_list_result.ash:9:5)
-  match_none_15:
+    Jump                  Target=match_none_18   (non_tail_self_call_list_result.ash:9:5)
+  match_none_18:
     LoadConstInt          Target=9 Value=0   (non_tail_self_call_list_result.ash:9:5)
     StoreLocal            Slot=2 Source=9   (non_tail_self_call_list_result.ash:9:5)
-  match_end_14:
+  match_end_17:
     LoadLocal             Target=10 Slot=2   (non_tail_self_call_list_result.ash:9:5)
-    Return                Source=10
+    Return                Source=10   (non_tail_self_call_list_result.ash:8:1)
 
 function _start_main  [ProgramEntry]
   locals=20 temps=42
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=2 Source=1
-    Alloc                 Target=2 SizeBytes=8
-    LoadLocal             Target=3 Slot=2
+    LoadConstInt          Target=0 Value=0   (non_tail_self_call_list_result.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (non_tail_self_call_list_result.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (non_tail_self_call_list_result.ash:1:1)
+    Alloc                 Target=2 SizeBytes=8   (non_tail_self_call_list_result.ash:3:1)
+    LoadLocal             Target=3 Slot=2   (non_tail_self_call_list_result.ash:3:1)
     Borrow                Target=4 SourceTemp=3
-    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4
-    MakeClosure           Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=3 Source=5
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (non_tail_self_call_list_result.ash:3:1)
+    MakeClosure           Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=3 Source=5   (non_tail_self_call_list_result.ash:3:1)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
-    LoadConstInt          Target=6 Value=0
-    MakeClosureStack      Target=7 FuncLabel=lambda_2 EnvPtrTemp=6 EnvSizeBytes=0
-    StoreLocal            Slot=6 Source=7
+    LoadConstInt          Target=6 Value=0   (non_tail_self_call_list_result.ash:8:1)
+    MakeClosureStack      Target=7 FuncLabel=lambda_2 EnvPtrTemp=6 EnvSizeBytes=0   (non_tail_self_call_list_result.ash:8:1)
+    StoreLocal            Slot=6 Source=7   (non_tail_self_call_list_result.ash:8:1)
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadLocal             Target=8 Slot=6   (non_tail_self_call_list_result.ash:13:35)
     Borrow                Target=9 SourceTemp=8
@@ -196,12 +224,12 @@ function _start_main  [ProgramEntry]
     CallClosure           Target=19 ClosureTemp=10 ArgTemp=15   (non_tail_self_call_list_result.ash:13:41)
     StoreLocal            Slot=12 Source=19   (non_tail_self_call_list_result.ash:13:41)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
-    JumpIfFalse           CondTemp=18 Target=call_copy_arena_result_19   (non_tail_self_call_list_result.ash:13:41)
-    Jump                  Target=call_reclaim_owned_result_20   (non_tail_self_call_list_result.ash:13:41)
-  call_copy_arena_result_19:
+    JumpIfFalse           CondTemp=18 Target=call_copy_arena_result_22   (non_tail_self_call_list_result.ash:13:41)
+    Jump                  Target=call_reclaim_owned_result_23   (non_tail_self_call_list_result.ash:13:41)
+  call_copy_arena_result_22:
     CopyOutList           DestTemp=20 SrcTemp=19 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (non_tail_self_call_list_result.ash:13:41)
     StoreLocal            Slot=12 Source=20   (non_tail_self_call_list_result.ash:13:41)
-  call_reclaim_owned_result_20:
+  call_reclaim_owned_result_23:
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
     LoadLocal             Target=21 Slot=12   (non_tail_self_call_list_result.ash:13:41)
     LoadMemOffset         Target=22 BasePtr=9 OffsetBytes=16   (non_tail_self_call_list_result.ash:13:35)
@@ -210,46 +238,46 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=25 Value=1   (non_tail_self_call_list_result.ash:13:35)
     AndInt                Target=26 Left=24 Right=25   (non_tail_self_call_list_result.ash:13:35)
     StoreLocal            Slot=13 Source=21   (non_tail_self_call_list_result.ash:13:35)
-    JumpIfFalse           CondTemp=26 Target=rc_call_argument_not_retained_21   (non_tail_self_call_list_result.ash:13:35)
+    JumpIfFalse           CondTemp=26 Target=rc_call_argument_not_retained_24   (non_tail_self_call_list_result.ash:13:35)
     RcDup                 Target=27 SourceTemp=21 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=13 Source=27   (non_tail_self_call_list_result.ash:13:35)
-  rc_call_argument_not_retained_21:
+  rc_call_argument_not_retained_24:
     LoadLocal             Target=28 Slot=13   (non_tail_self_call_list_result.ash:13:35)
     CallClosure           Target=29 ClosureTemp=9 ArgTemp=28 RuntimeManagedArgumentFlagTemp=26   (non_tail_self_call_list_result.ash:13:35)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=14
     StoreLocal            Slot=15 Source=21   (non_tail_self_call_list_result.ash:13:35)
-  rcdrop_list_22:
+  rcdrop_list_25:
     LoadLocal             Target=30 Slot=15   (non_tail_self_call_list_result.ash:13:35)
     LoadConstInt          Target=31 Value=0   (non_tail_self_call_list_result.ash:13:35)
     CmpIntNe              Target=32 Left=30 Right=31   (non_tail_self_call_list_result.ash:13:35)
-    JumpIfFalse           CondTemp=32 Target=rcdrop_list_end_24   (non_tail_self_call_list_result.ash:13:35)
+    JumpIfFalse           CondTemp=32 Target=rcdrop_list_end_27   (non_tail_self_call_list_result.ash:13:35)
     RcIsUnique            Target=33 SourceTemp=30
-    JumpIfFalse           CondTemp=33 Target=rcdrop_list_shared_23   (non_tail_self_call_list_result.ash:13:35)
+    JumpIfFalse           CondTemp=33 Target=rcdrop_list_shared_26   (non_tail_self_call_list_result.ash:13:35)
     LoadMemOffset         Target=34 BasePtr=30 OffsetBytes=0   (non_tail_self_call_list_result.ash:13:35)
     RcDrop                SourceTemp=34 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=35 BasePtr=30 OffsetBytes=8   (non_tail_self_call_list_result.ash:13:35)
     RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=15 Source=35   (non_tail_self_call_list_result.ash:13:35)
-    Jump                  Target=rcdrop_list_22   (non_tail_self_call_list_result.ash:13:35)
-  rcdrop_list_shared_23:
+    Jump                  Target=rcdrop_list_25   (non_tail_self_call_list_result.ash:13:35)
+  rcdrop_list_shared_26:
     RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_24   (non_tail_self_call_list_result.ash:13:35)
-  rcdrop_list_end_24:
+    Jump                  Target=rcdrop_list_end_27   (non_tail_self_call_list_result.ash:13:35)
+  rcdrop_list_end_27:
     TextFromInt           Target=36 ValueTemp=29   (non_tail_self_call_list_result.ash:13:16)
     PrintStr              Source=36   (non_tail_self_call_list_result.ash:13:1)
     AllocAdt              Target=37 Tag=0 FieldCount=0   (non_tail_self_call_list_result.ash:13:1)
-    StoreLocal            Slot=16 Source=37
-    LoadLocal             Target=38 Slot=6
+    StoreLocal            Slot=16 Source=37   (non_tail_self_call_list_result.ash:8:1)
+    LoadLocal             Target=38 Slot=6   (non_tail_self_call_list_result.ash:8:1)
     CleanupResource       SourceTemp=38 TypeName=Function
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=17
     CopyOutArena          DestTemp=39 SrcTemp=37 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=17
-    StoreLocal            Slot=18 Source=39
-    LoadLocal             Target=40 Slot=2
+    StoreLocal            Slot=18 Source=39   (non_tail_self_call_list_result.ash:1:1)
+    LoadLocal             Target=40 Slot=2   (non_tail_self_call_list_result.ash:1:1)
     CleanupResource       SourceTemp=40 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=19
-    LoadLocal             Target=41 Slot=18
+    LoadLocal             Target=41 Slot=18   (non_tail_self_call_list_result.ash:1:1)
     Return                Source=41
 

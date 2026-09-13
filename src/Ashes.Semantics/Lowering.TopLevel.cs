@@ -432,6 +432,12 @@ public sealed partial class Lowering
             Requires = declaration.Requires,
         };
         AstSpans.SetLetName(result, AstSpans.GetOrDefault(declaration));
+        // The node is synthesized here, so the declaration's extent is the only thing that can give it a
+        // span. Without one, every instruction the binding emits is unpositioned — a flat top-level
+        // declaration had no line for a breakpoint to bind to — and a diagnostic blamed on the binding
+        // falls back to offset 0, the first stitched standard-library module. The extent matches what a
+        // `let ... in` form records for itself, so both forms are attributed the same way.
+        AstSpans.Set(result, AstSpans.GetLetDeclExtentOrDefault(declaration));
         return result;
     }
 
@@ -445,6 +451,7 @@ public sealed partial class Lowering
             Requires = declaration.Requires,
         };
         AstSpans.SetLetRecursiveName(result, AstSpans.GetOrDefault(declaration));
+        AstSpans.Set(result, AstSpans.GetLetDeclExtentOrDefault(declaration));
         return result;
     }
 
@@ -457,7 +464,8 @@ public sealed partial class Lowering
     /// trailing expression) under Model-A scoping; <paramref name="body"/> carries that continuation.
     /// </summary>
     private Expr DesugarRecursiveGroup(TopLevelItem.RecursiveGroup group, Expr body)
-        => new RecursiveGroupExpr(
+    {
+        var result = new RecursiveGroupExpr(
             group.Bindings,
             AstSpans.GetRecursiveGroupBindingNamesOrDefault(group),
             body)
@@ -465,6 +473,9 @@ public sealed partial class Lowering
             TypeAnnotations = group.TypeAnnotations,
             Requires = group.Requires,
         };
+        AstSpans.Set(result, AstSpans.GetRecursiveGroupExtentOrDefault(group));
+        return result;
+    }
 
     /// <summary>
     /// Internal-only AST node carrying a mutual-recursion binding group plus its continuation. It only

@@ -1,27 +1,24 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9024)
-
 function lambda_0  [SourceFunction from bang]
   locals=3 temps=8
     LoadLocal             Target=0 Slot=1   (match_fresh_scrutinee_owner_release.ash:1:21)
     LoadConstStr          Target=1 StrLabel=str_0   (match_fresh_scrutinee_owner_release.ash:1:25)
     ConcatStr             Target=2 Left=0 Right=1 RuntimeManaged=true   (match_fresh_scrutinee_owner_release.ash:1:21)
-    LoadArgumentOwnership Target=3
-    LoadConstInt          Target=4 Value=1
-    ShrInt                Target=5 Left=3 Right=4
-    JumpIfFalse           CondTemp=5 Target=rc_result_owned_0
+    LoadArgumentOwnership Target=3   (match_fresh_scrutinee_owner_release.ash:1:1)
+    LoadConstInt          Target=4 Value=1   (match_fresh_scrutinee_owner_release.ash:1:1)
+    ShrInt                Target=5 Left=3 Right=4   (match_fresh_scrutinee_owner_release.ash:1:1)
+    JumpIfFalse           CondTemp=5 Target=rc_result_owned_0   (match_fresh_scrutinee_owner_release.ash:1:1)
     CopyOutArena          DestTemp=6 SrcTemp=2 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=2 Source=6
-    Jump                  Target=rc_result_done_1
+    StoreLocal            Slot=2 Source=6   (match_fresh_scrutinee_owner_release.ash:1:1)
+    Jump                  Target=rc_result_done_1   (match_fresh_scrutinee_owner_release.ash:1:1)
   rc_result_owned_0:
-    StoreLocal            Slot=2 Source=2
+    StoreLocal            Slot=2 Source=2   (match_fresh_scrutinee_owner_release.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=7 Slot=2
-    Return                Source=7
+    LoadLocal             Target=7 Slot=2   (match_fresh_scrutinee_owner_release.ash:1:1)
+    Return                Source=7   (match_fresh_scrutinee_owner_release.ash:1:1)
 
 function lambda_1  [SourceFunction from pair]
   locals=10 temps=22
@@ -46,36 +43,36 @@ function lambda_1  [SourceFunction from pair]
     Alloc                 Target=10 SizeBytes=16 RuntimeManaged=true   (match_fresh_scrutinee_owner_release.ash:3:21)
     StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=9   (match_fresh_scrutinee_owner_release.ash:3:21)
     StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=5   (match_fresh_scrutinee_owner_release.ash:3:21)
-    LoadArgumentOwnership Target=11
-    LoadConstInt          Target=12 Value=1
-    ShrInt                Target=13 Left=11 Right=12
-    JumpIfFalse           CondTemp=13 Target=rc_result_owned_2
-    CopyOutList           DestTemp=14 SrcTemp=10 HeadCopy=String Purpose=ArenaResultBoundary
-    StoreLocal            Slot=9 Source=10
+    LoadArgumentOwnership Target=11   (match_fresh_scrutinee_owner_release.ash:3:1)
+    LoadConstInt          Target=12 Value=1   (match_fresh_scrutinee_owner_release.ash:3:1)
+    ShrInt                Target=13 Left=11 Right=12   (match_fresh_scrutinee_owner_release.ash:3:1)
+    JumpIfFalse           CondTemp=13 Target=rc_result_owned_2   (match_fresh_scrutinee_owner_release.ash:3:1)
+    CopyOutList           DestTemp=14 SrcTemp=10 HeadCopy=String Purpose=ArenaResultBoundary   (match_fresh_scrutinee_owner_release.ash:3:1)
+    StoreLocal            Slot=9 Source=10   (match_fresh_scrutinee_owner_release.ash:3:1)
   rcdrop_list_4:
-    LoadLocal             Target=15 Slot=9
-    LoadConstInt          Target=16 Value=0
-    CmpIntNe              Target=17 Left=15 Right=16
-    JumpIfFalse           CondTemp=17 Target=rcdrop_list_end_6
+    LoadLocal             Target=15 Slot=9   (match_fresh_scrutinee_owner_release.ash:3:1)
+    LoadConstInt          Target=16 Value=0   (match_fresh_scrutinee_owner_release.ash:3:1)
+    CmpIntNe              Target=17 Left=15 Right=16   (match_fresh_scrutinee_owner_release.ash:3:1)
+    JumpIfFalse           CondTemp=17 Target=rcdrop_list_end_6   (match_fresh_scrutinee_owner_release.ash:3:1)
     RcIsUnique            Target=18 SourceTemp=15
-    JumpIfFalse           CondTemp=18 Target=rcdrop_list_shared_5
-    LoadMemOffset         Target=19 BasePtr=15 OffsetBytes=0
+    JumpIfFalse           CondTemp=18 Target=rcdrop_list_shared_5   (match_fresh_scrutinee_owner_release.ash:3:1)
+    LoadMemOffset         Target=19 BasePtr=15 OffsetBytes=0   (match_fresh_scrutinee_owner_release.ash:3:1)
     RcDrop                SourceTemp=19 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=20 BasePtr=15 OffsetBytes=8
+    LoadMemOffset         Target=20 BasePtr=15 OffsetBytes=8   (match_fresh_scrutinee_owner_release.ash:3:1)
     RcDrop                SourceTemp=15 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=9 Source=20
-    Jump                  Target=rcdrop_list_4
+    StoreLocal            Slot=9 Source=20   (match_fresh_scrutinee_owner_release.ash:3:1)
+    Jump                  Target=rcdrop_list_4   (match_fresh_scrutinee_owner_release.ash:3:1)
   rcdrop_list_shared_5:
     RcDrop                SourceTemp=15 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_6
+    Jump                  Target=rcdrop_list_end_6   (match_fresh_scrutinee_owner_release.ash:3:1)
   rcdrop_list_end_6:
-    StoreLocal            Slot=8 Source=14
-    Jump                  Target=rc_result_done_3
+    StoreLocal            Slot=8 Source=14   (match_fresh_scrutinee_owner_release.ash:3:1)
+    Jump                  Target=rc_result_done_3   (match_fresh_scrutinee_owner_release.ash:3:1)
   rc_result_owned_2:
-    StoreLocal            Slot=8 Source=10
+    StoreLocal            Slot=8 Source=10   (match_fresh_scrutinee_owner_release.ash:3:1)
   rc_result_done_3:
-    LoadLocal             Target=21 Slot=8
-    Return                Source=21
+    LoadLocal             Target=21 Slot=8   (match_fresh_scrutinee_owner_release.ash:3:1)
+    Return                Source=21   (match_fresh_scrutinee_owner_release.ash:3:1)
 
 function lambda_2  [SourceFunction from rebuilt]
   locals=13 temps=17
@@ -120,25 +117,25 @@ function lambda_2  [SourceFunction from rebuilt]
     StoreLocal            Slot=2 Source=15   (match_fresh_scrutinee_owner_release.ash:6:5)
   match_end_7:
     LoadLocal             Target=16 Slot=2   (match_fresh_scrutinee_owner_release.ash:6:5)
-    Return                Source=16
+    Return                Source=16   (match_fresh_scrutinee_owner_release.ash:5:1)
 
 function _start_main  [ProgramEntry]
   locals=40 temps=79
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (match_fresh_scrutinee_owner_release.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (match_fresh_scrutinee_owner_release.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (match_fresh_scrutinee_owner_release.ash:1:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
-    AllocStack            Target=2 SizeBytes=8
-    LoadLocal             Target=3 Slot=2
+    AllocStack            Target=2 SizeBytes=8   (match_fresh_scrutinee_owner_release.ash:3:1)
+    LoadLocal             Target=3 Slot=2   (match_fresh_scrutinee_owner_release.ash:3:1)
     Borrow                Target=4 SourceTemp=3
-    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4
-    MakeClosureStack      Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=5 Source=5
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (match_fresh_scrutinee_owner_release.ash:3:1)
+    MakeClosureStack      Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (match_fresh_scrutinee_owner_release.ash:3:1)
+    StoreLocal            Slot=5 Source=5   (match_fresh_scrutinee_owner_release.ash:3:1)
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
-    LoadConstInt          Target=6 Value=0
-    MakeClosureStack      Target=7 FuncLabel=lambda_2 EnvPtrTemp=6 EnvSizeBytes=0
-    StoreLocal            Slot=8 Source=7
+    LoadConstInt          Target=6 Value=0   (match_fresh_scrutinee_owner_release.ash:5:1)
+    MakeClosureStack      Target=7 FuncLabel=lambda_2 EnvPtrTemp=6 EnvSizeBytes=0   (match_fresh_scrutinee_owner_release.ash:5:1)
+    StoreLocal            Slot=8 Source=7   (match_fresh_scrutinee_owner_release.ash:5:1)
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     LoadLocal             Target=8 Slot=8   (match_fresh_scrutinee_owner_release.ash:10:7)
     Borrow                Target=9 SourceTemp=8
@@ -308,23 +305,23 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=20 Source=71   (match_fresh_scrutinee_owner_release.ash:10:1)
   match_end_25:
     LoadLocal             Target=72 Slot=20   (match_fresh_scrutinee_owner_release.ash:10:1)
-    StoreLocal            Slot=34 Source=72
-    LoadLocal             Target=73 Slot=8
+    StoreLocal            Slot=34 Source=72   (match_fresh_scrutinee_owner_release.ash:5:1)
+    LoadLocal             Target=73 Slot=8   (match_fresh_scrutinee_owner_release.ash:5:1)
     CleanupResource       SourceTemp=73 TypeName=Function
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=35
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=35
-    LoadLocal             Target=74 Slot=34
-    StoreLocal            Slot=36 Source=74
-    LoadLocal             Target=75 Slot=5
+    LoadLocal             Target=74 Slot=34   (match_fresh_scrutinee_owner_release.ash:5:1)
+    StoreLocal            Slot=36 Source=74   (match_fresh_scrutinee_owner_release.ash:3:1)
+    LoadLocal             Target=75 Slot=5   (match_fresh_scrutinee_owner_release.ash:3:1)
     CleanupResource       SourceTemp=75 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=37
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=37
-    LoadLocal             Target=76 Slot=36
-    StoreLocal            Slot=38 Source=76
-    LoadLocal             Target=77 Slot=2
+    LoadLocal             Target=76 Slot=36   (match_fresh_scrutinee_owner_release.ash:3:1)
+    StoreLocal            Slot=38 Source=76   (match_fresh_scrutinee_owner_release.ash:1:1)
+    LoadLocal             Target=77 Slot=2   (match_fresh_scrutinee_owner_release.ash:1:1)
     CleanupResource       SourceTemp=77 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=39
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=39
-    LoadLocal             Target=78 Slot=38
+    LoadLocal             Target=78 Slot=38   (match_fresh_scrutinee_owner_release.ash:1:1)
     Return                Source=78
 

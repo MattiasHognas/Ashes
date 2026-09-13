@@ -43,6 +43,8 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<TraitConstraintSyntax, SpanBox> TraitConstraintSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.LetDecl, SpanBox> LetDeclSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanBox> RecursiveGroupSpans = new();
+    private static readonly ConditionalWeakTable<TopLevelItem.LetDecl, SpanBox> LetDeclExtentSpans = new();
+    private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanBox> RecursiveGroupExtentSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanListBox>
         RecursiveGroupBindingNameSpans = new();
 
@@ -150,6 +152,37 @@ public static class AstSpans
     {
         RecursiveGroupSpans.Remove(recursiveGroup);
         RecursiveGroupSpans.Add(recursiveGroup, new SpanBox(span));
+    }
+
+    /// <summary>
+    /// Records a flat top-level <c>let</c> declaration's full extent, from the <c>let</c> keyword through
+    /// its value — the same span a <c>let ... in</c> form records for its own expression node. Separate
+    /// from the identifier span above, which name-anchored diagnostics and editor symbols depend on.
+    /// </summary>
+    public static void SetLetDeclExtent(TopLevelItem.LetDecl letDecl, TextSpan span)
+    {
+        LetDeclExtentSpans.Remove(letDecl);
+        LetDeclExtentSpans.Add(letDecl, new SpanBox(span));
+    }
+
+    /// <summary>Records a top-level mutual-recursion group's full extent. See
+    /// <see cref="SetLetDeclExtent"/>.</summary>
+    public static void SetRecursiveGroupExtent(TopLevelItem.RecursiveGroup recursiveGroup, TextSpan span)
+    {
+        RecursiveGroupExtentSpans.Remove(recursiveGroup);
+        RecursiveGroupExtentSpans.Add(recursiveGroup, new SpanBox(span));
+    }
+
+    /// <summary>Returns a flat top-level declaration's full extent, or the default span if unset.</summary>
+    public static TextSpan GetLetDeclExtentOrDefault(TopLevelItem.LetDecl letDecl)
+    {
+        return LetDeclExtentSpans.TryGetValue(letDecl, out SpanBox? spanBox) ? spanBox.Span : default;
+    }
+
+    /// <summary>Returns a mutual-recursion group's full extent, or the default span if unset.</summary>
+    public static TextSpan GetRecursiveGroupExtentOrDefault(TopLevelItem.RecursiveGroup recursiveGroup)
+    {
+        return RecursiveGroupExtentSpans.TryGetValue(recursiveGroup, out SpanBox? spanBox) ? spanBox.Span : default;
     }
 
     /// <summary>Records each binding identifier span in a top-level mutual-recursion group.</summary>

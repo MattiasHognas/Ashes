@@ -1,9 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Multiply(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9890)
-
 function _start_main  [ProgramEntry]
   locals=20 temps=35
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
@@ -20,11 +17,11 @@ function _start_main  [ProgramEntry]
     AllocAdt              Target=6 Tag=1 FieldCount=2   (reuse_shared_falls_back.ash:5:11)
     SetAdtField           Ptr=6 FieldIndex=0 Source=0   (reuse_shared_falls_back.ash:5:11)
     SetAdtField           Ptr=6 FieldIndex=1 Source=5   (reuse_shared_falls_back.ash:5:11)
-    StoreLocal            Slot=2 Source=6
+    StoreLocal            Slot=2 Source=6   (reuse_shared_falls_back.ash:5:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=7 Slot=2   (reuse_shared_falls_back.ash:7:12)
     Borrow                Target=8 SourceTemp=7
-    StoreLocal            Slot=5 Source=8
+    StoreLocal            Slot=5 Source=8   (reuse_shared_falls_back.ash:7:1)
     LoadLocal             Target=9 Slot=2   (reuse_shared_falls_back.ash:9:7)
     Borrow                Target=10 SourceTemp=9
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
@@ -78,7 +75,7 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=6 Source=31   (reuse_shared_falls_back.ash:9:1)
   match_end_0:
     LoadLocal             Target=32 Slot=6   (reuse_shared_falls_back.ash:9:1)
-    StoreLocal            Slot=18 Source=32
-    LoadLocal             Target=34 Slot=18
+    StoreLocal            Slot=18 Source=32   (reuse_shared_falls_back.ash:5:1)
+    LoadLocal             Target=34 Slot=18   (reuse_shared_falls_back.ash:5:1)
     Return                Source=34
 

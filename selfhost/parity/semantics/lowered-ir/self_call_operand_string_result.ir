@@ -1,13 +1,8 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9348)
-  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9447)
-
 function lambda_0  [SourceFunction from go]
-  locals=8 temps=24
+  locals=8 temps=23
     LoadLocal             Target=0 Slot=1   (self_call_operand_string_result.ash:2:8)
     LoadConstInt          Target=1 Value=0   (self_call_operand_string_result.ash:2:13)
     CmpIntEq              Target=2 Left=0 Right=1   (self_call_operand_string_result.ash:2:8)
@@ -24,44 +19,38 @@ function lambda_0  [SourceFunction from go]
     LoadLocal             Target=8 Slot=1   (self_call_operand_string_result.ash:4:19)
     LoadConstInt          Target=9 Value=1   (self_call_operand_string_result.ash:4:23)
     SubInt                Target=10 Left=8 Right=9   (self_call_operand_string_result.ash:4:19)
-    LoadMemOffset         Target=11 BasePtr=6 OffsetBytes=16   (self_call_operand_string_result.ash:4:16)
-    LoadConstInt          Target=12 Value=63   (self_call_operand_string_result.ash:4:16)
-    ShrInt                Target=13 Left=11 Right=12   (self_call_operand_string_result.ash:4:16)
-    CallClosure           Target=14 ClosureTemp=6 ArgTemp=10   (self_call_operand_string_result.ash:4:16)
-    StoreLocal            Slot=6 Source=14   (self_call_operand_string_result.ash:4:16)
+    LoadConstInt          Target=12 Value=2   (self_call_operand_string_result.ash:4:16)
+    CallClosure           Target=11 ClosureTemp=6 ArgTemp=10 RuntimeManagedArgumentFlagTemp=12   (self_call_operand_string_result.ash:4:16)
+    StoreLocal            Slot=6 Source=11   (self_call_operand_string_result.ash:4:16)
+    LoadLocal             Target=21 Slot=6
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
-    JumpIfFalse           CondTemp=13 Target=call_copy_arena_result_2   (self_call_operand_string_result.ash:4:16)
-    Jump                  Target=call_reclaim_owned_result_3   (self_call_operand_string_result.ash:4:16)
-  call_copy_arena_result_2:
-    CopyOutArena          DestTemp=15 SrcTemp=14 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=6 Source=15   (self_call_operand_string_result.ash:4:16)
-  call_reclaim_owned_result_3:
+    CopyOutArena          DestTemp=22 SrcTemp=21 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    LoadLocal             Target=16 Slot=6   (self_call_operand_string_result.ash:4:16)
-    ConcatStr             Target=17 Left=5 Right=16 RuntimeManaged=true   (self_call_operand_string_result.ash:4:10)
-    RcDrop                SourceTemp=16 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=2 Source=17   (self_call_operand_string_result.ash:2:5)
+    StoreLocal            Slot=6 Source=22
+    LoadLocal             Target=13 Slot=6   (self_call_operand_string_result.ash:4:16)
+    ConcatStr             Target=14 Left=5 Right=13 RuntimeManaged=true   (self_call_operand_string_result.ash:4:10)
+    StoreLocal            Slot=2 Source=14   (self_call_operand_string_result.ash:2:5)
   endif_1:
-    LoadLocal             Target=18 Slot=2   (self_call_operand_string_result.ash:2:5)
-    LoadArgumentOwnership Target=19
-    LoadConstInt          Target=20 Value=1
-    ShrInt                Target=21 Left=19 Right=20
-    JumpIfFalse           CondTemp=21 Target=rc_result_owned_4
-    CopyOutArena          DestTemp=22 SrcTemp=18 Purpose=ArenaResultBoundary
-    RcDrop                SourceTemp=18 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=7 Source=22
-    Jump                  Target=rc_result_done_5
-  rc_result_owned_4:
-    StoreLocal            Slot=7 Source=18
-  rc_result_done_5:
-    LoadLocal             Target=23 Slot=7
-    Return                Source=23
+    LoadLocal             Target=15 Slot=2   (self_call_operand_string_result.ash:2:5)
+    LoadArgumentOwnership Target=16   (self_call_operand_string_result.ash:1:1)
+    LoadConstInt          Target=17 Value=1   (self_call_operand_string_result.ash:1:1)
+    ShrInt                Target=18 Left=16 Right=17   (self_call_operand_string_result.ash:1:1)
+    JumpIfFalse           CondTemp=18 Target=rc_result_owned_2   (self_call_operand_string_result.ash:1:1)
+    CopyOutArena          DestTemp=19 SrcTemp=15 Purpose=ArenaResultBoundary
+    RcDrop                SourceTemp=15 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=7 Source=19   (self_call_operand_string_result.ash:1:1)
+    Jump                  Target=rc_result_done_3   (self_call_operand_string_result.ash:1:1)
+  rc_result_owned_2:
+    StoreLocal            Slot=7 Source=15   (self_call_operand_string_result.ash:1:1)
+  rc_result_done_3:
+    LoadLocal             Target=20 Slot=7   (self_call_operand_string_result.ash:1:1)
+    Return                Source=20   (self_call_operand_string_result.ash:1:1)
 
 function _start_main  [ProgramEntry]
   locals=4 temps=9
-    LoadConstInt          Target=0 Value=0
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=0 Source=1
+    LoadConstInt          Target=0 Value=0   (self_call_operand_string_result.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (self_call_operand_string_result.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (self_call_operand_string_result.ash:1:1)
     SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
     LoadLocal             Target=2 Slot=0   (self_call_operand_string_result.ash:6:16)
     LoadConstInt          Target=3 Value=3   (self_call_operand_string_result.ash:6:19)

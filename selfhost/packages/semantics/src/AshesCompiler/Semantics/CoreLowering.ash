@@ -2559,21 +2559,6 @@ let recursive stripExprAt (expr: Expr) =
         | ExprAt(_span, inner) -> stripExprAt(inner)
         | other -> other
 
-// Stage 0's parser attaches no location between `in` and a directly-chained `let`, so every
-// frame store in a `let ... in let ... in body` chain carries the chain head's span (its
-// LowerSequentialBindingChain walks the chain without touching the ambient diagnostic span).
-// This parser wraps the chained let in its own `ExprAt`; dropping that wrapper here reproduces
-// stage 0's spans exactly — the chained let's value and body keep their own inner `ExprAt`s, so
-// only the frame store's location is affected.
-let stripChainedLetAt body =
-    match body with
-        | ExprAt(_span, inner) ->
-            match inner with
-                | ExprLet(_name, _value, _body, _parameters, _annotation, _requirements) -> inner
-                | ExprLetRecursive(_name, _value, _body, _parameters, _annotation, _requirements) -> inner
-                | _ -> body
-        | _ -> body
-
 let recursive patternBindsName (name: Str) (pattern: Pattern) =
     match pattern with
         | PatternAt(_span, inner) -> patternBindsName(name)(inner)
@@ -10756,7 +10741,7 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(state))
                             |> armOwnerReleasePlan(value)
-                            |> finishLetValueInSlot(name)(value)(stripChainedLetAt(body))(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lower)(outerBindings) with
+                            |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lower)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
@@ -16550,7 +16535,11 @@ let recursive allTopLevelBindingNames items =
 // the general case additionally needs a CopyOutArena for an escaping heap result, not yet ported
 // (see docs/md/future/SELF_HOSTING.md). Takes the sentinel-placeholder continuation
 // lowerCoreProgramItems supplies (see its own TopLevelLet case) in place of a literal body Expr.
-let lowerArenaBracketedTopLevelLet name value remainingBody environment continuation outerBindings stackClosure state =
+// The continuation lowers every later declaration before this bracket closes, and each of those sets
+// its own currentSpan without restoring this one, so the closing instructions would carry the last
+// declaration's position. Closing under this declaration's own span keeps a chain of top-level
+// declarations stepping forwards, the way the nested form already does through its body's ExprAt.
+let lowerArenaBracketedTopLevelLet name value remainingBody environment continuation outerBindings stackClosure (state: CoreLoweringState) =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = saved, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
@@ -16568,7 +16557,7 @@ let lowerArenaBracketedTopLevelLet name value remainingBody environment continua
                             |> finishLetValueInSlot(name)(rewrittenValue)(topLevelContinuationBody)(remainingBody)(escapingLetBodyRequest(remainingBody)(consumerRequestOf(saved))(saved))(continuation)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match closeOwnedLetBracket(letOwnedTypeName(rewrittenValue)(loweredValue)(saved))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
+                                    match closeOwnedLetBracket(letOwnedTypeName(rewrittenValue)(loweredValue)(saved))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)((bodyState with currentSpan = state.currentSpan)) with
                                         | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
@@ -17239,7 +17228,11 @@ let capabilityHandlerGlobalCount (state: CoreLoweringState) =
 let recursive lowerCoreProgramItems items trailingBody seen environment state =
     match items with
         | [] -> lowerCore(trailingBody)(state)
-        | TopLevelAt(span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)((state with recursiveDeclarationSpan = Some(span)))
+        // currentSpan carries the declaration as the innermost enclosing span, so an instruction the
+        // binding emits outside its value expression — the StoreLocal of the bound value — is tagged
+        // with the declaration rather than left unpositioned. A flat top-level declaration otherwise has
+        // no position at all, and a debugger stepping over it reports whatever line came before.
+        | TopLevelAt(span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)((state with recursiveDeclarationSpan = Some(span), currentSpan = Some(span)))
         | TopLevelType(declaration) :: rest ->
             match registerTopLevelTypeDeclaration(declaration)(state) with
                 | Error(error) -> failure(state)(error)

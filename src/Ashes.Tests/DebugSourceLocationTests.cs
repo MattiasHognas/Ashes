@@ -77,6 +77,36 @@ public sealed class DebugSourceLocationTests
         lines.ShouldBe([1, 3]);
     }
 
+    [Test]
+    public void Every_binding_in_a_let_chain_stores_under_its_own_line()
+    {
+        var source = """
+            let first = 1
+
+            let second =
+                let inner = 2
+                in
+                    let deeper = 3
+                    in inner + deeper
+
+            Ashes.IO.print(first + second)
+            """.Replace("\r\n", "\n", StringComparison.Ordinal);
+
+        var ir = LowerWithLayout(source, "/tmp/chain-lines.ash");
+
+        // A chain is flattened rather than recursed into, so every binding used to store under the chain
+        // head: stepping over `deeper` jumped back to `inner`'s line, and a flat top-level declaration
+        // carried no position at all. Declaration lines here are 1 (first), 3 (second), 4 (inner), 6
+        // (deeper).
+        int?[] storeLines = ir.EntryFunction.Instructions
+            .OfType<IrInst.StoreLocal>()
+            .Select(inst => inst.Location?.Line)
+            .ToArray();
+
+        storeLines.ShouldNotContain(line => !line.HasValue, "every binding's store carries its own declaration's line");
+        storeLines.Select(line => line!.Value).Distinct().Order().ShouldBe([1, 3, 4, 6]);
+    }
+
     private static IrProgram LowerWithLayout(string source, string displayPath)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, displayPath);

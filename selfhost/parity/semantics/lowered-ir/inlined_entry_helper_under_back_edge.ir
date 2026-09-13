@@ -1,11 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
-
 function lambda_2  [ClosureHelper from go]
   locals=22 temps=21
     LoadEnv               Target=0 Index=0   (inlined_entry_helper_under_back_edge.ash:2:6)
@@ -98,7 +93,7 @@ function lambda_0  [SourceFunction from count]
     CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (inlined_entry_helper_under_back_edge.ash:6:8)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Return                Source=6
+    Return                Source=6   (inlined_entry_helper_under_back_edge.ash:1:1)
 
 function lambda_6  [ClosureHelper from go]
   locals=22 temps=21
@@ -271,20 +266,20 @@ function lambda_3  [SourceFunction from loop]
     LoadLocal             Target=1 Slot=1   (inlined_entry_helper_under_back_edge.ash:8:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (inlined_entry_helper_under_back_edge.ash:8:1)
     MakeClosure           Target=6 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=8   (inlined_entry_helper_under_back_edge.ash:8:1)
-    Return                Source=6
+    Return                Source=6   (inlined_entry_helper_under_back_edge.ash:8:1)
 
 function _start_main  [ProgramEntry]
   locals=9 temps=15
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=2 Source=1
-    Alloc                 Target=2 SizeBytes=8
-    LoadLocal             Target=3 Slot=2
+    LoadConstInt          Target=0 Value=0   (inlined_entry_helper_under_back_edge.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (inlined_entry_helper_under_back_edge.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (inlined_entry_helper_under_back_edge.ash:1:1)
+    Alloc                 Target=2 SizeBytes=8   (inlined_entry_helper_under_back_edge.ash:8:1)
+    LoadLocal             Target=3 Slot=2   (inlined_entry_helper_under_back_edge.ash:8:1)
     Borrow                Target=4 SourceTemp=3
-    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4
-    MakeClosure           Target=5 FuncLabel=lambda_3 EnvPtrTemp=2 EnvSizeBytes=8
-    StoreLocal            Slot=3 Source=5
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (inlined_entry_helper_under_back_edge.ash:8:1)
+    MakeClosure           Target=5 FuncLabel=lambda_3 EnvPtrTemp=2 EnvSizeBytes=8   (inlined_entry_helper_under_back_edge.ash:8:1)
+    StoreLocal            Slot=3 Source=5   (inlined_entry_helper_under_back_edge.ash:8:1)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadLocal             Target=6 Slot=3   (inlined_entry_helper_under_back_edge.ash:15:35)
     LoadConstInt          Target=7 Value=3   (inlined_entry_helper_under_back_edge.ash:15:40)
@@ -296,8 +291,8 @@ function _start_main  [ProgramEntry]
     TextFromInt           Target=11 ValueTemp=10   (inlined_entry_helper_under_back_edge.ash:15:16)
     PrintStr              Source=11   (inlined_entry_helper_under_back_edge.ash:15:1)
     AllocAdt              Target=12 Tag=0 FieldCount=0   (inlined_entry_helper_under_back_edge.ash:15:1)
-    StoreLocal            Slot=7 Source=12
-    LoadLocal             Target=13 Slot=2
+    StoreLocal            Slot=7 Source=12   (inlined_entry_helper_under_back_edge.ash:1:1)
+    LoadLocal             Target=13 Slot=2   (inlined_entry_helper_under_back_edge.ash:1:1)
     CleanupResource       SourceTemp=13 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=8
     CopyOutArena          DestTemp=14 SrcTemp=12 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization

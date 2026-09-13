@@ -64,7 +64,7 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=2 Source=25   (match_arm_copy_out.ash:10:5)
   match_end_0:
     LoadLocal             Target=26 Slot=2   (match_arm_copy_out.ash:10:5)
-    StoreLocal            Slot=12 Source=26
+    StoreLocal            Slot=12 Source=26   (match_arm_copy_out.ash:9:1)
     LoadLocal             Target=27 Slot=12   (match_arm_copy_out.ash:14:7)
     Borrow                Target=28 SourceTemp=27
     SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
@@ -90,7 +90,7 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=13 Source=35   (match_arm_copy_out.ash:14:1)
   match_end_5:
     LoadLocal             Target=36 Slot=13   (match_arm_copy_out.ash:14:1)
-    StoreLocal            Slot=19 Source=36
+    StoreLocal            Slot=19 Source=36   (match_arm_copy_out.ash:9:1)
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=20
     CopyOutArena          DestTemp=38 SrcTemp=36 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=20

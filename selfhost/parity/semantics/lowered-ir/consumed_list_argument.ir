@@ -3,19 +3,19 @@ IR (lowered)
 
 function lambda_0  [SourceFunction from makeItems]
   locals=3 temps=11
-    LoadLocal             Target=5 Slot=1
-    LoadArgumentOwnership Target=6
-    LoadConstInt          Target=7 Value=1
-    AndInt                Target=8 Left=6 Right=7
-    JumpIfFalse           CondTemp=8 Target=rc_arg_normalize_copy_0
-    StoreLocal            Slot=2 Source=5
-    Jump                  Target=rc_arg_normalize_done_1
+    LoadLocal             Target=5 Slot=1   (consumed_list_argument.ash:1:1)
+    LoadArgumentOwnership Target=6   (consumed_list_argument.ash:1:1)
+    LoadConstInt          Target=7 Value=1   (consumed_list_argument.ash:1:1)
+    AndInt                Target=8 Left=6 Right=7   (consumed_list_argument.ash:1:1)
+    JumpIfFalse           CondTemp=8 Target=rc_arg_normalize_copy_0   (consumed_list_argument.ash:1:1)
+    StoreLocal            Slot=2 Source=5   (consumed_list_argument.ash:1:1)
+    Jump                  Target=rc_arg_normalize_done_1   (consumed_list_argument.ash:1:1)
   rc_arg_normalize_copy_0:
     CopyOutArena          DestTemp=9 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=2 Source=9
+    StoreLocal            Slot=2 Source=9   (consumed_list_argument.ash:1:1)
   rc_arg_normalize_done_1:
-    LoadLocal             Target=10 Slot=2
-    StoreLocal            Slot=1 Source=10
+    LoadLocal             Target=10 Slot=2   (consumed_list_argument.ash:1:1)
+    StoreLocal            Slot=1 Source=10   (consumed_list_argument.ash:1:1)
     LoadConstInt          Target=0 Value=0   (consumed_list_argument.ash:1:29)
     LoadLocal             Target=1 Slot=1   (consumed_list_argument.ash:1:36)
     Alloc                 Target=2 SizeBytes=16   (consumed_list_argument.ash:1:29)
@@ -25,7 +25,7 @@ function lambda_0  [SourceFunction from makeItems]
     Alloc                 Target=4 SizeBytes=16   (consumed_list_argument.ash:1:29)
     StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=3   (consumed_list_argument.ash:1:29)
     StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=2   (consumed_list_argument.ash:1:29)
-    Return                Source=4
+    Return                Source=4   (consumed_list_argument.ash:1:1)
 
 function lambda_1  [SourceFunction from count]
   locals=11 temps=11
@@ -64,18 +64,18 @@ function lambda_1  [SourceFunction from count]
     StoreLocal            Slot=2 Source=9   (consumed_list_argument.ash:4:5)
   match_end_2:
     LoadLocal             Target=10 Slot=2   (consumed_list_argument.ash:4:5)
-    Return                Source=10
+    Return                Source=10   (consumed_list_argument.ash:3:1)
 
 function _start_main  [ProgramEntry]
   locals=19 temps=35
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 AcceptsRuntimeManagedArgument=true
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (consumed_list_argument.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 AcceptsRuntimeManagedArgument=true   (consumed_list_argument.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (consumed_list_argument.ash:1:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
-    LoadConstInt          Target=2 Value=0
-    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
-    StoreLocal            Slot=5 Source=3
+    LoadConstInt          Target=2 Value=0   (consumed_list_argument.ash:3:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0   (consumed_list_argument.ash:3:1)
+    StoreLocal            Slot=5 Source=3   (consumed_list_argument.ash:3:1)
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     LoadLocal             Target=4 Slot=5   (consumed_list_argument.ash:8:35)
     Borrow                Target=5 SourceTemp=4
@@ -132,17 +132,17 @@ function _start_main  [ProgramEntry]
     TextFromInt           Target=29 ValueTemp=22   (consumed_list_argument.ash:8:16)
     PrintStr              Source=29   (consumed_list_argument.ash:8:1)
     AllocAdt              Target=30 Tag=0 FieldCount=0   (consumed_list_argument.ash:8:1)
-    StoreLocal            Slot=15 Source=30
-    LoadLocal             Target=31 Slot=5
+    StoreLocal            Slot=15 Source=30   (consumed_list_argument.ash:3:1)
+    LoadLocal             Target=31 Slot=5   (consumed_list_argument.ash:3:1)
     CleanupResource       SourceTemp=31 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=16
     CopyOutArena          DestTemp=32 SrcTemp=30 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=16
-    StoreLocal            Slot=17 Source=32
-    LoadLocal             Target=33 Slot=2
+    StoreLocal            Slot=17 Source=32   (consumed_list_argument.ash:1:1)
+    LoadLocal             Target=33 Slot=2   (consumed_list_argument.ash:1:1)
     CleanupResource       SourceTemp=33 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=18
-    LoadLocal             Target=34 Slot=17
+    LoadLocal             Target=34 Slot=17   (consumed_list_argument.ash:1:1)
     Return                Source=34
 

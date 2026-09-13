@@ -43,13 +43,13 @@ function lambda_0  [SourceFunction from f]
   locals=2 temps=4
     Alloc                 Target=0 SizeBytes=0   (tco_unused_chain_parameter.ash:1:1)
     MakeClosure           Target=3 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=0   (tco_unused_chain_parameter.ash:1:1)
-    Return                Source=3
+    Return                Source=3   (tco_unused_chain_parameter.ash:1:1)
 
 function _start_main  [ProgramEntry]
   locals=4 temps=9
-    LoadConstInt          Target=0 Value=0
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=0 Source=1
+    LoadConstInt          Target=0 Value=0   (tco_unused_chain_parameter.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_unused_chain_parameter.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (tco_unused_chain_parameter.ash:1:1)
     SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
     LoadLocal             Target=2 Slot=0   (tco_unused_chain_parameter.ash:6:35)
     LoadConstInt          Target=3 Value=3   (tco_unused_chain_parameter.ash:6:37)
