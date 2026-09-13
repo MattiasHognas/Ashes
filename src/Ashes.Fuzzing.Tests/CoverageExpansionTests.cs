@@ -441,6 +441,33 @@ public sealed class CoverageExpansionTests
     }
 
     [Test]
+    public void EveryMutationOfSurrogateBearingSourceCanBePersisted()
+    {
+        InvalidSourceMutator mutator = new();
+        // Truncation cuts at an arbitrary index, so over a range of seeds it lands between the halves of
+        // this emoji's surrogate pair. The oracle writes the mutation to a file before running the parser
+        // worker on it, and a writer that throws on an unpaired half fails the case before the parser is
+        // ever reached.
+        const string source = """
+            // expect: emoji
+            match '😀' with
+                | '😀' -> Ashes.IO.print("emoji")
+                | _ -> Ashes.IO.print("other")
+            """;
+
+        foreach (InvalidSourceMutation mutation in Enum.GetValues<InvalidSourceMutation>())
+        {
+            for (ulong seed = 0; seed < 64; seed++)
+            {
+                string mutated = mutator.Mutate(source, seed, mutation);
+                Should.NotThrow(
+                    () => InvalidSourceOracle.MutatedSourceEncoding.GetByteCount(mutated),
+                    $"{mutation} at seed {seed} produced text the oracle cannot write");
+            }
+        }
+    }
+
+    [Test]
     public async Task InvalidSourceSeedsRotateBetweenGeneratedAndCheckedInFamilies()
     {
         var fixture = TestFixture.Create();

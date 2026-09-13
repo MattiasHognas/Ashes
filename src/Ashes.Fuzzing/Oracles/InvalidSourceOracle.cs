@@ -1,3 +1,4 @@
+using System.Text;
 using Ashes.Fuzzing.Execution;
 using Ashes.Fuzzing.Generation;
 
@@ -5,6 +6,15 @@ namespace Ashes.Fuzzing.Oracles;
 
 internal sealed class InvalidSourceOracle : IFuzzOracle
 {
+    /// <summary>
+    /// Persists a mutation that left a lone surrogate behind. Truncation cuts at an arbitrary index, so
+    /// it can land between the halves of a surrogate pair, and the default text writer throws on an
+    /// unpaired half instead of producing a file — which failed the case before the parser ever saw it.
+    /// Handing the parser hostile bytes is this oracle's whole purpose, so an unpaired half is encoded
+    /// as the replacement character rather than aborting the campaign.
+    /// </summary>
+    internal static UTF8Encoding MutatedSourceEncoding { get; } = new(encoderShouldEmitUTF8Identifier: false);
+
     public string Id => "invalid-source";
     public async ValueTask<FuzzOracleResult> EvaluateAsync(GeneratedFuzzCase testCase, FuzzExecutionContext context, CancellationToken cancellationToken)
     {
@@ -15,7 +25,7 @@ internal sealed class InvalidSourceOracle : IFuzzOracle
             try
             {
                 string sourcePath = Path.Combine(temporaryRoot, "mutated.ash");
-                await File.WriteAllTextAsync(sourcePath, mutated, cancellationToken).ConfigureAwait(false);
+                await File.WriteAllTextAsync(sourcePath, mutated, MutatedSourceEncoding, cancellationToken).ConfigureAwait(false);
                 string assemblyPath = typeof(InvalidSourceOracle).Assembly.Location;
                 ProcessResult process = await ProcessTimeout.RunAsync(
                     "dotnet",
