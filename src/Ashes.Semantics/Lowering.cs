@@ -12223,11 +12223,21 @@ public sealed partial class Lowering
         int i,
         TypeRef.TFun funType)
     {
+        LoweredValueRequest argumentRequest =
+            LoweredValueRequest.None.WithCallerReportedExpectedType(funType.Arg);
+        if (CalleeResultMayReachArgument(rootExpr, i))
+        {
+            // The argument travels on inside the callee's result, so it escapes every binding scope
+            // of this function exactly like a tail self-call argument escapes into the next
+            // iteration: a runtime-managed owned binding stored inside the aggregate (a `let` call
+            // result placed in a constructor field) must be retained, because the binding's own
+            // scope-exit release still fires while the callee's result keeps the aggregate.
+            argumentRequest = argumentRequest with { TransfersRuntimeManagedChildren = true };
+        }
+
         (int argTemp, TypeRef argType) =
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
-            ?? LowerExpr(
-                collectedArgs[i],
-                LoweredValueRequest.None.WithCallerReportedExpectedType(funType.Arg)).AsPair();
+            ?? LowerExpr(collectedArgs[i], argumentRequest).AsPair();
 
         var calleeName = TryGetCalleeDisplayName(rootExpr);
         var callContext = calleeName is not null
@@ -12419,6 +12429,14 @@ public sealed partial class Lowering
     // `setTree`/`HashMap.set`): the parameter genuinely reaches such a function's result, but the
     // argument temp backing it can still be an arena pointer with no RC header at all, which forcing
     // an RcDup on would corrupt rather than protect.
+    // Whether the callee's result may reach this argument at all, decided from the whole-program
+    // ownership summary alone, before the argument is lowered: an aggregate literal passed here is
+    // then lowered as one that escapes the caller's scopes.
+    private bool CalleeResultMayReachArgument(Expr rootExpr, int argumentIndex)
+        => GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex < summary.Parameters.Count
+            && summary.ResultReaches(summary.Parameters[argumentIndex]);
+
     private bool CalleeResultMayReachParameter(Expr rootExpr, int argumentIndex, int argumentTemp)
         => IsRuntimeManagedResultTemp(argumentTemp)
             && GetOwnershipSummaryForCallRoot(rootExpr) is { } summary

@@ -1,0 +1,111 @@
+Ownership report
+================
+
+Function: addImpl
+  Parameters
+    t
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    head
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    env
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - t
+      - env
+
+Function: addTraitImplementation
+  Parameters
+    t
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    methods
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    env
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - t
+      - methods
+      - env
+
+Function: buildEnv
+  Parameters
+    unit
+      ownership: borrowed
+      move-safe: no
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: churn
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - acc
+
+Function: count
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - acc
+
+Function: firstNames
+  Parameters
+    impls
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: methodNameOf
+  Parameters
+    t
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+

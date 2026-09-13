@@ -1,0 +1,154 @@
+Memory report
+=============
+
+Function: addImpl
+  ownership
+    t: consumed, move-safe yes
+    head: consumed, move-safe yes
+    env: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_7]
+    dup:                  1
+    drop:                 1
+    uniqueness checks:    0
+  perceus [lambda_6]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_5]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_7]
+    conservative unknown: 16
+    region:               8
+    runtime rc:           7
+    copy value:           5
+  representation [lambda_6]
+    conservative unknown: 2
+    region:               2
+    copy value:           1
+  representation [lambda_5]
+    conservative unknown: 3
+    region:               2
+
+Function: addTraitImplementation
+  ownership
+    t: consumed, move-safe yes
+    methods: consumed, move-safe yes
+    env: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_3]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_2]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_2$env_normalize]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_3__scalarenv2]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_3]
+    conservative unknown: 6
+    region:               3
+  representation [lambda_2]
+    conservative unknown: 1
+    region:               2
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               2
+    runtime rc:           2
+
+Function: buildEnv
+  ownership
+    unit: borrowed, move-safe no
+    result fresh: yes
+  perceus [lambda_8]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_8__scalarenv0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_8]
+    conservative unknown: 16
+    region:               1
+    copy value:           3
+
+Function: churn
+  ownership
+    n: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_11]
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
+  perceus [lambda_10]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_11]
+    conservative unknown: 2
+    region:               3
+    runtime rc:           8
+    copy value:           7
+  representation [lambda_10]
+    region:               3
+    copy value:           1
+
+Function: count
+  ownership
+    items: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_13]
+    dup:                  1
+    drop:                 9
+    uniqueness checks:    3
+  perceus [lambda_12]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_13__scalarenv1]
+    dup:                  1
+    drop:                 9
+    uniqueness checks:    3
+  representation [lambda_13]
+    runtime rc:           5
+    copy value:           6
+  representation [lambda_12]
+    conservative unknown: 1
+    region:               3
+
+Function: firstNames
+  ownership
+    impls: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_14]
+    dup:                  1
+    drop:                 1
+    uniqueness checks:    0
+  representation [lambda_14]
+    conservative unknown: 13
+    region:               5
+    runtime rc:           6
+
+Function: methodNameOf
+  ownership
+    t: consumed, move-safe yes
+    result fresh: yes
+  representation [lambda_0]
+    conservative unknown: 21
+
