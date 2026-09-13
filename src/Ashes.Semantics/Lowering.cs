@@ -5514,6 +5514,28 @@ public sealed partial class Lowering
         _scopes.Push(scope.SetItem(name, binding));
     }
 
+    /// <summary>
+    /// Records <c>let y = x</c> as an alias of an already-owned <c>x</c> rather than a second owner, so
+    /// only the original emits the drop. Only a plain variable reference aliases; anything else (a call,
+    /// a constructor, an <c>if</c>/<c>match</c>) produces a fresh value tracked as a new owner.
+    /// <para>
+    /// An owner recorded in an enclosing function is nothing this frame can release — local slots are
+    /// frame-local, so aliasing a capture read inside a lambda aimed the scope-exit drop at a slot this
+    /// frame does not have, which the IR verifier reports as an out-of-range owner slot. Such a binding
+    /// borrows: the closure's environment holds the reference and its dropper releases it, so the binding
+    /// is recorded as neither an alias nor an owner.
+    /// </para>
+    /// </summary>
+    private void TrackLetOwnershipAlias(string name, string aliasSourceName, OwnershipInfo aliasedOwner)
+    {
+        if (aliasedOwner.FrameDepth != _lambdaDepth)
+        {
+            return;
+        }
+
+        _ownershipAliases[name] = ResolveOwnershipAlias(aliasSourceName);
+    }
+
     private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
         if (_collectInferredTraitElaboration
@@ -5526,16 +5548,9 @@ public sealed partial class Lowering
         var ownedTypeName = GetOwnedTypeName(prunedValueType);
         if (ownedTypeName is not null)
         {
-            // Alias detection: when `let y = x` and x is already tracked as owned,
-            // record y as an alias of x instead of tracking it independently.
-            // This prevents double-Drop: only the original owner emits Drop.
-            // Only simple Expr.Var references are recognized as aliases. More complex
-            // expressions (function calls, constructors, if/match) produce fresh
-            // values that are tracked as new owners.
-            if (let.Value is Expr.Var aliasSource && LookupOwnedValue(aliasSource.Name) is not null)
+            if (let.Value is Expr.Var aliasSource && LookupOwnedValue(aliasSource.Name) is { } aliasedOwner)
             {
-                var resolvedSource = ResolveOwnershipAlias(aliasSource.Name);
-                _ownershipAliases[let.Name] = resolvedSource;
+                TrackLetOwnershipAlias(let.Name, aliasSource.Name, aliasedOwner);
             }
             else
             {
