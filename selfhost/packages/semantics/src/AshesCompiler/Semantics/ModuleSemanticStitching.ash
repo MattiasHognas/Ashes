@@ -810,7 +810,28 @@ let resolveStitchedUnqualified moduleName boundary kind name (project: StitchedS
                 | Some(definition) -> Some(definition)
                 | None -> resolveImported(name)(None)(kind)(moduleScope.imports)
 
+// A qualifier naming a shipped module outright (`Ashes.Text` in `Ashes.Text.join`) resolves to
+// that module's export with no import in scope, language.md's "qualified access, no import
+// required"; the reserved namespace keeps a user module from ever matching this way. The module
+// is in the project only when a stitcher loaded it for exactly such a reference.
+let resolveShippedModuleExport qualifier kind name (project: StitchedSemanticProject) =
+    if Ashes.Text.startsWith(qualifier)("Ashes.")
+    then
+        match findModule(qualifier)(project.scopes) with
+            | None -> None
+            | Some(moduleScope) ->
+                match findExportedDefinition(name)(kind)(moduleScope.definitions) with
+                    | None -> None
+                    | Some(definition) ->
+                        definition
+                        |> deepCopy
+                        |> Some
+    else None
+
 let resolveStitchedQualified moduleName qualifier kind name (project: StitchedSemanticProject) =
     match findModule(moduleName)(project.scopes) with
         | None -> None
-        | Some(moduleScope) -> resolveImported(name)(Some(qualifier))(kind)(moduleScope.imports)
+        | Some(moduleScope) ->
+            match resolveImported(name)(Some(qualifier))(kind)(moduleScope.imports) with
+                | Some(definition) -> Some(definition)
+                | None -> resolveShippedModuleExport(qualifier)(kind)(name)(project)
