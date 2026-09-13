@@ -2937,20 +2937,27 @@ same public behavior.
   Mirror the contract rather than the symptom: unconditionally dropping a handed-over reference is
   unsound, because other callees genuinely adopt it or keep it in their result. Since #1002 the
   port covers the ordinary call site, and since the self-call port the operand-position self call
-  too (`"a" + go(n - 1)`, `1 + countLeft(n - 1)`): stage 0 lowers a recursive binding's body
-  against a lowering-local arrow whose result stays unresolved until the body is done, so such a
-  call asks for an arena result (the ownership word's bit 1) and defers its copy-out; the
-  self-hosted lowering, which resolves as it goes, gives the self call's last application a
-  fresh result type (`deferSelfCallResultType`) unified with the binding's own once the body is
-  finished (`unifySelfCallResults`) and no longer lowers the body a second time for it. The
-  deferred copy-out itself is now real (`deferCallCopyOut`, resolved with the pending resets by
-  `splicePendingBlocks`: the copy-out block ahead of the reload, or the store and reload removed
-  and the reload's temp renamed when the resolved type needs none), which also closed OPT-25's
-  `CallResultCopyOutPending` tail. `self_call_operand_string_result`,
+  too (`"a" + go(n - 1)`, `1 + countLeft(n - 1)`) of a binding stage 0 does not elaborate: stage 0
+  lowers such a recursive binding's body against a lowering-local arrow whose result stays
+  unresolved until the body is done, so the call asks for an arena result (the ownership word's
+  bit 1) and defers its copy-out; the self-hosted lowering, which resolves as it goes, gives the
+  self call's last application a fresh result type (`deferSelfCallResultType`) unified with the
+  binding's own once the body is finished (`unifySelfCallResults`). A binding stage 0 *does*
+  elaborate (its body applies an operator and its inferred type is closed, which is every such
+  binding the compiler meets, since it always stitches `Ashes.Trait` in; see OPT-70) is lowered
+  against its closed arrow, result included, so its self call reads the returns bit like any
+  call: the self-hosted mirror is the second lowering of the body, judged on a copy of the first
+  whose self-call results and body type are bound into the binding's own arrow
+  (`closeRecursiveBodyResult`), with the deferral decided again on entry
+  (`refreshSelfResultDeferral`). The deferred copy-out itself is real (`deferCallCopyOut`,
+  resolved with the pending resets by `splicePendingBlocks`: the copy-out block ahead of the
+  reload, or the store and reload removed and the reload's temp renamed when the resolved type
+  needs none), which also closed OPT-25's `CallResultCopyOutPending` tail. `--emit-ir lowered`
+  of the stage-0 CLI now matches the self-hosted dump of `self_call_operand_string_result`,
   `tco_non_tail_self_call_in_operator_operand`, `tco_record_head_consed_into_sibling_accumulator`,
-  and `parameter_reaches_result_record_update` (a lowered-ir fixture no runner listed, stale
-  since #887 and regenerated) match stage 0 byte for byte; a recursive group's sibling call is
-  left to OPT-19's merged dispatch.
+  and `parameter_reaches_result_record_update` function for function (the un-stitched oracle
+  fixtures differ by OPT-70's elaboration gap); a recursive group's sibling call is left to
+  OPT-19's merged dispatch.
 - [ ] **OPT-66** Self-hosted mirror of stage 0's let-bound tail-call argument facts. A tail self-call
   whose argument is a `let`-bound name passes a value built earlier in the same iteration, and stage 0
   read the loop's structural facts off that bare `Var`: the parameter was placed on the arena instead
@@ -3004,13 +3011,48 @@ same public behavior.
   emits at the binding's declaration; regenerated from the (main-identical) output. The suite
   now runs green in both modes; its last red check, `TcoLoopLoweringTests.ash`'s `countLeft`,
   closed with OPT-65's self-call port.
-- [ ] **OPT-69** `selfhost/tests/ir-program-parity` stops at its first mismatch, so a red fixture
-  hides every fixture after it: `tco_consumed_list_parameter_borrowed_head` has been red on main
-  behind OPT-65's fixtures for an unknown time (found 2026-09-13; only local slot numbering
-  differs: the runtime-managed list parameter's active-flag slot is allocated before the loop's
-  arena and stack-pointer slots by the self-hosted entry normalization, and after them by stage
-  0), and `pattern_head_read_under_operator` behind it differs by OPT-25's pattern-head borrow.
-  Make the runner report every mismatch in one run, then fix the active-slot allocation order.
+- [x] **OPT-69** `selfhost/tests/ir-program-parity` stopped at its first mismatch, so a red
+  fixture hid every fixture after it. The runner now checks every listed fixture and prints one
+  report per red fixture (line number, expected and actual line) before failing, and names the
+  fixtures it leaves out. The two fixtures found red behind it on 2026-09-13
+  (`tco_consumed_list_parameter_borrowed_head`, `pattern_head_read_under_operator`) turned out to
+  be OPT-70's oracle gap, not lowering bugs: the self-hosted dump of both equals the stage-0
+  CLI's own `--emit-ir lowered` dump function for function. What was a genuine gap is the
+  active-flag slot of a loop parameter whose type is still a variable at the loop entry: stage 0
+  admits a parameter to the reference-counted heap only once its layout is resolved
+  (`ResolvedLayoutEligible`), so it allocates the flag where a back edge or the post-body
+  refresh resolves it, after the locals allocated in between; the self-hosted entry allocated
+  every shape candidate's flag ahead of the body. `allocateListActiveSlots` now skips an
+  unresolved candidate and `allocateListActiveSlotsAt` allocates at the back edge (from the
+  argument types, ahead of the pattern-binding transfer) and at the finalize (every remaining
+  candidate, retired if the resolved types keep it in the arena), pinned by the new
+  `tco_list_parameter_resolved_by_back_edge` fixture (an operator-free loop, so both oracles
+  agree on it).
+- [ ] **OPT-70** The lowered-ir parity oracle (`SelfhostIrParityTests`, `new Lowering(diagnostics)`
+  on the bare fixture source) registers no trait declarations, so no operator records a trait
+  requirement there and `ElaborateInferredTraitBindings` never lowers a binding against its
+  closed inferred type. The compiler always stitches `Ashes.Trait` in (`PrepareStandaloneCompilationSource`
+  and the project loader both add it), so every closed monomorphic binding whose body applies an
+  operator is elaborated in a real compile, and the self-hosted lowering follows the compiler
+  (`bodyEncounteredRequirementClosedScope` lowers such a body again against the closed scope).
+  Where elaboration changes the IR the committed `.ir` therefore pins a configuration no compile
+  runs: a self call under an operator asks for an arena result in the oracle but reads the
+  returns bit in the compiler (`self_call_operand_string_result`,
+  `tco_non_tail_self_call_in_operator_operand`, `parameter_reaches_result_record_update`,
+  `tco_record_head_consed_into_sibling_accumulator`), an unannotated list parameter's active
+  flag is allocated at the loop entry rather than lazily (`tco_consumed_list_parameter_borrowed_head`),
+  and the pattern-bound head read under an operator is tracked and borrowed
+  (`pattern_head_read_under_operator`). Surveyed 2026-09-13 with `ashes compile --emit-ir lowered`
+  over all 63 fixture sources: the self-hosted dump equals the compiler's on every fixture
+  except those six's un-stitched oracles, the stitched `_start_main` brackets of `simple_arith`
+  and `ownerless_match`, the trait-dictionary `makeAdder` of `closure_capture` (TRT), and the
+  deliberately excluded `generic_list_result_deep_copy`, `handle_match_arm_reset`, and
+  `mutual_recursion`. The runner lists the six as `elaboratedFixtures` and skips them by name;
+  `TcoLoopLoweringTests` pins `sumTo`'s compiler dump inline instead. Give the oracle the trait
+  declarations the compiler stitches without its implementations (so the fixtures keep their
+  un-stitched numbering and no dictionary closures appear), regenerate the six, and compare them
+  again; a fixture that turns trait-polymorphic under declared traits (`closure_capture`'s
+  `makeAdder`) belongs to the trait milestone instead.
 
 #### LLVM code generation and runtime integration
 

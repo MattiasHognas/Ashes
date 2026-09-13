@@ -1,0 +1,13 @@
+// expect: 3
+// A list accumulator with no annotation in a loop whose body applies no operator: the
+// accumulator's type is still a variable at the loop entry and resolves only at the back edge,
+// so its active flag is allocated there, after the arm's own pattern locals, rather than ahead
+// of the loop's watermark and stack-pointer slots.
+let recursive collect xs acc =
+    match xs with
+        | [] -> acc
+        | x :: rest -> collect(rest)(Ashes.Text.fromInt(x) :: acc)
+
+match collect([1, 2, 3])([]) with
+    | first :: _ -> Ashes.IO.print(first)
+    | [] -> Ashes.IO.print("none")

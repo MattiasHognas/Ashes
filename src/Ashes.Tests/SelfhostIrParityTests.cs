@@ -65,6 +65,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("tco_variant_parameter_reused_in_place")]
     [Arguments("unannotated_parameter_record")]
     [Arguments("parameter_reaches_result_record_update")]
+    [Arguments("tco_list_parameter_resolved_by_back_edge")]
     public async Task Stage_zero_lowering_matches_shared_lowered_ir_fixture(string fixtureName)
     {
         string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "SelfhostIrParity");

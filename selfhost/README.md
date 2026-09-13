@@ -117,9 +117,12 @@ dotnet run --project src/Ashes.Cli -- compile \
 /tmp/ashes-selfhost-ir-program-parity-tests selfhost/parity/semantics/lowered-ir
 ```
 
-Only fixtures whose IR needs no ownership/reuse arena bracketing or constructor-layout registration
-match yet (currently `simple_arith`); the rest are covered by `SelfhostIrParityTests` on the stage-0
-side only until that machinery is ported.
+The runner checks every fixture it lists and prints one report per mismatch (the first differing
+line, expected and actual) before failing. It names the fixtures it leaves out: those whose
+stage-0 oracle lowers without the trait declarations the compiler stitches, so a binding the
+compiler lowers against its closed inferred type is lowered against an open one there (see
+OPT-70 in `docs/md/future/SELF_HOSTING.md`); the self-hosted dump of those matches the
+compiler's own `ashes compile --emit-ir lowered` output instead.
 
 Run the shared stage-0/self-hosted semantic diagnostic parity fixtures (the diagnostics lowering
 reports, in the frontend's `ashes-diagnostic-v1` format) with:
