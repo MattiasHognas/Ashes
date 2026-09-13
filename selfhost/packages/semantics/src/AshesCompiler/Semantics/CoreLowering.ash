@@ -2473,13 +2473,41 @@ let recursive tailForwardedVariable (body: Expr) =
                 | None -> None
         | _ -> None
 
-let recursive isTailForwardedBindingResult (body: Expr) (name: Str) =
-    match body with
-        | ExprAt(_span, inner) -> isTailForwardedBindingResult(inner)(name)
-        | ExprVar(candidate) -> candidate == name
-        | ExprLet(nested, _value, nestedBody, _parameters, _annotation, _requirements) -> nested != name && isTailForwardedBindingResult(nestedBody)(name)
-        | ExprLetRecursive(nested, _value, nestedBody, _parameters, _annotation, _requirements) -> nested != name && isTailForwardedBindingResult(nestedBody)(name)
+let recursive forwardedBindingContains (name: Str) (forwarded: List(Str)) =
+    match forwarded with
+        | [] -> false
+        | candidate :: rest -> candidate == name || forwardedBindingContains(name)(rest)
+
+// Whether a binding's value is just one of the forwarded names, which makes it an alias of the same
+// reference rather than a new owner.
+let recursive forwardedBindingAliasesValue (value: Expr) (forwarded: List(Str)) =
+    match value with
+        | ExprAt(_span, inner) -> forwardedBindingAliasesValue(inner)(forwarded)
+        | ExprVar(source) -> forwardedBindingContains(source)(forwarded)
         | _ -> false
+
+// Returning an alias still returns the aliased value, so `let a = … in let b = a in b` forwards `a`
+// out of its scope. Missing that released the value at the chain's exit while the result still
+// pointed at it.
+let recursive isTailForwardedBindingResultNames (body: Expr) (forwarded: List(Str)) =
+    match body with
+        | ExprAt(_span, inner) -> isTailForwardedBindingResultNames(inner)(forwarded)
+        | ExprVar(candidate) -> forwardedBindingContains(candidate)(forwarded)
+        | ExprLet(nested, value, nestedBody, _parameters, _annotation, _requirements) ->
+            !forwardedBindingContains(nested)(forwarded) && isTailForwardedBindingResultNames(nestedBody)(
+                if forwardedBindingAliasesValue(value)(forwarded)
+                then nested :: forwarded
+                else forwarded
+            )
+        | ExprLetRecursive(nested, value, nestedBody, _parameters, _annotation, _requirements) ->
+            !forwardedBindingContains(nested)(forwarded) && isTailForwardedBindingResultNames(nestedBody)(
+                if forwardedBindingAliasesValue(value)(forwarded)
+                then nested :: forwarded
+                else forwarded
+            )
+        | _ -> false
+
+let isTailForwardedBindingResult (body: Expr) (name: Str) = isTailForwardedBindingResultNames(body)([name])
 
 // The request the `let`'s body lowers under: `bodyRequest`, the caller's request for the body's
 // result, carrying the binding's slot as the transfer slot when the body hands the newly produced

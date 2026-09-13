@@ -4079,19 +4079,34 @@ public sealed partial class Lowering
 
     private static bool IsTailForwardedBindingResult(Expr body, string bindingName)
     {
-        // A tail-position let chain still transfers the same binding out of its scope. The
-        // intervening values may borrow it (for example spawn(async(shared))), but they do not turn
-        // the final `in shared` into a new owner. Stop at a rebinding so lexical shadowing cannot
-        // transfer the outer value by source name.
+        return IsTailForwardedBindingResult(body, new HashSet<string>(StringComparer.Ordinal) { bindingName });
+    }
+
+    /// <summary>
+    /// Whether the chain in tail position hands <paramref name="forwarded"/>'s value out of its scope,
+    /// so the scope must not release it. The intervening values may borrow it (for example
+    /// <c>spawn(async(shared))</c>) without turning the final <c>in shared</c> into a new owner.
+    /// A binding whose value is just one of these names aliases the same reference, so returning the
+    /// alias still returns this value: <c>let a = … in let b = a in b</c> forwards <c>a</c>. Missing that
+    /// released the value at the chain's exit while the result still pointed at it. Stop at a rebinding,
+    /// so lexical shadowing cannot transfer the outer value by source name.
+    /// </summary>
+    private static bool IsTailForwardedBindingResult(Expr body, IReadOnlySet<string> forwarded)
+    {
         return body switch
         {
-            Expr.Var variable => string.Equals(variable.Name, bindingName, StringComparison.Ordinal),
-            Expr.Let nested when !string.Equals(nested.Name, bindingName, StringComparison.Ordinal) =>
-                IsTailForwardedBindingResult(nested.Body, bindingName),
-            Expr.LetRecursive nested when !string.Equals(nested.Name, bindingName, StringComparison.Ordinal) =>
-                IsTailForwardedBindingResult(nested.Body, bindingName),
+            Expr.Var variable => forwarded.Contains(variable.Name),
+            Expr.Let nested when !forwarded.Contains(nested.Name) =>
+                IsTailForwardedBindingResult(nested.Body, WithAliasOf(nested.Name, nested.Value, forwarded)),
+            Expr.LetRecursive nested when !forwarded.Contains(nested.Name) =>
+                IsTailForwardedBindingResult(nested.Body, WithAliasOf(nested.Name, nested.Value, forwarded)),
             _ => false,
         };
+
+        static IReadOnlySet<string> WithAliasOf(string name, Expr value, IReadOnlySet<string> forwarded)
+            => value is Expr.Var source && forwarded.Contains(source.Name)
+                ? new HashSet<string>(forwarded, StringComparer.Ordinal) { name }
+                : forwarded;
     }
 
     private bool TryLowerRuntimeRcBytesLet(
