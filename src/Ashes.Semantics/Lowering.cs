@@ -677,6 +677,11 @@ public sealed partial class Lowering
     // normalized = makeNode(...)) reuses the same cell rather than allocating a fresh one.
     private HashSet<int> _reuseResultTemps = new();
 
+    // The temps NormalizePatternOwnerElement produced in the function being lowered: owned
+    // reference-counted copies of a pattern-bound head, which carry their own reference and so take
+    // no pattern-owner marker when stored into a cell.
+    private HashSet<int> _patternOwnerNormalizedTemps = new();
+
     // Per-arm result-ownership facts for the innermost match being lowered: whether the arm's result
     // is runtime-RC at all, and whether it is a fresh, unowned RC value (no live binding drops it) —
     // the second bit lets the merged match result stay releasable by a consuming read when EVERY arm
@@ -8292,6 +8297,7 @@ public sealed partial class Lowering
         HashSet<string> SpecAccumulators,
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
+        HashSet<int> PatternOwnerNormalizedTemps,
         Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
         Dictionary<int, int> PendingRuntimeArgumentFlags,
         List<PatternBindingPlacementSite> PatternBindingPlacementSites,
@@ -8362,6 +8368,8 @@ public sealed partial class Lowering
         _resetSafeAccumulators = new HashSet<string>(StringComparer.Ordinal);
         var savedReuseResultTemps = _reuseResultTemps;
         _reuseResultTemps = [];
+        var savedPatternOwnerNormalizedTemps = _patternOwnerNormalizedTemps;
+        _patternOwnerNormalizedTemps = [];
         Dictionary<int, LoweredTempOwnershipFact> savedTempOwnershipFacts = _tempOwnershipFacts;
         _tempOwnershipFacts = [];
         var savedPendingRuntimeArgumentFlags = _pendingRuntimeArgumentFlags;
@@ -8383,6 +8391,7 @@ public sealed partial class Lowering
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
             savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
+            savedPatternOwnerNormalizedTemps,
             savedTempOwnershipFacts, savedPendingRuntimeArgumentFlags,
             savedPatternBindingPlacementSites, savedKnownFunctionLabelsBySlot,
             savedKnownFunctionLabelsByEnvIndex, savedLetBindingValues,
@@ -9535,6 +9544,7 @@ public sealed partial class Lowering
         _linearSpecializationAccumulators = frame.SpecAccumulators;
         _resetSafeAccumulators = frame.ResetSafe;
         _reuseResultTemps = frame.ReuseResultTemps;
+        _patternOwnerNormalizedTemps = frame.PatternOwnerNormalizedTemps;
         _tempOwnershipFacts = frame.TempOwnershipFacts;
         _pendingRuntimeArgumentFlags = frame.PendingRuntimeArgumentFlags;
         _patternBindingPlacementSites = frame.PatternBindingPlacementSites;
@@ -14144,6 +14154,10 @@ public sealed partial class Lowering
             lowered = NormalizeRuntimeManagedBytesValue(lowered);
         }
         lowered = NormalizeRuntimeManagedListElement(lowered, listRequest);
+        if (runtimeManagedList)
+        {
+            lowered = NormalizePatternOwnerElement(element, lowered);
+        }
         // An arena list that escapes (a function result) carries its runtime-managed heads out of
         // the scopes that own them just like a runtime-RC list owns them, so both retain here.
         if (runtimeManagedList || listRequest.TransfersRuntimeManagedChildren)
@@ -14155,6 +14169,52 @@ public sealed partial class Lowering
             lowered = CreateLoweredValue(retainedTemp, lowered.Type);
         }
         return lowered;
+    }
+
+    // A string, or a list of scalars or strings, bound out of a record or list pattern is a
+    // borrowed read of a value the pattern's root owns, so on its own it never counts as a
+    // runtime-managed element, and the cell built around it stays in the arena: a non-tail
+    // producer then copies its whole partial result out of every level's arena window, quadratic
+    // in the finished list. An owned reference-counted copy of the head (linear in its size) lets
+    // the cell be reference-counted, so the result is handed back level to level instead.
+    private LoweredValue NormalizePatternOwnerElement(Expr element, LoweredValue lowered)
+    {
+        if (element is not Expr.Var variable
+            || LookupOwnedValue(variable.Name) is not { PerceusPatternOwner: true, IsDropped: false }
+            || lowered.Ownership.Representation == LoweredTempRepresentation.RuntimeRc)
+        {
+            return lowered;
+        }
+
+        TypeRef elementType = Prune(lowered.Type);
+        IrInst.ListHeadCopyKind? listHeadCopy = elementType switch
+        {
+            TypeRef.TList list when CanArenaReset(Prune(list.Element)) => IrInst.ListHeadCopyKind.Inline,
+            TypeRef.TList list when Prune(list.Element) is TypeRef.TStr => IrInst.ListHeadCopyKind.String,
+            _ => null,
+        };
+        if (elementType is not TypeRef.TStr && listHeadCopy is null)
+        {
+            return lowered;
+        }
+
+        int normalizedTemp = NewTemp();
+        Emit(listHeadCopy is { } headCopy
+            ? new IrInst.CopyOutList(
+                normalizedTemp,
+                lowered.Temp,
+                headCopy,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization)
+            : new IrInst.CopyOutArena(
+                normalizedTemp,
+                lowered.Temp,
+                StaticSizeBytes: -1,
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+        MarkRuntimeManagedTemp(normalizedTemp, type: elementType);
+        _patternOwnerNormalizedTemps.Add(normalizedTemp);
+        return CreateLoweredValue(normalizedTemp, lowered.Type);
     }
 
     private LoweredValue NormalizeRuntimeManagedBytesValue(LoweredValue lowered)
@@ -14695,7 +14755,12 @@ public sealed partial class Lowering
 
         int headTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp);
         MarkResourceArgMoved(cons.Head);
-        MarkTmcSpineChildMoved(cons.Head);
+        // A head copied out of its pattern owner leaves the owner's own reference behind: the cell
+        // owns the copy, and the owner still releases at its scope's exit.
+        if (!_patternOwnerNormalizedTemps.Contains(head.Temp))
+        {
+            MarkTmcSpineChildMoved(cons.Head);
+        }
 
         // Building the cell with a nil tail goes through the ordinary cell lowering, so placement,
         // reuse tokens, and head ownership are decided exactly as they are for a cons that is not

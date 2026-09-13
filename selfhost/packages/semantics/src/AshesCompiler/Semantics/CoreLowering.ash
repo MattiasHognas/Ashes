@@ -421,6 +421,7 @@ type CoreLoweringState =
     | letLambdasByName: MapTree(Str, (List(Str), Expr))
     | runtimeTemps: MapTree(Int, RuntimeTempState)
     | backEdgeDummyTemps: List(Int)
+    | patternOwnerCopyTemps: List(Int)
     | runtimeOwners: List((Int, Bool))
     | reuseTransferredNames: List(Str)
     | reuseEnabled: Bool
@@ -827,6 +828,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         letLambdasByName = Ashes.Collection.Map.empty,
         runtimeTemps = Ashes.Collection.Map.empty,
         backEdgeDummyTemps = [],
+        patternOwnerCopyTemps = [],
         runtimeOwners = [],
         reuseTransferredNames = [],
         reuseEnabled = true,
@@ -2306,9 +2308,12 @@ let duplicatePatternOwnerTemp (child: Expr) (temp: Int) (state: CoreLoweringStat
         | ExprVar(name) ->
             match patternOwnerBinding(name)(state) with
                 | Some(_fact) ->
-                    match freshTemp(state) with
-                        | FreshTemp { state = allocated, temp = duplicate } ->
-                            (emit(RcDup(duplicate)(temp)(false)(false))(allocated), duplicate)
+                    if containsInt(temp)(state.patternOwnerCopyTemps)
+                    then (state, temp)
+                    else
+                        match freshTemp(state) with
+                            | FreshTemp { state = allocated, temp = duplicate } ->
+                                (emit(RcDup(duplicate)(temp)(false)(false))(allocated), duplicate)
                 | None -> (state, temp)
         | _ -> (state, temp)
 
@@ -3988,7 +3993,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -12305,7 +12310,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -12874,6 +12879,57 @@ let retainListElement (request: ConsumerRequest) (transfers: Bool) (element: Exp
             else lowered
         | _ -> lowered
 
+// Stage 0's `NormalizePatternOwnerElement`: a string, or a list of scalars or strings, read out
+// of a pattern owner is a borrowed read of a value the pattern's root owns, so on its own it never
+// counts as a runtime-managed element, and the cell built around it would stay in the arena,
+// where a non-tail producer copies its whole partial result out of every level's window. Under a
+// runtime list request the head takes an owned reference-counted copy instead, recorded so the
+// pattern-owner duplicate is not emitted on top of it.
+let isPatternOwnerRead (child: Expr) (state: CoreLoweringState) =
+    match unspanArgument(child) with
+        | ExprVar(name) ->
+            state
+            |> patternOwnerBinding(name)
+            |> patternOwnerFlag
+        | _ -> false
+
+let patternOwnerHeadCopy (copyTemp: Int) (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString ->
+            None
+            |> CopyOutArena(copyTemp)(sourceTemp)(-1)(true)(RcNormalization)
+            |> Some
+        | SemList(element) ->
+            match listHeadCopyKindOf(element)(state) with
+                | Some(InlineListHead) ->
+                    RcNormalization
+                    |> CopyOutList(copyTemp)(sourceTemp)(InlineListHead)(true)
+                    |> Some
+                | Some(StringListHead) ->
+                    RcNormalization
+                    |> CopyOutList(copyTemp)(sourceTemp)(StringListHead)(true)
+                    |> Some
+                | _ -> None
+        | _ -> None
+
+let normalizePatternOwnerHead (request: ConsumerRequest) (head: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if requestsRuntimeList(request) && isPatternOwnerRead(head)(state) && !isRuntimeTemp(temp)(state)
+            then
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = copyTemp } ->
+                        match patternOwnerHeadCopy(copyTemp)(temp)(semanticType)(allocated) with
+                            | Some(copy) ->
+                                allocated
+                                |> emit(copy)
+                                |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                                |> (given (marked: CoreLoweringState) -> marked with patternOwnerCopyTemps = copyTemp :: marked.patternOwnerCopyTemps)
+                                |> success(copyTemp)(semanticType)
+                            | None -> lowered
+            else lowered
+        | _ -> lowered
+
 // The cell of a cons or list literal is runtime-managed when a runtime list was requested and its
 // head is runtime-manageable, stage 0's `LowerConsCell`.
 let cellIsRuntimeManaged (request: ConsumerRequest) (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) = requestsRuntimeList(request) && isRuntimeManageableListElement(headExpression)(headTemp)(headType)(state)
@@ -13048,6 +13104,7 @@ let lowerCons head tail lower state =
                 |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
                 |> lower(head)
                 |> normalizeRuntimeManagedConsHead(request)(head)(tail)
+                |> normalizePatternOwnerHead(request)(head)
                 |> retainListElement(request)(listTransfers(request)(state))(head)
                 |> finishConsTail(request)(listTransfers(request)(state))(lower)(head)(tail)
 
@@ -13066,6 +13123,7 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
             match state
             |> withConsumerRequest(listElementRequest(request)(Some(elementType))(transfers)(expression)(state))
             |> lower(expression)
+            |> normalizePatternOwnerHead(request)(expression)
             |> retainListElement(request)(transfers)(expression) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
@@ -16882,6 +16940,7 @@ let lowerConsTmc head tail lower state =
                         |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
                         |> lower(head)
                         |> normalizeRuntimeManagedConsHead(request)(head)(tail)
+                        |> normalizePatternOwnerHead(request)(head)
                         |> retainListElement(request)(listTransfers(request)(state))(head)
                         |> finishConsTmc(request)(listTransfers(request)(state))(frame)(loop)(head)(tail)(lower)
                     | _ -> lowerCons(head)(tail)(lower)(state)

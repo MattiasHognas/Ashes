@@ -1823,7 +1823,7 @@ public sealed class OwnershipTests
     }
 
     [Test]
-    public void List_rebuilt_by_consing_onto_a_recursive_call_result_stays_arena_managed()
+    public void List_rebuilt_by_consing_a_borrowed_head_onto_a_recursive_call_result_is_reference_counted()
     {
         // `h :: rebuild(t)` has a Call as its tail -- self-contained per the arena-side
         // IsArenaSelfContainedListRebuildExpr
@@ -1831,7 +1831,12 @@ public sealed class OwnershipTests
         // to whole-clone at a TCO back-edge), but deliberately NOT fresh per this RC-promotion engine's
         // narrower IsFreshListConstructionExpression, which only ever accepts ListLit or a Cons chain
         // bottoming out in one. The two predicates answer different questions (cost-safe-to-clone vs.
-        // safe-to-RC-promote) and must not be unified into accepting the same terminal set.
+        // safe-to-RC-promote) and must not be unified into accepting the same terminal set. The cell
+        // is reference-counted all the same, by the non-tail producer rule rather than by freshness:
+        // the tail is a call back into the producer, whose result the call site normalizes to a
+        // reference-counted list on the copy branch and receives as one on the other, and the head,
+        // a string bound out of the list pattern, is copied to an owned reference-counted string so
+        // the cell can own it. An arena cell here made every level copy its partial result out.
         IrProgram ir = LowerProgram(
             """
             let recursive rebuild xs =
@@ -1845,18 +1850,28 @@ public sealed class OwnershipTests
                 | head :: _ -> Ashes.Text.byteLength(head)
             """);
 
-        // The call fixes the element type, so the rebuild is compiled twice: the generic function and
-        // the element specialization the call routes to. Both copies owe the same invariant.
+        // The call fixes the element type, so the rebuild is compiled twice: the generic function,
+        // whose head type is still a type variable and so cannot be copied to an owned value (its
+        // cell stays in the arena), and the element specialization the call routes to, which knows
+        // the head is a string.
         IReadOnlyList<IrFunction> rebuilds =
             [.. ir.Functions.Where(function => function.Instructions.Any(inst => inst is IrInst.StoreMemOffset))];
-        rebuilds.ShouldNotBeEmpty();
+        rebuilds.Count.ShouldBe(2);
         foreach (IrFunction rebuild in rebuilds)
         {
-            rebuild.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
-                "a cons cell whose tail is a recursive call result must stay arena-managed under this RC " +
-                "engine even though the arena/TCO side's own IsArenaSelfContainedListRebuildExpr treats a call result as " +
-                "safe to whole-clone -- the two questions (RC-promotion-safe vs. clone-cost-safe) are not " +
-                "the same question and must not share a terminal set.");
+            bool specialized = rebuild.Origin?.Kind == IrFunctionOriginKind.ElementSpecialization;
+            rebuild.Instructions
+                .OfType<IrInst.Alloc>()
+                .Where(inst => inst.SizeBytes == 16)
+                .ShouldAllBe(inst => inst.RuntimeManaged == specialized);
+            rebuild.Instructions
+                .Count(inst => inst is IrInst.CopyOutArena
+                {
+                    RuntimeManaged: true,
+                    StaticSizeBytes: -1,
+                    Purpose: IrInst.CopyOutPurpose.RcNormalization,
+                })
+                .ShouldBe(specialized ? 1 : 0, "the borrowed head is copied to an owned reference-counted string once per cell");
         }
     }
 

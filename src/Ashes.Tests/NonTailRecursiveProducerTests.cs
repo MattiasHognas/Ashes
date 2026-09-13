@@ -130,6 +130,66 @@ public sealed class NonTailRecursiveProducerTests
     }
 
     [Test]
+    public void A_producer_consing_a_string_bound_out_of_a_record_keeps_its_spine_reference_counted()
+    {
+        // The head is a borrowed read of a string the record pattern's root owns, so it is not a
+        // runtime-managed producer on its own; the head is copied to an owned reference-counted
+        // string instead, which keeps the spine cell reference-counted. An arena cell here made
+        // every level copy its whole partial result out of its own window (quadratic in the list).
+        var ir = LowerProgram("""
+            type Node =
+                | functionName: Str
+                | id: Int
+
+            let recursive getNodeNames (nodes: List(Node)) =
+                match nodes with
+                    | [] -> []
+                    | Node { functionName = name } :: rest -> name :: getNodeNames(rest)
+
+            getNodeNames([Node(functionName = "a", id = 1), Node(functionName = "b", id = 2)])
+            """);
+
+        IrFunction producer = FunctionFromSource(ir, "getNodeNames");
+        producer.Instructions
+            .OfType<IrInst.Alloc>()
+            .Where(a => a.SizeBytes == 16)
+            .ShouldAllBe(a => a.RuntimeManaged);
+        producer.Instructions
+            .OfType<IrInst.CopyOutArena>()
+            .Count(c => c.RuntimeManaged && c.StaticSizeBytes == -1)
+            .ShouldBe(1);
+    }
+
+    [Test]
+    public void A_producer_consing_a_list_bound_out_of_a_record_keeps_its_spine_reference_counted()
+    {
+        // The same shape with a list of scalars as the borrowed head: the head is copied to an
+        // owned reference-counted list, one cell per element, so the spine stays reference-counted.
+        var ir = LowerProgram("""
+            type Node =
+                | functionName: Str
+                | deps: List(Int)
+
+            let recursive allDeps (nodes: List(Node)) =
+                match nodes with
+                    | [] -> []
+                    | Node { deps = deps } :: rest -> deps :: allDeps(rest)
+
+            allDeps([Node(functionName = "a", deps = [1]), Node(functionName = "b", deps = [2, 3])])
+            """);
+
+        IrFunction producer = FunctionFromSource(ir, "allDeps");
+        producer.Instructions
+            .OfType<IrInst.Alloc>()
+            .Where(a => a.SizeBytes == 16)
+            .ShouldAllBe(a => a.RuntimeManaged);
+        producer.Instructions
+            .OfType<IrInst.CopyOutList>()
+            .Count(c => c.RuntimeManaged && c.Purpose == IrInst.CopyOutPurpose.RcNormalization)
+            .ShouldBe(1);
+    }
+
+    [Test]
     public void A_recursive_producer_builds_its_spine_in_a_loop_instead_of_recursing()
     {
         // Tail modulo constructor: `7 :: makeList(...)` becomes one cell per iteration plus a jump

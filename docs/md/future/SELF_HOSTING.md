@@ -3157,7 +3157,7 @@ same public behavior.
   MOD-13. Found on the way, and filed as OPT-76 with its reproduction: a stage-0 use after
   free that the accumulate-and-reverse shape of a record builder triggers, which is why
   `buildComponents` keeps its recursive shape.
-- [ ] **OPT-74** Stage 0 copies the partial result of a list builder out at every return when
+- [x] **OPT-74** Stage 0 copies the partial result of a list builder out at every return when
   the element consed around the recursive call is a string or list borrowed from a record
   (`| Node { functionName = name } :: tail -> name :: getNodeNames(tail)`), so a builder over n
   records costs n^2 memory: measured 2026-09-13, 4,000 records cost 1.1 GiB and 0.19 s where
@@ -3175,7 +3175,33 @@ same public behavior.
   account for most of the samples, then `refineProgramParameterOwnership` (one list per
   fixpoint pass over every function) and the `ResultReachSummaries` path builders. Fixing the
   stage-0 copy is the leveraged fix; the selfhost can also stop building name lists for
-  membership tests (a constructor name set in the lowering state).
+  membership tests (a constructor name set in the lowering state). Fixed in both compilers
+  (2026-09-13): the head admission was the gap. A cons whose tail is a call back into the
+  producer already asks for a reference-counted cell, but a string or list bound out of a
+  record or list pattern is a borrowed read of a value the pattern's root owns, never a
+  runtime-managed element, so the cell stayed in the arena. Under that request the head now
+  takes an owned reference-counted copy once per cell (`NormalizePatternOwnerElement`, a
+  `CopyOutArena` for a string and a `CopyOutList` for a list of scalars or strings), the
+  pattern-owner marker is not stacked on it, and the tail-modulo-constructor path no longer
+  marks such a head moved, so the owner still releases its own reference. The 4,000-record
+  builder went from 509 MiB to 8 MiB, its tuple and list-head variants likewise, and the
+  BOOT-2 probe from exhausting 45 GiB to reaching MOD-14 in 25 s and 28 GiB. Tests:
+  `NonTailRecursiveProducerTests` (string and list heads), the rewritten
+  `List_rebuilt_by_consing_a_borrowed_head_onto_a_recursive_call_result_is_reference_counted`,
+  and the parity fixture `producer_conses_record_string_head`. A head of any other type (a
+  record, a list of records, an unresolved element type in a generic producer) still keeps the
+  arena cell and the per-level copy.
+- [ ] **OPT-78** Two self-hosted lowering divergences found while writing OPT-74's parity fixture
+  (2026-09-13), both pre-existing: the self-hosted compiler applies the tail-modulo-constructor
+  transform to a generic producer whose head type is still a type variable (`let recursive
+  rebuild xs = match xs with | [] -> [] | h :: t -> h :: rebuild(t)`, called at `List(Str)`),
+  where stage 0 declines it and lowers the recursion (its element specialization is what gets
+  the reference-counted cell); and it emits no `__rcdrop_structural_N` owner dropper for a
+  top-level `match names with | name :: _ -> name | [] -> "none"` over a reference-counted
+  list of strings, where stage 0 synthesizes one. Neither shape is in a parity fixture; the
+  scratch dumper (`dumpir`) on the two snippets shows both. Mirror stage 0's
+  `CanBuildRuntimeManagedCell` decline for an unresolved element type and its structural
+  dropper synthesis for the pattern owner, and add both shapes as fixtures.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
@@ -3762,10 +3788,11 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   stitching gap, now MOD-13). OPT-72 made the lowering linear in the number of declarations and
   stack-safe, and fixed a stage-0 use after unmap it exposed; OPT-73 made the provenance and
   reach fixpoints once-per-program worklists. MOD-13 closed the two stitching gaps that
-  stopped the lowering at 15 GiB; the lowering now runs on past them and exhausts 45 GiB
-  (OPT-74's builder copies, then OPT-77's entry copies), and with OPT-77's copies disabled in
-  stage 0 it reaches MOD-14's diagnostic after 31 s and 43 GiB, so OPT-74 is the next blocker
-  and MOD-14 the one after. The measurement tool is a
+  stopped the lowering at 15 GiB; the lowering then ran on past them and exhausted 45 GiB.
+  OPT-74 (the builder head copies) brought it to MOD-14's diagnostic in 25 s and 28 GiB with
+  the stock stage 0, against the 9 GiB stage 0 itself needs for the same package, so the
+  remaining memory (OPT-77's entry copies and whatever the next gdb `mmap` sampling names) and
+  MOD-14 are the next blockers. The measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker
