@@ -120,6 +120,34 @@ public sealed class TraitInferenceTests
     }
 
     [Test]
+    [Arguments("unjustified", "justified")]
+    [Arguments("justified", "unjustified")]
+    public void UnjustifiedRequiresBlamesOnlyTheBindingThatLacksTheEvidence(string first, string second)
+    {
+        string Binding(string name) => string.Equals(name, "unjustified", StringComparison.Ordinal)
+            ? "let unjustified : a -> a requires {Eq(a)} = given (value) -> value"
+            : "let justified : a -> Bool requires {Eq(a)} = given (value) -> Eq.equal(value)(value)";
+        string source = $"""
+            trait Eq(a) =
+                | equal : a -> a -> Bool
+
+            {Binding(first)}
+
+            {Binding(second)}
+
+            0
+            """;
+
+        _ = Lower(source, out Diagnostics diagnostics);
+
+        DiagnosticEntry[] unjustified = diagnostics.StructuredErrors
+            .Where(error => error.Message.Contains("includes unjustified requirement", StringComparison.Ordinal))
+            .ToArray();
+        unjustified.Length.ShouldBe(1, string.Join(" | ", diagnostics.Errors));
+        source[unjustified[0].Span.Start..].ShouldStartWith("unjustified", Case.Sensitive);
+    }
+
+    [Test]
     public void ExportedNonRecursiveBindingInfersAndGeneralizesItsConstraint()
     {
         const string source = """

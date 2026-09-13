@@ -113,6 +113,31 @@ public sealed partial class Lowering
         return span.Length == 0 ? TextSpan.FromBounds(span.Start, span.Start + 1) : span;
     }
 
+    /// <summary>
+    /// The span to blame for something a binding as a whole got wrong. A flat top-level declaration's
+    /// node is synthesized by <c>DesugarTopLevel</c>, so the only span it carries is the name span the
+    /// desugaring copies from the declaration; the unspanned fallback is offset 0, which renders as the
+    /// first stitched standard-library module rather than the user's code. Deliberately separate from the
+    /// node's own span, which <c>Emit</c> reads to position instructions: a declaration's instruction
+    /// positions are a debug-info contract the self-hosted lowerer mirrors fixture for fixture.
+    /// </summary>
+    private static TextSpan GetBindingSpan(Expr binding)
+    {
+        TextSpan span = AstSpans.GetOrDefault(binding);
+        if (span.Length != 0)
+        {
+            return span;
+        }
+
+        TextSpan nameSpan = binding switch
+        {
+            Expr.Let let => AstSpans.GetLetNameOrDefault(let),
+            Expr.LetRecursive letRecursive => AstSpans.GetLetRecursiveNameOrDefault(letRecursive),
+            _ => default,
+        };
+        return nameSpan.Length != 0 ? nameSpan : GetSpan(binding);
+    }
+
     private static TextSpan GetSpan(Pattern pattern)
     {
         var span = AstSpans.GetOrDefault(pattern);

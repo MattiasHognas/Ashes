@@ -106,6 +106,10 @@ public sealed partial class Lowering
     // the rewritten body a second time.
     private bool _sourceTraitConstraintBoundariesValidated;
 
+    // The written-versus-inferred requirement mismatches this pass found on source bindings, kept so a
+    // pass that can still see unelaborated evidence can hand its findings to one that cannot.
+    private readonly List<DiagnosticEntry> _sourceConstraintBoundaryDiagnostics = [];
+
     private TraitEvidenceAnnotations BuildTraitEvidenceAnnotations()
     {
         TraitDictionaryFunctionInfo[] functions = _traitDictionaryFunctions.Values
@@ -297,6 +301,16 @@ public sealed partial class Lowering
         _ = discovery.Lower(program);
         if (discoveryDiagnostics.StructuredErrors.Count > 0)
         {
+            // The discovery pass is the only one that still sees which operations justify each written
+            // requires clause, so take its boundary findings rather than letting this pass re-derive
+            // them. Re-deriving them reads bodies whose evidence dictionary emission has already
+            // discharged, which makes every written clause look unjustified and blames bindings whose
+            // clauses are justified.
+            foreach (DiagnosticEntry boundary in discovery._sourceConstraintBoundaryDiagnostics)
+            {
+                _diag.Error(boundary.Span, boundary.Message, boundary.Code);
+            }
+            _sourceTraitConstraintBoundariesValidated = true;
             return program;
         }
 
