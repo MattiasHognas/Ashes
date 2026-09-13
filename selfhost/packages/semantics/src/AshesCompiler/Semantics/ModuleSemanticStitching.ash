@@ -105,12 +105,17 @@ type ModuleSemanticStitchError =
     | CompilerPrivateNameCollision(Str, Str, Str)
     deriving {Eq, Show}
 
+// `global` marks a definition whose compiler name is its source name in every module: an
+// external opaque type, which stage 0 never renames (its private-member renaming covers the
+// module's declared types only), so a bare reference to the handle type from a module that
+// imports the declaring module whole names the same declaration.
 type PendingDefinition =
     | name: Str
     | kind: StitchedNameKind
     | span: Maybe(TextSpan)
     | order: Int
     | recursiveVisible: Bool
+    | global: Bool
 
 type DefinitionCollection =
     | reversed: List(PendingDefinition)
@@ -187,9 +192,11 @@ let recursive hasPendingDefinition name kind definitions =
             then true
             else hasPendingDefinition(name)(kind)(rest)
 
-let addPending name kind span order recursiveVisible collection =
+let addPendingWith (global: Bool) name kind span order recursiveVisible collection =
     match collection with
-        | DefinitionCollection { reversed = reversed, nextOrder = nextOrder } -> DefinitionCollection(reversed = PendingDefinition(name = name, kind = kind, span = span, order = order, recursiveVisible = recursiveVisible) :: reversed, nextOrder = nextOrder)
+        | DefinitionCollection { reversed = reversed, nextOrder = nextOrder } -> DefinitionCollection(reversed = PendingDefinition(name = name, kind = kind, span = span, order = order, recursiveVisible = recursiveVisible, global = global) :: reversed, nextOrder = nextOrder)
+
+let addPending name kind span order recursiveVisible collection = addPendingWith(false)(name)(kind)(span)(order)(recursiveVisible)(collection)
 
 let recursive addConstructors constructors span order collection =
     match constructors with
@@ -238,7 +245,7 @@ let recursive addBindings bindings span order recursiveVisible collection =
 
 let addExternal declaration span order collection =
     match declaration with
-        | ExternalOpaqueType(name, _resource) -> addPending(name)(StitchedType)(span)(order)(false)(collection)
+        | ExternalOpaqueType(name, _resource) -> addPendingWith(true)(name)(StitchedType)(span)(order)(false)(collection)
         | ExternalFunction(name, _parameters, _result, _symbol, _ownership, _needs) ->
             addPending(
                 name,
@@ -370,17 +377,20 @@ let recursive materializeDefinitions pending (unit: SemanticStitchUnit) nextId r
         | SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = _imports, interface = ModuleImportInterface { name = _interfaceName, exports = exports }, program = _program, isEntry = isEntry } ->
             match pending with
                 | [] -> (reverseList(reversed), nextId)
-                | PendingDefinition { name = name, kind = kind, span = span, order = order, recursiveVisible = recursiveVisible } :: rest ->
+                | PendingDefinition { name = name, kind = kind, span = span, order = order, recursiveVisible = recursiveVisible, global = global } :: rest ->
                     let exported = interfaceExports(name)(kind)(exports)
                     in
                         let definition =
-                            StitchedDefinition(id = nextId, sourceName = name, qualifiedName = moduleName + "." + name, compilerName = compilerName(
-                                moduleName,
-                                name,
-                                kind,
-                                isEntry,
-                                exported
-                            ), moduleName = moduleName, packageId = packageId, sourcePath = sourcePath, kind = kind, definitionSpan = span, declarationOrder = order, visibleFrom = if recursiveVisible
+                            StitchedDefinition(id = nextId, sourceName = name, qualifiedName = moduleName + "." + name, compilerName = if global
+                            then deepCopy(name)
+                            else
+                                compilerName(
+                                    moduleName,
+                                    name,
+                                    kind,
+                                    isEntry,
+                                    exported
+                                ), moduleName = moduleName, packageId = packageId, sourcePath = sourcePath, kind = kind, definitionSpan = span, declarationOrder = order, visibleFrom = if recursiveVisible
                             then order
                             else order + 1, exported = exported)
                         in materializeDefinitions(rest)(unit)(nextId + 1)(definition :: reversed)
@@ -394,7 +404,7 @@ let recursive duplicateDefinition definitions seen =
             else
                 duplicateDefinition(
                     rest,
-                    PendingDefinition(name = name, kind = kind, span = None, order = 0, recursiveVisible = false) :: seen
+                    PendingDefinition(name = name, kind = kind, span = None, order = 0, recursiveVisible = false, global = false) :: seen
                 )
 
 let recursive compilerNameOwner name definitions =

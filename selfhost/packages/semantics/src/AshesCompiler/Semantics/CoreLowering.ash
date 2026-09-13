@@ -20,6 +20,9 @@ import AshesCompiler.Frontend.Syntax.ProgramSyntax
 import AshesCompiler.Frontend.Syntax.CapabilityDecl
 import AshesCompiler.Frontend.Syntax.CapabilityOperation
 import AshesCompiler.Frontend.Syntax.TypeDecl
+import AshesCompiler.Frontend.Syntax.TypeAliasDecl
+import AshesCompiler.Frontend.Syntax.ZeroCostTypeDecl
+import AshesCompiler.Frontend.Syntax.ExternalDecl
 import AshesCompiler.Frontend.Syntax.TypeConstructor
 import AshesCompiler.Frontend.Syntax.TypeParameter
 import AshesCompiler.Frontend.Syntax.TypeExpr
@@ -386,6 +389,7 @@ type CoreLoweringState =
     | externalLayouts: List(CoreExternalFunctionLayout)
     | externalFunctions: List(ExternalFunctionAbi)
     | externalOpaqueTypes: List(Str)
+    | declaredTypeNames: MapTree(Str, Bool)
     | capabilityLayouts: List(CoreCapabilityLayout)
     | staticProviders: List(CoreStaticProviderLayout)
     | capabilityGlobalCount: Int
@@ -785,6 +789,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         externalLayouts = externalLayouts,
         externalFunctions = externalFunctions,
         externalOpaqueTypes = externalOpaqueTypes,
+        declaredTypeNames = Ashes.Collection.Map.empty,
         capabilityLayouts = capabilityLayouts,
         staticProviders = staticProviders,
         capabilityGlobalCount = capabilityGlobalCount,
@@ -17884,7 +17889,12 @@ let recursive containsTypeName names target =
 // no user `type` declaration registers a layout for.
 let isBuiltinRuntimeTypeName name = name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Socket" || name == "TlsSocket" || name == "Task" || name == "JoinHandle" || name == "Process" || name == "FileHandle"
 
-let isKnownTypeName name selfName layouts externalOpaqueTypes =
+// Stage 0's `knownTypeNames`: the type itself, the primitives and builtin runtime types, the
+// external opaque types, the types registered so far, and every type the program declares
+// anywhere (`declaredTypeNames`, collected before any declaration is registered), so a
+// constructor field naming a type declared later is a forward reference, not an implicit type
+// parameter.
+let isKnownTypeName name selfName layouts externalOpaqueTypes (declaredTypeNames: MapTree(Str, Bool)) =
     if name == selfName
     then true
     else
@@ -17894,40 +17904,43 @@ let isKnownTypeName name selfName layouts externalOpaqueTypes =
             if containsTypeName(externalOpaqueTypes)(name)
             then true
             else
-                match findDeclaredTypeArity(name)(layouts) with
-                    | Some(_arity) -> true
-                    | None -> false
+                match Ashes.Collection.Map.getStr(name)(declaredTypeNames) with
+                    | Some(_declared) -> true
+                    | None ->
+                        match findDeclaredTypeArity(name)(layouts) with
+                            | Some(_arity) -> true
+                            | None -> false
 
-let recursive collectImplicitTypeParameterNames (typeExpr: TypeExpr) selfName layouts externalOpaqueTypes acc =
+let recursive collectImplicitTypeParameterNames (typeExpr: TypeExpr) selfName layouts externalOpaqueTypes (declaredTypeNames: MapTree(Str, Bool)) acc =
     match typeExpr with
-        | TypeAt(_span, inner) -> collectImplicitTypeParameterNames(inner)(selfName)(layouts)(externalOpaqueTypes)(acc)
+        | TypeAt(_span, inner) -> collectImplicitTypeParameterNames(inner)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)(acc)
         | TypeNamed(name) ->
-            if isKnownTypeName(name)(selfName)(layouts)(externalOpaqueTypes)
+            if isKnownTypeName(name)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)
             then acc
             else
                 if containsTypeName(acc)(name)
                 then acc
                 else append(acc)([name])
-        | TypeApplied("List", element :: []) -> collectImplicitTypeParameterNames(element)(selfName)(layouts)(externalOpaqueTypes)(acc)
-        | TypeApplied(_name, arguments) -> collectImplicitTypeParameterNamesList(arguments)(selfName)(layouts)(externalOpaqueTypes)(acc)
-        | TypeTuple(elements) -> collectImplicitTypeParameterNamesList(elements)(selfName)(layouts)(externalOpaqueTypes)(acc)
-        | TypeArrow(argument, result, _capabilities, _tail) -> collectImplicitTypeParameterNamesList([argument, result])(selfName)(layouts)(externalOpaqueTypes)(acc)
+        | TypeApplied("List", element :: []) -> collectImplicitTypeParameterNames(element)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)(acc)
+        | TypeApplied(_name, arguments) -> collectImplicitTypeParameterNamesList(arguments)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)(acc)
+        | TypeTuple(elements) -> collectImplicitTypeParameterNamesList(elements)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)(acc)
+        | TypeArrow(argument, result, _capabilities, _tail) -> collectImplicitTypeParameterNamesList([argument, result])(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)(acc)
         | _other -> acc
-and collectImplicitTypeParameterNamesList (typeExprs: List(TypeExpr)) selfName layouts externalOpaqueTypes acc =
+and collectImplicitTypeParameterNamesList (typeExprs: List(TypeExpr)) selfName layouts externalOpaqueTypes (declaredTypeNames: MapTree(Str, Bool)) acc =
     match typeExprs with
         | [] -> acc
         | head :: tail ->
             acc
-            |> collectImplicitTypeParameterNames(head)(selfName)(layouts)(externalOpaqueTypes)
-            |> collectImplicitTypeParameterNamesList(tail)(selfName)(layouts)(externalOpaqueTypes)
+            |> collectImplicitTypeParameterNames(head)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)
+            |> collectImplicitTypeParameterNamesList(tail)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)
 
-let recursive collectImplicitTypeParametersFromConstructors (constructors: List(TypeConstructor)) selfName layouts externalOpaqueTypes acc =
+let recursive collectImplicitTypeParametersFromConstructors (constructors: List(TypeConstructor)) selfName layouts externalOpaqueTypes (declaredTypeNames: MapTree(Str, Bool)) acc =
     match constructors with
         | [] -> acc
         | TypeConstructor { parameters = parameters } :: rest ->
             acc
-            |> collectImplicitTypeParameterNamesList(parameters)(selfName)(layouts)(externalOpaqueTypes)
-            |> collectImplicitTypeParametersFromConstructors(rest)(selfName)(layouts)(externalOpaqueTypes)
+            |> collectImplicitTypeParameterNamesList(parameters)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)
+            |> collectImplicitTypeParametersFromConstructors(rest)(selfName)(layouts)(externalOpaqueTypes)(declaredTypeNames)
 
 let recursive namesToTypeParameters (names: List(Str)) =
     match names with
@@ -17967,12 +17980,12 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
             then Error(ReservedTypeName("'Ashes' and built-in runtime types are reserved"))
             else
                 match state with
-                    | CoreLoweringState { typeSupply = supply, constructorLayouts = existingLayouts, externalOpaqueTypes = externalOpaqueTypes } ->
+                    | CoreLoweringState { typeSupply = supply, constructorLayouts = existingLayouts, externalOpaqueTypes = externalOpaqueTypes, declaredTypeNames = declaredTypeNames } ->
                         let effectiveTypeParameters =
                             match typeParameters with
                                 | [] ->
                                     []
-                                    |> collectImplicitTypeParametersFromConstructors(constructors)(name)(existingLayouts)(externalOpaqueTypes)
+                                    |> collectImplicitTypeParametersFromConstructors(constructors)(name)(existingLayouts)(externalOpaqueTypes)(declaredTypeNames)
                                     |> namesToTypeParameters
                                 | explicit -> explicit
                         in
@@ -18166,15 +18179,42 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
 // ahead of the item walk), so a constructor is known to every analysis that runs ahead of the
 // declaration's own position, the whole-program provenance fixpoint among them; the item walk
 // then passes the declarations by.
-let recursive registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
+// Every type name the program declares (a type, a type alias, a zero-cost type, or an external
+// opaque type), known to the registration of each declaration before any is registered, as
+// stage 0's `knownTypeNames` is.
+let recursive declaredTypeNamesOf (items: List(TopLevelItem)) (names: MapTree(Str, Bool)) =
+    match items with
+        | [] -> names
+        | TopLevelAt(_span, inner) :: rest -> declaredTypeNamesOf(inner :: rest)(names)
+        | TopLevelType(TypeDecl { name = name }) :: rest ->
+            names
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> declaredTypeNamesOf(rest)
+        | TopLevelExternal(ExternalOpaqueType(name, _resource)) :: rest ->
+            names
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> declaredTypeNamesOf(rest)
+        | TopLevelTypeAlias(TypeAliasDecl { name = name }) :: rest ->
+            names
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> declaredTypeNamesOf(rest)
+        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name }) :: rest ->
+            names
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> declaredTypeNamesOf(rest)
+        | _ :: rest -> declaredTypeNamesOf(rest)(names)
+
+let recursive registerDeclaredTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
     match items with
         | [] -> Ok(state)
-        | TopLevelAt(_span, inner) :: rest -> registerProgramTypes(inner :: rest)(state)
+        | TopLevelAt(_span, inner) :: rest -> registerDeclaredTypes(inner :: rest)(state)
         | TopLevelType(declaration) :: rest ->
             match registerTopLevelTypeDeclaration(declaration)(state) with
                 | Error(error) -> Error(error)
-                | Ok(registered) -> registerProgramTypes(rest)(registered)
-        | _ :: rest -> registerProgramTypes(rest)(state)
+                | Ok(registered) -> registerDeclaredTypes(rest)(registered)
+        | _ :: rest -> registerDeclaredTypes(rest)(state)
+
+let registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) = registerDeclaredTypes(items)((state with declaredTypeNames = declaredTypeNamesOf(items)(Ashes.Collection.Map.empty)))
 
 let lowerProgramWithCapabilities items trailingBody environment state =
     match registerProgramCapabilities(items)(state) with

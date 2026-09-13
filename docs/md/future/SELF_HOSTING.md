@@ -681,17 +681,28 @@ same public behavior.
   diagnostic ordering across files. Declaration-only entries infer Unit, non-entry trailing bodies
   are ignored, and reachable parse diagnostics retain their structured source/span data in stable
   discovery, span, and emission order.
-- [ ] **MOD-13** A stitched generic type used without its argument. The BOOT-2 probe (the stage-1
-  CLI compiling its own CLI package) stops in the lowering with
+- [x] **MOD-13** A stitched generic type used without its argument. The BOOT-2 probe (the stage-1
+  CLI compiling its own CLI package) stopped in the lowering with
   `UnsupportedTypeDeclaration("Type 'AshesCompiler_Frontend_Syntax_Expr' expects 1 type
-  argument(s) but got 0.")`, and the formatter package alone the same way (2026-09-13):
-  `Expr` is declared without type parameters, so the stitched declaration gets one from
-  `collectImplicitTypeParametersFromConstructors` (a constructor field naming a type the walk
-  does not know yet reads as an implicit parameter), and every later bare use of the name then
-  fails the arity check. Stage 0 compiles the same packages. Find the field that turns into the
-  implicit parameter (a type from another module registered later in the stitched order, or a
-  module-qualified name the stitcher rewrote) and register the declaration the way stage 0 does;
-  a reduced two-module repro belongs in `selfhost/tests/projects`.
+  argument(s) but got 0.")` (2026-09-13): `Expr` is declared without type parameters, so the
+  stitched declaration got one from `collectImplicitTypeParametersFromConstructors`, whose
+  `isKnownTypeName` only knew the layouts registered so far, and a constructor field naming a
+  type declared later in the stitched order (`Expr`'s `TypeParameter`) read as an implicit
+  parameter. Two causes, both fixed: the lowering now pre-scans every type, alias, zero-cost
+  and external opaque declaration into `declaredTypeNames` before registering any (stage 0's
+  `knownTypeNames`), and the stitcher keeps an `external type` declaration's compiler name bare
+  (stage 0's `RenamePrivateModuleMembers` never renames one) where it used to rename the
+  declaration `AshesPrivateType_...` while the constructor fields still named `LLVMValueRef`,
+  which made `CopyOutRuntime`'s field an implicit parameter. Tests:
+  `expectForwardTypeReferenceKeepsArity` and `expectExternalOpaqueFieldKeepsArity` in the
+  semantics suite.
+- [ ] **MOD-14** The stage-1 lowering of the CLI package's entry expression fails with
+  `CoreCallTypeMismatch(TypeArityMismatch(0, 4))` at `Package.ash:20` (the trailing
+  `Ashes.IO.args |> runCli |> Ashes.IO.exit`, span 1709-1923), reached once MOD-13 closed
+  (2026-09-13, under a stage 0 with OPT-77's entry copies disabled; the stock stage 0 exhausts
+  45 GiB first, see OPT-74). Stage 0 compiles the package. Find which of `runCli` and
+  `Ashes.IO.exit` the stage-1 core inference gives the wrong arity (a capability row or the
+  `Never`-returning `exit`), with a reduced repro in `selfhost/tests/cli`.
 
 #### IR model and lowering
 
@@ -3157,7 +3168,14 @@ same public behavior.
   element or place the spine on the reference-counted heap instead of copying the prefix at
   every level. Until then the self-hosted compiler's builders over record fields accumulate
   and reverse (`getNodeNamesInto`, `nodesOf`, `resolveNodeProvenancesInto`,
-  `dedupeValuePlacementsInto`).
+  `dedupeValuePlacementsInto`). This shape is what now dominates the BOOT-2 probe's memory
+  (2026-09-13, sampled with gdb at every heap-growing `mmap` past 8 GiB): the two constructor
+  name builders `constructorLayoutNames` and `constructorNamesOf` in `CoreLowering.ash`,
+  called per parameter and per pattern name over every constructor of the stitched program,
+  account for most of the samples, then `refineProgramParameterOwnership` (one list per
+  fixpoint pass over every function) and the `ResultReachSummaries` path builders. Fixing the
+  stage-0 copy is the leveraged fix; the selfhost can also stop building name lists for
+  membership tests (a constructor name set in the lowering state).
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
@@ -3183,6 +3201,25 @@ same public behavior.
   the owner's release balances, which is the OPT-71 model gap for record loop parameters seen
   from the child's side. Until then a stage-1 builder that stores a `let`-bound call result
   into a record and accumulates the records on a loop parameter keeps the recursive shape.
+- [ ] **OPT-77** Stage 0 deep-copies a loop's accumulator at entry for an in-place reuse
+  specialization that never runs, and for one that does but cannot pay for the copy. A loop
+  parameter passed to a specializable function is scanned as a specialization candidate and,
+  when the whole-program move analysis cannot prove it unique, deep-copied once at loop entry
+  so an `f$reuse` clone may rewrite it in place. Two gaps found in the BOOT-2 probe
+  (2026-09-13): the copy is kept even when every such call was qualified away (`getStr` on a
+  map is a pure reader, "result does not rebuild accumulator", so no clone is generated and the
+  copy only duplicates the map), and when the clone is `Map.setStr`, a helper loop such as
+  `enqueueDependents` re-entered from `solveReach` once per changed summary copies the whole
+  queued-set map (about 30,000 nodes) on every entry to save an O(log n) path rebuild, because
+  the argument is the result of an over-applied nested-`go` call (`setStr(k)(v)(map)`) that
+  `OverApplicationReach` poisons, so `ResultAliasUnsafe` rejects the elision. The first gap is
+  fixed on a branch (a `NoSpecializedCall` entry-copy outcome that omits the copy unless a call
+  was routed to a clone for that accumulator; `SpecializationCandidate_OmitsEntryCopyWhenNoCallIsSpecialized`).
+  The second needs either an over-application reach for the nested-`go` shape so the
+  elision can prove the argument moved, or a cost gate that declines the copy when the
+  clone's rebuild is a path rather than the whole accumulator; measured with the copies
+  disabled, the probe's lowering still needs 43 GiB (OPT-74 dominates), so this is not the
+  first blocker.
 
 #### LLVM code generation and runtime integration
 
@@ -3724,8 +3761,11 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   `AshesCompiler.Frontend.Syntax.Expr` (a stitched generic type used without its argument; a
   stitching gap, now MOD-13). OPT-72 made the lowering linear in the number of declarations and
   stack-safe, and fixed a stage-0 use after unmap it exposed; OPT-73 made the provenance and
-  reach fixpoints once-per-program worklists. The probe now lowers the whole stitched CLI
-  package in 10 s and 15 GiB and stops at MOD-13's diagnostic, the next blocker. The measurement tool is a
+  reach fixpoints once-per-program worklists. MOD-13 closed the two stitching gaps that
+  stopped the lowering at 15 GiB; the lowering now runs on past them and exhausts 45 GiB
+  (OPT-74's builder copies, then OPT-77's entry copies), and with OPT-77's copies disabled in
+  stage 0 it reaches MOD-14's diagnostic after 31 s and 43 GiB, so OPT-74 is the next blocker
+  and MOD-14 the one after. The measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker

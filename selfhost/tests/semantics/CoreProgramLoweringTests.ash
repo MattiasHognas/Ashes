@@ -54,6 +54,21 @@ let expectLongTrailingChainUnderOwnedLetLowers unit =
     |> loweredProgramSource
     |> (given (_) -> Unit)
 
+// A constructor field naming a type declared later in the program is a forward reference, not an
+// implicit type parameter: stage 0 knows every declared type name before it registers any, so
+// `Outer` keeps its arity of zero and a bare `Outer` annotation still resolves.
+let expectForwardTypeReferenceKeepsArity unit =
+    "type Outer =\n    | Wrap(Inner)\n    | Empty\n\ntype Inner =\n    | Leaf(Int)\n\nlet describe (value: Outer) =\n    match value with\n        | Wrap(Leaf(n)) -> n\n        | Empty -> 0\n\nAshes.IO.print(Ashes.Text.fromInt(describe(Wrap(Leaf(3)))))"
+    |> loweredProgramSource
+    |> (given (_) -> Unit)
+
+// An external opaque type is a declared type name too: a constructor field naming one is no
+// implicit type parameter, whatever order the declarations come in.
+let expectExternalOpaqueFieldKeepsArity unit =
+    "type Wrapper =\n    | Wrap(Handle)\n    | Empty\n\nexternal type Handle\n\nlet isEmpty (value: Wrapper) =\n    match value with\n        | Wrap(_handle) -> false\n        | Empty -> true\n\nAshes.IO.print(if isEmpty(Empty) then \"empty\" else \"full\")"
+    |> loweredProgramSource
+    |> (given (_) -> Unit)
+
 let expectSelfRecursiveTopLevelLetLowers unit =
     "let recursive fact n = if n <= 1 then 1 else n * fact(n - 1)\nfact(5)"
     |> loweredProgramSource
@@ -746,6 +761,8 @@ let runCoreProgramLoweringTests unit =
     |> expectDuplicateAcrossPlainAndRecursiveIsRejected
     |> expectForwardReferenceToLaterBindingIsRejected
     |> expectSelfReferenceWithoutRecursiveIsRejected
+    |> expectForwardTypeReferenceKeepsArity
+    |> expectExternalOpaqueFieldKeepsArity
     |> expectGenuinelyUnknownNameStillRejectedAsUnknown
     |> expectTraitConstrainedBindingLowersWithEnvironment
     |> expectTraitConstrainedBindingFailsWithoutEnvironment
