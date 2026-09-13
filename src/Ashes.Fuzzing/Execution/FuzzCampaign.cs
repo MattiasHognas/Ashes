@@ -178,7 +178,13 @@ internal sealed class FuzzCampaign
                 return false;
             }
             FuzzOracleResult candidateResult = await oracle.EvaluateAsync(candidate, context, token).ConfigureAwait(false);
-            return !candidateResult.Success;
+            // Failing the same oracle is not enough: a simplification can introduce a second, unrelated
+            // defect of its own — dropping a constrained body's use of its trait method leaves an
+            // unjustified `requires` clause, say, which also fails the semantic oracle — and accepting
+            // that walks minimization away from the defect being reported, so `minimized.ash` stops
+            // demonstrating it.
+            return !candidateResult.Success
+                && FuzzFailureSignature.ReportsOnlyKindsOf(candidateResult.Message, result.Message);
         }, 100, TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
         FuzzFailure failure = new(testCase, shrink.Case, result, shrink, configuration);
         string artifactPath = await _artifacts.WriteAsync(

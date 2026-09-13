@@ -10,6 +10,39 @@ namespace Ashes.Fuzzing.Tests;
 public sealed class ShrinkerTests
 {
     [Test]
+    public void ShrinkAcceptanceRejectsAFailureKindTheOriginalNeverReported()
+    {
+        const string original = """
+            Ashes.Frontend.CompileDiagnosticException: ASH018 [pos 25021] Capabilities 'ConsoleIO, ProcessExit' are not permitted by the closed row needs {}.
+            """;
+
+        // The same diagnostic worded for one capability instead of two, at another offset: one ASH018, so
+        // a shrink that reduces the plural form to the singular still reproduces it.
+        const string sameKind = "Ashes.Frontend.CompileDiagnosticException: ASH018 [pos 77] Capability 'EnvironmentRead' is not permitted by the closed row needs {}.";
+        FuzzFailureSignature.ReportsOnlyKindsOf(sameKind, original).ShouldBeTrue();
+
+        // What the shrinker used to accept: simplifying a constrained body away leaves an unjustified
+        // `requires` clause, which fails the same oracle for an entirely different reason.
+        const string introducedKind = """
+            Ashes.Frontend.CompileDiagnosticException: ASH010 [pos 0] Written requires clause includes unjustified requirement 'FuzzSelect4127(a)'.
+            ASH018 [pos 25021] Capabilities 'ConsoleIO, ProcessExit' are not permitted by the closed row needs {}.
+            """;
+        FuzzFailureSignature.ReportsOnlyKindsOf(introducedKind, original).ShouldBeFalse();
+
+        // A failure with no codes at all — a native execution or differential mismatch — still compares by
+        // its text, so an unrelated crash is not mistaken for the original.
+        FuzzFailureSignature.ReportsOnlyKindsOf(
+            "generated program at 2000 iterations exited with 139",
+            "generated program at 2000 iterations exited with 139").ShouldBeTrue();
+        FuzzFailureSignature.ReportsOnlyKindsOf(
+            "Checksum 41 is not stable across 10000 iterations.",
+            "generated program at 2000 iterations exited with 139").ShouldBeFalse();
+
+        // Losing a kind is fine: a shrink that removes one cause while keeping another still reproduces.
+        FuzzFailureSignature.ReportsOnlyKindsOf(original, introducedKind).ShouldBeTrue();
+    }
+
+    [Test]
     public async Task ShrinkingPreservesSimulatedFailureAndReducesMetric()
     {
         var fixture = TestFixture.Create();
