@@ -163,12 +163,18 @@ let testFromExternalAbiType unit =
         None
         |> ExternalAbiNativeString(false)(ExternalNativeStringBorrowed)
         |> fromExternalAbiType
-        |> test.assertEqual(SemString))
+        |> test.assertEqual(SemNamed(0)("Result")([SemString, SemString])))
     |> (given (_) ->
         None
         |> ExternalAbiNativeString(true)(ExternalNativeStringBorrowed)
         |> fromExternalAbiType
-        |> test.assertEqual(SemNamed(0)("Maybe")([SemString])))
+        |> test.assertEqual(SemNamed(0)("Result")([SemString, SemNamed(0)("Maybe")([SemString])])))
+    |> (given (_) ->
+        None
+        |> ExternalAbiNativeString(false)(ExternalNativeStringBorrowed)
+        |> ExternalAbiOut
+        |> fromExternalAbiType
+        |> test.assertEqual(SemNamed(0)("Result")([SemString, SemNamed(0)("Maybe")([SemString])])))
     |> (given (_) ->
         ExternalAbiVoid
         |> fromExternalAbiType
@@ -270,7 +276,13 @@ let testNativeStringReturn unit =
                         |> (given (_) ->
                             instrs
                             |> containsCopyFfiString
-                            |> test.assertEqual(true)))
+                            |> test.assertEqual(true))
+                        |> (given (_) ->
+                            // The copied native string is a `Result(Str, Str)`, stage 0's
+                            // `MaterializeNativeString`, not a bare string.
+                            match loweredResultWithExternal(layouts)([abi])([])(callExpr) with
+                                | CoreLoweringResult { semanticType = semanticType } ->
+                                    test.assertEqual(SemNamed(0)("Result")([SemString, SemString]))(semanticType)))
 
 let testOutParameterAndReturnPackaging unit =
     (let abi =

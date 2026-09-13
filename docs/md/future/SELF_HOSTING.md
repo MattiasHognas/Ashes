@@ -727,14 +727,25 @@ same public behavior.
   into the first-class reference and its `CoreExternalDirectOnlyViolation`. Test:
   `expectExternalFunctionDeclarationLowers` (opaque type, string and nullary externals) in the
   semantics suite; the projects and cli suites are green.
-- [ ] **MOD-16** The stage-1 compile of the CLI package fails with `ASH002 Type mismatch: Str vs
-  Result<a, b>` reported at `Main.ash:3:24433`, reached once MOD-15 closed (2026-09-13, 24 s
-  and 13.8 GiB). The location is borrowed from the entry file (the stitched line-mapping gap)
-  and the column is a stitched offset, so find the real module first (a scan of every stitched
-  source at that offset, as for MOD-14). Stage 0 compiles the package. Likely an external whose
-  native-string result the stage-1 typing gives as `Result` where the source expects `Str`, or
-  a `Result` pipe the self-hosted inference resolves differently; a reduced repro belongs in
-  `selfhost/tests/semantics`.
+- [x] **MOD-16** The stage-1 compile of the CLI package failed with `ASH002 Type mismatch: Str vs
+  Result<a, b>` reported at `Main.ash:3:24433`, reached once MOD-15 closed (2026-09-13). The
+  offset pointed into `Llvm.ash`'s `match LLVMCopyStringRepOfTargetData(targetData) with |
+  Ok(layout) -> ...`: the self-hosted external lowering typed a copied native string
+  (`CopyFfiString`) as a bare `Str`, or `Maybe(Str)` when nullable, where stage 0's
+  `MaterializeNativeString` types it as `Result(Str, Str)` or `Result(Str, Maybe(Str))` (the
+  `Error` carries the conversion's message) and an `out` native string always as the nullable
+  form. `CoreExternalLowering.ash`'s `fromExternalAbiType` and both materializations now give
+  the `Result` types; the external lowering tests assert them.
+- [ ] **MOD-17** The stage-1 compile of the CLI package fails with
+  `CoreOperatorTypeMismatch("==", List(SemNamed(0, "AshesCompiler_Semantics_Types_SemanticType", [])),
+  List(SemVariable(6418)))`, reached once MOD-16 closed (2026-09-13, 29 s and 14.6 GiB): an
+  equality between a list of semantic types and a list whose element type is still an
+  inference variable. Stage 0 compiles the package, so its operator typing unifies the operand
+  types (the variable takes `SemanticType`) where the self-hosted operator lowering compares
+  the two resolved types and rejects an unresolved side. Find the comparison (a byte-offset scan
+  of the stitched sources for `==` over lists of `SemanticType`, likely in the semantics package),
+  and make the operator lowering unify its operands before deciding the element equality it
+  emits, with a reduced repro in `selfhost/tests/semantics`.
 
 #### IR model and lowering
 
@@ -3844,9 +3855,10 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   OPT-74 (the builder head copies) brought it to MOD-14's diagnostic in 25 s and 28 GiB, and
   OPT-77 (the specialization entry copies) to 21 s and 12.9 GiB, against the 9 GiB stage 0
   itself needs for the same package. MOD-14 (type aliases and the program-arguments value)
-  moved the stop to MOD-15's diagnostic, and MOD-15 (external functions registered, kept
-  unrenamed, nullary calls) to MOD-16's `ASH002 Type mismatch: Str vs Result<a, b>`, still at
-  24 s and 13.8 GiB, so MOD-16 is the next blocker; a single-file program that reads
+  moved the stop to MOD-15's diagnostic, MOD-15 (external functions registered, kept
+  unrenamed, nullary calls) to MOD-16's, and MOD-16 (native-string results typed as `Result`)
+  to MOD-17's `CoreOperatorTypeMismatch("==", ...)` at 29 s and 14.6 GiB, so MOD-17 is the
+  next blocker; a single-file program that reads
   `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
   codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
   codegen either, which the CLI package's LLVM bindings will need before its binary links. The

@@ -80,11 +80,17 @@ let recursive fromExternalAbiType abiType =
             element
             |> fromExternalAbiType
             |> SemList
+        // An `out` native string is materialized as nullable whatever the declaration says
+        // (stage 0 loads the slot and copies it with `Nullable = true`).
+        | ExternalAbiOut(ExternalAbiNativeString(_nullable, _ownership, _destructor)) -> SemNamed(0)("Result")([SemString, SemNamed(0)("Maybe")([SemString])])
         | ExternalAbiOut(element) -> fromExternalAbiType(element)
+        // Stage 0's `MaterializeNativeString`: the copied string is a `Result(Str, Str)`, or
+        // `Result(Str, Maybe(Str))` when the pointer may be null, the `Error` carrying the
+        // conversion's message.
         | ExternalAbiNativeString(nullable, _ownership, _destructor) ->
             if nullable
-            then SemNamed(0)("Maybe")([SemString])
-            else SemString
+            then SemNamed(0)("Result")([SemString, SemNamed(0)("Maybe")([SemString])])
+            else SemNamed(0)("Result")([SemString, SemString])
         | ExternalAbiVoid -> SemNamed(0)("Unit")([])
 
 let emitCleanupResource temp resourceName destructor = CleanupResource(temp)(resourceName)(destructor)
@@ -184,7 +190,7 @@ let emitOutSlotMaterialization (slotTemp: Int) (elementType: ExternalAbiType) (c
                                     instructions = append(instrs)([LoadFfiOut(loadedTemp)(slotTemp)(elementType), copyInstruction]),
                                     nextTemp = temp + 2,
                                     nextLocal = local,
-                                    components = append(comps)([MaterializedComponent(temp = strTemp, semanticType = SemNamed(0)("Maybe")([SemString]))])
+                                    components = append(comps)([MaterializedComponent(temp = strTemp, semanticType = SemNamed(0)("Result")([SemString, SemNamed(0)("Maybe")([SemString])]))])
                                 )
                 | other ->
                     let loadedTemp = temp
@@ -318,10 +324,7 @@ let emitDirectExternalCall abi startTemp startLocal argumentTemps _argumentTypes
                                                     in
                                                         let copyInstr = CopyFfiString(strTemp)(nativeResultTemp)(retType)
                                                         in
-                                                            let semType =
-                                                                if nullable
-                                                                then SemNamed(0)("Maybe")([SemString])
-                                                                else SemString
+                                                            let semType = fromExternalAbiType(retType)
                                                             in ([callInstruction, copyInstr], Some(MaterializedComponent(temp = strTemp, semanticType = semType)), strTemp + 1)
                                                 | ExternalAbiVoid -> ([callInstruction], None, afterCallTemp)
                                                 | other -> ([callInstruction], Some(MaterializedComponent(temp = nativeResultTemp, semanticType = fromExternalAbiType(other))), afterCallTemp) with
