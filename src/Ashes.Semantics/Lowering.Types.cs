@@ -830,9 +830,18 @@ public sealed partial class Lowering
         bool runtimeDeepUnique = false,
         IReadOnlySet<int>? excludedDropFieldIndices = null,
         bool perceusPatternOwner = false,
-        int perceusRootParameterSlot = -1)
+        int perceusRootParameterSlot = -1,
+        int frameDepth = 0)
     {
         public int Slot { get; } = slot;
+
+        /// <summary>
+        /// The lambda nesting depth whose frame <see cref="Slot"/> belongs to. Local slots are frame-local,
+        /// so an owner recorded in an enclosing function is not droppable here: a capture read inside a
+        /// lambda borrows the value, and aliasing it would aim the release at a slot this frame does not
+        /// have.
+        /// </summary>
+        public int FrameDepth { get; } = frameDepth;
         public string TypeName { get; } = typeName;
         public bool IsResource { get; } = isResource;
         public TextSpan? DefinitionSpan { get; } = definitionSpan;

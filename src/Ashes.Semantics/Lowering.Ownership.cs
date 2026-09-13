@@ -442,7 +442,8 @@ public sealed partial class Lowering
                 runtimeDeepUnique,
                 excludedDropFieldIndices,
                 perceusPatternOwner,
-                perceusRootParameterSlot);
+                perceusRootParameterSlot,
+                _lambdaDepth);
             Dictionary<string, OwnershipInfo> scope = _ownershipScopes.Peek();
             if (scope.TryGetValue(name, out OwnershipInfo? previous))
             {
