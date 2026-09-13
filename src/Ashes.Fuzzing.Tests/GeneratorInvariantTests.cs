@@ -389,4 +389,33 @@ public sealed class GeneratorInvariantTests
         lowering.LastLoweredType.ShouldNotBeNull();
         lowering.FormatType(lowering.LastLoweredType).ShouldBe("FuzzChoice0<Bool, Str>");
     }
+
+    [Test]
+    public void ResultBindRuleStatesTheTypeOfTheBoundValue()
+    {
+        // `let?` carries no annotation, so the bound name's type is only what the input expression
+        // determines. An input that produces an `Error` leaves the ok payload a free type variable, and a
+        // trait requirement on the binding then has no type to resolve against. Stating the input's type
+        // pins it whichever constructor the input happens to pick.
+        var fixture = TestFixture.Create();
+        int bindings = 0;
+        for (int index = 0; index < 200; index++)
+        {
+            GeneratedFuzzCase generated = fixture.Generator.Generate(
+                2026091413,
+                index,
+                fixture.Profiles.Get("semantics"),
+                80);
+            foreach (string bound in generated.Source.Split('\n')
+                .Select(line => line.Trim())
+                .Where(line => line.StartsWith("let? ", StringComparison.Ordinal)))
+            {
+                bindings++;
+                string value = bound[(bound.IndexOf('=', StringComparison.Ordinal) + 1)..].Trim();
+                value.ShouldMatch("^[A-Za-z][A-Za-z0-9]*$", generated.Source);
+            }
+        }
+
+        bindings.ShouldBeGreaterThan(0);
+    }
 }
