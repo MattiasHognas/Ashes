@@ -305,9 +305,9 @@ let recursive aggregateComponentFacts (members: List(Str)) (facts: MapTree(Str, 
                         factUnknownBytes = first.factUnknownBytes || others.factUnknownBytes
                     )
 
-let recursive buildComponentsInto (sccs: List(List(Str))) (adj: Adjacency) (ids: MapTree(Str, Int)) (facts: MapTree(Str, NodeFacts)) (currentId: Int) (built: List(ProvenanceComponent)) =
+let recursive buildComponentsFrom (sccs: List(List(Str))) (adj: Adjacency) (ids: MapTree(Str, Int)) (facts: MapTree(Str, NodeFacts)) (currentId: Int) =
     match sccs with
-        | [] -> reverse(built)
+        | [] -> []
         | members :: tail ->
             match aggregateComponentFacts(members)(facts) with
                 | NodeFacts { factDirect = direct, factRejected = rejected, factArms = arms, factBytes = bProv, factUnknownBytes = unkBytes } ->
@@ -324,9 +324,9 @@ let recursive buildComponentsInto (sccs: List(List(Str))) (adj: Adjacency) (ids:
                                 directBytesProvenances = bProv,
                                 hasUnknownBytesResult = unkBytes
                             )
-                        in buildComponentsInto(tail)(adj)(ids)(facts)(currentId + 1)(comp :: built)
+                        in comp :: buildComponentsFrom(tail)(adj)(ids)(facts)(currentId + 1)
 
-let buildComponents (sccs: List(List(Str))) (adj: Adjacency) (ids: MapTree(Str, Int)) (facts: MapTree(Str, NodeFacts)) = buildComponentsInto(sccs)(adj)(ids)(facts)(0)([])
+let buildComponents (sccs: List(List(Str))) (adj: Adjacency) (ids: MapTree(Str, Int)) (facts: MapTree(Str, NodeFacts)) = buildComponentsFrom(sccs)(adj)(ids)(facts)(0)
 
 let isEligible (compId: Int) (eligible: MapTree(Int, Bool)) =
     match Ashes.Collection.Map.get(compId)(eligible) with

@@ -49,8 +49,6 @@ import AshesCompiler.Semantics.ResultReachSummaries.ReachSummary
 import AshesCompiler.Semantics.ResultReachSummaries.ReachFunction
 import AshesCompiler.Semantics.ResultReachSummaries.programReachSummaries
 import AshesCompiler.Semantics.ResultReachSummaries.expressionReachSummaries
-import AshesCompiler.Semantics.ResultReachSummaries.reachSummaryFor
-import AshesCompiler.Semantics.ResultReachSummaries.reachSummaryNamed
 import AshesCompiler.Semantics.ResultReachSummaries.lambdaIdentityOf
 import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
@@ -416,6 +414,7 @@ type CoreLoweringState =
     | consumerRequest: ConsumerRequest
     | resourceStates: List((Int, ResourceReleaseKind))
     | letLambdas: List((Str, List(Str), Expr))
+    | letLambdasByName: MapTree(Str, (List(Str), Expr))
     | runtimeTemps: MapTree(Int, RuntimeTempState)
     | backEdgeDummyTemps: List(Int)
     | runtimeOwners: List((Int, Bool))
@@ -465,17 +464,19 @@ type CoreLoweringState =
     | normalizedAlwaysReturnedParameter: Maybe((Str, Int, SemanticType))
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
-    | letLambdaLabels: List((Str, Str))
+    | letLambdaLabels: MapTree(Str, Str)
     // The lambda identity (`lambdaIdentityOf`) recorded under each let-bound function's name,
     // resolving its whole-program result-reach summary among same-named functions.
-    | letLambdaIdentities: List((Str, Int))
+    | letLambdaIdentities: MapTree(Str, Int)
     // The whole-program result-reach summaries of the program being lowered.
     | reachSummaries: List(ReachSummary)
+    | reachByIdentity: MapTree(Str, ReachSummary)
+    | reachByName: MapTree(Str, ReachSummary)
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
     | functionReturnedClosureLabels: List((Str, Str))
-    | resultRcEligibility: (Int, MapTree(Str, Bool))
+    | resultRcEligibility: Maybe(MapTree(Str, Bool))
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
     | pendingTcoResets: List(CoreTcoReset)
     // The call results of this function whose copy-out kind was undecidable when their window
@@ -818,6 +819,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         consumerRequest = emptyConsumerRequest,
         resourceStates = [],
         letLambdas = [],
+        letLambdasByName = Ashes.Collection.Map.empty,
         runtimeTemps = Ashes.Collection.Map.empty,
         backEdgeDummyTemps = [],
         runtimeOwners = [],
@@ -838,14 +840,16 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         normalizedAlwaysReturnedParameter = None,
         runtimeNormalizedArgumentLabels = [],
         recursiveGroupNames = [],
-        letLambdaLabels = [],
-        letLambdaIdentities = [],
+        letLambdaLabels = Ashes.Collection.Map.empty,
+        letLambdaIdentities = Ashes.Collection.Map.empty,
         reachSummaries = [],
+        reachByIdentity = Ashes.Collection.Map.empty,
+        reachByName = Ashes.Collection.Map.empty,
         programParameterOwnership = [],
         dropperLabels = emptyDropperLabelCache,
         tcoLoop = None,
         functionReturnedClosureLabels = [],
-        resultRcEligibility = (0, Ashes.Collection.Map.empty),
+        resultRcEligibility = None,
         tcoLoopFrame = None,
         pendingTcoResets = [],
         pendingCallCopyOuts = [],
@@ -1082,7 +1086,8 @@ let recursive lambdaParameterChain (value: Expr) (parameters: List(Str)) =
 // parameters it only borrows (stage 0's per-function ownership summary).
 let recordLetLambda (name: Str) (value: Expr) (state: CoreLoweringState) =
     match lambdaParameterChain(value)([]) with
-        | (parameters, body) -> state with letLambdas = (name, parameters, body) :: state.letLambdas, letLambdaIdentities = (name, lambdaIdentityOf(value)) :: state.letLambdaIdentities
+        | (parameters, body) ->
+            state with letLambdas = (name, parameters, body) :: state.letLambdas, letLambdasByName = Ashes.Collection.Map.setStr(name)((parameters, body))(state.letLambdasByName), letLambdaIdentities = Ashes.Collection.Map.setStr(name)(lambdaIdentityOf(value))(state.letLambdaIdentities)
 
 // A non-recursive let-bound lambda whose body allocates or calls is registered as an inlinable
 // helper, stage 0's `RegisterInlinableNonRecursiveLet`.
@@ -2074,13 +2079,9 @@ let builtinResourceRole (kind: CoreBuiltinKind) =
 
 // Which of a let-bound lambda's parameters a call through it only borrows: stage 0's parameter
 // ownership summary, computed from the lambda's body. An unknown callee consumes everything.
-let recursive lookupLetLambda (name: Str) (lambdas: List((Str, List(Str), Expr))) =
-    match lambdas with
-        | [] -> None
-        | (candidate, parameters, body) :: rest ->
-            if candidate == name
-            then Some((parameters, body))
-            else lookupLetLambda(name)(rest)
+// The parameters and innermost body recorded under a let-bound lambda's name, the latest
+// recording of the name winning as the list it indexes is searched newest first.
+let lookupLetLambdaNamed (name: Str) (state: CoreLoweringState) = Ashes.Collection.Map.getStr(name)(state.letLambdasByName)
 
 let recursive markConsumedArguments (arguments: List(Expr)) (index: Int) (ownership: List((Str, ParameterOwnership))) (state: CoreLoweringState) =
     match arguments with
@@ -2133,7 +2134,7 @@ let provenParameterOwnership (callee: Str) (parameters: List(Str)) (ownership: L
 let markCallArgumentsMoved (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
-            match lookupLetLambda(callee)(state.letLambdas) with
+            match lookupLetLambdaNamed(callee)(state) with
                 | Some((parameters, body)) ->
                     state
                     |> provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))
@@ -2142,13 +2143,15 @@ let markCallArgumentsMoved (spine: CoreCallSpine) (state: CoreLoweringState) =
         | _ -> markResourceArgumentsMoved(spine.arguments)(state)
 
 // The generated label recorded under a let-bound function's name, once its body is lowered.
-let recursive lookupLetLambdaLabel (name: Str) (labels: List((Str, Str))) =
+let lookupLetLambdaLabel (name: Str) (labels: MapTree(Str, Str)) = Ashes.Collection.Map.getStr(name)(labels)
+
+let recursive lookupClosureDropperLabel (name: Str) (labels: List((Str, Str))) =
     match labels with
         | [] -> None
         | (candidate, label) :: rest ->
             if candidate == name
             then Some(label)
-            else lookupLetLambdaLabel(name)(rest)
+            else lookupClosureDropperLabel(name)(rest)
 
 let markLoweredCallArgumentsMoved (spine: CoreCallSpine) (lowered: LoweredCoreValue) =
     match lowered with
@@ -5039,7 +5042,7 @@ let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: Cor
         |> ownedCaptureKey
         |> captureLayoutText
     in
-        match lookupLetLambdaLabel(key)(state.closureDropperLabels) with
+        match lookupClosureDropperLabel(key)(state.closureDropperLabels) with
             | Some(label) -> (state, label)
             | None ->
                 let label = "__rc_cdrop_" + Ashes.Text.fromInt(state.nextLambdaId)
@@ -6336,7 +6339,7 @@ let lowerLambdaParameterType annotation parameterType state =
 // name can consult the function's recorded body placement.
 let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
     match state.pendingSourceFunction with
-        | Some(SourceFunctionOrigin { functionSourceName = name }) -> state with letLambdaLabels = (name, label) :: state.letLambdaLabels
+        | Some(SourceFunctionOrigin { functionSourceName = name }) -> state with letLambdaLabels = Ashes.Collection.Map.setStr(name)(label)(state.letLambdaLabels)
         | None -> state
 
 // Stage 0's `LowerEscapingResult` at a function body, from an empty request.
@@ -8373,10 +8376,14 @@ let provenanceConstructorsOf (state: CoreLoweringState) =
         soleNullary = soleNullaryConstructorNames(state.constructorLayouts)(state.constructorLayouts)
     )
 
-let recursive provenanceFunctionsOf (lambdas: List((Str, List(Str), Expr))) =
-    match lambdas with
-        | [] -> []
-        | (name, parameters, body) :: rest -> ProvenanceFunction(name = name, parameters = parameters, body = body) :: provenanceFunctionsOf(rest)
+// The functions the whole-program provenance fixpoint classifies: every function the reach
+// registry registered, under its key, with the registered parameters and innermost body (a
+// Map.set-shaped function's outer parameters plus its accumulator over the inner body, as stage
+// 0's `_maFuncs` holds them) and the functions in scope of that body.
+let recursive provenanceFunctionsOf (summaries: List(ReachSummary)) (functions: List(ProvenanceFunction)) =
+    match summaries with
+        | [] -> reverse(functions)
+        | ReachSummary { function = ReachFunction { key = key, name = name, parameters = parameters, body = body, scope = scope } } :: rest -> provenanceFunctionsOf(rest)(ProvenanceFunction(key = key, name = name, parameters = parameters, body = body, scope = scope) :: functions)
 
 // Stage 0's `IsRuntimeRcFreshBuiltinProducer` over the fresh-string builtins the lowering knows.
 let isFreshBuiltinProducer (expression: Expr) (state: CoreLoweringState) =
@@ -8384,51 +8391,56 @@ let isFreshBuiltinProducer (expression: Expr) (state: CoreLoweringState) =
         | Some(_kind) -> true
         | None -> false
 
-let resultRcEligibilityOf (state: CoreLoweringState) =
-    match state.resultRcEligibility with
-        | (_count, eligibility) -> eligibility
-
-// Stage 0's `ComputeFunctionResultProvenanceFixpoint` over the let-bound functions recorded so
-// far, recomputed only once a function was recorded since the last call site.
+// Stage 0's `ComputeFunctionResultProvenanceFixpoint`: the RC-eligibility verdict of every
+// registered function of the program, by key, solved once at the first call site that asks (by
+// then every type declaration is registered, so a constructor application classifies as the
+// direct construction it is) and read for the rest of the lowering.
 let ensureResultRcEligibility (state: CoreLoweringState) =
     match state.resultRcEligibility with
-        | (count, _eligibility) ->
-            if count == length(state.letLambdas)
-            then state
-            else
-                state with resultRcEligibility = (length(state.letLambdas), (given (expression: Expr) -> isFreshBuiltinProducer(expression)(state))
-                |> resultProvenanceNodes(provenanceFunctionsOf(state.letLambdas))(provenanceConstructorsOf(state))
-                |> resolvedRcEligibility)
+        | Some(_eligibility) -> state
+        | None ->
+            state with resultRcEligibility = Some((given (expression: Expr) -> isFreshBuiltinProducer(expression)(state))
+            |> resultProvenanceNodes(provenanceFunctionsOf(state.reachSummaries)([]))(provenanceConstructorsOf(state))
+            |> resolvedRcEligibility)
 
-let recursive lookupLetLambdaIdentity (name: Str) (identities: List((Str, Int))) =
-    match identities with
-        | [] -> None
-        | (candidate, identity) :: rest ->
-            if candidate == name
-            then Some(identity)
-            else lookupLetLambdaIdentity(name)(rest)
+let resultRcEligibilityOf (state: CoreLoweringState) =
+    match state.resultRcEligibility with
+        | Some(eligibility) -> eligibility
+        | None -> Ashes.Collection.Map.empty
 
-// Stage 0's ownership summary of a let-bound callee: the whole-program result-reach summary of
-// the function recorded under the name (by its lambda identity, else by name), whose parameters
-// and body are the registered ones (a Map.set-shaped function's outer parameters plus its
-// accumulator over the inner body); a callee outside the program's registry keeps its recorded
-// chain with its reach computed on its own.
-let calleeReachSummary (callee: Str) (recordedParameters: List(Str)) (recordedBody: Expr) (state: CoreLoweringState) =
+// Stage 0's callee resolution to a registered function: the whole-program summary of the
+// function recorded under the name (by its lambda identity, else the first of that name, a
+// top-level one preferred), `None` for a callee outside the program's registry.
+let calleeSummaryOf (callee: Str) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { letLambdaIdentities = identities, reachSummaries = summaries } ->
-            let byIdentity =
-                match lookupLetLambdaIdentity(callee)(identities) with
-                    | Some(identity) -> reachSummaryFor(callee)(identity)(summaries)
+        | CoreLoweringState { letLambdaIdentities = identities, reachByIdentity = byIdentity, reachByName = byName } ->
+            let found =
+                match Ashes.Collection.Map.getStr(callee)(identities) with
+                    | Some(identity) -> Ashes.Collection.Map.getStr(callee + "@" + Ashes.Text.fromInt(identity))(byIdentity)
                     | None -> None
             in
-                let summary =
-                    match byIdentity with
-                        | Some(found) -> Some(found)
-                        | None -> reachSummaryNamed(callee)(summaries)
-                in
-                    match summary with
-                        | Some(ReachSummary { function = ReachFunction { parameters = parameters, body = body }, reach = reach }) -> (parameters, body, reach)
-                        | None -> (recordedParameters, recordedBody, singleFunctionReach(recordedParameters)(recordedBody))
+                match found with
+                    | Some(summary) -> Some(summary)
+                    | None -> Ashes.Collection.Map.getStr(callee)(byName)
+
+// Stage 0's ownership summary of a let-bound callee: the whole-program result-reach summary of
+// the function recorded under the name, whose parameters and body are the registered ones (a
+// Map.set-shaped function's outer parameters plus its accumulator over the inner body); a callee
+// outside the program's registry keeps its recorded chain with its reach computed on its own.
+let calleeReachSummary (callee: Str) (recordedParameters: List(Str)) (recordedBody: Expr) (state: CoreLoweringState) =
+    match calleeSummaryOf(callee)(state) with
+        | Some(ReachSummary { function = ReachFunction { parameters = parameters, body = body }, reach = reach }) -> (parameters, body, reach)
+        | None -> (recordedParameters, recordedBody, singleFunctionReach(recordedParameters)(recordedBody))
+
+// A callee's RC-eligibility verdict: the fixpoint's answer for the registered function the name
+// resolves to, never eligible for a callee outside the registry (stage 0's memo default).
+let calleeRcEligible (callee: Str) (state: CoreLoweringState) =
+    match calleeSummaryOf(callee)(state) with
+        | Some(ReachSummary { function = ReachFunction { key = key } }) ->
+            state
+            |> resultRcEligibilityOf
+            |> lookupRcEligible(key)
+        | None -> false
 
 // Stage 0's known-callee resolution for a call spine: a let-bound function called by name
 // carries its label, the ownership of its parameters (the single-function verdict overlaid with
@@ -8437,7 +8449,7 @@ let calleeReachSummary (callee: Str) (recordedParameters: List(Str)) (recordedBo
 let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
-            match lookupLetLambda(callee)(state.letLambdas) with
+            match lookupLetLambdaNamed(callee)(state) with
                 | Some((recordedParameters, recordedBody)) ->
                     match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
                         | (parameters, body, reach) ->
@@ -8446,9 +8458,7 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 parameters = parameters,
                                 ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                                 reach = reach,
-                                rcEligible = state
-                                |> resultRcEligibilityOf
-                                |> lookupRcEligible(callee),
+                                rcEligible = calleeRcEligible(callee)(state),
                                 argumentCount = length(spine.arguments)
                             ))
                 | None -> None
@@ -12363,7 +12373,7 @@ let closeRecursiveBodyResult (resultType: SemanticType) (lowered: LoweredCoreVal
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
     match prepared with
         | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, parameterType = parameterType, resultType = resultType } ->
-            match (state with letLambdaLabels = (name, label) :: state.letLambdaLabels) with
+            match (state with letLambdaLabels = Ashes.Collection.Map.setStr(name)(label)(state.letLambdaLabels)) with
                 | labeled ->
                     labeled
                     |> sourceFunctionOrigin(label)(sourceFunctionOriginFor(name)(labeled))
@@ -16347,7 +16357,7 @@ and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLo
             else
                 if containsName(name)(state.inlinableHelpers)
                 then
-                    match lookupLetLambda(name)(state.letLambdas) with
+                    match lookupLetLambdaNamed(name)(state) with
                         | Some((parameters, body)) ->
                             inlinedReferencesResolveHere(collectFree(body)(parameters)([]))(name :: visited)(state)
                         | None -> false
@@ -16361,7 +16371,7 @@ let inlinableHelperOf (spine: CoreCallSpine) (state: CoreLoweringState) =
         | ExprVar(callee) ->
             if inlineHelperTriggered(state) && containsName(callee)(state.inlinableHelpers) && containsName(callee)(state.inliningInProgress) == false && calleeBindsFunction(callee)(state)
             then
-                match lookupLetLambda(callee)(state.letLambdas) with
+                match lookupLetLambdaNamed(callee)(state) with
                     | Some((parameters, body)) ->
                         match calleeReachSummary(callee)(parameters)(body)(state) with
                             | (_summaryParameters, _summaryBody, reach) ->
@@ -16501,7 +16511,7 @@ let reuseSpecializationArgumentIsFresh (argument: Expr) (state: CoreLoweringStat
         | CoreCallSpine { root = root, arguments = callArguments } ->
             match unspanArgument(root) with
                 | ExprVar(callee) ->
-                    match lookupLetLambda(callee)(state.letLambdas) with
+                    match lookupLetLambdaNamed(callee)(state) with
                         | Some((recordedParameters, recordedBody)) ->
                             match calleeReachSummary(callee)(recordedParameters)(recordedBody)(state) with
                                 | (parameters, _body, reach) -> length(parameters) == coreListLength(callArguments) && helperResultFresh(reach)
@@ -18099,10 +18109,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
         // with the declaration rather than left unpositioned. A flat top-level declaration otherwise has
         // no position at all, and a debugger stepping over it reports whatever line came before.
         | TopLevelAt(span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(analysis)(pending)((state with recursiveDeclarationSpan = Some(span), currentSpan = Some(span)))
-        | TopLevelType(declaration) :: rest ->
-            match registerTopLevelTypeDeclaration(declaration)(state) with
-                | Error(error) -> failure(state)(error)
-                | Ok(nextState) -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(nextState)
+        | TopLevelType(_declaration) :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
@@ -18155,11 +18162,30 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                         lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(length(bindings))(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
         | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
 
+// Stage 0 registers every type declaration before it lowers a value (`RegisterTypeDeclarations`
+// ahead of the item walk), so a constructor is known to every analysis that runs ahead of the
+// declaration's own position, the whole-program provenance fixpoint among them; the item walk
+// then passes the declarations by.
+let recursive registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match items with
+        | [] -> Ok(state)
+        | TopLevelAt(_span, inner) :: rest -> registerProgramTypes(inner :: rest)(state)
+        | TopLevelType(declaration) :: rest ->
+            match registerTopLevelTypeDeclaration(declaration)(state) with
+                | Error(error) -> Error(error)
+                | Ok(registered) -> registerProgramTypes(rest)(registered)
+        | _ :: rest -> registerProgramTypes(rest)(state)
+
 let lowerProgramWithCapabilities items trailingBody environment state =
     match registerProgramCapabilities(items)(state) with
         | Error(error) -> failure(state)(error)
         | Ok(registered) ->
-            lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])(registered)
+            match registerProgramTypes(items)(registered) with
+                | Error(error) -> failure(registered)(error)
+                | Ok(typed) ->
+                    typed
+                    |> ensureResultRcEligibility
+                    |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.
@@ -18340,12 +18366,45 @@ let buildProgram lowered =
 
 // Seeds the state with the whole-program inspect-only fixpoint over the program's registered
 // top-level functions, the verdict `markCallArgumentsMoved` consults for hand-offs.
+// The summaries by `name@identity`, the index a call site resolves its callee's recorded lambda
+// identity through.
+let recursive reachSummariesByIdentity (summaries: List(ReachSummary)) (byIdentity: MapTree(Str, ReachSummary)) =
+    match summaries with
+        | [] -> byIdentity
+        | (ReachSummary { function = ReachFunction { name = name, identity = identity } } as summary) :: rest ->
+            byIdentity
+            |> Ashes.Collection.Map.setStr(name + "@" + Ashes.Text.fromInt(identity))(summary)
+            |> reachSummariesByIdentity(rest)
+
+let isTopLevelSummary (summary: ReachSummary) =
+    match summary with
+        | ReachSummary { function = ReachFunction { enclosing = None } } -> true
+        | _ -> false
+
+// The summaries by name, a top-level function preferred over a nested one and the first
+// registered otherwise, the answer `reachSummaryNamed` walked the list for.
+let recursive reachSummariesByName (summaries: List(ReachSummary)) (byName: MapTree(Str, ReachSummary)) =
+    match summaries with
+        | [] -> byName
+        | (ReachSummary { function = ReachFunction { name = name } } as summary) :: rest ->
+            byName
+            |> Ashes.Collection.Map.upsertStr(name)(summary)(given (existing: ReachSummary) ->
+                if isTopLevelSummary(existing) || isTopLevelSummary(summary) == false
+                then existing
+                else summary)
+            |> reachSummariesByName(rest)
+
+// Seeds the state with the whole-program result-reach summaries and their two indexes.
+let withReachSummaries (summaries: List(ReachSummary)) (state: CoreLoweringState) = state with reachSummaries = summaries, reachByIdentity = reachSummariesByIdentity(summaries)(Ashes.Collection.Map.empty), reachByName = reachSummariesByName(summaries)(Ashes.Collection.Map.empty)
+
 let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
     (let functionTable = topLevelFunctions(program)
-    in state with programParameterOwnership = inferProgramParameterOwnership(functionTable), reachSummaries = programReachSummaries(program), moveFunctionTable = functionTable, moveCallSites = collectAllCallSites(functionTable)(program.body))
+    in
+        (state with programParameterOwnership = inferProgramParameterOwnership(functionTable), moveFunctionTable = functionTable, moveCallSites = collectAllCallSites(functionTable)(program.body)) |> withReachSummaries(programReachSummaries(program)))
 
 // Seeds the state with the result-reach summaries of the functions a bare expression binds.
-let withExpressionReachSummaries (expression: Expr) (state: CoreLoweringState) = state with reachSummaries = expressionReachSummaries(expression)
+let withExpressionReachSummaries (expression: Expr) (state: CoreLoweringState) =
+    withReachSummaries(expressionReachSummaries(expression))(state)
 
 let lowerCoreProgram (program: ProgramSyntax) =
     match program with
