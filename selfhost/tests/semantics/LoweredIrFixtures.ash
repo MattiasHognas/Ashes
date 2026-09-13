@@ -13,6 +13,7 @@ export (
     value stageZeroFixtureLines,
     value functionLines,
     value withoutLocations,
+    value withFunctionLocalLabels,
     value expectSameLines,
 )
 
@@ -79,6 +80,66 @@ let withoutLocations (lines: List(Str)) =
         match Ashes.Text.split(line)("   (") with
             | instruction :: _rest -> instruction
             | [] -> line)(lines)
+
+// A label definition line is indented two spaces (an instruction four) and ends in `:`.
+let labelDefinition (line: Str) =
+    (let trimmed = Ashes.Text.trim(line)
+    in
+        if Ashes.Text.startsWith(line)("  ") && Ashes.Text.startsWith(line)("    ") == false && Ashes.Text.length(trimmed) > 1 && Ashes.Text.substring(trimmed)(Ashes.Text.length(trimmed) - 1)(1) == ":"
+        then
+            Ashes.Text.length(trimmed) - 1
+            |> Ashes.Text.take(trimmed)
+            |> Some
+        else None)
+
+let recursive dropLast (parts: List(Str)) =
+    match parts with
+        | [] -> []
+        | _last :: [] -> []
+        | head :: rest -> head :: dropLast(rest)
+
+// `rc_normalize_list_13` -> `rc_normalize_list`: the program-wide number is the last segment.
+let labelBase (name: Str) =
+    "_"
+    |> Ashes.Text.split(name)
+    |> dropLast
+    |> Ashes.Text.join("_")
+
+let recursive collectLabelRenames (lines: List(Str)) (index: Int) (renames: List((Str, Str))) =
+    match lines with
+        | [] -> Ashes.Collection.List.reverse(renames)
+        | line :: rest ->
+            match labelDefinition(line) with
+                | None -> collectLabelRenames(rest)(index)(renames)
+                | Some(name) -> collectLabelRenames(rest)(index + 1)((name, labelBase(name) + "_" + Ashes.Text.fromInt(index)) :: renames)
+
+let recursive renameLabelToken (renames: List((Str, Str))) (token: Str) =
+    match renames with
+        | [] -> token
+        | (old, new) :: rest ->
+            if token == old + ":"
+            then new + ":"
+            else
+                if token == "Target=" + old
+                then "Target=" + new
+                else renameLabelToken(rest)(token)
+
+let renameLabels (renames: List((Str, Str))) (line: Str) =
+    " "
+    |> Ashes.Text.split(line)
+    |> Ashes.Collection.List.map(renameLabelToken(renames))
+    |> Ashes.Text.join(" ")
+
+// Label numbers are allocated program-wide in lowering order, so a function compared on its own
+// inherits the count of every label the functions before it allocated. Where one of those
+// functions is a known cross-compiler difference (the self-hosted lowering applies
+// tail-modulo-constructor to a generic `mapAll`, which stage 0 declines; OPT-63), the compared
+// function's labels shift while its instructions stay identical. Renumbering each label by the
+// order of its definition within the function keeps the comparison about the instructions.
+let withFunctionLocalLabels (lines: List(Str)) =
+    (let renames = collectLabelRenames(lines)(0)([])
+    in
+        Ashes.Collection.List.map(renameLabels(renames))(lines))
 
 let expectSameLines (label: Str) (expected: List(Str)) (actual: List(Str)) =
     if expected == actual

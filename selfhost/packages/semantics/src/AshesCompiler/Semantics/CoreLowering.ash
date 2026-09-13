@@ -5935,6 +5935,17 @@ let adoptNormalizedParameterResult (label: Str) (bodyTemp: Int) (state: CoreLowe
             then markRuntimeTemp(bodyTemp)(RuntimeNewlyProduced)(state)
             else state
 
+// The closed result joins two branches, the spine (reference-counted by the transform's own
+// eligibility gate, its last tail the body value) and the body value alone, so it carries the body
+// value's own representation and ownership, stage 0's `RecordControlFlowJoinTemp` at the close.
+// Left without a fact, the slot read reports an arena result: the closure then lacks its
+// `ReturnsRuntimeManaged` bit and the result-ownership epilogue, and a caller that copies the
+// "arena" result out reclaims only the arena, stranding the reference-counted spine it copied.
+let carryRuntimeTempState (fromTemp: Int) (toTemp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(fromTemp)(state) with
+        | Some(runtimeState) -> markRuntimeTemp(toTemp)(runtimeState)(state)
+        | None -> state
+
 // The branch stage 0 emits in `LowerLambdaCoreCloseTmcChain`: with a pending cell, the body's value
 // fills its still-nil tail and the spine head becomes the result; with none, the body's value is the
 // result unchanged.
@@ -5961,7 +5972,8 @@ let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (joinSlo
                                             |> emit(Label(emptyLabel))
                                             |> emit(StoreLocal(joinSlot)(bodyTemp))
                                             |> emit(Label(doneLabel))
-                                            |> emit(LoadLocal(outTemp)(joinSlot)), outTemp)
+                                            |> emit(LoadLocal(outTemp)(joinSlot))
+                                            |> carryRuntimeTempState(bodyTemp)(outTemp), outTemp)
 
 // Closes a tail-modulo-constructor spine at the function's single return, before any ownership
 // finalization: from here on the function's result IS the spine and the body value is only the last
@@ -5995,6 +6007,27 @@ let closeTmcChainPrepared (prepared: PreparedCoreRecursiveBinding) (lowered: Low
     match prepared with
         | PreparedCoreRecursiveBinding { label = label } -> closeTmcChainLowered(label)(lowered)
 
+// Stage 0's `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops` reserves the exit-transfer selection
+// slot whenever a loop's result is reference-counted, before it walks the runtime-managed
+// parameter slots; a loop that placed no parameter has nothing to walk and the zero store stays.
+// `emitTcoExitDrops` emits it with the walk, so this covers only the loop with no placed
+// parameter, at the point stage 0 reaches it: after the spine closes, before the result-ownership
+// epilogue.
+let reserveTcoExitTransferSlot (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | Some(CoreTcoLoopFrame { bodyLabel = bodyLabel, runtimeManagedListSlots = [], runtimeManagedAdtSlots = [], runtimeManagedStrSlots = [] }) ->
+            if bodyLabel == label + "_body" && isRuntimeTemp(bodyTemp)(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = slotState, local = transferSelectedSlot } ->
+                        match freshTemp(slotState) with
+                            | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                zeroState
+                                |> emit(LoadConstInt(zeroTemp)(0))
+                                |> emit(StoreLocal(transferSelectedSlot)(zeroTemp))
+            else state
+        | _ -> state
+
 // A curried producer's loop body lives in an inner lambda rather than in the recursive binding, so
 // the spine is closed at this return too. Wrapping the lowered body keeps the close ahead of every
 // ownership step without disturbing the shape of the function below it.
@@ -6002,7 +6035,10 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
     match closeTmcChainLowered(label)(lowered) with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            let loweredBody = adoptNormalizedParameterResult(label)(bodyTemp)(bodyState)
+            let loweredBody =
+                bodyState
+                |> adoptNormalizedParameterResult(label)(bodyTemp)
+                |> reserveTcoExitTransferSlot(label)(bodyTemp)
             in
                 let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(loweredBody)
                 in
@@ -11933,7 +11969,10 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
             match bindType(resultType)(bodyType)(bodyState) with
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (boundBody, None) ->
-                    let typedBody = adoptNormalizedParameterResult(label)(bodyTemp)(boundBody)
+                    let typedBody =
+                        boundBody
+                        |> adoptNormalizedParameterResult(label)(bodyTemp)
+                        |> reserveTcoExitTransferSlot(label)(bodyTemp)
                     in
                         let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(typedBody)
                         in
@@ -15726,16 +15765,18 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
         |> (given (scheduled: CoreLoweringState) -> scheduled with pendingTcoResets = reset :: scheduled.pendingTcoResets))
 
 // The back edge cannot reach its expression join; its synthetic zero is the value the join
-// stores (stage 0's `LowerCallTcoBackEdgeDummy`, which marks it reference-counted but
-// ownership-neutral): recorded so the reachable arms alone decide whether the join carries
-// such a result, the back-edge arm closes its bracket, and the function's own result never
-// counts it.
+// stores. Stage 0's `LowerCallTcoBackEdgeDummy` marks it a reference-counted value (so a join
+// of reachable reference-counted arms and this arm is itself reference-counted, and a
+// tail-modulo-constructor producer's closed spine keeps that representation through to its
+// `ReturnsRuntimeManaged` bit and result-ownership epilogue) and it is recorded as a dummy so
+// the back-edge arm closes its bracket without a copy.
 let emitBackEdgeDummy (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = dummy } ->
             match freshType(tempState) with
                 | FreshType { state = typedState, semanticType = resultType } ->
                     (typedState with backEdgeDummyTemps = dummy :: typedState.backEdgeDummyTemps)
+                    |> markRuntimeTemp(dummy)(RuntimeNewlyProduced)
                     |> emit(LoadConstInt(dummy)(0))
                     |> success(dummy)(resultType)
 
