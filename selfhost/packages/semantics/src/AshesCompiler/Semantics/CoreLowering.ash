@@ -23,6 +23,9 @@ import AshesCompiler.Frontend.Syntax.TypeDecl
 import AshesCompiler.Frontend.Syntax.TypeAliasDecl
 import AshesCompiler.Frontend.Syntax.ZeroCostTypeDecl
 import AshesCompiler.Frontend.Syntax.ExternalDecl
+import AshesCompiler.Frontend.Syntax.TraitImplementationDecl
+import AshesCompiler.Frontend.Syntax.TraitImplementationMethodBinding
+import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
 import AshesCompiler.Frontend.Syntax.TypeConstructor
 import AshesCompiler.Frontend.Syntax.TypeParameter
 import AshesCompiler.Frontend.Syntax.TypeExpr
@@ -36,6 +39,11 @@ import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreResultPipeLowering
 import AshesCompiler.Semantics.CoreExternalLowering
+import AshesCompiler.Semantics.DerivingExpansion.expandDerivedImplementations
+import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
+import AshesCompiler.Semantics.TraitResolution
+import AshesCompiler.Semantics.TraitResolution.resolveTraitEvidence
+import AshesCompiler.Semantics.TypeInference.addTraitImplementation
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.ExternalAbi.validateExternalProgramAbi
 import AshesCompiler.Semantics.ExternalTyping
@@ -165,6 +173,10 @@ type CoreLoweringError =
     | ResourceUseAfterClose(Str)
     | ResourceUseAfterMove(Str)
     | ResourceDoubleClose(Str)
+    | MissingCoreTraitEvidence(Str, SemanticType)
+    | UnsupportedCoreTraitDispatch(Str, SemanticType)
+    | UnsupportedCoreImplementationHead(Str)
+    | UnsupportedCoreDerivingExpansion(Str)
     deriving {Eq, Show}
 
 // How a resource binding stopped being its scope's responsibility: closed by an explicit close
@@ -554,6 +566,14 @@ type CoreLoweringState =
     // captured it (an inlined helper) can rebuild its closure from the label with a null
     // environment.
     | topLevelFunctionRefs: List((Str, Str, TypeScheme))
+    // The standard trait environment with the program's own implementations registered, the
+    // evidence a trait-mapped operator at a concrete operand type resolves against.
+    | traitEnvironment: TypeEnvironment
+    // Stage 0's compiled-instance cache (TRT-16): each implementation method already lowered as
+    // a capture-free closure helper, by trait, method, and operand type, with its label and
+    // type, so a later site rebuilds the closure from the label instead of lowering the body
+    // again.
+    | traitMethodLabels: MapTree(Str, (Str, SemanticType))
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
     // The representation the lowering itself decided for a control-flow join's result, by the
     // function it belongs to and the temp the join reloads. The `memory` report's post-hoc walk
@@ -890,6 +910,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         specializingReuseLabel = None,
         fullyReusingCallees = [],
         topLevelFunctionRefs = [],
+        traitEnvironment = standardTraitEnvironment(Unit),
+        traitMethodLabels = Ashes.Collection.Map.empty,
         valuePlacements = [],
         joinRepresentations = [],
         unresolvedCallResults = [],
@@ -3970,6 +3992,7 @@ let restoreOuterFrame outer bodyState =
             // too, so the nested routings join the enclosing function's set.
             |> (given (current: CoreLoweringState) -> current with routedSpecializationAccumulators = append(bodyState.routedSpecializationAccumulators)(outer.routedSpecializationAccumulators))
             |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels, dropperLabels = bodyState.dropperLabels)
+            |> (given (current: CoreLoweringState) -> current with traitMethodLabels = bodyState.traitMethodLabels)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -15051,7 +15074,165 @@ let emitResolvedCoreOrdered name intKind uintKind floatKind binary =
         | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
         | _ -> operatorMismatch(name)(binary)
 
-let emitResolvedCoreEquality name intKind floatKind stringKind binary =
+let recursive lastQualifiedPiece (pieces: List(Str)) =
+    match pieces with
+        | [] -> ""
+        | piece :: [] -> piece
+        | _piece :: rest -> lastQualifiedPiece(rest)
+
+let traitLeafName (name: Str) =
+    "."
+    |> Ashes.Text.split(name)
+    |> lastQualifiedPiece
+
+let recursive findImplementationMethod (methodName: Str) (methods: List(TraitImplementationMethodInferenceDefinition)) =
+    match methods with
+        | [] -> None
+        | TraitImplementationMethodInferenceDefinition { name = name, implementation = implementation } :: rest ->
+            if name == methodName
+            then Some(implementation)
+            else findImplementationMethod(methodName)(rest)
+
+let implementationMethodExpression (methodName: Str) (implementation: TraitImplementationInferenceDefinition) =
+    match implementation with
+        | TraitImplementationInferenceDefinition { methods = methods } -> findImplementationMethod(methodName)(methods)
+
+let traitMethodLabelKey (traitName: Str) (methodName: Str) (operandType: SemanticType) = traitName + "/" + methodName + "/" + Ashes.Trait.Show.show(operandType)
+
+// The label `lowerLambda` will give a capture-free implementation lambda lowered next, known
+// before its body is lowered so a recursive type's derived method can call itself through the
+// cache while its own body is still being lowered (a derived `Tree` equality compares the
+// subtrees through the same `equal`).
+let predictedTraitMethodLabel (implementation: Expr) (state: CoreLoweringState) =
+    match stripExprAt(implementation) with
+        | ExprLambda(parameter, body, _annotation) ->
+            match capturedBindings(collectFree(body)([parameter])([]))(state.bindings)([]) with
+                | [] -> Some("lambda_" + Ashes.Text.fromInt(state.nextLambdaId))
+                | _captures -> None
+        | _other -> None
+
+let rememberTraitMethodLabel (key: Str) (label: Str) (semanticType: SemanticType) (state: CoreLoweringState) = state with traitMethodLabels = Ashes.Collection.Map.setStr(key)((label, semanticType))(state.traitMethodLabels)
+
+let emitTraitMethodClosureFromLabel (label: Str) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = environmentState, temp = environmentTemp } ->
+            match environmentState
+            |> emit(LoadConstInt(environmentTemp)(0))
+            |> emitClosure(label)(environmentTemp)(0)(false) with
+                | (closureState, closureTemp) -> success(closureTemp)(semanticType)(closureState)
+
+// The closure of an implementation method at a concrete operand type: lowered from its body the
+// first time a site needs it and, when the closure carries no environment, remembered by label
+// so every later site rebuilds the closure from the label with a null environment. A
+// capture-free lambda is remembered under its predicted label before its body is lowered; a
+// body that then lowers to a different label is refused rather than left calling the wrong
+// function.
+let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (methodType: SemanticType) (implementation: Expr) lower (state: CoreLoweringState) =
+    match Ashes.Collection.Map.getStr(key)(state.traitMethodLabels) with
+        | Some((label, semanticType)) -> emitTraitMethodClosureFromLabel(label)(semanticType)(state)
+        | None ->
+            let predicted = predictedTraitMethodLabel(implementation)(state)
+            in
+                let primed =
+                    match predicted with
+                        | Some(label) -> rememberTraitMethodLabel(key)(label)(methodType)(state)
+                        | None -> state
+                in
+                    match primed
+                    |> withConsumerRequest(emptyConsumerRequest)
+                    |> lower(implementation) with
+                        | LoweredCoreValue { state = loweredState, temp = temp, semanticType = semanticType, error = None } ->
+                            let restored = withConsumerRequest(state.consumerRequest)(loweredState)
+                            in
+                                match (predicted, emptyEnvironmentClosureLabel(temp)(loweredState.reversedInstructions)) with
+                                    | (Some(expected), Some(label)) ->
+                                        if expected == label
+                                        then
+                                            restored
+                                            |> rememberTraitMethodLabel(key)(label)(semanticType)
+                                            |> success(temp)(semanticType)
+                                        else
+                                            operandType
+                                            |> UnsupportedCoreTraitDispatch(key)
+                                            |> failure(restored)
+                                    | (Some(_expected), None) ->
+                                        operandType
+                                        |> UnsupportedCoreTraitDispatch(key)
+                                        |> failure(restored)
+                                    | (None, Some(label)) ->
+                                        restored
+                                        |> rememberTraitMethodLabel(key)(label)(semanticType)
+                                        |> success(temp)(semanticType)
+                                    | (None, None) -> success(temp)(semanticType)(restored)
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+
+// The two closure calls stage 0's `RecordMappedBinaryTrait` emits: the method applied to the left
+// operand, the partial application to the right.
+let emitTraitMethodCalls (closureTemp: Int) (leftTemp: Int) (rightTemp: Int) (state: CoreLoweringState) =
+    match reserveCoreTemps(2)(state) with
+        | ReservedCoreTemps { state = callState, first = first } ->
+            callState
+            |> emit(CallClosure(first)(closureTemp)(leftTemp)(-1))
+            |> emit(CallClosure(first + 1)(first)(rightTemp)(-1))
+            |> success(first + 1)(SemBool)
+
+let emitBoolNegation (operand: Int) (state: CoreLoweringState) =
+    match reserveCoreTemps(2)(state) with
+        | ReservedCoreTemps { state = targetState, first = falseTemp } ->
+            targetState
+            |> emit(LoadConstBool(falseTemp)(false))
+            |> emit(CmpIntEq(falseTemp + 1)(operand)(falseTemp))
+            |> success(falseTemp + 1)(SemBool)
+
+// A binary trait method at a concrete operand type, stage 0's `RecordMappedBinaryTrait` past its
+// primitive specialization: the `Eq(T)` evidence is resolved against the program's
+// implementations, the selected method's closure is built (or rebuilt from its cached label) and
+// called on the two operand temps. An implementation that still needs requirement or supertrait
+// dictionaries is not dispatched yet; an unsupplied `notEqual` is the default method's
+// `!Eq.equal(left)(right)` without the lambda around it.
+let recursive emitCoreTraitBinaryDispatch (traitName: Str) (methodName: Str) lower (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = leftTemp, leftType = operandType, rightTemp = rightTemp, error = None } ->
+            match resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [operandType]))(state.traitEnvironment) with
+                | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(_goal, implementation, [], [])) } ->
+                    match implementationMethodExpression(methodName)(implementation) with
+                        | Some(implementationBody) ->
+                            match lowerTraitMethodClosure(traitMethodLabelKey(traitName)(methodName)(operandType))(operandType)(SemFunction(operandType)(SemFunction(operandType)(SemBool)(None))(None))(implementationBody)(lower)(state) with
+                                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCalls(closureTemp)(leftTemp)(rightTemp)(closureState)
+                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | None ->
+                            if methodName == "notEqual"
+                            then
+                                match emitCoreTraitBinaryDispatch(traitName)("equal")(lower)(binary) with
+                                    | LoweredCoreValue { state = equalState, temp = equalTemp, error = None } -> emitBoolNegation(equalTemp)(equalState)
+                                    | failed -> failed
+                            else
+                                operandType
+                                |> UnsupportedCoreTraitDispatch(traitName)
+                                |> failure(state)
+                | TraitEvidenceResolution { plan = Some(_plan) } ->
+                    operandType
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> failure(state)
+                | TraitEvidenceResolution { plan = None } ->
+                    operandType
+                    |> MissingCoreTraitEvidence(traitName)
+                    |> failure(state)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+// Past the primitive comparisons of `emitResolvedCoreEquality`: the operands were unified before
+// the comparison was chosen (`unifyEqualityOperands`), so what is left is one concrete operand
+// type, which dispatches through its `Eq` implementation, or a variable no side pins.
+let emitCoreTraitEquality name lower binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemVariable(_id), error = None } -> operatorMismatch(name)(binary)
+        | LoweredCoreBinary { error = None } ->
+            binary |> emitCoreTraitBinaryDispatch("Eq")(if name == "=="
+            then "equal"
+            else "notEqual")(lower)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let emitResolvedCoreEquality name intKind floatKind stringKind lower binary =
     match binary with
         | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemBool)(binary)
         | LoweredCoreBinary { leftType = SemRune, rightType = SemRune } -> emitCoreBoolBinary(intKind)(binary)
@@ -15063,9 +15244,9 @@ let emitResolvedCoreEquality name intKind floatKind stringKind binary =
         | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreBoolBinary(floatKind)(binary)
         | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
         | LoweredCoreBinary { leftType = SemString, rightType = SemString } -> emitCoreBoolBinary(stringKind)(binary)
-        | _ -> operatorMismatch(name)(binary)
+        | _ -> emitCoreTraitEquality(name)(lower)(binary)
 
-let emitResolvedCoreBinary operator binary =
+let emitResolvedCoreBinary operator lower binary =
     match operator with
         | CoreAddOperator -> emitResolvedCoreAdd(binary)
         | CoreSubtractOperator -> emitResolvedCoreSubtract(binary)
@@ -15081,8 +15262,8 @@ let emitResolvedCoreBinary operator binary =
         | CoreGreaterOrEqualOperator -> emitResolvedCoreOrdered(">=")(CmpIntGe)(CmpUIntGe)(CmpFloatGe)(binary)
         | CoreLessOperator -> emitResolvedCoreOrdered("<")(CmpIntLt)(CmpUIntLt)(CmpFloatLt)(binary)
         | CoreLessOrEqualOperator -> emitResolvedCoreOrdered("<=")(CmpIntLe)(CmpUIntLe)(CmpFloatLe)(binary)
-        | CoreEqualOperator -> emitResolvedCoreEquality("==")(CmpIntEq)(CmpFloatEq)(CmpStrEq)(binary)
-        | CoreNotEqualOperator -> emitResolvedCoreEquality("!=")(CmpIntNe)(CmpFloatNe)(CmpStrNe)(binary)
+        | CoreEqualOperator -> emitResolvedCoreEquality("==")(CmpIntEq)(CmpFloatEq)(CmpStrEq)(lower)(binary)
+        | CoreNotEqualOperator -> emitResolvedCoreEquality("!=")(CmpIntNe)(CmpFloatNe)(CmpStrNe)(lower)(binary)
 
 let setBinaryLeft temp semanticType (binary: LoweredCoreBinary) state = binary with state = state, leftTemp = temp, leftType = semanticType
 
@@ -15185,15 +15366,35 @@ let deferredCoreOperatorEmitter operator =
             |> Some
         | _ -> None
 
-let emitPreparedCoreBinary operator binary =
+// Stage 0 unifies the two operands of a trait-mapped comparison before anything else: a side
+// whose type is still a variable takes the other side's type rather than the numeric default
+// the arithmetic operators fall back to. Operands that cannot be unified are the operator's
+// own mismatch.
+let bindEqualityOperands (name: Str) (leftType: SemanticType) (rightType: SemanticType) (binary: LoweredCoreBinary) (state: CoreLoweringState) =
+    match bindType(leftType)(rightType)(state) with
+        | (unifiedState, None) -> binary with state = unifiedState
+        | (failedState, Some(_error)) ->
+            rightType
+            |> resolveType(failedState)
+            |> CoreOperatorTypeMismatch(name)(resolveType(failedState)(leftType))
+            |> failedCoreBinary(failedState)
+
+let unifyEqualityOperands operator (binary: LoweredCoreBinary) =
+    match (operator, binary) with
+        | (CoreEqualOperator, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) -> bindEqualityOperands("==")(leftType)(rightType)(binary)(state)
+        | (CoreNotEqualOperator, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) -> bindEqualityOperands("!=")(leftType)(rightType)(binary)(state)
+        | _ -> binary
+
+let emitPreparedCoreBinary operator lower binary =
     match binary with
         | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None } ->
             match (deferredCoreOperatorEmitter(operator), resolveType(state)(leftType), resolveType(state)(rightType)) with
                 | (Some(emitDeferred), SemVariable(_leftId), SemVariable(_rightId)) -> emitDeferred(binary)
                 | _ ->
                     binary
+                    |> unifyEqualityOperands(operator)
                     |> resolvedCoreBinary
-                    |> emitResolvedCoreBinary(operator)
+                    |> emitResolvedCoreBinary(operator)(lower)
         | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
 
 // The instructions a speculative operator becomes once its operand type is final, with the
@@ -15305,7 +15506,7 @@ let lowerCoreBinary operator left right lower state =
             |> restoreBinaryRequest(request)
             |> withBinaryAffineReservation(binaryAffineReservation(operator)(left)(state))
             |> prepareCoreBinary(operator)(left)
-            |> emitPreparedCoreBinary(operator)
+            |> emitPreparedCoreBinary(operator)(lower)
             |> clearAffineReservation
 
 let finishCoreLogicalNot lowered =
@@ -17134,6 +17335,21 @@ let isCapabilityOperationCall expression (state: CoreLoweringState) =
                         | None -> false
         | _other -> false
 
+// A saturated `Eq.equal(left)(right)` or `Eq.notEqual(left)(right)`, the calls a derived
+// equality makes per field, is the operator it stands for: the operands take the same
+// primitive-or-dispatched comparison as `left == right`.
+let traitOperatorCall (function: Expr) (argument: Expr) =
+    match stripExprAt(function) with
+        | ExprCall(inner, left, _sugar, _layout) ->
+            match stripExprAt(inner) with
+                | ExprQualifiedVar(qualifier, methodName) ->
+                    match (traitLeafName(qualifier), methodName) with
+                        | ("Eq", "equal") -> Some((CoreEqualOperator, left, argument))
+                        | ("Eq", "notEqual") -> Some((CoreNotEqualOperator, left, argument))
+                        | _ -> None
+                | _ -> None
+        | _ -> None
+
 let lowerCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
@@ -17327,7 +17543,10 @@ let lowerCoreDispatch expression lowerCore state =
             )
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
         | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(state.pendingStackClosure)(lowerCore)(state)
-        | ExprCall(function, argument, _whitespace, _layout) -> lowerCallExpression(expression)(function)(argument)(lowerCore)(state)
+        | ExprCall(function, argument, _whitespace, _layout) ->
+            match traitOperatorCall(function)(argument) with
+                | Some((operator, left, right)) -> lowerCoreBinary(operator)(left)(right)(lowerCore)(state)
+                | None -> lowerCallExpression(expression)(function)(argument)(lowerCore)(state)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->
@@ -18654,6 +18873,114 @@ let registerProgramExternals (items: List(TopLevelItem)) (state: CoreLoweringSta
                     |> Error
                 | _ -> Ok(state)
 
+let isImplementationTypeParameter (name: Str) =
+    match name with
+        | "u8" -> false
+        | "u16" -> false
+        | "u32" -> false
+        | "u64" -> false
+        | _ ->
+            if Ashes.Text.length(name) == 0
+            then false
+            else
+                1
+                |> Ashes.Text.substring(name)(0)
+                |> Ashes.Text.contains("abcdefghijklmnopqrstuvwxyz")
+
+// The type parameters an implementation head mentions, in first-mention order once reversed.
+let recursive implementationHeadParameterNames (typeExpr: TypeExpr) (names: List(Str)) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> implementationHeadParameterNames(inner)(names)
+        | TypeNamed(name) ->
+            if isImplementationTypeParameter(name) && !containsName(name)(names)
+            then name :: names
+            else names
+        | TypeApplied(_name, arguments) -> implementationHeadParameterNamesOf(arguments)(names)
+        | TypeTuple(elements) -> implementationHeadParameterNamesOf(elements)(names)
+        | TypeArrow(argument, result, _capabilities, _tail) ->
+            names
+            |> implementationHeadParameterNames(argument)
+            |> implementationHeadParameterNames(result)
+        | _other -> names
+and implementationHeadParameterNamesOf (typeExprs: List(TypeExpr)) (names: List(Str)) =
+    match typeExprs with
+        | [] -> names
+        | head :: rest ->
+            names
+            |> implementationHeadParameterNames(head)
+            |> implementationHeadParameterNamesOf(rest)
+
+let recursive implementationParameterTypes (names: List(Str)) (index: Int) =
+    match names with
+        | [] -> []
+        | name :: rest -> (name, SemParameter(3000 + index)(name)) :: implementationParameterTypes(rest)(index + 1)
+
+let recursive expandTypeExprAliases (aliases: MapTree(Str, (List(Str), TypeExpr))) (typeExprs: List(TypeExpr)) =
+    match typeExprs with
+        | [] -> []
+        | head :: rest -> expandTypeAliases(aliases)(32)(head) :: expandTypeExprAliases(aliases)(rest)
+
+let implementationTypes (aliases: MapTree(Str, (List(Str), TypeExpr))) (parameters: List((Str, SemanticType))) (typeExprs: List(TypeExpr)) =
+    typeExprListToSemanticTypes(expandTypeExprAliases(aliases)(typeExprs))(parameters)
+
+let recursive implementationRequirementConstraints (aliases: MapTree(Str, (List(Str), TypeExpr))) (parameters: List((Str, SemanticType))) (requirements: List(TraitConstraintSyntax)) =
+    match requirements with
+        | [] -> Some([])
+        | TraitConstraintSyntax { traitName = traitName, typeArguments = typeArguments } :: rest ->
+            match implementationTypes(aliases)(parameters)(typeArguments) with
+                | None -> None
+                | Some(argumentTypes) ->
+                    match implementationRequirementConstraints(aliases)(parameters)(rest) with
+                        | None -> None
+                        | Some(restConstraints) -> Some(TraitConstraint(traitName = traitLeafName(traitName), typeArguments = argumentTypes) :: restConstraints)
+
+let recursive implementationMethodDefinitions (bindings: List(TraitImplementationMethodBinding)) =
+    match bindings with
+        | [] -> []
+        | TraitImplementationMethodBinding { methodName = methodName, implementation = implementation } :: rest -> TraitImplementationMethodInferenceDefinition(name = methodName, implementation = implementation, semanticType = SemNever) :: implementationMethodDefinitions(rest)
+
+let registerImplementationDeclaration (declaration: TraitImplementationDecl) (state: CoreLoweringState) =
+    match declaration with
+        | TraitImplementationDecl { traitName = traitName, typeArguments = typeArguments, requirements = requirements, bindings = bindings } ->
+            let parameters =
+                implementationParameterTypes([]
+                |> implementationHeadParameterNamesOf(typeArguments)
+                |> reverse)(0)
+            in
+                match (implementationTypes(state.typeAliases)(parameters)(typeArguments), implementationRequirementConstraints(state.typeAliases)(parameters)(requirements)) with
+                    | (Some(headTypes), Some(constraints)) ->
+                        Ok((state with traitEnvironment = addTraitImplementation(traitLeafName(traitName))(headTypes)(constraints)(implementationMethodDefinitions(bindings))(state.traitEnvironment)))
+                    | _ -> Error(UnsupportedCoreImplementationHead(traitName))
+
+let recursive registerImplementationDeclarations (declarations: List(TraitImplementationDecl)) (state: CoreLoweringState) =
+    match declarations with
+        | [] -> Ok(state)
+        | declaration :: rest ->
+            match registerImplementationDeclaration(declaration)(state) with
+                | Error(error) -> Error(error)
+                | Ok(registered) -> registerImplementationDeclarations(rest)(registered)
+
+let recursive implementationDeclarationsOf (items: List(TopLevelItem)) (reversed: List(TraitImplementationDecl)) =
+    match items with
+        | [] -> reverse(reversed)
+        | TopLevelAt(_span, inner) :: rest -> implementationDeclarationsOf(inner :: rest)(reversed)
+        | TopLevelImplementation(declaration) :: rest -> implementationDeclarationsOf(rest)(declaration :: reversed)
+        | _other :: rest -> implementationDeclarationsOf(rest)(reversed)
+
+// Stage 0 registers a program's `implement` declarations, and the ones `deriving` expands to,
+// before it lowers any value: each head with its type parameters, its requirements, and its
+// method bodies joins the standard trait environment the trait-mapped operators resolve
+// against.
+let registerProgramImplementations (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match expandDerivedImplementations(ProgramSyntax(items = items, body = None)) with
+        | Error(error) ->
+            error
+            |> Ashes.Trait.Show.show
+            |> UnsupportedCoreDerivingExpansion
+            |> Error
+        | Ok(ProgramSyntax { items = expanded }) ->
+            registerImplementationDeclarations(implementationDeclarationsOf(expanded)([]))(state)
+
 let lowerProgramWithCapabilities items trailingBody environment state =
     match registerProgramCapabilities(items)(state) with
         | Error(error) -> failure(state)(error)
@@ -18664,9 +18991,12 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                     match registerProgramExternals(items)(typed) with
                         | Error(error) -> failure(typed)(error)
                         | Ok(withExternals) ->
-                            withExternals
-                            |> ensureResultRcEligibility
-                            |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
+                            match registerProgramImplementations(items)(withExternals) with
+                                | Error(error) -> failure(withExternals)(error)
+                                | Ok(withImplementations) ->
+                                    withImplementations
+                                    |> ensureResultRcEligibility
+                                    |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

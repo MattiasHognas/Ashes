@@ -736,16 +736,40 @@ same public behavior.
   `Error` carries the conversion's message) and an `out` native string always as the nullable
   form. `CoreExternalLowering.ash`'s `fromExternalAbiType` and both materializations now give
   the `Result` types; the external lowering tests assert them.
-- [ ] **MOD-17** The stage-1 compile of the CLI package fails with
+- [~] **MOD-17** The stage-1 compile of the CLI package fails with
   `CoreOperatorTypeMismatch("==", List(SemNamed(0, "AshesCompiler_Semantics_Types_SemanticType", [])),
-  List(SemVariable(6418)))`, reached once MOD-16 closed (2026-09-13, 29 s and 14.6 GiB): an
-  equality between a list of semantic types and a list whose element type is still an
-  inference variable. Stage 0 compiles the package, so its operator typing unifies the operand
-  types (the variable takes `SemanticType`) where the self-hosted operator lowering compares
-  the two resolved types and rejects an unresolved side. Find the comparison (a byte-offset scan
-  of the stitched sources for `==` over lists of `SemanticType`, likely in the semantics package),
-  and make the operator lowering unify its operands before deciding the element equality it
-  emits, with a reduced repro in `selfhost/tests/semantics`.
+  List(SemVariable(6418)))`, reached once MOD-16 closed (2026-09-13, 29 s and 14.6 GiB).
+  Diagnosis: not an operand-comparison bug but the physical trait dispatch TRT-13..TRT-15
+  still lack. Stage 0's `LowerEqualityOp` first maps `==` to the `Eq` trait
+  (`RecordMappedBinaryTrait`: unify the operands, resolve `Eq(T)` evidence, build the
+  dictionary, select `equal`, two `CallClosure`s) and only a primitive operand type takes the
+  direct comparison; the self-hosted `emitResolvedCoreEquality` has the primitive comparisons
+  alone, so every `==` on a list, tuple, or user type is rejected, and the operands are never
+  unified either (`arguments == []` at `TypeResolution.ash:360` leaves the literal's element a
+  variable). The real sites are lists of `deriving {Eq}` types (`TypeResolution.ash:360`,
+  `ExternalTyping.ash:568`); a reduced repro is a `Shape deriving {Eq}` with `list == []` and
+  `left == right` over `List(Shape)`. Sliced, each its own PR:
+  - [x] **MOD-17a** Concrete dispatch on a program implementation. The core lowering expands
+    `deriving` into implementation items and registers every `implement` of the program (its
+    head types with parameters, its requirements, its method bodies) in a trait environment
+    seeded from `standardTraitEnvironment`; `==`/`!=` first unify the operands, then take the
+    primitive comparison, else resolve `Eq(T)` evidence and, for an implementation with no
+    requirement or supertrait dictionaries, lower the selected method once as a capture-free
+    closure helper (cached by label like stage 0's TRT-16 instance cache) and call it on the two
+    operand temps; an unsupplied `notEqual` negates `equal`. `Eq.equal(a)(b)` calls, which the
+    derived bodies use per field, lower as `a == b`. Done (2026-09-13).
+  - [ ] **MOD-17b** Structural standard implementations with requirement dictionaries: bind the
+    stitched `Ashes.Trait` bodies for `List(a)`, `Maybe(a)`, `Result(e, a)` and tuples to the
+    seeded placeholder heads, thread each requirement's dictionary into the method (the
+    `x == y` inside `equalLists` dispatches through the active `Eq(a)` evidence, stage 0's
+    `TryLowerActiveTraitMethod`), and derived implementations of parameterized types. Closes
+    the CLI-package sites above and the shared fixture
+    `tests/reuse_specialization_declines_unreachable_helper.ash` (`==` on `List(Live)`).
+  - [ ] **MOD-17c** The other mapped operators (`<`..`>=` through `Ord` with its `Eq`
+    supertrait, `+` through `Add` on a user type) and trait method calls at a concrete type
+    (`Ashes.Trait.Show.show(x)`, which the selfhost source uses), sharing the dispatch of
+    MOD-17a; default methods whose bodies call sibling methods (`less` via `compare`) need the
+    concrete operand type pinned on the default lambda's parameters before it is lowered.
 
 #### IR model and lowering
 
@@ -3857,8 +3881,10 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   itself needs for the same package. MOD-14 (type aliases and the program-arguments value)
   moved the stop to MOD-15's diagnostic, MOD-15 (external functions registered, kept
   unrenamed, nullary calls) to MOD-16's, and MOD-16 (native-string results typed as `Result`)
-  to MOD-17's `CoreOperatorTypeMismatch("==", ...)` at 29 s and 14.6 GiB, so MOD-17 is the
-  next blocker; a single-file program that reads
+  to MOD-17's `CoreOperatorTypeMismatch("==", ...)` at 29 s and 14.6 GiB. MOD-17a (concrete
+  `Eq` dispatch) moved that stop to `UnsupportedCoreTraitDispatch("Eq", List(SemanticType))`
+  at 28.9 s and 14.7 GiB, the structural list implementation MOD-17b supplies, so MOD-17b is
+  the next blocker; a single-file program that reads
   `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
   codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
   codegen either, which the CLI package's LLVM bindings will need before its binary links. The

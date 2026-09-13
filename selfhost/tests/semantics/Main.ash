@@ -45,6 +45,7 @@ import ResultPipeLoweringTests
 import CapabilityProgramLoweringTests
 import CoreBuiltinLoweringTests
 import CoreExternalLoweringTests
+import CoreTraitDispatchLoweringTests
 import CoreCapabilityLoweringTests
 import CallWindowLoweringTests
 import StateMachineTransformTests
@@ -115,6 +116,7 @@ let run unit =
     |> (given (_) -> CapabilityProgramLoweringTests.runCapabilityProgramLoweringTests(Unit))
     |> (given (_) -> CoreBuiltinLoweringTests.runCoreBuiltinLoweringTests(Unit))
     |> (given (_) -> CoreExternalLoweringTests.runCoreExternalLoweringTests(Unit))
+    |> (given (_) -> CoreTraitDispatchLoweringTests.runCoreTraitDispatchLoweringTests(Unit))
     |> (given (_) -> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests(Unit))
     |> (given (_) -> CallWindowLoweringTests.runCallWindowLoweringTests(Unit))
     |> (given (_) -> StateMachineTransformTests.runStateMachineTransformTests(Unit))
