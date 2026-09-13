@@ -211,11 +211,20 @@ let recursive stitchUnits (entryName: Str) (loaded: List(LoadedShippedModule)) (
 
 // The entry (`entryName`, its `entrySource` including any import header) plus every shipped module
 // it reaches, as one stitched project whose `program` lowers like any single program.
+// Stage 0 loads `Ashes.Trait` into every program whether or not the program names it: the
+// standard trait implementations a trait-mapped operator dispatches through live there.
+let standardTraitModuleNames (shipped: List(ShippedModuleText)) =
+    match findShipped("Ashes.Trait")(shipped) with
+        | Some(_module) -> ["Ashes.Trait"]
+        | None -> []
+
 let stitchWithShippedModules (entryName: Str) (entryPath: Str) (entrySource: Str) (shipped: List(ShippedModuleText)) =
     match loadModuleText(shipped)(entryName)(entryPath)(entrySource) with
         | Error(error) -> Error(error)
         | Ok(entry) ->
-            match loadReachable(entryName)(reachedModuleNames(entry))([entry])(shipped) with
+            match loadReachable(entryName)(shipped
+            |> standardTraitModuleNames
+            |> appendList(reachedModuleNames(entry)))([entry])(shipped) with
                 | Error(error) -> Error(error)
                 | Ok(loaded) ->
                     match loaded

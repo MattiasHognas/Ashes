@@ -134,18 +134,67 @@ let expectMissingEqualityEvidenceIsReported unit =
                 test.assertEqual(SemNamed(0)("Plain")([]))(operandType))
         | other -> test.fail("expected MissingCoreTraitEvidence, got " + Ashes.Trait.Show.show(other))
 
-// The standard list implementation needs the element's dictionary threaded through: until that
-// lands, a list comparison names the trait and the operand type it could not dispatch.
-let expectListEqualityIsStillUnsupported unit =
+// The standard implementations live in `Ashes.Trait`, which the stitcher always loads; a bare
+// program only has the seeded placeholder bodies, whose binding names nothing defines.
+let expectListEqualityWithoutTheTraitModuleNamesThePlaceholder unit =
     match loweringErrorFor(shapeSource + "let empty (list: List(Shape)) = list == []\n\nempty([Circle])") with
-        | UnsupportedCoreTraitDispatch(traitName, operandType) ->
+        | UnknownLoweringBinding(name) ->
+            "__ashes_standard_trait_Eq_equal_list"
+            |> Ashes.Text.startsWith(name)
+            |> test.assertEqual(true)
+        | other -> test.fail("expected UnknownLoweringBinding, got " + Ashes.Trait.Show.show(other))
+
+let standardTraitSource unit =
+    match Ashes.IO.File.readText("lib/Ashes/Trait.ash") with
+        | Ok(source) -> source
+        | Error(message) -> test.fail("could not read lib/Ashes/Trait.ash: " + message)
+
+let withStandardTraits (source: Str) = standardTraitSource(Unit) + "\n\n" + source
+
+// `==` on a list of a derived type goes through `Ashes.Trait`'s `Eq(List(a))`: its `equal` is
+// lowered once as a generic closure taking the element's `equal` and `notEqual` as hidden
+// parameters, the site applies it to the derived `Shape` methods (two calls) and calls the
+// result on the operands (two more), and the `x == y` inside `equalLists` reaches the element
+// evidence through those parameters. Both sites share the generic body.
+let expectListEqualityDispatchesThroughTheStandardImplementation unit =
+    match shapeSource + "let empty (list: List(Shape)) = list == []\n\nlet same (left: List(Shape)) (right: List(Shape)) = left == right\n\nempty([Circle]) && same([Circle])([Square])"
+    |> withStandardTraits
+    |> loweredDump with
+        | dump ->
             Unit
-            |> (given (_) -> test.assertEqual("Eq")(traitName))
             |> (given (_) ->
-                test.assertEqual([]
-                |> SemNamed(0)("Shape")
-                |> SemList)(operandType))
-        | other -> test.fail("expected UnsupportedCoreTraitDispatch, got " + Ashes.Trait.Show.show(other))
+                dump
+                |> occurrences("CallClosure")
+                |> (given (count) -> test.assertEqual(true)(count >= 8)))
+            |> (given (_) ->
+                dump
+                |> occurrences("[ClosureHelper from empty]")
+                |> (given (count) -> test.assertEqual(true)(count >= 2)))
+
+// A derived implementation of a parameterized type requires the parameter's `Eq`: comparing two
+// `Box(Shape)` values applies the generic `Box` equality to the derived `Shape` methods.
+let expectDerivedEqualityOfAParameterizedTypeThreadsTheElementEvidence unit =
+    shapeSource + "type Box(a) =\n    | Box(a)\n    | Empty\n    deriving {Eq}\n\nlet same (a: Box(Shape)) (b: Box(Shape)) = a == b\n\nsame(Box(Circle))(Empty)"
+    |> loweredDump
+    |> occurrences("CallClosure")
+    |> (given (count) -> test.assertEqual(true)(count >= 6))
+
+// The requirement dictionaries nest: a list of lists applies the generic list equality to the
+// generic list equality applied to the element's methods.
+let expectNestedListEqualityNestsTheEvidence unit =
+    shapeSource + "let same (a: List(List(Shape))) (b: List(List(Shape))) = a == b\n\nsame([[Circle]])([[Square]])"
+    |> withStandardTraits
+    |> loweredDump
+    |> occurrences("CallClosure")
+    |> (given (count) -> test.assertEqual(true)(count >= 8))
+
+// `!=` inside a generic body reaches the requirement's `notEqual` through the active evidence.
+let expectNotEqualInAGenericBodyUsesTheActiveEvidence unit =
+    "type Pair(a) =\n    | Pair(a, a)\n\nimplement Eq(Pair(a)) requires {Eq(a)} =\n    | equal = given (left) -> given (right) -> match (left, right) with | (Pair(x, y), Pair(u, v)) -> !(x != u) && !(y != v)\n\nlet same (a: Pair(Int)) (b: Pair(Int)) = a == b\n\nsame(Pair(1, 2))(Pair(1, 2))"
+    |> withStandardTraits
+    |> loweredDump
+    |> occurrences("CallClosure")
+    |> (given (count) -> test.assertEqual(true)(count >= 4))
 
 let runCoreTraitDispatchLoweringTests unit =
     Unit
@@ -156,5 +205,9 @@ let runCoreTraitDispatchLoweringTests unit =
     |> expectSuppliedNotEqualIsCalled
     |> expectRecursiveDerivedEqualityCallsItselfThroughTheCache
     |> expectMissingEqualityEvidenceIsReported
-    |> expectListEqualityIsStillUnsupported
+    |> expectListEqualityWithoutTheTraitModuleNamesThePlaceholder
+    |> expectListEqualityDispatchesThroughTheStandardImplementation
+    |> expectDerivedEqualityOfAParameterizedTypeThreadsTheElementEvidence
+    |> expectNestedListEqualityNestsTheEvidence
+    |> expectNotEqualInAGenericBodyUsesTheActiveEvidence
     |> (given (_) -> Ashes.IO.print("all self-hosted core trait dispatch lowering tests passed"))

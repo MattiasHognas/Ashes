@@ -727,13 +727,20 @@ let recursive lastModuleName names =
             |> Some
         | _name :: rest -> lastModuleName(rest)
 
+// Stage 0 loads `Ashes.Trait` into every program whether or not the project names it: the
+// standard trait implementations a trait-mapped operator dispatches through live there.
+let standardTraitSeed (shipped: List(ShippedModuleText)) =
+    match findShippedText("Ashes.Trait")(shipped) with
+        | Some(_module) -> ["Ashes.Trait"]
+        | None -> []
+
 let planIndexedSources (layout: ProjectLayout) shipped (dependencies: List(ResolvedProjectDependency)) (paths: List(Str)) (sources: List(IndexedProjectSource)) =
     (let loadLayout = deepCopy(layout)
     in
         match loadReachableModules(
             projectEntryModuleName(loadLayout),
             shipped,
-            [projectEntryModuleName(layout)],
+            projectEntryModuleName(layout) :: standardTraitSeed(shipped),
             [],
             [],
             [],
