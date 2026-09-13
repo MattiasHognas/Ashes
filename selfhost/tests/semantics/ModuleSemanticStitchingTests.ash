@@ -173,6 +173,42 @@ let checkPrimaryPlan unitValue =
         |> (given (_) -> expectStablePrivateNames(project))
         |> (given (_) -> expectDefinitionMetadata(project)))
 
+// A type selector import brings the module in wholesale beside the selected type, as stage 0's
+// `NormalizeTypeSelectors` does: the module's other exports resolve unqualified and qualified.
+let typeSelectorUnit =
+    unit(
+        "Sel",
+        "app@1.0.0",
+        "/app/Sel.ash",
+        [ResolvedTypeImport("Foo.Util")("Box")("Box")(1)("import Foo.Util.Box")],
+        moduleInterface("Sel")([ImportValueExport("use")]),
+        ProgramSyntax(items = [TopLevelLet(binding("use")(ExprVar("first")))(false)], body = None),
+        false
+    )
+
+let checkTypeSelectorImportsModule unitValue =
+    [utilUnit, typeSelectorUnit]
+    |> buildStitchedSemanticProject
+    |> requireProject
+    |> (given (project) ->
+        project
+        |> resolveStitchedUnqualified("Sel")(-1)(StitchedValue)("first")
+        |> requireDefinition("a type selector import should expose the module's exported values unqualified")
+        |> definitionName
+        |> test.assertEqual("Foo_Util_first")
+        |> (given (_) ->
+            project
+            |> resolveStitchedQualified("Sel")("Foo.Util")(StitchedValue)("first")
+            |> requireDefinition("a type selector import should expose the module's exported values qualified")
+            |> definitionId
+            |> test.assertEqual(0))
+        |> (given (_) ->
+            project
+            |> resolveStitchedUnqualified("Sel")(-1)(StitchedType)("Box")
+            |> requireDefinition("the selected type should resolve unqualified")
+            |> definitionName
+            |> test.assertEqual("Foo_Util_Box")))
+
 let collisionUnit name path =
     unit(
         name,
@@ -292,6 +328,7 @@ let checkShortQualifierCollision unitValue =
 let runModuleSemanticStitchingTests unitValue =
     unitValue
     |> checkPrimaryPlan
+    |> checkTypeSelectorImportsModule
     |> checkCompilerNameCollision
     |> checkUnusedImportCollision
     |> checkReferencedImportCollision
