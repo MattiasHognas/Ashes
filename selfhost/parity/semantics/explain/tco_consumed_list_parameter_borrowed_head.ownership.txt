@@ -1,0 +1,51 @@
+Ownership report
+================
+
+Function: buildTexts
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - acc
+
+Function: countTexts
+  Parameters
+    xs
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    count
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - count
+
+Function: sumTextLengths
+  Parameters
+    xs
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    total
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - total
+

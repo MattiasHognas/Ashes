@@ -1,0 +1,63 @@
+RC report
+=========
+
+Function: bang
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: pair
+  Operations
+    dup:                  0
+    drop:                 3
+    uniqueness checks:    1
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: rebuilt
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_structural_4
+  Operations
+    dup:                  0
+    drop:                 3
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: first
+  Operations
+    dup:                  2
+    drop:                 10
+    uniqueness checks:    3
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               4
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+

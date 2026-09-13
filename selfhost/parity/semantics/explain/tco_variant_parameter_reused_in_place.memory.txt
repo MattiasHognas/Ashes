@@ -1,0 +1,47 @@
+Memory report
+=============
+
+Function: step
+  ownership
+    n: consumed, move-safe yes
+    s: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_1]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1__scalarenv0]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+  reuse: entry copy elided
+  reuse: runtime uniqueness check omitted
+  reuse: runtime uniqueness check omitted
+  reuse: runtime uniqueness check omitted
+  reuse: runtime uniqueness check omitted
+  reuse: constructor layout compatibility rejected
+  reuse: constructor layout compatibility rejected
+  reuse: constructor layout compatibility accepted
+  reuse: token production produced
+  reuse: token production produced
+  reuse: token production produced
+  reuse: token production produced
+  reuse: token disposition discarded
+  reuse: token disposition discarded
+  reuse: token disposition discarded
+  reuse: token disposition consumed
+  reuse: fallback allocation allocated
+  reuse: fallback allocation allocated
+  representation [lambda_1]
+    conservative unknown: 3
+    region:               5
+    runtime rc:           3
+    copy value:           29
+  representation [lambda_0]
+    region:               3
+    copy value:           1
+

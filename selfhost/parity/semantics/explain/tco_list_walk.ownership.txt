@@ -1,0 +1,22 @@
+Ownership report
+================
+
+Function: walk
+  Parameters
+    xs
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    count
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    total
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+

@@ -1,0 +1,23 @@
+RC report
+=========
+
+Function: stamp
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: _start_main
+  Operations
+    dup:                  1
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+

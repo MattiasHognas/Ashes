@@ -1,0 +1,15 @@
+Reuse report
+============
+
+Function: _start_main
+  runtime uniqueness check: required [counter]
+    reason: runtime managed reuse candidate (reuse_record_update.ash:8:7)
+  constructor layout compatibility: accepted [counter]
+    reason: compatible constructor layout (reuse_record_update.ash:8:32)
+  token production: produced [counter]
+    reason: matched cell became dead (reuse_record_update.ash:8:7)
+  token disposition: consumed [counter]
+    reason: compatible token consumed (reuse_record_update.ash:8:32)
+  fallback allocation: available [counter]
+    reason: runtime uniqueness fallback (reuse_record_update.ash:8:32)
+

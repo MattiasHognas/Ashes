@@ -1,0 +1,53 @@
+RC report
+=========
+
+Function: __deepcopy_2
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: step [lambda_1]
+  Operations
+    dup:                  0
+    drop:                 7
+    uniqueness checks:    3
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               4
+
+Function: step
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: step [lambda_1__scalarenv0]
+  Operations
+    dup:                  0
+    drop:                 7
+    uniqueness checks:    3
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               4
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+

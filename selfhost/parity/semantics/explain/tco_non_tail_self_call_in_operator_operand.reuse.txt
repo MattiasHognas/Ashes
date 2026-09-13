@@ -1,0 +1,9 @@
+Reuse report
+============
+
+Function: _start_main
+  specialization candidate qualification: rejected [items]
+    reason: accumulator not proven unique (tco_non_tail_self_call_in_operator_operand.ash:55:219)
+  specialization candidate qualification: rejected [items]
+    reason: accumulator not proven unique (tco_non_tail_self_call_in_operator_operand.ash:55:266)
+

@@ -1,0 +1,37 @@
+Ownership report
+================
+
+Function: bang
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: pair
+  Parameters
+    a
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: rebuilt
+  Parameters
+    xs
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - xs
+

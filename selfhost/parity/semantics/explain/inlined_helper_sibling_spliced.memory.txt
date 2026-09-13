@@ -1,0 +1,92 @@
+Memory report
+=============
+
+Function: base
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  representation [lambda_0]
+    region:               1
+    runtime rc:           2
+    copy value:           4
+
+Function: count
+  ownership
+    xs: consumed, move-safe yes
+    result fresh: yes
+  representation [lambda_2]
+    conservative unknown: 3
+    region:               1
+    copy value:           2
+
+Function: go
+  ownership
+    acc: consumed, move-safe yes
+    rest: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_3]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_7]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_4]
+    conservative unknown: 3
+    copy value:           6
+  representation [lambda_3]
+    region:               3
+    copy value:           1
+  representation [lambda_8]
+    conservative unknown: 3
+    copy value:           6
+  representation [lambda_7]
+    region:               3
+    copy value:           1
+
+Function: loop
+  ownership
+    i: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_6]
+    dup:                  1
+    drop:                 2
+    uniqueness checks:    1
+  perceus [lambda_5]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_6__scalarenv0]
+    dup:                  1
+    drop:                 2
+    uniqueness checks:    1
+  representation [lambda_6]
+    conservative unknown: 4
+    region:               1
+    runtime rc:           3
+    copy value:           14
+  representation [lambda_5]
+    conservative unknown: 2
+    region:               3
+    copy value:           1
+
+Function: wrap
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               1
+    runtime rc:           1
+    copy value:           1
+

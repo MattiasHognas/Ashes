@@ -1,0 +1,74 @@
+Memory report
+=============
+
+Function: countEvens
+  ownership
+    xs: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_2]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_2]
+    conservative unknown: 6
+    region:               1
+    runtime rc:           3
+    copy value:           11
+
+Function: countFields
+  ownership
+    items: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_4]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_4]
+    conservative unknown: 6
+    region:               1
+    runtime rc:           2
+    copy value:           6
+
+Function: countLeft
+  ownership
+    n: consumed, move-safe yes
+    result fresh: yes
+  representation [lambda_0]
+    conservative unknown: 1
+    region:               1
+    runtime rc:           1
+    copy value:           20
+
+Function: countNegated
+  ownership
+    items: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_5]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_5]
+    conservative unknown: 6
+    region:               1
+    runtime rc:           2
+    copy value:           10
+
+Function: countRight
+  ownership
+    n: consumed, move-safe yes
+    result fresh: yes
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               1
+    runtime rc:           1
+    copy value:           20
+
+Function: sumTo
+  ownership
+    n: consumed, move-safe yes
+    result fresh: yes
+  representation [lambda_3]
+    conservative unknown: 1
+    region:               1
+    copy value:           11
+

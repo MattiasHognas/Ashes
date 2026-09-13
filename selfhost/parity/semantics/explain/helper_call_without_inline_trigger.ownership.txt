@@ -1,0 +1,42 @@
+Ownership report
+================
+
+Function: count
+  Parameters
+    xs
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: double
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: yes
+    aliases:
+      - n
+
+Function: go
+  Parameters
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    rest
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - acc
+

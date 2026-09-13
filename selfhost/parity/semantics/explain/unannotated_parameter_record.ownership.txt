@@ -1,0 +1,27 @@
+Ownership report
+================
+
+Function: describe
+  Parameters
+    item
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - item
+
+Function: toEntry
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - n
+

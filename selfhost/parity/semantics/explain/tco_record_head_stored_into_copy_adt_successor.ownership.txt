@@ -1,0 +1,52 @@
+Ownership report
+================
+
+Function: build
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - acc
+
+Function: heaviest
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    best
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - items
+      - best
+
+Function: run
+  Parameters
+    round
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    total
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - total
+

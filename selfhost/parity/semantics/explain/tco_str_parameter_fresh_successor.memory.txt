@@ -1,0 +1,38 @@
+Memory report
+=============
+
+Function: collect
+  ownership
+    n: consumed, move-safe yes
+    text: consumed, move-safe yes
+    count: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  0
+    drop:                 3
+    uniqueness checks:    0
+  perceus [lambda_2$env_normalize]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_2]
+    conservative unknown: 1
+    region:               3
+    runtime rc:           5
+    copy value:           10
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               2
+    runtime rc:           1
+  representation [lambda_0]
+    region:               3
+    copy value:           1
+

@@ -18,6 +18,7 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Semantics.OwnershipProvenance
 import AshesCompiler.Semantics.OwnershipSummary
+import Ashes.Collection.Map.MapTree
 export (
     type ProvenanceFunction(..),
     type ProvenanceConstructors(..),
@@ -176,13 +177,17 @@ let recursive lookupArity (name: Str) (arities: List((Str, Int))) =
             then Some(arity)
             else lookupArity(name)(rest)
 
-let recursive lookupFunction (name: Str) (functions: List(ProvenanceFunction)) =
+// The functions by name, the earliest entry of a repeated name standing for it, so a call target
+// resolves in logarithmic time.
+let recursive functionsByName (functions: List(ProvenanceFunction)) (byName: MapTree(Str, ProvenanceFunction)) =
     match functions with
-        | [] -> None
-        | (ProvenanceFunction { name = candidate } as function) :: rest ->
-            if candidate == name
-            then Some(function)
-            else lookupFunction(name)(rest)
+        | [] -> byName
+        | (ProvenanceFunction { name = name } as function) :: rest ->
+            byName
+            |> Ashes.Collection.Map.upsertStr(name)(function)(given (existing) -> existing)
+            |> functionsByName(rest)
+
+let lookupFunction (name: Str) (functions: MapTree(Str, ProvenanceFunction)) = Ashes.Collection.Map.getStr(name)(functions)
 
 let isLiteral (expression: Expr) =
     match expression with
@@ -246,7 +251,7 @@ and callArguments (expression: Expr) (arguments: List(Expr)) =
 
 // Stage 0's `TryResolveForwardTarget`: a saturated call to a visible let-bound function that is
 // not a constructor.
-let forwardTarget (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (arm: ProvenanceArm) =
+let forwardTarget (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (arm: ProvenanceArm) =
     match callHead(arm.expression)(0) with
         | Some((name, argumentCount)) ->
             match (lookupArity(name)(constructors.arities), containsName(name)(arm.hidden), lookupFunction(name)(functions)) with
@@ -269,7 +274,7 @@ type ArmFacts =
     | considered: Int
     | targets: List(Str)
 
-let recursive classifyArms (function: ProvenanceFunction) (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (arms: List(ProvenanceArm)) (facts: ArmFacts) =
+let recursive classifyArms (function: ProvenanceFunction) (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (arms: List(ProvenanceArm)) (facts: ArmFacts) =
     match arms with
         | [] -> facts
         | arm :: rest ->
@@ -298,7 +303,7 @@ let functionBodyArms (function: ProvenanceFunction) =
 
 // The provenance node of one function: a directly returned string literal is a fresh string by
 // itself; any other body is classified arm by arm.
-let provenanceNodeOf (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (function: ProvenanceFunction) =
+let provenanceNodeOf (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (function: ProvenanceFunction) =
     match functionBodyArms(function) with
         | None -> buildProvenanceNode(function.name)(true)(false)(1)([])(None)([])(true)
         | Some(arms) ->
@@ -308,39 +313,44 @@ let provenanceNodeOf (functions: List(ProvenanceFunction)) (constructors: Proven
                         | target :: [] -> buildProvenanceNode(function.name)(direct)(rejected)(considered)(targets)(Some(target))([])(true)
                         | _ -> buildProvenanceNode(function.name)(direct)(rejected)(considered)(targets)(None)([])(true)
 
-let recursive dedupeFunctions (functions: List(ProvenanceFunction)) (seen: List(Str)) =
+let recursive dedupeFunctionsInto (functions: List(ProvenanceFunction)) (seen: MapTree(Str, Bool)) (unique: List(ProvenanceFunction)) =
     match functions with
-        | [] -> []
+        | [] -> reverse(unique)
         | (ProvenanceFunction { name = name } as function) :: rest ->
-            if containsName(name)(seen)
-            then dedupeFunctions(rest)(seen)
-            else function :: dedupeFunctions(rest)(name :: seen)
+            match Ashes.Collection.Map.getStr(name)(seen) with
+                | Some(_present) -> dedupeFunctionsInto(rest)(seen)(unique)
+                | None ->
+                    dedupeFunctionsInto(rest)(Ashes.Collection.Map.setStr(name)(true)(seen))(function :: unique)
 
-let recursive nodesOf (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (remaining: List(ProvenanceFunction)) =
+let dedupeFunctions (functions: List(ProvenanceFunction)) (seen: MapTree(Str, Bool)) = dedupeFunctionsInto(functions)(seen)([])
+
+// The nodes accumulate and are reversed once: a node holds names borrowed from its function, and
+// stage 0 copies such a list out at every return of a builder that conses around its recursive
+// call.
+let recursive nodesOf (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (remaining: List(ProvenanceFunction)) (nodes: List(ProvenanceFunctionNode)) =
     match remaining with
-        | [] -> []
-        | function :: rest -> provenanceNodeOf(functions)(constructors)(isFreshBuiltin)(function) :: nodesOf(functions)(constructors)(isFreshBuiltin)(rest)
+        | [] -> reverse(nodes)
+        | function :: rest -> nodesOf(functions)(constructors)(isFreshBuiltin)(rest)(provenanceNodeOf(functions)(constructors)(isFreshBuiltin)(function) :: nodes)
 
 // The provenance nodes of every function, the earliest entry of a repeated name standing for it.
 let resultProvenanceNodes (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) =
-    match dedupeFunctions(functions)([]) with
-        | unique -> nodesOf(unique)(constructors)(isFreshBuiltin)(unique)
+    match dedupeFunctions(functions)(Ashes.Collection.Map.empty) with
+        | unique ->
+            nodesOf(functionsByName(unique)(Ashes.Collection.Map.empty))(constructors)(isFreshBuiltin)(unique)([])
 
-let recursive eligibilityOf (provenances: List((Str, FunctionResultProvenance))) =
+let recursive eligibilityOf (eligibility: MapTree(Str, Bool)) (provenances: List((Str, FunctionResultProvenance))) =
     match provenances with
-        | [] -> []
-        | (name, FunctionResultProvenance { rcEligible = eligible }) :: rest -> (name, eligible) :: eligibilityOf(rest)
+        | [] -> eligibility
+        | (name, FunctionResultProvenance { rcEligible = eligible }) :: rest ->
+            eligibilityOf(Ashes.Collection.Map.setStr(name)(eligible)(eligibility))(rest)
 
-// Every function's RC-eligibility verdict after the forwarding fixpoint.
+// Every function's RC-eligibility verdict after the forwarding fixpoint, by name.
 let resolvedRcEligibility (nodes: List(ProvenanceFunctionNode)) =
     nodes
     |> resolveResultProvenances
-    |> eligibilityOf
+    |> eligibilityOf(Ashes.Collection.Map.empty)
 
-let recursive lookupRcEligible (name: Str) (eligibility: List((Str, Bool))) =
-    match eligibility with
-        | [] -> false
-        | (candidate, eligible) :: rest ->
-            if candidate == name
-            then eligible
-            else lookupRcEligible(name)(rest)
+let lookupRcEligible (name: Str) (eligibility: MapTree(Str, Bool)) =
+    match Ashes.Collection.Map.getStr(name)(eligibility) with
+        | Some(eligible) -> eligible
+        | None -> false

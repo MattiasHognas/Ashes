@@ -1,0 +1,41 @@
+Memory report
+=============
+
+Function: count
+  ownership
+    xs: consumed, move-safe yes
+    result fresh: yes
+  representation [lambda_1]
+    conservative unknown: 3
+    region:               1
+    copy value:           2
+
+Function: double
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  representation [lambda_0]
+    region:               1
+    runtime rc:           2
+    copy value:           2
+
+Function: go
+  ownership
+    acc: consumed, move-safe yes
+    rest: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_3]
+    conservative unknown: 3
+    copy value:           6
+  representation [lambda_2]
+    region:               3
+    copy value:           1
+

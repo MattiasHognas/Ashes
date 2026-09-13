@@ -9148,6 +9148,9 @@ public sealed partial class Lowering
             if (_inst[i] is IrInst.AllocReusing allocation)
             {
                 ReclassifyRevertedReuseAllocation(allocation);
+                // A reverted cell is a fresh arena allocation from here on; no decision may keep
+                // treating it as one sitting below its scope's watermark.
+                _reuseResultTemps.Remove(allocation.Target);
                 IrInst replacement = new IrInst.AllocAdt(
                     allocation.Target,
                     allocation.Tag,

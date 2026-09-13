@@ -1,0 +1,24 @@
+Ownership report
+================
+
+Function: total
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    sum
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    labels
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - sum
+      - labels
+

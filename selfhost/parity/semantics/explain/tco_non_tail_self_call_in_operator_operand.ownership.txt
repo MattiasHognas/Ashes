@@ -1,0 +1,69 @@
+Ownership report
+================
+
+Function: countEvens
+  Parameters
+    xs
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: countFields
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: countLeft
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: countNegated
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: countRight
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: sumTo
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+

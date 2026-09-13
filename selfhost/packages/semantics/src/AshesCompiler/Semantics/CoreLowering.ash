@@ -11,6 +11,7 @@
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.LetBindingSyntax
@@ -404,7 +405,7 @@ type CoreLoweringState =
     | sourceContext: Maybe(SourceContext)
     | currentSpan: Maybe(TextSpan)
     | currentItem: Int
-    | topLevelNames: List(Str)
+    | topLevelNames: MapTree(Str, Bool)
     | pendingStackClosure: Bool
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
@@ -415,7 +416,7 @@ type CoreLoweringState =
     | consumerRequest: ConsumerRequest
     | resourceStates: List((Int, ResourceReleaseKind))
     | letLambdas: List((Str, List(Str), Expr))
-    | runtimeTemps: List((Int, RuntimeTempState))
+    | runtimeTemps: MapTree(Int, RuntimeTempState)
     | backEdgeDummyTemps: List(Int)
     | runtimeOwners: List((Int, Bool))
     | reuseTransferredNames: List(Str)
@@ -455,7 +456,7 @@ type CoreLoweringState =
     // The reservation slots of the `+` whose operands were just lowered and whose leftmost leaf
     // is the armed accumulator, read by the string concatenation emitter and cleared after it.
     | affineAppendReservation: Maybe((Int, Int))
-    | bodyRuntimeManagedByLabel: List((Str, Bool))
+    | bodyRuntimeManagedByLabel: MapTree(Str, Bool)
     | recursiveProducerResultSlots: List(Int)
     // The parameter of the function being lowered that its entry copies into an owned
     // runtime-managed value because the result always reaches it (stage 0's
@@ -474,7 +475,7 @@ type CoreLoweringState =
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
     | functionReturnedClosureLabels: List((Str, Str))
-    | resultRcEligibility: (Int, List((Str, Bool)))
+    | resultRcEligibility: (Int, MapTree(Str, Bool))
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
     | pendingTcoResets: List(CoreTcoReset)
     // The call results of this function whose copy-out kind was undecidable when their window
@@ -806,7 +807,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         sourceContext = None,
         currentSpan = None,
         currentItem = 0,
-        topLevelNames = [],
+        topLevelNames = Ashes.Collection.Map.empty,
         pendingStackClosure = false,
         runtimeAdtRequested = false,
         pendingOperatorDefaults = [],
@@ -817,7 +818,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         consumerRequest = emptyConsumerRequest,
         resourceStates = [],
         letLambdas = [],
-        runtimeTemps = [],
+        runtimeTemps = Ashes.Collection.Map.empty,
         backEdgeDummyTemps = [],
         runtimeOwners = [],
         reuseTransferredNames = [],
@@ -832,7 +833,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         backEdgeArgumentSlot = None,
         affineAppendContext = None,
         affineAppendReservation = None,
-        bodyRuntimeManagedByLabel = [],
+        bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
         recursiveProducerResultSlots = [],
         normalizedAlwaysReturnedParameter = None,
         runtimeNormalizedArgumentLabels = [],
@@ -844,7 +845,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         dropperLabels = emptyDropperLabelCache,
         tcoLoop = None,
         functionReturnedClosureLabels = [],
-        resultRcEligibility = (0, []),
+        resultRcEligibility = (0, Ashes.Collection.Map.empty),
         tcoLoopFrame = None,
         pendingTcoResets = [],
         pendingCallCopyOuts = [],
@@ -1273,13 +1274,12 @@ let armSpecializationLinearParameter (parameter: Str) (origin: IrFunctionOrigin)
             else state
         | _ -> state
 
-let recursive containsTempOrigin (temp: Int) (origin: Maybe(IrFunctionOrigin)) (seen: List((Int, Maybe(IrFunctionOrigin)))) =
-    match seen with
-        | [] -> false
-        | (seenTemp, seenOrigin) :: rest ->
-            if seenTemp == temp && seenOrigin == origin
-            then true
-            else containsTempOrigin(temp)(origin)(rest)
+// A placement's identity: a function's generated label is unique, so the label and temp name the
+// (temp, origin) pair without comparing the origin records.
+let valuePlacementKey (temp: Int) (origin: Maybe(IrFunctionOrigin)) =
+    match origin with
+        | Some(IrFunctionOrigin { generatedLabel = label }) -> label + "#" + Ashes.Text.fromInt(temp)
+        | None -> "#" + Ashes.Text.fromInt(temp)
 
 // A temp is produced exactly once (`freshTemp`'s counter never repeats within one function), so
 // the same (temp, origin) pair recorded more than once always names the same value passing
@@ -1287,25 +1287,33 @@ let recursive containsTempOrigin (temp: Int) (origin: Maybe(IrFunctionOrigin)) (
 // bracket returning its body's own result temp unchanged, an aggregate's child retain that turned
 // out to be a no-op — rather than two different values sharing a number. Keeping the first
 // occurrence and dropping the rest turns each such re-wrap back into the single placement stage 0
-// would have recorded.
-let recursive dedupeValuePlacements (seen: List((Int, Maybe(IrFunctionOrigin)))) (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) =
+// would have recorded. The kept placements accumulate in reverse and are reversed once at the end,
+// so a program's whole placement list costs no stack.
+let recursive dedupeValuePlacementsInto (seen: MapTree(Str, Bool)) (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) (kept: List((Int, Maybe(IrFunctionOrigin), SemanticType))) =
     match placements with
-        | [] -> []
+        | [] -> reverse(kept)
         | (temp, origin, semanticType) :: rest ->
-            if containsTempOrigin(temp)(origin)(seen)
-            then dedupeValuePlacements(seen)(rest)
-            else (temp, origin, semanticType) :: dedupeValuePlacements((temp, origin) :: seen)(rest)
+            let key = valuePlacementKey(temp)(origin)
+            in
+                match Ashes.Collection.Map.getStr(key)(seen) with
+                    | Some(_present) -> dedupeValuePlacementsInto(seen)(rest)(kept)
+                    | None ->
+                        dedupeValuePlacementsInto(Ashes.Collection.Map.setStr(key)(true)(seen))(rest)((temp, origin, semanticType) :: kept)
+
+let dedupeValuePlacements (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) = dedupeValuePlacementsInto(Ashes.Collection.Map.empty)(placements)([])
 
 // Resolves every recorded value placement's type against the finished program's substitution and
 // classifies it, turning the deduplicated `(temp, origin, semanticType)` list `CoreLoweringState`
 // grows during lowering into the `(temp, origin, isCopyType)` list `CoreLoweringResult` exports.
-let recursive finalizeValuePlacements (state: CoreLoweringState) (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) =
+let recursive finalizeValuePlacementsInto (state: CoreLoweringState) (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) (finalized: List((Int, Maybe(IrFunctionOrigin), Bool))) =
     match placements with
-        | [] -> []
+        | [] -> reverse(finalized)
         | (temp, origin, semanticType) :: rest ->
-            (temp, origin, semanticType
+            finalizeValuePlacementsInto(state)(rest)((temp, origin, semanticType
             |> resolveType(state)
-            |> isCopyTypeSemantic) :: finalizeValuePlacements(state)(rest)
+            |> isCopyTypeSemantic) :: finalized)
+
+let finalizeValuePlacements (state: CoreLoweringState) (placements: List((Int, Maybe(IrFunctionOrigin), SemanticType))) = finalizeValuePlacementsInto(state)(placements)([])
 
 let success temp semanticType state =
     LoweredCoreValue(
@@ -1382,22 +1390,14 @@ let transfersChildrenRequested (state: CoreLoweringState) =
 let withArgumentRequest expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, argumentSite = site, transfersRuntimeManagedChildren = transfers))(state)
 
 // The reference-counted heap temps of the current function.
-let recursive lookupRuntimeTemp (temp: Int) (temps: List((Int, RuntimeTempState))) =
-    match temps with
-        | [] -> None
-        | (candidate, runtimeState) :: rest ->
-            if candidate == temp
-            then Some(runtimeState)
-            else lookupRuntimeTemp(temp)(rest)
-
-let runtimeTempStateOf (temp: Int) (state: CoreLoweringState) = lookupRuntimeTemp(temp)(state.runtimeTemps)
+let runtimeTempStateOf (temp: Int) (state: CoreLoweringState) = Ashes.Collection.Map.get(temp)(state.runtimeTemps)
 
 let isRuntimeTemp (temp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(temp)(state) with
         | Some(_runtimeState) -> true
         | None -> false
 
-let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = (temp, runtimeState) :: state.runtimeTemps
+let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = Ashes.Collection.Map.set(temp)(runtimeState)(state.runtimeTemps)
 
 let markLoweredRuntimeTemp (lowered: LoweredCoreValue) =
     match lowered with
@@ -1406,17 +1406,12 @@ let markLoweredRuntimeTemp (lowered: LoweredCoreValue) =
 
 // Whether a lifted function's body result is a reference-counted heap value, recorded when the
 // body is finished and read back by the closure carrying the function and by known calls to it.
-let recursive lookupBodyRuntimeManaged (label: Str) (entries: List((Str, Bool))) =
-    match entries with
-        | [] -> false
-        | (candidate, runtimeManaged) :: rest ->
-            if candidate == label
-            then runtimeManaged
-            else lookupBodyRuntimeManaged(label)(rest)
+let bodyReturnsRuntimeManaged (label: Str) (state: CoreLoweringState) =
+    match Ashes.Collection.Map.getStr(label)(state.bodyRuntimeManagedByLabel) with
+        | Some(runtimeManaged) -> runtimeManaged
+        | None -> false
 
-let bodyReturnsRuntimeManaged (label: Str) (state: CoreLoweringState) = lookupBodyRuntimeManaged(label)(state.bodyRuntimeManagedByLabel)
-
-let recordBodyRuntimeManaged (label: Str) (runtimeManaged: Bool) (state: CoreLoweringState) = state with bodyRuntimeManagedByLabel = (label, runtimeManaged) :: state.bodyRuntimeManagedByLabel
+let recordBodyRuntimeManaged (label: Str) (runtimeManaged: Bool) (state: CoreLoweringState) = state with bodyRuntimeManagedByLabel = Ashes.Collection.Map.setStr(label)(runtimeManaged)(state.bodyRuntimeManagedByLabel)
 
 // Stage 0's `BackfillSelfClosureResultOwnership`: a recursive function's own call sites build its
 // callee closure from `CoreSelf` while the body is still being lowered, before this body's own
@@ -2113,10 +2108,10 @@ let recursive sameParameterNames (proven: List((Str, ParameterOwnership))) (para
         | ((provenParameter, _kind) :: provenRest, parameter :: rest) -> provenParameter == parameter && sameParameterNames(provenRest)(rest)
         | _ -> false
 
-let recursive registeredTopLevelName (name: Str) (names: List(Str)) =
-    match names with
-        | [] -> false
-        | candidate :: rest -> candidate == name || registeredTopLevelName(name)(rest)
+let registeredTopLevelName (name: Str) (names: MapTree(Str, Bool)) =
+    match Ashes.Collection.Map.getStr(name)(names) with
+        | Some(_declared) -> true
+        | None -> false
 
 // Stage 0's open-world hand-off approval: the whole-program inspect-only fixpoint
 // (`inferProgramParameterOwnership`) is consulted for a callee that is a registered top-level
@@ -2541,8 +2536,8 @@ let isTailForwardedBindingResult (body: Expr) (name: Str) = isTailForwardedBindi
 // result, carrying the binding's slot as the transfer slot when the body hands the newly produced
 // value straight back. `requestBody` is the body the decision reads; the top-level `let` path lowers
 // a placeholder continuation but decides on the program's remaining body.
-let letBodyRequest (name: Str) (requestBody: Expr) (bodyRequest: ConsumerRequest) (valueTemp: Int) (slot: Int) (state: CoreLoweringState) =
-    match (runtimeTempStateOf(valueTemp)(state), isTailForwardedBindingResult(requestBody)(name)) with
+let letBodyRequest (tailForwarded: Bool) (bodyRequest: ConsumerRequest) (valueTemp: Int) (slot: Int) (state: CoreLoweringState) =
+    match (runtimeTempStateOf(valueTemp)(state), tailForwarded) with
         | (Some(RuntimeNewlyProduced), true) -> bodyRequest with transferSlot = Some(slot)
         | _ -> bodyRequest
 
@@ -2583,7 +2578,10 @@ let registerTopLevelFunctionRef (name: Str) (valueTemp: Int) (scheme: TypeScheme
             | None -> state
     else state
 
-let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTemp valueType fresh =
+// The stored half of a `let`: the value in its slot, the name bound over the body, and the body's
+// consumer request armed. The body itself is lowered by the caller over the returned state, which
+// takes the binding back out of scope afterwards.
+let storeLetValue name (tailForwarded: Bool) bodyRequest outerBindings valueTemp valueType fresh =
     match fresh with
         | FreshLocal { state = state, local = local } ->
             let storedState =
@@ -2596,11 +2594,15 @@ let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTe
                 in
                     storedState
                     |> registerTopLevelFunctionRef(name)(valueTemp)(scheme)
-                    |> withConsumerRequest(letBodyRequest(name)(requestBody)(bodyRequest)(valueTemp)(local)(storedState))
+                    |> withConsumerRequest(letBodyRequest(tailForwarded)(bodyRequest)(valueTemp)(local)(storedState))
                     |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
                     |> addOwnedBinding(name)(scheme)(CoreLocal(local))
-                    |> lower(body)
-                    |> restoreLoweredBindings(outerBindings)
+
+let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTemp valueType fresh =
+    fresh
+    |> storeLetValue(name)(isTailForwardedBindingResult(requestBody)(name))(bodyRequest)(outerBindings)(valueTemp)(valueType)
+    |> lower(body)
+    |> restoreLoweredBindings(outerBindings)
 
 let finishLetValue name body lower outerBindings lowered =
     match lowered with
@@ -2781,7 +2783,9 @@ let locateSynthesizedFunction (state: CoreLoweringState) (function: IrFunction) 
 let spliceInlineRelease (synthesis: InlineReleaseSynthesis) (state: CoreLoweringState) =
     match synthesis with
         | InlineReleaseSynthesis { instructions = instructions, nextTemp = nextTemp, nextLocal = nextLocal, cache = cache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-            emitSplicedInstructions(instructions)((state with nextTemp = nextTemp, nextLocal = nextLocal, dropperLabels = cache, functions = append(state.functions)(map(locateSynthesizedFunction(state))(synthesized)), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+            emitSplicedInstructions(instructions)((state with nextTemp = nextTemp, nextLocal = nextLocal, dropperLabels = cache, functions = append(synthesized
+            |> map(locateSynthesizedFunction(state))
+            |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
 // The scope-exit release of a runtime-managed owner whose release reaches past its own cell —
 // a tuple, a list, or an ADT with owned children — walked inline at the lexical scope exit as
@@ -3027,14 +3031,27 @@ let recordRecursiveProducerSlot expression (fresh: FreshLocal) =
 
 // `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it,
 // and the body's request decided by the caller from the body the binding scopes over.
-let finishLetValueInSlot name value body requestBody bodyRequest lower outerBindings lowered =
+// The stored half of `finishLetValueInSlot`: the binding's slot allocated and its value stored in
+// it, with the body left for the caller to lower over the returned state.
+let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindings lowered =
     match lowered with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> (failure(failedState)(error), -1)
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match state
             |> freshLocal
             |> recordRecursiveProducerSlot(value) with
-                | FreshLocal { local = local } as fresh -> (lowerStoredLet(name)(body)(requestBody)(bodyRequest)(lower)(outerBindings)(temp)(semanticType)(fresh), local)
+                | FreshLocal { local = local } as fresh ->
+                    (fresh
+                    |> storeLetValue(name)(tailForwarded)(bodyRequest)(outerBindings)(temp)(semanticType)
+                    |> success(temp)(semanticType), local)
+
+let finishLetValueInSlot name value body requestBody bodyRequest lower outerBindings lowered =
+    match storeLetValueInSlot(name)(value)(isTailForwardedBindingResult(requestBody)(name))(bodyRequest)(outerBindings)(lowered) with
+        | (LoweredCoreValue { state = failedState, error = Some(error) }, slot) -> (failure(failedState)(error), slot)
+        | (LoweredCoreValue { state = stored, error = None }, local) ->
+            (stored
+            |> lower(body)
+            |> restoreLoweredBindings(outerBindings), local)
 
 // Stage 0's `IsRuntimeRcStringProducer`: `+` or a fully applied call to a builtin declared to
 // produce a fresh string — the expressions a runtime-string request can place on the
@@ -3898,7 +3915,7 @@ let finishLiftedFunction label origin bodyState =
                 )
             in
                 bodyState
-                |> (given (current: CoreLoweringState) -> current with functions = append(functions)([function]))
+                |> (given (current: CoreLoweringState) -> current with functions = function :: functions)
                 |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
                 |> (given (current: CoreLoweringState) -> current with sealedOperatorDefaults = sealOperatorDefaults(label)(pending)(sealed))
 
@@ -3963,7 +3980,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -4643,7 +4660,9 @@ let recursive emitSplicedInstructionsWith emitter (instructions: List(IrInstruct
 let spliceInlineReleaseWith emitter (synthesis: InlineReleaseSynthesis) (state: CoreLoweringState) =
     match synthesis with
         | InlineReleaseSynthesis { instructions = instructions, nextTemp = nextTemp, nextLocal = nextLocal, cache = cache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-            emitSplicedInstructionsWith(emitter)(instructions)((state with nextTemp = nextTemp, nextLocal = nextLocal, dropperLabels = cache, functions = append(state.functions)(map(locateSynthesizedFunction(state))(synthesized)), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+            emitSplicedInstructionsWith(emitter)(instructions)((state with nextTemp = nextTemp, nextLocal = nextLocal, dropperLabels = cache, functions = append(synthesized
+            |> map(locateSynthesizedFunction(state))
+            |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
 // The inline `rcdrop_list` walk of a runtime-managed list whose cells may be shared, stage 0's
 // `EmitRuntimeManagedListDrop`: a unique cell releases its head and continues into its tail, a
@@ -5040,7 +5059,7 @@ let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: Cor
                                                     |> emit(LoadConstInt(resultTemp)(0))
                                                     |> emit(Return(resultTemp)) with
                                                         | CoreLoweringState { reversedInstructions = instructions, nextTemp = tempCount, nextLocal = localCount, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, closureDropperLabels = labels } ->
-                                                            ((state with functions = append(state.functions)([IrFunction(
+                                                            ((state with functions = IrFunction(
                                                                 label = label,
                                                                 instructions = reverse(instructions),
                                                                 localCount = localCount,
@@ -5053,7 +5072,7 @@ let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: Cor
                                                                 |> closureDropperOrigin(label)
                                                                 |> Some,
                                                                 lifetimesPlaced = false
-                                                            )]), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, closureDropperLabels = labels), label))
+                                                            ) :: state.functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, closureDropperLabels = labels), label))
 
 // Stage 0's `AttachRuntimeManagedClosureNormalizer`: a capturing closure whose captures all
 // resolve to types the normalizer re-establishes gets its normalizer (and the dropper of its
@@ -5073,7 +5092,7 @@ let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (c
                             match synthesizeClosureDropper(owned)(state) with
                                 | (synthesized, label) -> (synthesized, Some(label)) with
                         | (dropped, dropperLabel) ->
-                            dropped with functions = append(dropped.functions)([closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(currentLocation(state))(dropperLabel)])
+                            dropped with functions = closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(currentLocation(state))(dropperLabel) :: dropped.functions
                 | None -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: state.pendingClosureNormalizers
 
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
@@ -7040,7 +7059,9 @@ let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLo
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
             match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
                 | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    (label, (state with dropperLabels = nextCache, functions = append(functions)(map(locateSynthesizedFunction(state))(synthesized)), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+                    (label, (state with dropperLabels = nextCache, functions = append(synthesized
+                    |> map(locateSynthesizedFunction(state))
+                    |> reverse)(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
 // Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
 // real retain, and the owner's release marker a real runtime-managed release under the resolved
@@ -7723,7 +7744,9 @@ let synthesizeAccumulatorCopier (named: SemanticType) (state: CoreLoweringState)
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextLambdaId = lambdaId, nextLabelId = labelId } ->
             match synthesizeDeepCopy(0)(named)(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
                 | (InlineReleaseSynthesis { cache = copierCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
-                    state with dropperLabels = copierCache, functions = append(state.functions)(map(locateSynthesizedFunction(state))(synthesized)), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId
+                    state with dropperLabels = copierCache, functions = append(synthesized
+                    |> map(locateSynthesizedFunction(state))
+                    |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId
 
 // Stage 0's `LowerLambdaCoreScanDirectReuse`: every accumulator the loop body matches by a
 // constructor pattern, not placed on the reference-counted heap at the provisional entry and of a
@@ -9112,7 +9135,8 @@ let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
             match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> (label, (state with dropperLabels = nextCache, functions = append(functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    (label, (state with dropperLabels = nextCache, functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
 // Stage 0's `EmitRecursiveRuntimeManagedAdtDrop`: the value is handed to its type's dropper.
 let emitAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
@@ -11177,10 +11201,13 @@ let recursive escapingChainBody (body: Expr) (lastOrdinary: Bool) =
             then Some(body)
             else None
 
-let escapingLetBodyRequest (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
-    match escapingChainBody(body)(true) with
+let escapeBodyRequest (escapeBody: Maybe(Expr)) (request: ConsumerRequest) (state: CoreLoweringState) =
+    match escapeBody with
         | Some(chainBody) -> escapingResultRequest(chainBody)(request)(state)
         | None -> request
+
+let escapingLetBodyRequest (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
+    escapeBodyRequest(escapingChainBody(body)(true))(request)(state)
 
 // Stage 0's alias rule in `TrackLetOwnership`: `let y = x` over a binding that already owns its
 // value makes `y` an alias the original owner alone releases, so the binding owns no type name
@@ -12263,7 +12290,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -12487,29 +12514,27 @@ let recursive addRecursiveGroupContinuationBindings members outerBindings state 
                 |> addBinding(name)(scheme)(CoreLocal(slot))
                 |> addRecursiveGroupContinuationBindings(rest)(outerBindings)
 
-let finishRecursiveGroupContinuation members outerBindings body (request: ConsumerRequest) lower loweredMembers =
+// The group's names bound over what follows it and the continuation's consumer request armed,
+// once every member is lowered and stored; the continuation itself is lowered by the caller.
+let bindRecursiveGroupContinuation members outerBindings (request: ConsumerRequest) loweredMembers =
     match loweredMembers with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = groupState, error = None } ->
-            let continuationState = addRecursiveGroupContinuationBindings(members)(outerBindings)(groupState)
-            in
-                match continuationState
-                |> withConsumerRequest(request)
-                |> lower(body) with
-                    | LoweredCoreValue { state = resultState, temp = temp, semanticType = semanticType, error = error } ->
-                        LoweredCoreValue(
-                            state = restoreBindings(outerBindings)(resultState),
-                            temp = temp,
-                            semanticType = semanticType,
-                            error = error
-                        )
+            groupState
+            |> addRecursiveGroupContinuationBindings(members)(outerBindings)
+            |> withConsumerRequest(request)
+            |> success(-1)(SemNever)
 
 // Splits the single `lower` continuation lowerPreparedRecursiveGroup uses into two: memberLower
 // lowers each recursive member's own body, continuationLower lowers what follows the group. A
 // whole-program driver needs the two to differ (member bodies always go through the ordinary
 // expression lowerer; the continuation is "the rest of the top-level items", which isn't an Expr
 // at all), so the plain single-`lower` form below is now a same-lowerer convenience wrapper.
-let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower outerBindings prepared =
+// The opened half of lowerPreparedRecursiveGroupWith: the members lowered and stored and the
+// group's names bound over what follows, which the caller lowers over the returned state before
+// restoring `outerBindings`. The whole-program driver keeps the flat top-level chain iterative by
+// opening each group this way and taking its names back out of scope once the rest is lowered.
+let openPreparedRecursiveGroup bindings memberLower outerBindings prepared =
     match prepared with
         | PreparedCoreRecursiveGroup { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | PreparedCoreRecursiveGroup { state = preparedState, members = members, error = None } ->
@@ -12535,7 +12560,15 @@ let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower 
                                     environmentTemp,
                                     memberLower
                                 )
-                                |> finishRecursiveGroupContinuation(members)(outerBindings)(body)(consumerRequestOf(preparedState))(continuationLower)
+                                |> bindRecursiveGroupContinuation(members)(outerBindings)(consumerRequestOf(preparedState))
+
+let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower outerBindings prepared =
+    match openPreparedRecursiveGroup(bindings)(memberLower)(outerBindings)(prepared) with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = continuationState, error = None } ->
+            continuationState
+            |> continuationLower(body)
+            |> restoreLoweredBindings(outerBindings)
 
 let lowerPreparedRecursiveGroup bindings body lower outerBindings prepared = lowerPreparedRecursiveGroupWith(bindings)(body)(lower)(lower)(outerBindings)(prepared)
 
@@ -15089,7 +15122,7 @@ let lowerUnboundVariable name lower state =
                     match tryFindExternalLayout(name)(externalLayouts) with
                         | Some(extLayout) -> finishCoreExternalReference(extLayout)(lower)(state)
                         | None ->
-                            if containsName(name)(topLevelNames)
+                            if registeredTopLevelName(name)(topLevelNames)
                             then failure(state)(ForwardTopLevelReference(name))
                             else failure(state)(UnknownLoweringBinding(name))
 
@@ -17008,17 +17041,22 @@ let recursive collectCoreFunctionUses functions uses =
             |> collectCoreInstructionUses(instructions)
             |> collectCoreFunctionUses(rest)
 
+// The names declared so far, as a map so a program's thousands of declarations are each checked in
+// logarithmic time.
 type TopLevelDuplicateCheck =
-    | seen: List(Str)
+    | seen: MapTree(Str, Bool)
     | duplicate: Maybe(Str)
 
-let recursive checkTopLevelNames names seen =
+let recursive checkTopLevelNames (names: List(Str)) (seen: MapTree(Str, Bool)) =
     match names with
         | [] -> TopLevelDuplicateCheck(seen = seen, duplicate = None)
         | name :: rest ->
-            if containsName(name)(seen)
-            then TopLevelDuplicateCheck(seen = seen, duplicate = Some(name))
-            else checkTopLevelNames(rest)(name :: seen)
+            match Ashes.Collection.Map.getStr(name)(seen) with
+                | Some(_declared) -> TopLevelDuplicateCheck(seen = seen, duplicate = Some(name))
+                | None ->
+                    seen
+                    |> Ashes.Collection.Map.setStr(name)(true)
+                    |> checkTopLevelNames(rest)
 
 let recursive letBindingSyntaxPairs bindings =
     match bindings with
@@ -17037,16 +17075,26 @@ let recursive letBindingSyntaxNames bindings =
 // the file). Mirrors stage-0's CollectTopLevelBindingNames/_topLevelBindingNames
 // (Lowering.TopLevel.cs/Lowering.cs) and the same LowerVarUnbound-style specialization
 // (Lowering.cs:2844).
-let recursive allTopLevelBindingNames items =
+let recursive allTopLevelBindingNames (items: List(TopLevelItem)) (names: MapTree(Str, Bool)) =
     match items with
-        | [] -> []
-        | TopLevelAt(_span, inner) :: rest -> allTopLevelBindingNames(inner :: rest)
-        | TopLevelLet(LetBindingSyntax { name = name }, _isRecursive) :: rest -> name :: allTopLevelBindingNames(rest)
+        | [] -> names
+        | TopLevelAt(_span, inner) :: rest -> allTopLevelBindingNames(inner :: rest)(names)
+        | TopLevelLet(LetBindingSyntax { name = name }, _isRecursive) :: rest ->
+            names
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> allTopLevelBindingNames(rest)
         | TopLevelRecursiveGroup(bindings) :: rest ->
-            rest
-            |> allTopLevelBindingNames
-            |> append(letBindingSyntaxNames(bindings))
-        | _ :: rest -> allTopLevelBindingNames(rest)
+            names
+            |> addTopLevelNames(letBindingSyntaxNames(bindings))
+            |> allTopLevelBindingNames(rest)
+        | _ :: rest -> allTopLevelBindingNames(rest)(names)
+and addTopLevelNames (added: List(Str)) (names: MapTree(Str, Bool)) =
+    match added with
+        | [] -> names
+        | name :: rest ->
+            names
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> addTopLevelNames(rest)
 
 // When an inference environment is available, elaborates a constrained top-level binding's value
 // into ordinary syntax with hidden dictionary parameters and forwards evidence at any call site
@@ -17062,32 +17110,104 @@ let recursive allTopLevelBindingNames items =
 // lowerer. Only reached once the whole remaining top-level sequence has been proven, by
 // topLevelItemsProvablyArenaSafe, to contain no heap value that could cross the restore boundary —
 // the general case additionally needs a CopyOutArena for an escaping heap result, not yet ported
-// (see docs/md/future/SELF_HOSTING.md). Takes the sentinel-placeholder continuation
-// lowerCoreProgramItems supplies (see its own TopLevelLet case) in place of a literal body Expr.
-// The continuation lowers every later declaration before this bracket closes, and each of those sets
-// its own currentSpan without restoring this one, so the closing instructions would carry the last
-// declaration's position. Closing under this declaration's own span keeps a chain of top-level
-// declarations stepping forwards, the way the nested form already does through its body's ExprAt.
-let lowerArenaBracketedTopLevelLet name value remainingBody environment continuation outerBindings stackClosure (state: CoreLoweringState) =
+// (see docs/md/future/SELF_HOSTING.md).
+// The rest of the program is lowered between opening a declaration's bracket and closing it, so the
+// flat chain is walked in two halves: `openArenaBracketedTopLevelLet` opens the bracket, lowers the
+// value and stores it, and records the close still owed as a PendingTopLevelClose;
+// lowerCoreProgramItems then goes on to the next declaration with that record pushed, and
+// closePendingTopLevelItems closes every record innermost first once the trailing body is lowered.
+// A chain of thousands of declarations thereby costs a list cell each rather than a stack frame
+// each, the way stage 0's sequential binding chain is lowered. Every later declaration sets its
+// own currentSpan without restoring this one, so a close records the declaration's own span and
+// closes under it, keeping a chain of top-level declarations stepping forwards in a debugger the
+// way the nested form does through its body's ExprAt.
+type PendingTopLevelClose =
+    | closeOwnedTypeName: Maybe(Str)
+    | closeOwnerSlot: Int
+    | closeCursorSlot: Int
+    | closeEndSlot: Int
+    | closeSpan: Maybe(TextSpan)
+    | closeOuterBindings: List(CoreBinding)
+    | closeBracket: Bool
+
+// A recursive group's close: only its names are taken back out of scope.
+let pendingBindingsRestore (outerBindings: List(CoreBinding)) =
+    PendingTopLevelClose(
+        closeOwnedTypeName = None,
+        closeOwnerSlot = -1,
+        closeCursorSlot = -1,
+        closeEndSlot = -1,
+        closeSpan = None,
+        closeOuterBindings = outerBindings,
+        closeBracket = false
+    )
+
+type OpenedTopLevelChain =
+    | chainState: CoreLoweringState
+    | chainPending: List(PendingTopLevelClose)
+    | chainError: Maybe(CoreLoweringError)
+
+let openedChainFailure (pending: List(PendingTopLevelClose)) (error: CoreLoweringError) (state: CoreLoweringState) = OpenedTopLevelChain(chainState = state, chainPending = pending, chainError = Some(error))
+
+// `remainingBody` is the rest of the program the declaration binds over, read only for the
+// value's request (a look at its immediate shape); the two facts that need the whole chain walked
+// come precomputed from the program analysis: `escapeBody`, the innermost body the chain escapes
+// through (escapingChainBody), and `tailForwarded`, whether the chain's result forwards this
+// binding (isTailForwardedBindingResult).
+let openArenaBracketedTopLevelLet name value remainingBody (escapeBody: Maybe(Expr)) (tailForwarded: Bool) environment outerBindings stackClosure (pending: List(PendingTopLevelClose)) (state: CoreLoweringState) =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = saved, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
-                | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(saved)(UnresolvedTraitEvidenceForwarding(error))
+                | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> openedChainFailure(pending)(UnresolvedTraitEvidenceForwarding(error))(saved)
                 | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
                     match saved
                     |> withConsumerRequest(letValueRequest(name)(rewrittenValue)(remainingBody)(saved))
                     |> armSourceFunction(name)(rewrittenValue)(stackClosure)
                     |> lowerCore(rewrittenValue) with
-                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> openedChainFailure(pending)(error)(failedState)
                         | LoweredCoreValue { error = None } as loweredValue ->
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(saved))
                             |> armOwnerReleasePlan(rewrittenValue)
-                            |> finishLetValueInSlot(name)(rewrittenValue)(topLevelContinuationBody)(remainingBody)(escapingLetBodyRequest(remainingBody)(consumerRequestOf(saved))(saved))(continuation)(outerBindings) with
-                                | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
-                                | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match closeOwnedLetBracket(letOwnedTypeName(rewrittenValue)(loweredValue)(saved))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)((bodyState with currentSpan = state.currentSpan)) with
-                                        | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
+                            |> storeLetValueInSlot(name)(rewrittenValue)(tailForwarded)(escapeBodyRequest(escapeBody)(consumerRequestOf(saved))(saved))(outerBindings) with
+                                | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> openedChainFailure(pending)(error)(failedState)
+                                | (LoweredCoreValue { state = stored, error = None }, ownerSlot) ->
+                                    OpenedTopLevelChain(
+                                        chainState = stored,
+                                        chainPending = PendingTopLevelClose(
+                                            closeOwnedTypeName = letOwnedTypeName(rewrittenValue)(loweredValue)(saved),
+                                            closeOwnerSlot = ownerSlot,
+                                            closeCursorSlot = cursorSlot,
+                                            closeEndSlot = endSlot,
+                                            closeSpan = state.currentSpan,
+                                            closeOuterBindings = outerBindings,
+                                            closeBracket = true
+                                        ) :: pending,
+                                        chainError = None
+                                    )
+
+// Closes the opened top-level declarations innermost first around the lowered trailing body: a
+// bracketed let releases its owner and restores the arena under the declaration's own span, a
+// recursive group only takes its names back out of scope. A failure passes through with each
+// declaration's names taken out of scope, as the nested form's failure did.
+let recursive closePendingTopLevelItems (pending: List(PendingTopLevelClose)) (lowered: LoweredCoreValue) =
+    match (pending, lowered) with
+        | ([], _lowered) -> lowered
+        | (close :: rest, LoweredCoreValue { state = failedState, error = Some(_error) }) -> closePendingTopLevelItems(rest)((lowered with state = restoreBindings(close.closeOuterBindings)(failedState)))
+        | (close :: rest, LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }) ->
+            let restored = restoreBindings(close.closeOuterBindings)(bodyState)
+            in
+                if close.closeBracket
+                then
+                    match closeOwnedLetBracket(close.closeOwnedTypeName)(close.closeOwnerSlot)(close.closeCursorSlot)(close.closeEndSlot)(resultTemp)(resultType)((restored with currentSpan = close.closeSpan)) with
+                        | (closed, finalTemp) ->
+                            closed
+                            |> finishClosedLetResult(finalTemp)(resultType)
+                            |> closePendingTopLevelItems(rest)
+                else
+                    restored
+                    |> success(resultTemp)(resultType)
+                    |> closePendingTopLevelItems(rest)
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
 // fully-saturated call to a known field-carrying constructor (see
@@ -17224,6 +17344,216 @@ let recursive letBindingSyntaxListMayReferenceName (bindings: List(LetBindingSyn
 // Conservative the same way: any item this isn't specifically taught about (a recursive group, a
 // self-recursive let) answers `true` via its value/binding expressions rather than trying to reason
 // about what it could shadow or capture.
+// Stage 0's direct-callee analysis asked once per program rather than once per binding over the
+// rest of the program: the free names every top-level value and the trailing expression use
+// other than as the callee of an application, collected in one walk. A binder ends the walk for
+// the name it binds within its scope, and an expression form the walk does not know marks every
+// name, the way `nameHasNonCalleeUse` answers for one name. Top-level names are unique
+// (`checkTopLevelNames`), so a plain binding's verdict is its name's absence here.
+type NonCalleeUses =
+    | names: MapTree(Str, Bool)
+    | everyName: Bool
+
+let recordNonCalleeUse (candidate: Str) (shadowed: List(Str)) (uses: NonCalleeUses) =
+    if containsName(candidate)(shadowed)
+    then uses
+    else uses with names = Ashes.Collection.Map.setStr(candidate)(true)(uses.names)
+
+let recursive patternBoundNames (pattern: Pattern) (names: List(Str)) =
+    match pattern with
+        | PatternAt(_span, inner) -> patternBoundNames(inner)(names)
+        | PatternVar(candidate) -> candidate :: names
+        | PatternCons(head, tail) ->
+            names
+            |> patternBoundNames(head)
+            |> patternBoundNames(tail)
+        | PatternTuple(elements) -> patternsBoundNames(elements)(names)
+        | PatternConstructor(_constructor, arguments) -> patternsBoundNames(arguments)(names)
+        | PatternRecord(_typeName, fields) -> fieldPatternsBoundNames(fields)(names)
+        | PatternAs(inner, alias) -> patternBoundNames(inner)(alias :: names)
+        | PatternOr(alternatives) -> patternsBoundNames(alternatives)(names)
+        | _ -> names
+and patternsBoundNames (patterns: List(Pattern)) (names: List(Str)) =
+    match patterns with
+        | [] -> names
+        | pattern :: rest ->
+            names
+            |> patternBoundNames(pattern)
+            |> patternsBoundNames(rest)
+and fieldPatternsBoundNames (fields: List((Str, Pattern))) (names: List(Str)) =
+    match fields with
+        | [] -> names
+        | (_field, pattern) :: rest ->
+            names
+            |> patternBoundNames(pattern)
+            |> fieldPatternsBoundNames(rest)
+
+let recursive collectNonCalleeUses (expr: Expr) (asCallee: Bool) (shadowed: List(Str)) (uses: NonCalleeUses) =
+    match expr with
+        | ExprAt(_span, inner) -> collectNonCalleeUses(inner)(asCallee)(shadowed)(uses)
+        | ExprInt(_value) -> uses
+        | ExprBigInt(_value) -> uses
+        | ExprUInt(_value, _bitWidth, _suffix) -> uses
+        | ExprFloat(_value, _suffix) -> uses
+        | ExprString(_value) -> uses
+        | ExprRune(_value) -> uses
+        | ExprBool(_value) -> uses
+        | ExprVar(candidate) ->
+            if asCallee
+            then uses
+            else recordNonCalleeUse(candidate)(shadowed)(uses)
+        | ExprQualifiedVar(_moduleName, _memberName) -> uses
+        | ExprCall(function, argument, _isSugar, _layout) ->
+            uses
+            |> collectNonCalleeUses(function)(true)(shadowed)
+            |> collectNonCalleeUses(argument)(false)(shadowed)
+        | ExprLambda(parameter, body, _annotation) -> collectNonCalleeUses(body)(false)(parameter :: shadowed)(uses)
+        | ExprLet(bound, value, body, _parameters, _annotation, _requirements) ->
+            uses
+            |> collectNonCalleeUses(value)(false)(shadowed)
+            |> collectNonCalleeUses(body)(false)(bound :: shadowed)
+        | ExprLetResult(bound, value, body) ->
+            uses
+            |> collectNonCalleeUses(value)(false)(shadowed)
+            |> collectNonCalleeUses(body)(false)(bound :: shadowed)
+        | ExprLetRecursive(bound, value, body, _parameters, _annotation, _requirements) ->
+            uses
+            |> collectNonCalleeUses(value)(false)(bound :: shadowed)
+            |> collectNonCalleeUses(body)(false)(bound :: shadowed)
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            uses
+            |> collectNonCalleeUses(condition)(false)(shadowed)
+            |> collectNonCalleeUses(thenBranch)(false)(shadowed)
+            |> collectNonCalleeUses(elseBranch)(false)(shadowed)
+        | ExprAdd(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprSubtract(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprMultiply(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprDivide(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprModulo(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprBitwiseAnd(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprBitwiseOr(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprBitwiseXor(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprShiftLeft(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprShiftRight(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprLogicalAnd(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprLogicalOr(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprGreaterThan(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprLessThan(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprGreaterOrEqual(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprLessOrEqual(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprEqual(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprNotEqual(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprResultPipe(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprResultMapErrorPipe(left, right) -> collectBothNonCalleeUses(left)(right)(shadowed)(uses)
+        | ExprCons(head, tail) -> collectBothNonCalleeUses(head)(tail)(shadowed)(uses)
+        | ExprBitwiseNot(operand) -> collectNonCalleeUses(operand)(false)(shadowed)(uses)
+        | ExprLogicalNot(operand) -> collectNonCalleeUses(operand)(false)(shadowed)(uses)
+        | ExprTuple(elements) -> collectAllNonCalleeUses(elements)(shadowed)(uses)
+        | ExprList(elements, _isMultiline) -> collectAllNonCalleeUses(elements)(shadowed)(uses)
+        | ExprRecord(_typeName, fields, _isMultiline) -> collectFieldNonCalleeUses(fields)(shadowed)(uses)
+        | ExprRecordUpdate(record, fields) ->
+            uses
+            |> collectNonCalleeUses(record)(false)(shadowed)
+            |> collectFieldNonCalleeUses(fields)(shadowed)
+        | ExprMatch(scrutinee, arms, _position) ->
+            uses
+            |> collectNonCalleeUses(scrutinee)(false)(shadowed)
+            |> collectArmNonCalleeUses(arms)(shadowed)
+        | _ -> uses with everyName = true
+and collectBothNonCalleeUses (left: Expr) (right: Expr) (shadowed: List(Str)) (uses: NonCalleeUses) =
+    uses
+    |> collectNonCalleeUses(left)(false)(shadowed)
+    |> collectNonCalleeUses(right)(false)(shadowed)
+and collectAllNonCalleeUses (expressions: List(Expr)) (shadowed: List(Str)) (uses: NonCalleeUses) =
+    match expressions with
+        | [] -> uses
+        | expression :: rest ->
+            uses
+            |> collectNonCalleeUses(expression)(false)(shadowed)
+            |> collectAllNonCalleeUses(rest)(shadowed)
+and collectFieldNonCalleeUses (fields: List((Str, Expr))) (shadowed: List(Str)) (uses: NonCalleeUses) =
+    match fields with
+        | [] -> uses
+        | (_field, expression) :: rest ->
+            uses
+            |> collectNonCalleeUses(expression)(false)(shadowed)
+            |> collectFieldNonCalleeUses(rest)(shadowed)
+and collectArmNonCalleeUses (arms: List((Pattern, Expr, Maybe(Expr)))) (shadowed: List(Str)) (uses: NonCalleeUses) =
+    match arms with
+        | [] -> uses
+        | (pattern, body, guard) :: rest ->
+            let armShadowed = patternBoundNames(pattern)(shadowed)
+            in
+                uses
+                |> collectGuardNonCalleeUses(guard)(armShadowed)
+                |> collectNonCalleeUses(body)(false)(armShadowed)
+                |> collectArmNonCalleeUses(rest)(shadowed)
+and collectGuardNonCalleeUses (guard: Maybe(Expr)) (shadowed: List(Str)) (uses: NonCalleeUses) =
+    match guard with
+        | None -> uses
+        | Some(condition) -> collectNonCalleeUses(condition)(false)(shadowed)(uses)
+
+let recursive letBindingValuesNonCalleeUses (bindings: List(LetBindingSyntax)) (uses: NonCalleeUses) =
+    match bindings with
+        | [] -> uses
+        | LetBindingSyntax { value = value } :: rest ->
+            uses
+            |> collectNonCalleeUses(value)(false)([])
+            |> letBindingValuesNonCalleeUses(rest)
+
+let recursive programNonCalleeUses (items: List(TopLevelItem)) (trailingBody: Expr) (uses: NonCalleeUses) =
+    match items with
+        | [] -> collectNonCalleeUses(trailingBody)(false)([])(uses)
+        | TopLevelAt(_span, inner) :: rest -> programNonCalleeUses(inner :: rest)(trailingBody)(uses)
+        | TopLevelLet(LetBindingSyntax { value = value }, _isRecursive) :: rest ->
+            uses
+            |> collectNonCalleeUses(value)(false)([])
+            |> programNonCalleeUses(rest)(trailingBody)
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            uses
+            |> letBindingValuesNonCalleeUses(bindings)
+            |> programNonCalleeUses(rest)(trailingBody)
+        | _other :: rest -> programNonCalleeUses(rest)(trailingBody)(uses)
+
+// A plain top-level binding's lambda value is a stack closure when nothing after it uses the
+// name other than as a callee (`topLevelNameUsedOnlyAsDirectCallee` walked the rest of the
+// program per binding for the same answer).
+let topLevelNameOnlyDirectCallee (name: Str) (uses: NonCalleeUses) =
+    if uses.everyName
+    then false
+    else
+        match Ashes.Collection.Map.getStr(name)(uses.names) with
+            | Some(_used) -> false
+            | None -> true
+
+// What the top-level item loop reads per item without walking the rest of the program again:
+// the direct-callee verdicts and the nested body of the items still ahead, built once and
+// peeled one `let` at a time.
+// `escapeOfChain` is escapingChainBody's answer for the whole remaining chain: the chain's last
+// binding, not the current one, decides it, so it holds for every declaration that still has a
+// later binding after it, and the last declaration reads `escapeOfTrailing`, the answer for the
+// trailing expression alone. `trailingFinalVar` is the bare variable the trailing expression's
+// own chain ends in, when it ends in one; a chain ending in anything else forwards no binding.
+// Together they answer, per declaration, the two questions that would otherwise walk the whole
+// remaining chain again for each declaration.
+type TopLevelLoweringAnalysis =
+    | nonCalleeUses: NonCalleeUses
+    | remainingBody: Expr
+    | escapeOfChain: Maybe(Expr)
+    | escapeOfTrailing: Maybe(Expr)
+    | trailingFinalVar: Maybe(Str)
+
+let recursive peelRemainingBody (count: Int) (body: Expr) =
+    if count <= 0
+    then body
+    else
+        match body with
+            | ExprLet(_name, _value, next, _parameters, _annotation, _requirements) -> peelRemainingBody(count - 1)(next)
+            | ExprLetRecursive(_name, _value, next, _parameters, _annotation, _requirements) -> peelRemainingBody(count - 1)(next)
+            | _ -> body
+
+let peelAnalysis (count: Int) (analysis: TopLevelLoweringAnalysis) = analysis with remainingBody = peelRemainingBody(count)(analysis.remainingBody)
+
 // The rest of the program as the body a top-level `let` binds over, the way stage 0 nests every
 // later item under it: each later `let` becomes a nested `let` (a recursive binding or group a
 // `let recursive`) around the trailing expression, and the other items contribute nothing a
@@ -17247,6 +17577,41 @@ and recursiveGroupBody (bindings: List(LetBindingSyntax)) (body: Expr) =
         | LetBindingSyntax { name = name, value = value } :: rest ->
             ExprLetRecursive(name)(value)(recursiveGroupBody(rest)(body))([])(None)([])
 
+// The bare variable a `let` chain's innermost body is, spans looked through.
+let recursive chainFinalVar (body: Expr) =
+    match body with
+        | ExprAt(_span, inner) -> chainFinalVar(inner)
+        | ExprLet(_name, _value, nested, _parameters, _annotation, _requirements) -> chainFinalVar(nested)
+        | ExprLetRecursive(_name, _value, nested, _parameters, _annotation, _requirements) -> chainFinalVar(nested)
+        | ExprVar(name) -> Some(name)
+        | _ -> None
+
+let programLoweringAnalysis (items: List(TopLevelItem)) (trailingBody: Expr) =
+    (let remainingBody = remainingProgramBody(items)(trailingBody)
+    in
+        TopLevelLoweringAnalysis(
+            nonCalleeUses = programNonCalleeUses(items)(trailingBody)(NonCalleeUses(names = Ashes.Collection.Map.empty, everyName = false)),
+            remainingBody = remainingBody,
+            escapeOfChain = escapingChainBody(remainingBody)(true),
+            escapeOfTrailing = escapingChainBody(trailingBody)(true),
+            trailingFinalVar = chainFinalVar(trailingBody)
+        ))
+
+// escapingChainBody's answer for the current remaining body: the chain's answer while a later
+// binding remains, the trailing expression's own once none does.
+let topLevelEscapeBody (analysis: TopLevelLoweringAnalysis) =
+    match analysis.remainingBody with
+        | ExprLet(_name, _value, _nested, _parameters, _annotation, _requirements) -> analysis.escapeOfChain
+        | ExprLetRecursive(_name, _value, _nested, _parameters, _annotation, _requirements) -> analysis.escapeOfChain
+        | _ -> analysis.escapeOfTrailing
+
+// Whether the rest of the program forwards `name` as its result: never when the trailing
+// expression's chain ends in anything but a bare variable, else decided by the walk.
+let topLevelTailForwarded (name: Str) (analysis: TopLevelLoweringAnalysis) =
+    match analysis.trailingFinalVar with
+        | None -> false
+        | Some(_finalVar) -> isTailForwardedBindingResult(analysis.remainingBody)(name)
+
 let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailingBody: Expr) (name: Str) =
     match items with
         | [] -> exprMayReferenceName(trailingBody)(name)
@@ -17260,40 +17625,6 @@ let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailin
             then true
             else topLevelItemsMayReferenceName(rest)(trailingBody)(name)
         | _other :: rest -> topLevelItemsMayReferenceName(rest)(trailingBody)(name)
-
-let recursive letBindingSyntaxValuesHaveNonCalleeUse (name: Str) (bindings: List(LetBindingSyntax)) =
-    match bindings with
-        | [] -> false
-        | LetBindingSyntax { value = value } :: rest -> nameHasNonCalleeUse(name)(value)(false) || letBindingSyntaxValuesHaveNonCalleeUse(name)(rest)
-
-// The direct-callee analysis over the flat top-level sequence after a binding, the scope stage 0
-// walks as the desugared nested `let` body: a later value or the trailing expression that uses
-// `name` other than as a callee keeps its closure on the heap, and a later binding of the same
-// name shadows it and ends the walk.
-let recursive topLevelNameUsedOnlyAsDirectCallee (name: Str) (items: List(TopLevelItem)) (trailingBody: Expr) =
-    match items with
-        | [] -> nameUsedOnlyAsDirectCallee(name)(trailingBody)
-        | TopLevelAt(_span, inner) :: rest -> topLevelNameUsedOnlyAsDirectCallee(name)(inner :: rest)(trailingBody)
-        | TopLevelLet(LetBindingSyntax { name = bound, value = value }, isRecursive) :: rest ->
-            if isRecursive && bound == name
-            then true
-            else
-                if nameHasNonCalleeUse(name)(value)(false)
-                then false
-                else
-                    if bound == name
-                    then true
-                    else topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody)
-        | TopLevelRecursiveGroup(bindings) :: rest ->
-            if bindings
-            |> letBindingSyntaxNames
-            |> containsName(name)
-            then true
-            else
-                if letBindingSyntaxValuesHaveNonCalleeUse(name)(bindings)
-                then false
-                else topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody)
-        | _other :: rest -> topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody)
 
 // Recognizes ONLY `Ctor(arg)` — one, fully-saturating argument — against a known constructor whose
 // scheme is exactly `a -> T(...)` (not itself a function, ruling out a curried/multi-argument
@@ -17324,7 +17655,7 @@ let directSingleArgRcConstructorLayout (expr: Expr) (constructorLayouts: List(Co
 // releases it with a single `RcDrop` (`ownerSlot = -1`, since this value is never stored to a
 // local) naming the type's structural dropper when the release reaches past the cell, then
 // continues lowering the rest of the program.
-let lowerDeadRcTopLevelLet name value layout environment continuation state =
+let lowerDeadRcTopLevelLet name value layout environment state =
     match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
         | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
         | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
@@ -17335,7 +17666,7 @@ let lowerDeadRcTopLevelLet name value layout environment continuation state =
                         | (CoreConstructorLayout { name = constructorName }, (dropperLabel, dropperState)) ->
                             dropperState
                             |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(dropperLabel))
-                            |> continuation(topLevelContinuationBody)
+                            |> success(-1)(SemNever)
 
 // The declaring type's own bare name in a field is shorthand for the type applied to its own
 // parameters (`Node(Int, MapTree, K, V, MapTree)` inside `MapTree(K, V)`), the language's one
@@ -17754,53 +18085,60 @@ let capabilityHandlerGlobalCount (state: CoreLoweringState) =
 // — it enables trait-constrained-value rewriting for plain (non-recursive) top-level lets only;
 // recursive bindings and call-site trait-evidence forwarding (rewriteTraitConstrainedReference)
 // remain unwired, a deliberately narrower first slice of the trait-dictionary epic.
-let recursive lowerCoreProgramItems items trailingBody seen environment state =
+// Walks the flat top-level sequence iteratively: each declaration is opened (its value lowered and
+// stored, its names in scope) and the close it still owes pushed on `pending`, the trailing body is
+// lowered last, and closePendingTopLevelItems then closes the chain innermost first.
+let recursive lowerCoreProgramItems items trailingBody seen environment (analysis: TopLevelLoweringAnalysis) (pending: List(PendingTopLevelClose)) state =
     match items with
-        | [] -> lowerCore(trailingBody)(state)
+        | [] ->
+            state
+            |> lowerCore(trailingBody)
+            |> closePendingTopLevelItems(pending)
         // currentSpan carries the declaration as the innermost enclosing span, so an instruction the
         // binding emits outside its value expression — the StoreLocal of the bound value — is tagged
         // with the declaration rather than left unpositioned. A flat top-level declaration otherwise has
         // no position at all, and a debugger stepping over it reports whatever line came before.
-        | TopLevelAt(span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)((state with recursiveDeclarationSpan = Some(span), currentSpan = Some(span)))
+        | TopLevelAt(span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(analysis)(pending)((state with recursiveDeclarationSpan = Some(span), currentSpan = Some(span)))
         | TopLevelType(declaration) :: rest ->
             match registerTopLevelTypeDeclaration(declaration)(state) with
                 | Error(error) -> failure(state)(error)
-                | Ok(nextState) -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(nextState)
+                | Ok(nextState) -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(nextState)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
                         | CoreLoweringState { bindings = outerBindings, constructorLayouts = constructorLayouts } ->
-                            let continuation =
-                                given (_ignoredBody) ->
-                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s)
+                            let nextAnalysis = peelAnalysis(1)(analysis)
                             in
                                 match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
                                     | Some(layout) ->
                                         if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
                                         then
-                                            lowerArenaBracketedTopLevelLet(name)(value)(remainingProgramBody(rest)(trailingBody))(environment)(continuation)(outerBindings)(false)(state)
-                                        else lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(continuation)(state)
+                                            match openArenaBracketedTopLevelLet(name)(value)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
+                                                | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
+                                                | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
+                                        else
+                                            match lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(state) with
+                                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                                | LoweredCoreValue { state = dropped, error = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(pending)(dropped)
                                     | None ->
-                                        lowerArenaBracketedTopLevelLet(name)(value)(remainingProgramBody(rest)(trailingBody))(environment)(continuation)(outerBindings)(topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody))(state)
+                                        match openArenaBracketedTopLevelLet(name)(value)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
+                                            | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
+                                            | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
                         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
-                            []
+                            match []
                             |> prepareRecursiveGroup([(name, value)])(state)
                             |> relabelSingleRecursive(lambdaId)
-                            |> lowerPreparedRecursiveGroupWith(
-                                [(name, value)],
-                                topLevelContinuationBody,
-                                lowerCore,
-                                given (_ignoredBody) ->
-                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s),
-                                outerBindings
-                            )
+                            |> openPreparedRecursiveGroup([(name, value)])(lowerCore)(outerBindings) with
+                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                | LoweredCoreValue { state = opened, error = None } ->
+                                    lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(1)(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
         | TopLevelRecursiveGroup(bindings) :: rest ->
             match checkTopLevelNames(letBindingSyntaxNames(bindings))(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
@@ -17809,22 +18147,19 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                         | CoreLoweringState { bindings = outerBindings } ->
                             let pairs = letBindingSyntaxPairs(bindings)
                             in
-                                []
+                                match []
                                 |> prepareRecursiveGroup(pairs)(state)
-                                |> lowerPreparedRecursiveGroupWith(
-                                    pairs,
-                                    topLevelContinuationBody,
-                                    lowerCore,
-                                    given (_ignoredBody) ->
-                                        given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s),
-                                    outerBindings
-                                )
-        | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(state)
+                                |> openPreparedRecursiveGroup(pairs)(lowerCore)(outerBindings) with
+                                    | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                    | LoweredCoreValue { state = opened, error = None } ->
+                                        lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(length(bindings))(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
+        | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
 
 let lowerProgramWithCapabilities items trailingBody environment state =
     match registerProgramCapabilities(items)(state) with
         | Error(error) -> failure(state)(error)
-        | Ok(registered) -> lowerCoreProgramItems(items)(trailingBody)([])(environment)(registered)
+        | Ok(registered) ->
+            lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])(registered)
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.
@@ -17950,6 +18285,7 @@ let buildProgram lowered =
                     match applyDeferredOperators(state)(pendingOperatorDefaults)((entryInstructions(temp)(instructions), tempCount)) with
                         | (deferredEntryInstructions, entryTempCount) ->
                             match functions
+                            |> reverse
                             |> applySealedDeferredOperators(state)(sealedOperatorDefaults)
                             |> insertClosureNormalizers(reverse(state.pendingClosureNormalizers))(operatorDefaultedVariables([]
                             |> sealedOperatorTypes(sealedOperatorDefaults)
@@ -17997,7 +18333,7 @@ let buildProgram lowered =
                                                     semanticType = resolveType(state)(semanticType),
                                                     error = None,
                                                     valuePlacements = state.valuePlacements
-                                                    |> dedupeValuePlacements([])
+                                                    |> dedupeValuePlacements
                                                     |> finalizeValuePlacements(state),
                                                     joinRepresentations = state.joinRepresentations
                                                 )
@@ -18021,7 +18357,7 @@ let lowerCoreProgram (program: ProgramSyntax) =
             in
                 Unit
                 |> initialState
-                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items))
+                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
@@ -18048,7 +18384,7 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 Unit
                 |> initialStateWithContext(constructorLayouts)(builtinLayouts)
                 |> (given (state: CoreLoweringState) ->
-                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items))
+                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
@@ -18068,7 +18404,7 @@ let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (sou
                 Unit
                 |> initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)
                 |> (given (state: CoreLoweringState) ->
-                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items), reuseEnabled = reuseEnabled)
+                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items), reuseEnabled = reuseEnabled)
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(None)
                 |> buildProgram
@@ -18094,7 +18430,7 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
             in
                 Unit
                 |> initialState
-                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items), specializationCandidates = reuseSpecializationCandidates(items))
+                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramWithCapabilities(items)(trailingBody)(Some(environment))
                 |> buildProgram

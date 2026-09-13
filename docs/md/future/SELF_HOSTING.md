@@ -3069,22 +3069,80 @@ same public behavior.
   a cons chain the body grows), so a record accumulator costs what its fields would cost as
   parameters. Both compilers, since stage 0 emits the copy and the self-hosted lowering mirrors
   it.
-- [ ] **OPT-72** The self-hosted lowering's memory on a whole stitched project. Measured
-  2026-09-13 with BOOT-2's phase probe: `lowerCoreProgramWithSourceAndReuse` over the stitched
-  frontend package (325 KB of source) reaches 8.2 GiB resident, the formatter package 9.0 GiB,
-  and the CLI package (frontend, semantics, backend, and CLI stitched together, about 5 MB)
-  exhausts 24 GiB in six seconds, where stage 0 compiles the same package in about 9 GiB. Find
-  the dominators the way OPT-57 did for the single-file case (gdb breakpoints on source lines
-  with a resident-set printer at each phase boundary; a stack-sampling profiler pointed at the
-  wrong code there), starting with what the lowering keeps alive across modules: the per-module
-  re-lowering of `lowerFunctionBodyResolvingCalls` lowers every closed body twice, the
-  instruction lists of finished functions are appended with `append` (a copy of the whole
-  prefix per function), and every `deepCopy` on the resolution paths copies a definition per
-  reference. Stage 1 cannot compile itself before this is within reach of a developer machine;
-  BOOT-9's acceptance is the same peak memory as stage 0. Related: the standard library's
-  `append` is not tail-recursive, so a 13,000-element append (one declaration's tokens in the
-  parser) already needs 8 MB of stack at `-O0`; a stack-safe `append` belongs to the same
-  arc.
+- [x] **OPT-72** The self-hosted lowering's memory and time on a whole stitched project, first
+  measured 2026-09-13 with BOOT-2's phase probe (the stitched CLI package exhausted 24 GiB in
+  six seconds where stage 0 compiles it in about 9 GiB). Profiled with a `--debug -O2` build of
+  a lowering-only driver over generated programs of n independent top-level functions
+  (`perf record` plus `addr2line`, the binary loads at 0x400000): time and memory were both
+  quadratic in n. Every dominator found is fixed, in the self-hosted lowering unless noted: the
+  flat top-level chain nested one bracket close per declaration (a continuation per `let`, a
+  stack frame per declaration, and a stack overflow at 2,000 declarations on the default
+  stack), now walked iteratively with the pending closes on a list
+  (`openArenaBracketedTopLevelLet`, `closePendingTopLevelItems`); the whole remaining chain
+  was walked again per declaration for two facts (`escapingChainBody`,
+  `isTailForwardedBindingResult`), now precomputed once in `TopLevelLoweringAnalysis`; the
+  direct-callee analysis walked the rest of the program per binding (`programNonCalleeUses`,
+  one walk); the result-provenance SCC (`OwnershipProvenance`) used association lists for
+  every lookup and recursed with a `(visited, ...)` pair per visit whose returned map was
+  cloned, now balanced maps and explicit-stack walks; `lookupRuntimeTemp`,
+  `bodyRuntimeManagedByLabel`, `topLevelNames`, `checkTopLevelNames`, the reach registry's
+  value names, and the RC-eligibility table were lists searched per query, now maps;
+  `dedupeValuePlacements` compared origin records pairwise, now keyed by label and temp;
+  `SourceContext.findLine` scanned the line starts, now a balanced tree; and two placement
+  walks tail-called through a pipe into a lambda (`ownerSlots`, `collectArenaAdtCells`), which
+  stage 0 does not compile as a loop (OPT-75). Two stage-0 findings came out of it: a list
+  builder that conses a string or list borrowed from a record around its recursive call has
+  its partial list copied out at every return (OPT-74; the affected builders now accumulate and
+  reverse once), and a match arm that speculatively reused a dead nullary cell for its result
+  (`| Empty -> None`) was later reverted to a fresh arena allocation while the arm's scope had
+  already reset the arena under the result on the strength of the reuse, so the `None` came
+  back in a reclaimed chunk whenever that allocation opened one (a use after unmap the stage-1
+  compiler hit in `Ashes.Collection.Map.getStr`; a nullary reuse no longer registers as a
+  reuse result, pinned by `RevertedNullaryReuseArmResetTests`, the explain fixtures the parity
+  test listed without files are generated). Measured on the same driver, lowering only:
+  8,000 independent functions went from 12.4 s and 7.3 GiB to 0.62 s and 1.7 GiB, memory now
+  doubling with n, and 8,000 declarations lower on the default 8 MB stack. The remaining
+  superlinear cost is the shape where every function calls an earlier one: 1,000 such
+  functions take 1.8 s and 10 GiB, 2,000 take 11 s and 40 GiB, because
+  `ensureResultRcEligibility` recomputes the whole-program provenance fixpoint at the first
+  call site after every recorded lambda (OPT-73). The standard library's `append` is still not
+  tail-recursive (a stack-safe `append` belongs to OPT-73's arc, since the stitched CLI's
+  instruction lists are the first place it will matter).
+- [ ] **OPT-73** Compute the result-provenance fixpoint once per program, keyed by function
+  identity, as stage 0's `ComputeFunctionResultProvenanceFixpoint` over `_maFuncs` does. The
+  self-hosted `ensureResultRcEligibility` recomputes `resultProvenanceNodes` and
+  `resolveResultProvenances` over every lambda recorded so far whenever a lambda was recorded
+  since the last call site, so a program of n calling functions pays n fixpoints of size n
+  (measured 2026-09-13: 10 GiB per 1,000 such functions, the reason the stitched CLI package
+  still exhausts 16 GiB in 8 s of lowering); it also resolves forward targets by name against
+  the latest recorded lambda of that name, so a nested helper shared by several functions (a
+  `go`) resolves to whichever was lowered last. The reach registry already registers every
+  function of the program with its identity and a lexical scope from names to keys
+  (`ReachFunction.scope`); build the provenance nodes from it (`CallResultProvenance` takes a
+  key-resolving scope instead of a by-name function list), solve once at
+  `withProgramParameterOwnership`, and look a callee up by `name@identity` the way
+  `calleeReachSummary` does, falling back by name for a callee outside the registry. Parity
+  fixtures pin the verdicts; the `call_N` generated programs (each function calling the
+  previous one) pin the cost.
+- [ ] **OPT-74** Stage 0 copies the partial result of a list builder out at every return when
+  the element consed around the recursive call is a string or list borrowed from a record
+  (`| Node { functionName = name } :: tail -> name :: getNodeNames(tail)`), so a builder over n
+  records costs n^2 memory: measured 2026-09-13, 4,000 records cost 1.1 GiB and 0.19 s where
+  the same builder consing a fresh string, a tuple, or the record itself, and the same walk as
+  an accumulator loop reversed once, cost 8 MiB. The builder's result is arena-placed (a
+  borrowed element keeps it off the reference-counted heap) and each return crosses the
+  callee's bracket with a `CopyOutList HeadCopy=String`; the copy should retain the borrowed
+  element or place the spine on the reference-counted heap instead of copying the prefix at
+  every level. Until then the self-hosted compiler's builders over record fields accumulate
+  and reverse (`getNodeNamesInto`, `nodesOf`, `resolveNodeProvenancesInto`,
+  `dedupeValuePlacementsInto`).
+- [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
+  (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
+  as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
+  costs a stack frame per element (`PerceusLifetimePlacement`'s `ownerSlots` overflowed the
+  default stack on a 20,000-instruction entry function). Lower `e |> (given (x) -> body)` as
+  `let x = e in body`, which keeps tail position, in both compilers; the two placement walks
+  are rewritten with `let` meanwhile.
 
 #### LLVM code generation and runtime integration
 
@@ -3618,13 +3676,16 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   planner's interface and to the stitcher (the intrinsic module's interface is now synthesized
   from the builtin table and the stitcher keeps such selectors as `intrinsicSelectors`); and
   the stitcher's `findModule` deep-copying a whole module scope at every name lookup. Planning
-  and stitching of the CLI package now complete in 0.5 s and 1.7 GiB. The next blocker is the
-  self-hosted lowering's memory: lowering the stitched CLI package exhausts 24 GiB in 6 s, and
-  the same probe on the frontend package alone (325 KB of source) reaches 8.2 GiB before
+  and stitching of the CLI package now complete in 0.5 s and 1.7 GiB. The next blocker was the
+  self-hosted lowering's memory: lowering the stitched CLI package exhausted 24 GiB in 6 s, and
+  the same probe on the frontend package alone (325 KB of source) reached 8.2 GiB before
   failing on `Ashes.Internal.Regex.compileRaw` (a builtin `standardBuiltinLayouts` lacks; CG-11)
   and on the formatter package 9.0 GiB before `UnsupportedTypeDeclaration` for a bare
   `AshesCompiler.Frontend.Syntax.Expr` (a stitched generic type used without its argument; a
-  stitching gap to file with its repro). OPT-72 owns the memory. The measurement tool is a
+  stitching gap to file with its repro). OPT-72 made the lowering linear in the number of
+  declarations and stack-safe, and fixed a stage-0 use after unmap it exposed; the probe still
+  exhausts 16 GiB in 8 s of lowering, now because the result-provenance fixpoint is recomputed
+  at the first call site after every recorded lambda (OPT-73 owns it). The measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker

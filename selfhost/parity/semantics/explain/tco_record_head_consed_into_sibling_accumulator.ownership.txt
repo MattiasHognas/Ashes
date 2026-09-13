@@ -1,0 +1,77 @@
+Ownership report
+================
+
+Function: collect
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    s
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - s
+      - acc
+
+Function: firstLabels
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    k
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: reversed
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - items
+      - acc
+
+Function: total
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    sum
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    labels
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - sum
+      - labels
+

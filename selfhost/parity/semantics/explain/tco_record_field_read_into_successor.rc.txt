@@ -1,0 +1,113 @@
+RC report
+=========
+
+Function: __deepcopy_3
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_2
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: walk [lambda_1]
+  Operations
+    dup:                  2
+    drop:                 18
+    uniqueness checks:    10
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               10
+
+Function: walk
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: carry [lambda_6]
+  Operations
+    dup:                  2
+    drop:                 24
+    uniqueness checks:    13
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               14
+
+Function: __rc_cdrop_7
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: carry [lambda_6$env_normalize]
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: carry [lambda_5]
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: carry
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: walk [lambda_1__scalarenv0]
+  Operations
+    dup:                  2
+    drop:                 18
+    uniqueness checks:    10
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               10
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 10
+    uniqueness checks:    6
+    allocations:          8
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+

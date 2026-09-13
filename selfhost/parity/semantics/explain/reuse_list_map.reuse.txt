@@ -1,0 +1,25 @@
+Reuse report
+============
+
+Function: _start_main
+  runtime uniqueness check: required [lst]
+    reason: runtime managed reuse candidate (reuse_list_map.ash:8:7)
+  runtime uniqueness check: required [lst]
+    reason: runtime managed reuse candidate (reuse_list_map.ash:9:7)
+  constructor layout compatibility: accepted [lst]
+    reason: compatible constructor layout (reuse_list_map.ash:8:14)
+  constructor layout compatibility: accepted [lst]
+    reason: compatible constructor layout (reuse_list_map.ash:9:27)
+  token production: produced [lst]
+    reason: matched cell became dead (reuse_list_map.ash:8:7)
+  token production: produced [lst]
+    reason: matched cell became dead (reuse_list_map.ash:9:7)
+  token disposition: consumed [lst]
+    reason: compatible token consumed (reuse_list_map.ash:8:14)
+  token disposition: consumed [lst]
+    reason: compatible token consumed (reuse_list_map.ash:9:27)
+  fallback allocation: available [lst]
+    reason: runtime uniqueness fallback (reuse_list_map.ash:8:14)
+  fallback allocation: available [lst]
+    reason: runtime uniqueness fallback (reuse_list_map.ash:9:27)
+
