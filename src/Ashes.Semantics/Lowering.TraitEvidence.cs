@@ -100,6 +100,47 @@ public sealed partial class Lowering
     private readonly Dictionary<(string Name, int Position), TypeExpr>
         _inferredTraitBindingTypeHints = [];
 
+    // A trait goal whose type was still a variable when its use site was lowered, recorded by the
+    // discovery pass so the emitting pass can pin it. Inference can learn such a type AFTER the use
+    // site — a comparison inside an expression whose later part is what fixes the operand's type — and
+    // a single pass reaching that site has no way to know whether the variable is genuinely ambiguous or
+    // merely not determined yet. The discovery pass lowers the whole program, so by its end the
+    // substitution answers that question; what it proved concrete is carried over here.
+    private readonly List<(string Key, TraitConstraint Constraint)> _pendingAmbiguousTraitGoals = [];
+
+    private readonly Dictionary<string, TraitConstraint> _provenAmbiguousTraitGoalTypes =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The goals recorded during this pass whose type the pass's own substitution has since resolved to a
+    /// concrete one. Read off the discovery pass once it has lowered everything.
+    /// </summary>
+    private Dictionary<string, TraitConstraint> ResolveProvenAmbiguousTraitGoals()
+    {
+        var proven = new Dictionary<string, TraitConstraint>(StringComparer.Ordinal);
+        foreach ((string key, TraitConstraint constraint) in _pendingAmbiguousTraitGoals)
+        {
+            TraitConstraint resolved = PruneTraitConstraint(constraint);
+            if (resolved.TypeArgs.All(argument => !ContainsFreeTypeVariable(argument)))
+            {
+                proven[key] = resolved;
+            }
+        }
+
+        return proven;
+    }
+
+    private static bool ContainsFreeTypeVariable(TypeRef type) => type switch
+    {
+        TypeRef.TVar => true,
+        TypeRef.TList list => ContainsFreeTypeVariable(list.Element),
+        TypeRef.TPtr pointer => ContainsFreeTypeVariable(pointer.Pointee),
+        TypeRef.TTuple tuple => tuple.Elements.Any(ContainsFreeTypeVariable),
+        TypeRef.TFun function => ContainsFreeTypeVariable(function.Arg) || ContainsFreeTypeVariable(function.Ret),
+        TypeRef.TNamedType named => named.TypeArgs.Any(ContainsFreeTypeVariable),
+        _ => false,
+    };
+
     // The discovery pass lowers the unelaborated source and therefore sees the operations that
     // justify every written requires clause. Dictionary emission replaces those operations with
     // ordinary closure calls, so the emitting pass must not try to validate the same boundary from
@@ -316,6 +357,14 @@ public sealed partial class Lowering
 
         _traitValidationCompletedDuringElaboration = true;
         _sourceTraitConstraintBoundariesValidated = true;
+
+        // Carried unconditionally: a goal this pass could only resolve once it had lowered everything is
+        // exactly what the emitting pass cannot work out on its own, and a program can need this without
+        // needing any binding rewritten.
+        foreach ((string key, TraitConstraint constraint) in discovery.ResolveProvenAmbiguousTraitGoals())
+        {
+            _provenAmbiguousTraitGoalTypes[key] = constraint;
+        }
 
         if (discovery._inferredTraitBindingElaborations.Count == 0
             && discovery._inferredTraitBindingTypeHints.Count == 0)

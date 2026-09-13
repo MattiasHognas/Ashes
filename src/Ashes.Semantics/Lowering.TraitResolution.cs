@@ -513,9 +513,10 @@ public sealed partial class Lowering
     /// A use site reached <see cref="TraitEvidencePlan.Parameter"/> with no enclosing dictionary
     /// parameter to supply it. Trait-goal resolution only returns <c>Parameter</c> for a
     /// goal that still contains a free type variable (a concrete goal either resolves or reports its
-    /// own no-implementation/coherence diagnostic), so reaching here means that variable is never going
-    /// to be pinned down by anything else in the program: the requirement is genuinely ambiguous, not
-    /// merely deferred. Reports that and returns a <see cref="TypeRef.TNever"/> sentinel instead of
+    /// own no-implementation/coherence diagnostic). Inference can fix such a variable after the use
+    /// site, so a variable here is not ambiguous on its own: the discovery pass lowers the whole program
+    /// first and pins every goal it proved concrete, and only a goal that pass could not resolve either
+    /// reaches this point. Reports that and returns a <see cref="TypeRef.TNever"/> sentinel instead of
     /// silently fabricating a value, mirroring <see cref="ReturnNeverWithDummyTemp"/>'s use after every
     /// other trait-resolution failure. Callers must only take this branch when
     /// <see cref="_emitTraitDictionaries"/> is set — the throwaway discovery and validation
