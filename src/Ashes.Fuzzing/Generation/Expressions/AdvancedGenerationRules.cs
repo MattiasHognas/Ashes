@@ -388,12 +388,25 @@ internal sealed class ResultBindGenerationRule : IExpressionGenerationRule
         ]);
         features.UnionWith(input.Features);
         features.UnionWith(body.Features);
+
+        // `let?` takes no annotation, so the bound name's type is only whatever the input expression
+        // determines. An input that produces an `Error` leaves the ok payload a free type variable, and
+        // the body is then generated against a bound type the source never states: an operator on the
+        // binding has no type to resolve its trait requirement against. Stating the input's type pins it.
+        string inputName = "boundInput" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Expr value = new Expr.Let(
+            inputName,
+            input.Value,
+            new Expr.LetResult(name, new Expr.Var(inputName), body.Value))
+        {
+            TypeAnnotation = inputType.ToSyntax(),
+        };
         return new GenerationResult<Expr>(
-            new Expr.LetResult(name, input.Value, body.Value),
+            value,
             requiredType,
             features,
             GenerationTrace.Merge($"result:bind:{name}:{boundType}", input.Trace, body.Trace),
-            input.NodeCount + body.NodeCount + 1);
+            input.NodeCount + body.NodeCount + 3);
     }
 }
 
