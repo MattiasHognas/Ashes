@@ -14,6 +14,7 @@ export (
     type CoreBuiltinEmissionResult(..),
     type CoreBuiltinEmission(..),
     value coreBuiltinKind,
+    value intrinsicBuiltinModuleNames,
     value isIntrinsicBuiltinModule,
     value standardBuiltinLayouts,
     value reservedBuiltinTypeVariableCount,
@@ -412,28 +413,38 @@ let coreBuiltinKind moduleName memberName =
 // shipped `.ash` source. An import of one of these resolves to an empty synthesized module (its
 // members are reached through qualified access, which needs no import); every other missing
 // `Ashes.*` module stays a real error. Keep this list in step with `coreBuiltinKind`'s arms.
-let isIntrinsicBuiltinModule moduleName =
-    match moduleName with
-        | "Ashes.IO" -> true
-        | "Ashes.Number.Math" -> true
-        | "Ashes.IO.File" -> true
-        | "Ashes.IO.Directory" -> true
-        | "Ashes.IO.Environment" -> true
-        | "Ashes.Text" -> true
-        | "Ashes.Rune" -> true
-        | "Ashes.Number.BigInt" -> true
-        | "Ashes.Internal" -> true
-        | "Ashes.Internal.Regex" -> true
-        | "Ashes.Byte" -> true
-        | "Ashes.Number.UInt" -> true
-        | "Ashes.Net.Http" -> true
-        | "Ashes.Net.Tcp" -> true
-        | "Ashes.Net.Tcp.Server" -> true
-        | "Ashes.Net.Tls" -> true
-        | "Ashes.Net.Tls.Server" -> true
-        | "Ashes.IO.Process" -> true
-        | "Ashes.IO.Console" -> true
-        | _ -> false
+let intrinsicBuiltinModuleNames =
+    [
+        "Ashes.IO",
+        "Ashes.Number.Math",
+        "Ashes.IO.File",
+        "Ashes.IO.Directory",
+        "Ashes.IO.Environment",
+        "Ashes.Text",
+        "Ashes.Rune",
+        "Ashes.Number.BigInt",
+        "Ashes.Internal",
+        "Ashes.Internal.Regex",
+        "Ashes.Byte",
+        "Ashes.Number.UInt",
+        "Ashes.Net.Http",
+        "Ashes.Net.Tcp",
+        "Ashes.Net.Tcp.Server",
+        "Ashes.Net.Tls",
+        "Ashes.Net.Tls.Server",
+        "Ashes.IO.Process",
+        "Ashes.IO.Console"
+    ]
+
+let recursive isIntrinsicBuiltinModuleIn (moduleName: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest ->
+            if candidate == moduleName
+            then true
+            else isIntrinsicBuiltinModuleIn(moduleName)(rest)
+
+let isIntrinsicBuiltinModule moduleName = isIntrinsicBuiltinModuleIn(moduleName)(intrinsicBuiltinModuleNames)
 
 // Backs "qualified access (no import required)" (language.md's own section title): a real Ashes
 // program never needs to `import Ashes.IO` before calling `Ashes.IO.print`, so builtin

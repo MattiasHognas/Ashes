@@ -4,10 +4,14 @@
 //
 // Invariants:
 // - Only `Ashes.*` imports are resolved, and only against the supplied shipped module texts.
-// - Reachable modules are loaded transitively through their own import headers, each once.
+// - Reachable modules are loaded transitively through their own import headers and through
+//   their bare qualified references to shipped members (`Ashes.Text.join` with no import,
+//   `QualifiedShippedReferences`), each once; a qualified-only module precedes its referrer in
+//   the plan like an imported one.
 // - The entry alone contributes a trailing expression; shipped modules contribute declarations.
 // - Sources are never read from disk here; the caller supplies every text it wants resolvable.
 
+import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import AshesCompiler.Frontend.ImportHeader
 import AshesCompiler.Frontend.ImportResolution
@@ -19,6 +23,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
+import AshesCompiler.Semantics.QualifiedShippedReferences
 export (
     type ShippedModuleText(..),
     type ShippedStitchError(..),
@@ -41,12 +46,20 @@ type ShippedStitchError =
     | UnsupportedNonShippedImport(Str, Str)
     deriving {Eq, Show}
 
+// `qualifiedModules` are the shipped modules the body reaches only through bare qualified
+// references; they are loaded like imports and ordered ahead of this module in the plan.
 type LoadedShippedModule =
     | name: Str
     | sourcePath: Str
     | imports: List(ImportHeaderEntry)
+    | qualifiedModules: List(Str)
     | program: ProgramSyntax
     | interface: ModuleImportInterface
+
+let recursive shippedModuleNames (shipped: List(ShippedModuleText)) =
+    match shipped with
+        | [] -> []
+        | ShippedModuleText { moduleName = moduleName } :: rest -> moduleName :: shippedModuleNames(rest)
 
 let shippedPackageId = "ashes-std"
 
@@ -71,9 +84,14 @@ let recursive importedModuleNames (entries: List(ImportHeaderEntry)) =
         | [] -> []
         | ImportHeaderEntry { modulePath = modulePath } :: rest -> modulePath :: importedModuleNames(rest)
 
+// Every module a loaded module reaches: its imports, then the shipped modules its body names
+// through bare qualified references.
+let reachedModuleNames (module: LoadedShippedModule) =
+    appendList(importedModuleNames(module.imports))(module.qualifiedModules)
+
 // Splits the header off, parses the remainder, and builds the module's interface — the same
 // three steps `ProjectCompilationPlanning` performs per project module.
-let loadModuleText name path source =
+let loadModuleText (shipped: List(ShippedModuleText)) name path source =
     match parseImportHeader(source) with
         | Error(error) ->
             error
@@ -87,7 +105,15 @@ let loadModuleText name path source =
                             error
                             |> ShippedInterfaceError(path)
                             |> Error
-                        | Ok(interface) -> Ok(LoadedShippedModule(name = name, sourcePath = path, imports = imports, program = program, interface = interface))
+                        | Ok(interface) ->
+                            Ok(LoadedShippedModule(
+                                name = name,
+                                sourcePath = path,
+                                imports = imports,
+                                qualifiedModules = qualifiedShippedModulesNeedingSource(shippedModuleNames(shipped))(body),
+                                program = program,
+                                interface = interface
+                            ))
                 | ProgramParseResult { diagnostics = diagnostics } ->
                     diagnostics
                     |> Ashes.Trait.Show.show
@@ -127,6 +153,7 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                                                         name = name,
                                                         sourcePath = "<builtin>",
                                                         imports = [],
+                                                        qualifiedModules = [],
                                                         program = program,
                                                         interface = interface
                                                     ) :: loaded
@@ -136,20 +163,20 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                                     |> ShippedModuleMissing(importer)
                                     |> Error
                             | Some(ShippedModuleText { sourcePath = path, source = source }) ->
-                                match loadModuleText(name)(path)(source) with
+                                match loadModuleText(shipped)(name)(path)(source) with
                                     | Error(error) -> Error(error)
                                     | Ok(module) ->
-                                        loadReachable(name)(Ashes.Collection.List.append(importedModuleNames(module.imports))(rest))(module :: loaded)(shipped)
+                                        loadReachable(name)(appendList(reachedModuleNames(module))(rest))(module :: loaded)(shipped)
 
 let recursive planUnits (entryName: Str) (loaded: List(LoadedShippedModule)) =
     match loaded with
         | [] -> []
-        | LoadedShippedModule { name = name, sourcePath = path, imports = imports, interface = interface } :: rest ->
+        | LoadedShippedModule { name = name, sourcePath = path, imports = imports, qualifiedModules = qualifiedModules, interface = interface } :: rest ->
             let source =
                 if name == entryName
                 then ProjectModuleSource(path)
                 else ShippedModuleSource(path)
-            in ModulePlanUnit(name = name, source = source, imports = imports, interface = interface, dependencies = []) :: planUnits(entryName)(rest)
+            in ModulePlanUnit(name = name, source = source, imports = imports, interface = interface, dependencies = qualifiedModules) :: planUnits(entryName)(rest)
 
 let plannedSourcePath source =
     match source with
@@ -185,10 +212,10 @@ let recursive stitchUnits (entryName: Str) (loaded: List(LoadedShippedModule)) (
 // The entry (`entryName`, its `entrySource` including any import header) plus every shipped module
 // it reaches, as one stitched project whose `program` lowers like any single program.
 let stitchWithShippedModules (entryName: Str) (entryPath: Str) (entrySource: Str) (shipped: List(ShippedModuleText)) =
-    match loadModuleText(entryName)(entryPath)(entrySource) with
+    match loadModuleText(shipped)(entryName)(entryPath)(entrySource) with
         | Error(error) -> Error(error)
         | Ok(entry) ->
-            match loadReachable(entryName)(importedModuleNames(entry.imports))([entry])(shipped) with
+            match loadReachable(entryName)(reachedModuleNames(entry))([entry])(shipped) with
                 | Error(error) -> Error(error)
                 | Ok(loaded) ->
                     match loaded

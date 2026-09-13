@@ -35,6 +35,7 @@ import AshesCompiler.Semantics.ProjectDiagnostics
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectSourceEnumeration
 import AshesCompiler.Semantics.ProjectSourceEnumeration.ProjectSourceEnumerationError
+import AshesCompiler.Semantics.QualifiedShippedReferences
 import AshesCompiler.Semantics.ShippedModuleStitching
 export (
     type PlannedModuleProgram(..),
@@ -100,12 +101,16 @@ type ParsedProjectModuleCollection =
     | programs: List(PlannedModuleProgram)
     | diagnosticSources: List(ProjectDiagnosticSource)
 
+// `qualifiedModules` are the shipped modules the file reaches only through bare qualified
+// references (`QualifiedShippedReferences`); they are loaded like imports and ordered ahead of
+// the module in the plan.
 type ExpandedProjectModuleContext =
     | name: Str
     | scope: Str
     | path: Str
     | sources: List(IndexedProjectSource)
     | imports: List(ImportHeaderEntry)
+    | qualifiedModules: List(Str)
     | outerSource: Str
     | inlineNames: List(Str)
 
@@ -415,11 +420,11 @@ let appendOuterParsedModule outer collection =
 
 let completeExpandedModule context collection =
     match (context, collection) with
-        | (ExpandedProjectModuleContext { name = name, sources = sources, imports = imports, inlineNames = inlineNames }, ParsedProjectModuleCollection { units = units, programs = programs, diagnosticSources = diagnosticSources }) ->
+        | (ExpandedProjectModuleContext { name = name, sources = sources, imports = imports, qualifiedModules = qualifiedModules, inlineNames = inlineNames }, ParsedProjectModuleCollection { units = units, programs = programs, diagnosticSources = diagnosticSources }) ->
             LoadedProjectModule(
                 units = units,
                 programs = programs,
-                dependencies = deps(sources)(name :: deepCopy(inlineNames))(imports),
+                dependencies = appendList(deps(sources)(name :: deepCopy(inlineNames))(imports))(qualifiedModules),
                 names = appendList(inlineNames)([name]),
                 diagnosticSources = diagnosticSources
             )
@@ -436,12 +441,14 @@ let finishOuterProjectModule context collection result =
 
 let outerParsedProjectModule context =
     match context with
-        | ExpandedProjectModuleContext { name = name, scope = scope, path = path, imports = imports, inlineNames = inlineNames } ->
+        | ExpandedProjectModuleContext { name = name, scope = scope, path = path, imports = imports, qualifiedModules = qualifiedModules, inlineNames = inlineNames } ->
             ParsedProjectModule(
                 name = name,
                 source = ProjectModuleSource(path),
                 imports = imports,
-                dependencies = deepCopy(inlineNames),
+                dependencies = qualifiedModules
+                |> deepCopy
+                |> appendList(deepCopy(inlineNames)),
                 directModules = inlineNames
                 |> deepCopy
                 |> directModuleNames(scope)
@@ -475,7 +482,7 @@ let validateExpandedInlineModules inlineModules context =
             |> validateInlineModuleSources(path)(sources)
             |> finishValidatedInlineModules(inlineModules)(context)
 
-let finishExpandedModule name scope path sources imports expansion =
+let finishExpandedModule name scope path sources imports qualifiedModules expansion =
     match expansion with
         | InlineModuleExpansion { source = outerSource, modules = inlineModules } ->
             validateExpandedInlineModules(inlineModules)(ExpandedProjectModuleContext(
@@ -484,17 +491,18 @@ let finishExpandedModule name scope path sources imports expansion =
                 path = path,
                 sources = sources,
                 imports = imports,
+                qualifiedModules = qualifiedModules,
                 outerSource = outerSource,
                 inlineNames = inlineModuleNames(inlineModules)
             ))
 
-let expandLoadedSource name scope path sources imports source =
+let expandLoadedSource name scope path sources imports qualifiedModules source =
     match expandInlineModules(scope)(source) with
         | Error(error) ->
             error
             |> ProjectCompilationInlineModuleError(path)
             |> Error
-        | Ok(expansion) -> finishExpandedModule(name)(scope)(path)(sources)(imports)(expansion)
+        | Ok(expansion) -> finishExpandedModule(name)(scope)(path)(sources)(imports)(qualifiedModules)(expansion)
 
 let expandLoadedModule (entryModuleName: Str) (name: Str) =
     (let scope =
@@ -503,22 +511,29 @@ let expandLoadedModule (entryModuleName: Str) (name: Str) =
         else name
     in expandLoadedSource(name)(scope))
 
-let parseLoadedModule entryModuleName name path sources source =
+let recursive shippedNames (shipped: List(ShippedModuleText)) =
+    match shipped with
+        | [] -> []
+        | ShippedModuleText { moduleName = moduleName } :: rest -> moduleName :: shippedNames(rest)
+
+// The body is scanned for bare qualified shipped references before inline modules are lifted, so
+// a reference inside an inline module counts for its file.
+let parseLoadedModule entryModuleName shipped name path sources source =
     match parseImportHeader(source) with
         | Error(error) ->
             error
             |> ProjectCompilationImportHeaderError(path)
             |> Error
         | Ok(ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports }) ->
-            expandLoadedModule(entryModuleName)(name)(path)(sources)(deepCopy(imports))(sourceWithoutImports)
+            expandLoadedModule(entryModuleName)(name)(path)(sources)(deepCopy(imports))(qualifiedShippedModulesNeedingSource(shippedNames(shipped))(sourceWithoutImports))(sourceWithoutImports)
 
-let readIndexedModule entryModuleName name path sources =
+let readIndexedModule entryModuleName shipped name path sources =
     match Ashes.IO.File.readText(path) with
         | Error(error) ->
             error
             |> ProjectCompilationReadError(path)
             |> Error
-        | Ok(source) -> parseLoadedModule(entryModuleName)(name)(path)(sources)(source)
+        | Ok(source) -> parseLoadedModule(entryModuleName)(shipped)(name)(path)(sources)(source)
 
 let recursive findShippedText (name: Str) (shipped: List(ShippedModuleText)) =
     match shipped with
@@ -552,7 +567,7 @@ let recursive importedModulePaths (entries: List(ImportHeaderEntry)) =
         | [] -> []
         | ImportHeaderEntry { modulePath = modulePath } :: rest -> deepCopy(modulePath) :: importedModulePaths(rest)
 
-let shippedUnit name path imports program =
+let shippedUnit name path imports qualifiedModules program =
     match buildModuleInterface(name)([])(program) with
         | Error(error) ->
             error
@@ -560,14 +575,16 @@ let shippedUnit name path imports program =
             |> Error
         | Ok(moduleInterface) ->
             LoadedProjectModule(
-                units = [cu(deepCopy(name))(ShippedModuleSource(path))(deepCopy(imports))(deepCopy(moduleInterface))([])],
+                units = [qualifiedModules
+                |> deepCopy
+                |> cu(deepCopy(name))(ShippedModuleSource(path))(deepCopy(imports))(deepCopy(moduleInterface))],
                 programs = [PlannedModuleProgram(name = deepCopy(name), program = program)],
-                dependencies = importedModulePaths(imports),
+                dependencies = appendList(importedModulePaths(imports))(qualifiedModules),
                 names = [deepCopy(name)],
                 diagnosticSources = []
             ) |> Ok
 
-let parseShippedModule name path source =
+let parseShippedModule shipped name path source =
     match parseImportHeader(source) with
         | Error(error) ->
             error
@@ -575,7 +592,8 @@ let parseShippedModule name path source =
             |> Error
         | Ok(ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports }) ->
             match parseProgram(sourceWithoutImports) with
-                | ProgramParseResult { program = program, diagnostics = [] } -> shippedUnit(name)(path)(imports)(program)
+                | ProgramParseResult { program = program, diagnostics = [] } ->
+                    shippedUnit(name)(path)(imports)(qualifiedShippedModulesNeedingSource(shippedNames(shipped))(sourceWithoutImports))(program)
                 | ProgramParseResult { diagnostics = diagnostics } ->
                     Ok(LoadedProjectModule(
                         units = [],
@@ -587,11 +605,11 @@ let parseShippedModule name path source =
 
 // An intrinsic builtin module has no source: its members are reached through qualified access,
 // so it plans as an empty module whose interface exports nothing.
-let intrinsicModule name = shippedUnit(name)("<builtin>")([])(ProgramSyntax(items = [], body = None))
+let intrinsicModule name = shippedUnit(name)("<builtin>")([])([])(ProgramSyntax(items = [], body = None))
 
 let loadShippedModule (name: Str) (shipped: List(ShippedModuleText)) (sources: List(IndexedProjectSource)) =
     match findShippedText(name)(shipped) with
-        | Some(ShippedModuleText { sourcePath = path, source = source }) -> parseShippedModule(name)(path)(source)
+        | Some(ShippedModuleText { sourcePath = path, source = source }) -> parseShippedModule(shipped)(name)(path)(source)
         | None ->
             if isIntrinsicBuiltinModule(name)
             then intrinsicModule(name)
@@ -611,7 +629,7 @@ let loadNamedModule entryModuleName shipped (name: Str) (sources: List(IndexedPr
                 |> indexedModuleNames
                 |> ProjectCompilationMissingModule(name)
                 |> Error
-            | path :: [] -> readIndexedModule(entryModuleName)(name)(path)(sources)
+            | path :: [] -> readIndexedModule(entryModuleName)(shipped)(name)(path)(sources)
             | paths ->
                 paths
                 |> ProjectCompilationAmbiguousModule(name)

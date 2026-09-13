@@ -34,7 +34,8 @@ let createDirectory root relativePath =
     |> requireUnit("create " + relativePath)
 
 // A project with a sibling module, a path dependency, a shipped selector import, an intrinsic
-// whole-module import, and a shipped module that itself imports another shipped module.
+// whole-module import, a shipped module that itself imports another shipped module, and a
+// shipped module the sibling reaches only through a bare qualified reference.
 let prepareStitchFixture root =
     root
     |> Ashes.IO.Directory.removeTree
@@ -49,7 +50,7 @@ let prepareStitchFixture root =
         writeFile(root)("app/src/Main.ash")(
             "import Ashes.Collection.List.append\nimport Helper.Greet.greeting\nimport Ashes.IO\nimport Util.twice\nAshes.IO.print(greeting + Ashes.Text.fromInt(twice(1)))"
         ))
-    |> (given (_) -> writeFile(root)("app/src/Util.ash")("export (value twice)\nlet twice n = n * 2"))
+    |> (given (_) -> writeFile(root)("app/src/Util.ash")("export (value twice)\nlet twice n = n * 2 + Ashes.Collection.Extra.zero"))
     |> (given (_) ->
         writeFile(root)("helper/ashes.json")(
             "{\"name\":\"helper\",\"namespace\":\"Helper\",\"entry\":\"src/Helper.ash\",\"sourceRoots\":[\"src\"]}"
@@ -68,6 +69,11 @@ let shippedTexts unit =
             moduleName = "Ashes.Collection.Count",
             sourcePath = "<shipped>/Collection.Count.ash",
             source = "export (value count)\nlet recursive count xs =\n    match xs with\n        | [] -> 0\n        | _ :: tail -> 1 + count(tail)\n"
+        ),
+        ShippedModuleText(
+            moduleName = "Ashes.Collection.Extra",
+            sourcePath = "<shipped>/Collection.Extra.ash",
+            source = "export (value zero)\nlet zero = 0\n"
         )
     ]
 
@@ -112,13 +118,14 @@ let checkPlanWithShipped root =
                 "Ashes.Collection.List <- shipped <shipped>/Collection.List.ash",
                 "Helper.Greet <- project",
                 "Ashes.IO <- shipped <builtin>",
+                "Ashes.Collection.Extra <- shipped <shipped>/Collection.Extra.ash",
                 "Util <- project",
                 "Main <- project"
             ])
             |> (given (_) ->
                 programs
                 |> programNames
-                |> test.assertEqual(["Main", "Ashes.Collection.List", "Ashes.Collection.Count", "Helper.Greet", "Ashes.IO", "Util"]))
+                |> test.assertEqual(["Main", "Ashes.Collection.List", "Ashes.Collection.Count", "Helper.Greet", "Ashes.IO", "Util", "Ashes.Collection.Extra"]))
 
 // Without shipped texts a real shipped import is missing while an intrinsic one still resolves.
 let checkPlanWithoutShipped root =
@@ -153,6 +160,7 @@ let checkStitchedProject root =
                 "Ashes.Collection.List|ashes-core",
                 "Helper.Greet|helper",
                 "Ashes.IO|ashes-core",
+                "Ashes.Collection.Extra|ashes-core",
                 "Util|stitch-app",
                 "Main|stitch-app|entry"
             ])

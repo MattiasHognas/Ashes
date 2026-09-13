@@ -3133,6 +3133,12 @@ let buildIntrinsicAliasImportModule shipped name context = codegenShippedSource(
 
 let buildShippedTextJoinModule shipped name context = codegenShippedSource(shipped)("import Ashes.Text\nAshes.IO.print(Ashes.Text.join(\", \")([\"a\", \"b\", \"c\"]))")(name)(context)
 
+// language.md's "qualified access, no import required": a shipped member reached only through
+// its bare qualified name, with no import header at all (`Ashes.Text.join` is a shipped
+// function, `Ashes.Text.fromInt` an intrinsic one; `Ashes.IO.Path.join` and its `Unix`
+// constructor live in a shipped module under an intrinsic parent).
+let buildShippedQualifiedWithoutImportModule shipped name context = codegenShippedSource(shipped)("Ashes.IO.print(Ashes.Text.join(\"/\")([Ashes.Text.fromInt(1), \"b\"]) + \" \" + Ashes.IO.Path.join(Ashes.IO.Path.Unix)(\"x\")(\"y\"))")(name)(context)
+
 let buildTextFromIntModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.fromInt(0 - 42) + \"|\" + Ashes.Text.fromInt(0) + \"|\" + Ashes.Text.fromInt(9007))")(name)(context)
 
 let buildTextByteLengthModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.byteLength(\"hello, world\" + \"!\"))")(name)(context)
@@ -3185,6 +3191,9 @@ let testRunStaticExecutableForIntrinsicAliasImportModule shipped unit =
 
 let testRunStaticExecutableForShippedTextJoinModule shipped unit =
     assertProgramPrints(buildShippedTextJoinModule(shipped))("selfhostBackendRunShippedTextJoin")("selfhost_backend_shipped_text_join_e2e")("a, b, c")
+
+let testRunStaticExecutableForShippedQualifiedWithoutImportModule shipped unit =
+    assertProgramPrints(buildShippedQualifiedWithoutImportModule(shipped))("selfhostBackendRunShippedQualifiedWithoutImport")("selfhost_backend_shipped_qualified_without_import_e2e")("1/b x/y")
 
 let testRunStaticExecutableForTextFromIntModule unit = assertProgramPrints(buildTextFromIntModule)("selfhostBackendRunTextFromInt")("selfhost_backend_text_from_int_e2e")("-42|0|9007")
 
@@ -5213,6 +5222,7 @@ let run shipped =
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)
+    |> testRunStaticExecutableForShippedQualifiedWithoutImportModule(shipped)
     |> testRunStaticExecutableForTextFromIntModule
     |> testRunStaticExecutableForTextFloatModule
     |> testRunStaticExecutableForTextAsciiCaseModule

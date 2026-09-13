@@ -2963,6 +2963,17 @@ same public behavior.
   optimization-level work measured and closed — so start by measuring frame depth through
   `fmt` on a large source, not by re-checking the pass pipeline. Details in
   `project_selfhost_gaps_found_task3` (session memory).
+- [ ] **OPT-68** The self-hosted semantics suite is red on main (found 2026-09-13 while landing
+  LNK-2's qualified-reference port, reproduced on a baseline build of main itself):
+  `CallWindowLoweringTests.ash`'s "generic list result deep copy program entry" check differs
+  from stage 0's `generic_list_result_deep_copy.ir` fixture by exactly five label numbers
+  (`rc_normalize_list_13` versus `_18` and every label after it) with every instruction
+  otherwise identical, in both the reuse-enabled and `--debug-disable-reuse` builds. The fixture
+  is current for stage 0 (`SelfhostIrParityTests` guards it in the C# suite), so the self-hosted
+  lowering started allocating five more labels in a function numbered before the entry between
+  #896 and #1002 (#1002's handed-over-argument release is the likely site); decide whether those
+  labels are a genuine new emission stage 0 lacks or a drift, and make the check green either
+  way.
 
 #### LLVM code generation and runtime integration
 
@@ -3261,9 +3272,16 @@ same public behavior.
   [Linking → Constants](../internals/architecture.md#constants).
 - [~] **LNK-2** Shipped-module stitching (`stitchWithShippedModules`): the transitive `import Ashes.*` closure
   over the shipped `lib/Ashes` texts, intrinsic-only modules synthesized empty, whole-module alias
-  shorthands and plain-import unqualified access resolved. Open: builtin modules with no lowerable
-  members (`Ashes.Task`, `Ashes.Internal`), selector imports of intrinsic members, bare qualified
-  references without an import, ambiguity reporting for colliding plain imports, and locating the
+  shorthands and plain-import unqualified access resolved, and bare qualified references without
+  an import (`Ashes.Text.join` with no header): `QualifiedShippedReferences` scans each module's
+  token stream for `Ashes.*` paths the way stage 0's `CollectQualifiedStdModuleReferences` does,
+  a member the builtin table does not lower loads its shipped module like an import (in the
+  single-file stitcher and the project planner alike, ordered ahead of the referrer), and
+  `resolveStitchedQualified` falls back to a stitched `Ashes.*` module's export when no import
+  binding matches (`selfhost_backend_shipped_qualified_without_import_e2e`,
+  `QualifiedShippedReferencesTests.ash`). Open: builtin modules with no lowerable
+  members (`Ashes.Task`, `Ashes.Internal`), selector imports of intrinsic members,
+  ambiguity reporting for colliding plain imports, and locating the
   shipped root from the compiler binary.
 - [~] **LNK-3** Scalar and float instruction coverage: every integer arithmetic/bitwise/shift/comparison form,
   `PrintBool`, and float constants/arithmetic/ordered comparisons (each `f64` travels through the
@@ -3476,10 +3494,10 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   `ashes compile --project selfhost/packages/cli/ashes.json` through stage 1, possible since
   CLI-2's project form): planning stops at `Ashes.Ffi`, a builtin module with neither a shipped
   source nor an intrinsic entry (CG-11's FFI slice; `Compile.ash` copies LLVM buffers with
-  `Ashes.Ffi.copyBytes`), and the self-hosted sources rely on bare qualified references to
-  shipped members without an import (`Ashes.Text.join`, LNK-2's open tail), which stage 1
-  rejects as `UnknownLoweringBinding`. Re-run the probe after each of those closes; it is the
-  cheapest honest signal of what still blocks self-compilation.
+  `Ashes.Ffi.copyBytes`); the bare qualified shipped references the self-hosted sources rely on
+  (`Ashes.Text.join` with no import) are resolved since LNK-2's port of stage 0's token scan.
+  Re-run the probe after each blocker closes; it is the cheapest honest signal of what still
+  blocks self-compilation.
 - [ ] **BOOT-3** Compare stage-1/stage-2 deterministic artifacts where possible and otherwise compare normalized
   tokens, diagnostics, schemes, IR, object structure, executable behavior, and reports.
 - [ ] **BOOT-4** Compile and run the compiler, standard library, examples, and complete test corpus with the

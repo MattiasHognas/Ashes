@@ -69,6 +69,7 @@ import PatternBindingOwnershipTests
 import TcoLoopLoweringTests
 import OwnedAggregateReleaseTests
 import LoweringDiagnosticsTests
+import QualifiedShippedReferencesTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -138,6 +139,7 @@ let run unit =
     |> (given (_) -> TcoLoopLoweringTests.runTcoLoopLoweringTests(Unit))
     |> (given (_) -> OwnedAggregateReleaseTests.runOwnedAggregateReleaseTests(Unit))
     |> (given (_) -> LoweringDiagnosticsTests.runLoweringDiagnosticsTests(Unit))
+    |> (given (_) -> QualifiedShippedReferencesTests.runQualifiedShippedReferencesTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)
