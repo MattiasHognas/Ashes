@@ -11,6 +11,7 @@
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
+import Ashes.Collection.List.sortBy
 import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
@@ -44,6 +45,7 @@ import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TraitResolution.resolveTraitEvidence
 import AshesCompiler.Semantics.TypeInference.addTraitImplementation
+import AshesCompiler.Semantics.TypeInference.resolveTraitBinding
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.ExternalAbi.validateExternalProgramAbi
 import AshesCompiler.Semantics.ExternalTyping
@@ -574,6 +576,14 @@ type CoreLoweringState =
     // type, so a later site rebuilds the closure from the label instead of lowering the body
     // again.
     | traitMethodLabels: MapTree(Str, (Str, SemanticType))
+    // The requirement evidence of the generic implementation method being lowered, stage 0's
+    // active trait dictionary parameters: for each required trait's method at the requirement's
+    // type argument, the hidden parameter binding that carries its closure.
+    | activeTraitMethods: List((Str, SemanticType, Str, Str))
+    // The generic implementation head's type parameters by name, each standing for the fresh
+    // variable its method body is lowered against, so an annotation inside the body (a recursive
+    // let's declared type) names the same variables the active evidence carries.
+    | activeTypeParameters: List((Str, SemanticType))
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
     // The representation the lowering itself decided for a control-flow join's result, by the
     // function it belongs to and the temp the join reloads. The `memory` report's post-hoc walk
@@ -810,6 +820,9 @@ let emptyScheme semanticType =
 // program allocates on its own.
 let deferredLabelBase = 1000000
 
+// The standard trait environment every lowering starts from, built once for the whole program.
+let standardLoweringTraitEnvironment = standardTraitEnvironment(Unit)
+
 let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount unit =
     CoreLoweringState(
         reversedInstructions = [],
@@ -910,8 +923,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         specializingReuseLabel = None,
         fullyReusingCallees = [],
         topLevelFunctionRefs = [],
-        traitEnvironment = standardTraitEnvironment(Unit),
+        traitEnvironment = standardLoweringTraitEnvironment,
         traitMethodLabels = Ashes.Collection.Map.empty,
+        activeTraitMethods = [],
+        activeTypeParameters = [],
         valuePlacements = [],
         joinRepresentations = [],
         unresolvedCallResults = [],
@@ -6474,7 +6489,7 @@ let lowerLambdaParameterType annotation parameterType state =
     match annotation with
         | None -> (state, None)
         | Some(typeExpr) ->
-            match typeExprToSemanticType(expandTypeAliases(state.typeAliases)(32)(typeExpr))([]) with
+            match typeExprToSemanticType(expandTypeAliases(state.typeAliases)(32)(typeExpr))(state.activeTypeParameters) with
                 | None -> (state, None)
                 | Some(annotationType) -> bindType(parameterType)(annotationType)(state)
 
@@ -8598,7 +8613,24 @@ let lowerFunctionBodyResolvingCalls (body: Expr) prepare close lower (entered: C
                             |> lower(body)
                         else first
 
-let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin fresh =
+// A lambda lowered against an expected function type hands the expected result type on to its
+// body, as a recursive member does: a nested lambda of a curried chain then pins its own
+// parameter before the body is lowered, so a trait-mapped operator inside it sees the type the
+// context already knows rather than a variable no active evidence covers.
+let withLambdaBodyRequest (body: Expr) (expectedResult: Maybe(SemanticType)) (prepared: CoreLoweringState) =
+    match expectedResult with
+        | Some(resultType) -> withRecursiveBodyRequest(body)(resultType)(prepared)
+        | None -> withFunctionBodyRequest(body)(prepared)
+
+let expectedLambdaResultType (state: CoreLoweringState) =
+    match expectedTypeOf(state) with
+        | Some(expected) ->
+            match resolveType(state)(expected) with
+                | SemFunction(_argument, result, _row) -> Some(result)
+                | _ -> None
+        | None -> None
+
+let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin expectedResult fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
@@ -8608,7 +8640,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
                 |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
                 |> enterLambdaTcoLoop
                 |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
-                |> withFunctionBodyRequest(body))(given (first: LoweredCoreValue) -> first)(lower)
+                |> withLambdaBodyRequest(body)(expectedResult))(given (first: LoweredCoreValue) -> first)(lower)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
             |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
@@ -8657,12 +8689,28 @@ let applyExpectedLambdaType parameterType state =
                 | FunctionTypeResolution { state = failedState, error = Some(error) } -> (failedState, Some(error))
                 | FunctionTypeResolution { state = functionState, argumentType = argumentType, error = None } -> bindType(argumentType)(parameterType)(functionState)
 
+// The hidden evidence parameters of the generic implementation method being lowered, by binding
+// name: a nested lambda captures them alongside its body's free names, since a trait-mapped
+// operator inside it reads them without naming them; a capture no instruction reads is pruned
+// with the other dead captures.
+let recursive activeTraitMethodNames (entries: List((Str, SemanticType, Str, Str))) (names: List(Str)) =
+    match entries with
+        | [] -> names
+        | (_traitName, _typeArgument, _methodName, bindingName) :: rest ->
+            if containsName(bindingName)(names)
+            then activeTraitMethodNames(rest)(names)
+            else activeTraitMethodNames(rest)(bindingName :: names)
+
+let withActiveTraitMethodNames (state: CoreLoweringState) (names: List(Str)) = activeTraitMethodNames(state.activeTraitMethods)(names)
+
 // The lambda's origin is decided against the armed let name before the outer frame forgets it:
 // the outer continuation must not hand the same name to a later lambda.
 let lowerLambda parameter body annotation stackAllocate lower state =
     match state with
         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
-            match (capturedBindings(collectFree(body)([parameter])([]))(outerBindings)([]), lambdaOriginFor("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)(state)) with
+            match (capturedBindings([]
+            |> collectFree(body)([parameter])
+            |> withActiveTraitMethodNames(state))(outerBindings)([]), lambdaOriginFor("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)(state)) with
                 | (captures, origin) ->
                     match freshType(((given (armed: CoreLoweringState) -> armed with pendingSourceFunction = None, pendingStackClosure = false))(recordLetLambdaLabel("lambda_" + Ashes.Text.fromInt(lambdaId))(state))) with
                         | FreshType { state = freshState, semanticType = parameterType } ->
@@ -8671,7 +8719,8 @@ let lowerLambda parameter body annotation stackAllocate lower state =
                                 | (expectedState, None) ->
                                     match lowerLambdaParameterType(annotation)(parameterType)(expectedState) with
                                         | (checkedState, Some(error)) -> failure(checkedState)(error)
-                                        | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = seedParameterFromConstructorFields(parameter)(parameterType)(body)(checkedState), semanticType = parameterType))
+                                        | (checkedState, None) ->
+                                            lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(expectedLambdaResultType(freshState))(FreshType(state = seedParameterFromConstructorFields(parameter)(parameterType)(body)(checkedState), semanticType = parameterType))
 
 let recursive constructorAritiesOf (layouts: List(CoreConstructorLayout)) =
     match layouts with
@@ -12888,6 +12937,7 @@ let openPreparedRecursiveGroup bindings memberLower outerBindings prepared =
                 let captures =
                     []
                     |> collectRecursiveGroupFree(bindings)(groupNames)
+                    |> withActiveTraitMethodNames(preparedState)
                     |> (given (names) -> capturedBindings(names)(outerBindings)([]))
                 in
                     match preparedState
@@ -12934,12 +12984,32 @@ let relabelSingleRecursive lambdaId prepared =
             )
         | _ -> prepared
 
-let lowerLetRecursive name value body lower state =
+// A recursive let's declared type inside a generic implementation method body names the head's
+// type parameters (`let recursive equalLists : List(a) -> List(a) -> Bool requires {Eq(a)}`):
+// the binding's fresh function type is unified with the annotation read against the active type
+// parameters before the body is lowered, so a comparison inside the body sees the variable the
+// active evidence carries. Outside such a body the annotation is left to the ordinary inference.
+let pinRecursiveAnnotation (annotation: Maybe(TypeExpr)) (prepared: PreparedCoreRecursiveGroup) =
+    match (annotation, prepared) with
+        | (Some(typeExpr), PreparedCoreRecursiveGroup { state = state, members = (PreparedCoreRecursiveBinding { semanticType = semanticType } as member) :: [], error = None }) ->
+            match state.activeTypeParameters with
+                | [] -> prepared
+                | parameters ->
+                    match typeExprToSemanticType(expandTypeAliases(state.typeAliases)(32)(typeExpr))(parameters) with
+                        | None -> prepared
+                        | Some(annotationType) ->
+                            match bindType(semanticType)(annotationType)(state) with
+                                | (boundState, None) -> PreparedCoreRecursiveGroup(state = boundState, members = [member], error = None)
+                                | (failedState, Some(error)) -> PreparedCoreRecursiveGroup(state = failedState, members = [member], error = Some(error))
+        | _ -> prepared
+
+let lowerLetRecursive name value body annotation lower state =
     match state with
         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId, currentSpan = declarationSpan } ->
             []
             |> prepareRecursiveGroup([(name, value)])((state with recursiveDeclarationSpan = declarationSpan))
             |> relabelSingleRecursive(lambdaId)
+            |> pinRecursiveAnnotation(annotation)
             |> lowerPreparedRecursiveGroup([(name, value)])(body)(lower)(outerBindings)
 
 let recursive emitTupleFields baseTemp index temps state =
@@ -15089,6 +15159,43 @@ let traitLeafName (name: Str) =
     |> Ashes.Text.split(name)
     |> lastQualifiedPiece
 
+// A stitched standard trait keeps its module-qualified compiler name (`Ashes_Trait_Eq`); the
+// trait environment and the operator mapping know it by its bare name.
+let standardTraitName (name: Str) =
+    if Ashes.Text.startsWith(name)("Ashes_Trait_")
+    then Ashes.Text.substring(name)(12)(Ashes.Text.length(name) - 12)
+    else traitLeafName(name)
+
+// Whether two implementation heads are the same shape, any type parameter standing for any
+// other: the seeded standard implementation `Eq(List(a))` and the stitched `Ashes.Trait` one.
+let recursive sameImplementationHead (left: SemanticType) (right: SemanticType) =
+    match (left, right) with
+        | (SemParameter(_leftId, _leftName), SemParameter(_rightId, _rightName)) -> true
+        | (SemList(leftElement), SemList(rightElement)) -> sameImplementationHead(leftElement)(rightElement)
+        | (SemTuple(leftElements), SemTuple(rightElements)) -> sameImplementationHeads(leftElements)(rightElements)
+        | (SemNamed(_leftId, leftName, leftArguments), SemNamed(_rightId, rightName, rightArguments)) -> leftName == rightName && sameImplementationHeads(leftArguments)(rightArguments)
+        | (SemFunction(leftArgument, leftResult, _leftRow), SemFunction(rightArgument, rightResult, _rightRow)) -> sameImplementationHead(leftArgument)(rightArgument) && sameImplementationHead(leftResult)(rightResult)
+        | (SemPointer(leftInner), SemPointer(rightInner)) -> sameImplementationHead(leftInner)(rightInner)
+        | _ -> left == right
+and sameImplementationHeads (lefts: List(SemanticType)) (rights: List(SemanticType)) =
+    match (lefts, rights) with
+        | ([], []) -> true
+        | (left :: leftRest, right :: rightRest) -> sameImplementationHead(left)(right) && sameImplementationHeads(leftRest)(rightRest)
+        | _ -> false
+
+// The environment without the seeded standard implementation a program implementation of the
+// same trait and head shape replaces: the stitched `Ashes.Trait` bodies stand in for the
+// placeholders `standardTraitEnvironment` registers.
+let recursive withoutSeededImplementations (traitName: Str) (headTypes: List(SemanticType)) (implementations: List(TraitImplementationInferenceDefinition)) =
+    match implementations with
+        | [] -> []
+        | (TraitImplementationInferenceDefinition { traitName = candidateTrait, typeArguments = candidateHeads } as implementation) :: rest ->
+            if candidateTrait == traitName && sameImplementationHeads(candidateHeads)(headTypes)
+            then withoutSeededImplementations(traitName)(headTypes)(rest)
+            else implementation :: withoutSeededImplementations(traitName)(headTypes)(rest)
+
+let withoutSeededImplementation (traitName: Str) (headTypes: List(SemanticType)) (environment: TypeEnvironment) = environment with traitImplementations = withoutSeededImplementations(traitName)(headTypes)(environment.traitImplementations)
+
 let recursive findImplementationMethod (methodName: Str) (methods: List(TraitImplementationMethodInferenceDefinition)) =
     match methods with
         | [] -> None
@@ -15125,13 +15232,14 @@ let emitTraitMethodClosureFromLabel (label: Str) (semanticType: SemanticType) (s
             |> emitClosure(label)(environmentTemp)(0)(false) with
                 | (closureState, closureTemp) -> success(closureTemp)(semanticType)(closureState)
 
-// The closure of an implementation method at a concrete operand type: lowered from its body the
-// first time a site needs it and, when the closure carries no environment, remembered by label
-// so every later site rebuilds the closure from the label with a null environment. A
-// capture-free lambda is remembered under its predicted label before its body is lowered; a
-// body that then lowers to a different label is refused rather than left calling the wrong
-// function.
-let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (methodType: SemanticType) (implementation: Expr) lower (state: CoreLoweringState) =
+// The closure of an implementation method: lowered from its body the first time a site needs it
+// and, when the closure carries no environment, remembered by label so every later site
+// rebuilds the closure from the label with a null environment. The body is lowered against the
+// method's expected type, with only its own requirement evidence active (the implementation is a
+// closed term) and no consumer request. A capture-free lambda is remembered under its predicted
+// label before its body is lowered; a body that then lowers to a different label is refused
+// rather than left calling the wrong function.
+let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (expectedType: SemanticType) (evidence: List((Str, SemanticType, Str, Str))) (parameters: List((Str, SemanticType))) (implementation: Expr) lower (state: CoreLoweringState) =
     match Ashes.Collection.Map.getStr(key)(state.traitMethodLabels) with
         | Some((label, semanticType)) -> emitTraitMethodClosureFromLabel(label)(semanticType)(state)
         | None ->
@@ -15139,14 +15247,12 @@ let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (methodType: 
             in
                 let primed =
                     match predicted with
-                        | Some(label) -> rememberTraitMethodLabel(key)(label)(methodType)(state)
+                        | Some(label) -> rememberTraitMethodLabel(key)(label)(expectedType)(state)
                         | None -> state
                 in
-                    match primed
-                    |> withConsumerRequest(emptyConsumerRequest)
-                    |> lower(implementation) with
+                    match (primed with activeTraitMethods = evidence, activeTypeParameters = parameters) |> withOnlyExpectedType(Some(expectedType)) |> lower(implementation) with
                         | LoweredCoreValue { state = loweredState, temp = temp, semanticType = semanticType, error = None } ->
-                            let restored = withConsumerRequest(state.consumerRequest)(loweredState)
+                            let restored = (loweredState with activeTraitMethods = state.activeTraitMethods, activeTypeParameters = state.activeTypeParameters) |> withConsumerRequest(state.consumerRequest)
                             in
                                 match (predicted, emptyEnvironmentClosureLabel(temp)(loweredState.reversedInstructions)) with
                                     | (Some(expected), Some(label)) ->
@@ -15168,7 +15274,7 @@ let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (methodType: 
                                         |> rememberTraitMethodLabel(key)(label)(semanticType)
                                         |> success(temp)(semanticType)
                                     | (None, None) -> success(temp)(semanticType)(restored)
-                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with activeTraitMethods = state.activeTraitMethods, activeTypeParameters = state.activeTypeParameters))(error)
 
 // The two closure calls stage 0's `RecordMappedBinaryTrait` emits: the method applied to the left
 // operand, the partial application to the right.
@@ -15188,48 +15294,366 @@ let emitBoolNegation (operand: Int) (state: CoreLoweringState) =
             |> emit(CmpIntEq(falseTemp + 1)(operand)(falseTemp))
             |> success(falseTemp + 1)(SemBool)
 
-// A binary trait method at a concrete operand type, stage 0's `RecordMappedBinaryTrait` past its
+let traitDefinitionOf (traitName: Str) (state: CoreLoweringState) = resolveTraitBinding(traitName)(state.traitEnvironment)
+
+let recursive findTraitMethodDefinition (methodName: Str) (methods: List(TraitMethodInferenceDefinition)) =
+    match methods with
+        | [] -> None
+        | (TraitMethodInferenceDefinition { name = name } as method) :: rest ->
+            if name == methodName
+            then Some(method)
+            else findTraitMethodDefinition(methodName)(rest)
+
+let recursive traitMethodNamesOf (methods: List(TraitMethodInferenceDefinition)) =
+    match methods with
+        | [] -> []
+        | TraitMethodInferenceDefinition { name = name } :: rest -> name :: traitMethodNamesOf(rest)
+
+// A trait's methods in dictionary order: by name, as `planTraitEvidenceAbi` orders them.
+let sortedTraitMethodNames (traitName: Str) (state: CoreLoweringState) =
+    match traitDefinitionOf(traitName)(state) with
+        | Some(TraitInferenceDefinition { methods = methods }) ->
+            methods
+            |> traitMethodNamesOf
+            |> sortBy(given (left) ->
+                given (right) -> Ashes.Text.compare(left)(right) <= 0)
+        | None -> []
+
+// `semanticType` with every occurrence of `parameter` (a trait's own parameter, or an
+// implementation head's) replaced by `replacement`.
+let recursive substituteTraitParameter (parameter: SemanticType) (replacement: SemanticType) (semanticType: SemanticType) =
+    if semanticType == parameter
+    then replacement
+    else
+        match semanticType with
+            | SemList(element) ->
+                element
+                |> substituteTraitParameter(parameter)(replacement)
+                |> SemList
+            | SemTuple(elements) ->
+                elements
+                |> substituteTraitParameterIn(parameter)(replacement)
+                |> SemTuple
+            | SemFunction(argument, result, row) ->
+                SemFunction(substituteTraitParameter(parameter)(replacement)(argument))(substituteTraitParameter(parameter)(replacement)(result))(row)
+            | SemNamed(symbolId, name, arguments) ->
+                arguments
+                |> substituteTraitParameterIn(parameter)(replacement)
+                |> SemNamed(symbolId)(name)
+            | SemPointer(inner) ->
+                inner
+                |> substituteTraitParameter(parameter)(replacement)
+                |> SemPointer
+            | other -> other
+and substituteTraitParameterIn (parameter: SemanticType) (replacement: SemanticType) (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> []
+        | head :: rest -> substituteTraitParameter(parameter)(replacement)(head) :: substituteTraitParameterIn(parameter)(replacement)(rest)
+
+let recursive substituteTraitParameters (pairs: List((SemanticType, SemanticType))) (semanticType: SemanticType) =
+    match pairs with
+        | [] -> semanticType
+        | (parameter, replacement) :: rest ->
+            semanticType
+            |> substituteTraitParameter(parameter)(replacement)
+            |> substituteTraitParameters(rest)
+
+let recursive substituteTraitParametersIn (pairs: List((SemanticType, SemanticType))) (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> []
+        | head :: rest -> substituteTraitParameters(pairs)(head) :: substituteTraitParametersIn(pairs)(rest)
+
+// A method's type at a head: the trait method scheme's body with the trait's parameter replaced
+// by the head type. Every standard trait takes one parameter.
+let traitMethodTypeAt (traitName: Str) (methodName: Str) (headTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (traitDefinitionOf(traitName)(state), headTypes) with
+        | (Some(TraitInferenceDefinition { parameters = parameter :: [], methods = methods }), head :: []) ->
+            match findTraitMethodDefinition(methodName)(methods) with
+                | Some(TraitMethodInferenceDefinition { scheme = TypeScheme { body = body } }) ->
+                    body
+                    |> substituteTraitParameter(parameter)(head)
+                    |> Some
+                | None -> None
+        | _ -> None
+
+// The method body an implementation supplies, or the trait's default for it.
+let traitMethodBody (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) (state: CoreLoweringState) =
+    match implementationMethodExpression(methodName)(implementation) with
+        | Some(body) -> Some(body)
+        | None ->
+            match traitDefinitionOf(traitName)(state) with
+                | Some(TraitInferenceDefinition { methods = methods }) ->
+                    match findTraitMethodDefinition(methodName)(methods) with
+                        | Some(TraitMethodInferenceDefinition { defaultImplementation = defaultImplementation }) -> defaultImplementation
+                        | None -> None
+                | None -> None
+
+let evidenceMethodBindingName (index: Int) (traitName: Str) (methodName: Str) = "__trait_method_" + Ashes.Text.fromInt(index) + "_" + traitName + "_" + methodName
+
+let recursive collectHeadParameters (semanticType: SemanticType) (parameters: List(SemanticType)) =
+    match semanticType with
+        | SemParameter(_id, _name) ->
+            if containsSemanticType(semanticType)(parameters)
+            then parameters
+            else semanticType :: parameters
+        | SemList(element) -> collectHeadParameters(element)(parameters)
+        | SemTuple(elements) -> collectHeadParametersIn(elements)(parameters)
+        | SemFunction(argument, result, _row) ->
+            parameters
+            |> collectHeadParameters(argument)
+            |> collectHeadParameters(result)
+        | SemNamed(_symbolId, _name, arguments) -> collectHeadParametersIn(arguments)(parameters)
+        | SemPointer(inner) -> collectHeadParameters(inner)(parameters)
+        | _other -> parameters
+and collectHeadParametersIn (semanticTypes: List(SemanticType)) (parameters: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> parameters
+        | head :: rest ->
+            parameters
+            |> collectHeadParameters(head)
+            |> collectHeadParametersIn(rest)
+and containsSemanticType (target: SemanticType) (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> false
+        | head :: rest -> head == target || containsSemanticType(target)(rest)
+
+let recursive constraintArgumentsOf (constraints: List(TraitConstraint)) (arguments: List(SemanticType)) =
+    match constraints with
+        | [] -> arguments
+        | TraitConstraint { typeArguments = typeArguments } :: rest ->
+            arguments
+            |> append(typeArguments)
+            |> constraintArgumentsOf(rest)
+
+// Each head parameter of an implementation paired with a fresh type variable: the method body
+// is lowered generically, its parameter types pinned to the head at those variables.
+let recursive freshHeadParameterPairs (parameters: List(SemanticType)) (state: CoreLoweringState) =
+    match parameters with
+        | [] -> ([], state)
+        | parameter :: rest ->
+            match freshType(state) with
+                | FreshType { state = freshState, semanticType = variable } ->
+                    match freshHeadParameterPairs(rest)(freshState) with
+                        | (pairs, nextState) -> ((parameter, variable) :: pairs, nextState)
+
+// The evidence a generic method takes for one requirement: one hidden parameter per method of
+// the required trait, in dictionary order, each recorded as active evidence for the requirement's
+// type argument under its binding name, with the parameter's type.
+type TraitEvidenceParameters =
+    | entries: List((Str, SemanticType, Str, Str))
+    | names: List(Str)
+    | types: List(SemanticType)
+    | error: Maybe(CoreLoweringError)
+
+let recursive evidenceParametersForMethods (index: Int) (traitName: Str) (typeArgument: SemanticType) (methodNames: List(Str)) (state: CoreLoweringState) =
+    match methodNames with
+        | [] -> TraitEvidenceParameters(entries = [], names = [], types = [], error = None)
+        | methodName :: rest ->
+            match traitMethodTypeAt(traitName)(methodName)([typeArgument])(state) with
+                | None ->
+                    TraitEvidenceParameters(entries = [], names = [], types = [], error = typeArgument
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> Some)
+                | Some(methodType) ->
+                    match evidenceParametersForMethods(index)(traitName)(typeArgument)(rest)(state) with
+                        | TraitEvidenceParameters { error = Some(_error) } as failed -> failed
+                        | TraitEvidenceParameters { entries = entries, names = names, types = types, error = None } ->
+                            let name = evidenceMethodBindingName(index)(traitName)(methodName)
+                            in TraitEvidenceParameters(entries = (traitName, typeArgument, methodName, name) :: entries, names = name :: names, types = methodType :: types, error = None)
+
+let recursive evidenceParametersFor (index: Int) (requirements: List(TraitConstraint)) (state: CoreLoweringState) =
+    match requirements with
+        | [] -> TraitEvidenceParameters(entries = [], names = [], types = [], error = None)
+        | TraitConstraint { traitName = traitName, typeArguments = typeArgument :: [] } :: rest ->
+            match evidenceParametersForMethods(index)(traitName)(typeArgument)(sortedTraitMethodNames(traitName)(state))(state) with
+                | TraitEvidenceParameters { error = Some(_error) } as failed -> failed
+                | TraitEvidenceParameters { entries = entries, names = names, types = types, error = None } ->
+                    match evidenceParametersFor(index + 1)(rest)(state) with
+                        | TraitEvidenceParameters { error = Some(_error) } as failed -> failed
+                        | TraitEvidenceParameters { entries = restEntries, names = restNames, types = restTypes, error = None } -> TraitEvidenceParameters(entries = append(entries)(restEntries), names = append(names)(restNames), types = append(types)(restTypes), error = None)
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: _rest ->
+            TraitEvidenceParameters(entries = [], names = [], types = [], error = SemTuple(typeArguments)
+            |> UnsupportedCoreTraitDispatch(traitName)
+            |> Some)
+
+let recursive wrapEvidenceLambdas (names: List(Str)) (body: Expr) =
+    match names with
+        | [] -> body
+        | name :: rest ->
+            ExprLambda(name)(wrapEvidenceLambdas(rest)(body))(None)
+
+let recursive wrapEvidenceTypes (types: List(SemanticType)) (resultType: SemanticType) =
+    match types with
+        | [] -> resultType
+        | parameterType :: rest ->
+            SemFunction(parameterType)(wrapEvidenceTypes(rest)(resultType))(None)
+
+// A generic implementation method prepared for lowering: the body wrapped in one lambda per
+// requirement method (the evidence it takes first, in requirement then dictionary order), the
+// expected type of that wrapper at the head with fresh variables for the head's parameters,
+// and the evidence entries the body dispatches through.
+type PreparedTraitMethod =
+    | wrapper: Expr
+    | expectedType: SemanticType
+    | evidence: List((Str, SemanticType, Str, Str))
+    | requirements: List(TraitConstraint)
+    | parameters: List((Str, SemanticType))
+    | state: CoreLoweringState
+    | error: Maybe(CoreLoweringError)
+
+let recursive substituteConstraintArguments (pairs: List((SemanticType, SemanticType))) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: rest -> TraitConstraint(traitName = traitName, typeArguments = substituteTraitParametersIn(pairs)(typeArguments)) :: substituteConstraintArguments(pairs)(rest)
+
+let recursive namedHeadParameters (pairs: List((SemanticType, SemanticType))) =
+    match pairs with
+        | [] -> []
+        | (SemParameter(_id, name), variable) :: rest -> (name, variable) :: namedHeadParameters(rest)
+        | _pair :: rest -> namedHeadParameters(rest)
+
+let prepareTraitMethod (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) (body: Expr) (state: CoreLoweringState) =
+    match implementation with
+        | TraitImplementationInferenceDefinition { typeArguments = headTypes, requirements = requirements } ->
+            match freshHeadParameterPairs(collectHeadParametersIn(constraintArgumentsOf(requirements)(headTypes))([]))(state) with
+                | (pairs, freshState) ->
+                    let instantiatedRequirements = substituteConstraintArguments(pairs)(requirements)
+                    in
+                        match (traitMethodTypeAt(traitName)(methodName)(substituteTraitParametersIn(pairs)(headTypes))(freshState), evidenceParametersFor(0)(instantiatedRequirements)(freshState)) with
+                            | (Some(methodType), TraitEvidenceParameters { entries = entries, names = names, types = types, error = None }) -> PreparedTraitMethod(wrapper = wrapEvidenceLambdas(names)(body), expectedType = wrapEvidenceTypes(types)(methodType), evidence = entries, requirements = instantiatedRequirements, parameters = namedHeadParameters(pairs), state = freshState, error = None)
+                            | (_methodType, TraitEvidenceParameters { error = Some(error) }) -> PreparedTraitMethod(wrapper = body, expectedType = SemNever, evidence = [], requirements = [], parameters = [], state = freshState, error = Some(error))
+                            | (None, _parameters) ->
+                                PreparedTraitMethod(wrapper = body, expectedType = SemNever, evidence = [], requirements = [], parameters = [], state = freshState, error = SemTuple(headTypes)
+                                |> UnsupportedCoreTraitDispatch(traitName)
+                                |> Some)
+
+// The active evidence for a trait at a type argument: the hidden parameter of the generic
+// method body being lowered that carries the required trait's method for that type.
+let recursive activeTraitMethod (traitName: Str) (typeArgument: SemanticType) (methodName: Str) (state: CoreLoweringState) (entries: List((Str, SemanticType, Str, Str))) =
+    match entries with
+        | [] -> None
+        | (entryTrait, entryType, entryMethod, bindingName) :: rest ->
+            if entryTrait == traitName && entryMethod == methodName && resolveType(state)(entryType) == resolveType(state)(typeArgument)
+            then Some(bindingName)
+            else activeTraitMethod(traitName)(typeArgument)(methodName)(state)(rest)
+
+let hasActiveTraitEvidence (traitName: Str) (typeArgument: SemanticType) (state: CoreLoweringState) =
+    match sortedTraitMethodNames(traitName)(state) with
+        | [] -> false
+        | methodName :: _rest -> activeTraitMethod(traitName)(typeArgument)(methodName)(state)(state.activeTraitMethods) != None
+
+let traitMethodLabelKeyOf (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) =
+    match implementation with
+        | TraitImplementationInferenceDefinition { typeArguments = headTypes } -> traitName + "/" + methodName + "/" + Ashes.Trait.Show.show(headTypes)
+
+// The closure of a trait method for an evidence plan, stage 0's `BuildTraitDictionary` reduced
+// to the one method a site selects: an instance's method is its implementation body lowered once
+// per implementation head (or the trait's default), applied to the closures of every method of
+// every requirement in turn; a parameter's method is the active evidence of the generic body
+// being lowered. Supertrait dictionaries are not built yet.
+let recursive buildTraitMethodClosure (plan: TraitEvidencePlan) (methodName: Str) lower (state: CoreLoweringState) =
+    match plan with
+        | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = typeArgument :: [] }) ->
+            match activeTraitMethod(traitName)(typeArgument)(methodName)(state)(state.activeTraitMethods) with
+                | Some(bindingName) ->
+                    match state
+                    |> withConsumerRequest(emptyConsumerRequest)
+                    |> lower(ExprVar(bindingName)) with
+                        | LoweredCoreValue { state = readState, temp = temp, semanticType = semanticType, error = None } ->
+                            readState
+                            |> withConsumerRequest(state.consumerRequest)
+                            |> success(temp)(semanticType)
+                        | failed -> failed
+                | None ->
+                    typeArgument
+                    |> MissingCoreTraitEvidence(traitName)
+                    |> failure(state)
+        | TraitEvidenceInstance(TraitConstraint { traitName = traitName, typeArguments = goal :: [] }, implementation, requirementPlans, []) ->
+            match traitMethodBody(traitName)(methodName)(implementation)(state) with
+                | None ->
+                    goal
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> failure(state)
+                | Some(body) ->
+                    match prepareTraitMethod(traitName)(methodName)(implementation)(body)(state) with
+                        | PreparedTraitMethod { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | PreparedTraitMethod { wrapper = wrapper, expectedType = expectedType, evidence = evidence, requirements = requirements, parameters = parameters, state = preparedState, error = None } ->
+                            match lowerTraitMethodClosure(traitMethodLabelKeyOf(traitName)(methodName)(implementation))(goal)(expectedType)(evidence)(parameters)(wrapper)(lower)(preparedState) with
+                                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> applyRequirementMethods(requirementPlans)(requirements)(closureTemp)(lower)(closureState)
+                                | failed -> failed
+        | TraitEvidenceInstance(TraitConstraint { traitName = traitName, typeArguments = typeArguments }, _implementation, _requirementPlans, _supertraitPlans) ->
+            SemTuple(typeArguments)
+            |> UnsupportedCoreTraitDispatch(traitName)
+            |> failure(state)
+        | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = typeArguments }) ->
+            SemTuple(typeArguments)
+            |> UnsupportedCoreTraitDispatch(traitName)
+            |> failure(state)
+and applyRequirementMethods (plans: List(TraitEvidencePlan)) (requirements: List(TraitConstraint)) (closureTemp: Int) lower (state: CoreLoweringState) =
+    match (plans, requirements) with
+        | ([], _requirements) -> success(closureTemp)(SemNever)(state)
+        | (plan :: restPlans, TraitConstraint { traitName = traitName } :: restRequirements) ->
+            match applyRequirementMethodList(plan)(sortedTraitMethodNames(traitName)(state))(closureTemp)(lower)(state) with
+                | LoweredCoreValue { state = appliedState, temp = appliedTemp, error = None } -> applyRequirementMethods(restPlans)(restRequirements)(appliedTemp)(lower)(appliedState)
+                | failed -> failed
+        | (plan :: _restPlans, []) ->
+            match plan with
+                | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = typeArguments }) ->
+                    SemTuple(typeArguments)
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> failure(state)
+                | TraitEvidenceInstance(TraitConstraint { traitName = traitName, typeArguments = typeArguments }, _implementation, _requirementPlans, _supertraitPlans) ->
+                    SemTuple(typeArguments)
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> failure(state)
+and applyRequirementMethodList (plan: TraitEvidencePlan) (methodNames: List(Str)) (closureTemp: Int) lower (state: CoreLoweringState) =
+    match methodNames with
+        | [] -> success(closureTemp)(SemNever)(state)
+        | methodName :: rest ->
+            match buildTraitMethodClosure(plan)(methodName)(lower)(state) with
+                | LoweredCoreValue { state = argumentState, temp = argumentTemp, error = None } ->
+                    match freshTemp(argumentState) with
+                        | FreshTemp { state = callState, temp = appliedTemp } ->
+                            callState
+                            |> emit(CallClosure(appliedTemp)(closureTemp)(argumentTemp)(-1))
+                            |> applyRequirementMethodList(plan)(rest)(appliedTemp)(lower)
+                | failed -> failed
+
+// A binary trait method at an operand type, stage 0's `RecordMappedBinaryTrait` past its
 // primitive specialization: the `Eq(T)` evidence is resolved against the program's
-// implementations, the selected method's closure is built (or rebuilt from its cached label) and
-// called on the two operand temps. An implementation that still needs requirement or supertrait
-// dictionaries is not dispatched yet; an unsupplied `notEqual` is the default method's
+// implementations, the selected method's closure is built for the plan and called on the two
+// operand temps. An unsupplied `notEqual` on a concrete instance is the default method's
 // `!Eq.equal(left)(right)` without the lambda around it.
 let recursive emitCoreTraitBinaryDispatch (traitName: Str) (methodName: Str) lower (binary: LoweredCoreBinary) =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = leftTemp, leftType = operandType, rightTemp = rightTemp, error = None } ->
             match resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [operandType]))(state.traitEnvironment) with
-                | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(_goal, implementation, [], [])) } ->
-                    match implementationMethodExpression(methodName)(implementation) with
-                        | Some(implementationBody) ->
-                            match lowerTraitMethodClosure(traitMethodLabelKey(traitName)(methodName)(operandType))(operandType)(SemFunction(operandType)(SemFunction(operandType)(SemBool)(None))(None))(implementationBody)(lower)(state) with
-                                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCalls(closureTemp)(leftTemp)(rightTemp)(closureState)
-                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                        | None ->
-                            if methodName == "notEqual"
-                            then
-                                match emitCoreTraitBinaryDispatch(traitName)("equal")(lower)(binary) with
-                                    | LoweredCoreValue { state = equalState, temp = equalTemp, error = None } -> emitBoolNegation(equalTemp)(equalState)
-                                    | failed -> failed
-                            else
-                                operandType
-                                |> UnsupportedCoreTraitDispatch(traitName)
-                                |> failure(state)
-                | TraitEvidenceResolution { plan = Some(_plan) } ->
-                    operandType
-                    |> UnsupportedCoreTraitDispatch(traitName)
-                    |> failure(state)
+                | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(_goal, implementation, _requirementPlans, _supertraitPlans) as plan) } ->
+                    match (methodName, implementationMethodExpression(methodName)(implementation)) with
+                        | ("notEqual", None) ->
+                            match emitCoreTraitBinaryDispatch(traitName)("equal")(lower)(binary) with
+                                | LoweredCoreValue { state = equalState, temp = equalTemp, error = None } -> emitBoolNegation(equalTemp)(equalState)
+                                | failed -> failed
+                        | _ -> emitCoreTraitPlanCalls(plan)(methodName)(lower)(binary)
+                | TraitEvidenceResolution { plan = Some(plan) } -> emitCoreTraitPlanCalls(plan)(methodName)(lower)(binary)
                 | TraitEvidenceResolution { plan = None } ->
                     operandType
                     |> MissingCoreTraitEvidence(traitName)
                     |> failure(state)
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+and emitCoreTraitPlanCalls (plan: TraitEvidencePlan) (methodName: Str) lower (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = leftTemp, rightTemp = rightTemp, error = None } ->
+            match buildTraitMethodClosure(plan)(methodName)(lower)(state) with
+                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCalls(closureTemp)(leftTemp)(rightTemp)(closureState)
+                | failed -> failed
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 
 // Past the primitive comparisons of `emitResolvedCoreEquality`: the operands were unified before
-// the comparison was chosen (`unifyEqualityOperands`), so what is left is one concrete operand
-// type, which dispatches through its `Eq` implementation, or a variable no side pins.
+// the comparison was chosen (`unifyEqualityOperands`), so what is left is one operand type,
+// concrete or the type argument of an active requirement, which dispatches through `Eq`.
 let emitCoreTraitEquality name lower binary =
     match binary with
-        | LoweredCoreBinary { leftType = SemVariable(_id), error = None } -> operatorMismatch(name)(binary)
         | LoweredCoreBinary { error = None } ->
             binary |> emitCoreTraitBinaryDispatch("Eq")(if name == "=="
             then "equal"
@@ -15383,6 +15807,20 @@ let bindEqualityOperands (name: Str) (leftType: SemanticType) (rightType: Semant
             |> CoreOperatorTypeMismatch(name)(resolveType(failedState)(leftType))
             |> failedCoreBinary(failedState)
 
+// Whether the generic body being lowered carries evidence for the operator's trait at a still
+// unresolved operand type: two variable operands then dispatch through that evidence rather
+// than take the speculative integer comparison.
+let activeEvidenceCoversOperator operator (operandType: SemanticType) (state: CoreLoweringState) =
+    match operator with
+        | CoreEqualOperator -> hasActiveTraitEvidence("Eq")(operandType)(state)
+        | CoreNotEqualOperator -> hasActiveTraitEvidence("Eq")(operandType)(state)
+        | _ -> false
+
+let resolveCoreBinaryOwnTypes (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, error = None } -> resolveCoreBinaryTypes(state)(binary)
+        | failed -> failed
+
 let unifyEqualityOperands operator (binary: LoweredCoreBinary) =
     match (operator, binary) with
         | (CoreEqualOperator, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) -> bindEqualityOperands("==")(leftType)(rightType)(binary)(state)
@@ -15393,7 +15831,14 @@ let emitPreparedCoreBinary operator lower binary =
     match binary with
         | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None } ->
             match (deferredCoreOperatorEmitter(operator), resolveType(state)(leftType), resolveType(state)(rightType)) with
-                | (Some(emitDeferred), SemVariable(_leftId), SemVariable(_rightId)) -> emitDeferred(binary)
+                | (Some(emitDeferred), SemVariable(leftId), SemVariable(_rightId)) ->
+                    if activeEvidenceCoversOperator(operator)(SemVariable(leftId))(state)
+                    then
+                        binary
+                        |> unifyEqualityOperands(operator)
+                        |> resolveCoreBinaryOwnTypes
+                        |> emitResolvedCoreBinary(operator)(lower)
+                    else emitDeferred(binary)
                 | _ ->
                     binary
                     |> unifyEqualityOperands(operator)
@@ -17347,7 +17792,7 @@ let traitOperatorCall (function: Expr) (argument: Expr) =
         | ExprCall(inner, left, _sugar, _layout) ->
             match stripExprAt(inner) with
                 | ExprQualifiedVar(qualifier, methodName) ->
-                    match (traitLeafName(qualifier), methodName) with
+                    match (standardTraitName(qualifier), methodName) with
                         | ("Eq", "equal") -> Some((CoreEqualOperator, left, argument))
                         | ("Eq", "notEqual") -> Some((CoreNotEqualOperator, left, argument))
                         | _ -> None
@@ -17537,11 +17982,12 @@ let lowerCoreDispatch expression lowerCore state =
                 lowerCore,
                 state
             )
-        | ExprLetRecursive(name, value, body, _parameters, _annotation, _requirements) ->
+        | ExprLetRecursive(name, value, body, _parameters, annotation, _requirements) ->
             lowerLetRecursive(
                 name,
                 value,
                 body,
+                annotation,
                 lowerCore,
                 state
             )
@@ -18936,7 +19382,7 @@ let recursive implementationRequirementConstraints (aliases: MapTree(Str, (List(
                 | Some(argumentTypes) ->
                     match implementationRequirementConstraints(aliases)(parameters)(rest) with
                         | None -> None
-                        | Some(restConstraints) -> Some(TraitConstraint(traitName = traitLeafName(traitName), typeArguments = argumentTypes) :: restConstraints)
+                        | Some(restConstraints) -> Some(TraitConstraint(traitName = standardTraitName(traitName), typeArguments = argumentTypes) :: restConstraints)
 
 let recursive implementationMethodDefinitions (bindings: List(TraitImplementationMethodBinding)) =
     match bindings with
@@ -18953,7 +19399,7 @@ let registerImplementationDeclaration (declaration: TraitImplementationDecl) (st
             in
                 match (implementationTypes(state.typeAliases)(parameters)(typeArguments), implementationRequirementConstraints(state.typeAliases)(parameters)(requirements)) with
                     | (Some(headTypes), Some(constraints)) ->
-                        Ok((state with traitEnvironment = addTraitImplementation(traitLeafName(traitName))(headTypes)(constraints)(implementationMethodDefinitions(bindings))(state.traitEnvironment)))
+                        Ok((state with traitEnvironment = addTraitImplementation(standardTraitName(traitName))(headTypes)(constraints)(implementationMethodDefinitions(bindings))(withoutSeededImplementation(standardTraitName(traitName))(headTypes)(state.traitEnvironment))))
                     | _ -> Error(UnsupportedCoreImplementationHead(traitName))
 
 let recursive registerImplementationDeclarations (declarations: List(TraitImplementationDecl)) (state: CoreLoweringState) =

@@ -727,13 +727,40 @@ let recursive lastModuleName names =
             |> Some
         | _name :: rest -> lastModuleName(rest)
 
+// Stage 0 loads `Ashes.Trait` into every program whether or not the project names it: the
+// standard trait implementations a trait-mapped operator dispatches through live there. The
+// module is loaded with the entry and made a dependency of the entry's plan unit, since the
+// module plan keeps only what the entry reaches.
+let standardTraitSeed (shipped: List(ShippedModuleText)) =
+    match findShippedText("Ashes.Trait")(shipped) with
+        | Some(_module) -> ["Ashes.Trait"]
+        | None -> []
+
+let recursive unitNamed (name: Str) (units: List(ModulePlanUnit)) =
+    match units with
+        | [] -> false
+        | ModulePlanUnit { name = candidate } :: rest -> candidate == name || unitNamed(name)(rest)
+
+let recursive withStandardTraitDependency (entryModuleName: Str) (units: List(ModulePlanUnit)) =
+    match units with
+        | [] -> []
+        | (ModulePlanUnit { name = name, source = source, imports = imports, interface = interface, dependencies = dependencies } as unit) :: rest ->
+            if name == entryModuleName
+            then ModulePlanUnit(name = name, source = source, imports = imports, interface = interface, dependencies = appendList(dependencies)(["Ashes.Trait"])) :: withStandardTraitDependency(entryModuleName)(rest)
+            else unit :: withStandardTraitDependency(entryModuleName)(rest)
+
+let planUnitsWithStandardTraits (entryModuleName: Str) (units: List(ModulePlanUnit)) =
+    if unitNamed("Ashes.Trait")(units)
+    then withStandardTraitDependency(entryModuleName)(units)
+    else units
+
 let planIndexedSources (layout: ProjectLayout) shipped (dependencies: List(ResolvedProjectDependency)) (paths: List(Str)) (sources: List(IndexedProjectSource)) =
     (let loadLayout = deepCopy(layout)
     in
         match loadReachableModules(
             projectEntryModuleName(loadLayout),
             shipped,
-            [projectEntryModuleName(layout)],
+            projectEntryModuleName(layout) :: standardTraitSeed(shipped),
             [],
             [],
             [],
@@ -753,7 +780,9 @@ let planIndexedSources (layout: ProjectLayout) shipped (dependencies: List(Resol
                         |> ProjectCompilationMissingModule("")
                         |> Error
                     | Some(entryModuleName) ->
-                        match buildModulePlan(entryModuleName)(units) with
+                        match units
+                        |> planUnitsWithStandardTraits(entryModuleName)
+                        |> buildModulePlan(entryModuleName) with
                             | Error(error) -> Error(ProjectCompilationModulePlanError(error))
                             | Ok(modules) -> Ok(ProjectCompilationPlan(sourceFiles = paths, modules = modules, programs = programs, dependencies = dependencies)))
 
