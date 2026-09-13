@@ -77,6 +77,14 @@ let expectTypeAliasAnnotationKeepsArguments unit =
     |> loweredProgramSource
     |> (given (_) -> Unit)
 
+// A program's own `external` declarations are registered before its items are lowered: a call
+// to one finds its layout by the declared name and lowers to the foreign call, and an opaque
+// external type stays a known type name in the signatures around it.
+let expectExternalFunctionDeclarationLowers unit =
+    "external type Handle\n\nexternal strlen(Str) -> Int\n\nexternal handleOf(Str) -> Handle = \"handle_of\"\n\nexternal ticks() -> Int = \"clock_ticks\"\n\nlet measure (text: Str) = strlen(text)\n\nlet open (name: Str) = handleOf(name)\n\nlet now (unit: Unit) = ticks(Unit)\n\nmeasure(\"abc\") + now(Unit)"
+    |> loweredProgramSource
+    |> (given (_) -> Unit)
+
 let expectSelfRecursiveTopLevelLetLowers unit =
     "let recursive fact n = if n <= 1 then 1 else n * fact(n - 1)\nfact(5)"
     |> loweredProgramSource
@@ -772,6 +780,7 @@ let runCoreProgramLoweringTests unit =
     |> expectForwardTypeReferenceKeepsArity
     |> expectExternalOpaqueFieldKeepsArity
     |> expectTypeAliasAnnotationKeepsArguments
+    |> expectExternalFunctionDeclarationLowers
     |> expectGenuinelyUnknownNameStillRejectedAsUnknown
     |> expectTraitConstrainedBindingLowersWithEnvironment
     |> expectTraitConstrainedBindingFailsWithoutEnvironment

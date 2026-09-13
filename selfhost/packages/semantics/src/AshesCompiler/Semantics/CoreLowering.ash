@@ -37,7 +37,11 @@ import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreResultPipeLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.ExternalAbi
+import AshesCompiler.Semantics.ExternalAbi.validateExternalProgramAbi
 import AshesCompiler.Semantics.ExternalTyping
+import AshesCompiler.Semantics.TypeResolution.addExternalTypeDefinition
+import AshesCompiler.Semantics.TypeResolution.addTypeDefinition
+import AshesCompiler.Semantics.TypeResolution.emptyTypeResolutionContext
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.HelperInlining.isInlinableHelperValue
@@ -14402,11 +14406,15 @@ let finishCoreExternalReference layout lower state =
                     else
                         lower(externalWrapperLambda(layout))(state)
 
+// A nullary external is called as `f(Unit)`; the one argument, spanned or not, is dropped.
 let unwrapNullaryExternalArgs expectedCount arguments =
     if expectedCount == 0
     then
         match arguments with
-            | ExprVar("Unit") :: [] -> []
+            | single :: [] ->
+                match unspanArgument(single) with
+                    | ExprVar("Unit") -> []
+                    | _ -> arguments
             | other -> other
     else arguments
 
@@ -18583,6 +18591,69 @@ let recursive registerDeclaredTypes (items: List(TopLevelItem)) (state: CoreLowe
 
 let registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) = registerDeclaredTypes(items)((state with declaredTypeNames = declaredTypeNamesOf(items)(Ashes.Collection.Map.empty), typeAliases = typeAliasesOf(items)(Ashes.Collection.Map.empty)))
 
+// Stage 0's `RegisterExternalFunctions`: every `external` declaration of the program, typed
+// against a resolution context that names the program's own types (under symbol id 0, the id
+// this lowering gives every type), the compiler-provided `Maybe`, `Result` and `Unit`, and the
+// opaque external types, so a call to an external function finds its layout by the declared
+// (stitched) name and the arguments and result carry the declaration's source types.
+let recursive collectExternalDeclarationsOf (items: List(TopLevelItem)) (reversed: List(ExternalDecl)) =
+    match items with
+        | [] -> reverse(reversed)
+        | TopLevelAt(_span, inner) :: rest -> collectExternalDeclarationsOf(inner :: rest)(reversed)
+        | TopLevelExternal(declaration) :: rest -> collectExternalDeclarationsOf(rest)(declaration :: reversed)
+        | _ :: rest -> collectExternalDeclarationsOf(rest)(reversed)
+
+let recursive externalResolutionContextOf (items: List(TopLevelItem)) context =
+    match items with
+        | [] -> context
+        | TopLevelAt(_span, inner) :: rest -> externalResolutionContextOf(inner :: rest)(context)
+        | TopLevelType(TypeDecl { name = name, typeParameters = typeParameters }) :: rest ->
+            context
+            |> addTypeDefinition(0)(name)(length(typeParameters))
+            |> externalResolutionContextOf(rest)
+        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = typeParameters }) :: rest ->
+            context
+            |> addTypeDefinition(0)(name)(length(typeParameters))
+            |> externalResolutionContextOf(rest)
+        | TopLevelExternal(ExternalOpaqueType(name, destructor)) :: rest ->
+            context
+            |> addExternalTypeDefinition(name)(destructor)
+            |> externalResolutionContextOf(rest)
+        | _ :: rest -> externalResolutionContextOf(rest)(context)
+
+let standardExternalResolutionContext (unit: Unit) =
+    unit
+    |> emptyTypeResolutionContext
+    |> addTypeDefinition(0)("Maybe")(1)
+    |> addTypeDefinition(0)("Result")(2)
+    |> addTypeDefinition(0)("Unit")(0)
+
+let externalLayoutOf (abi: ExternalFunctionAbi) =
+    match abi with
+        | ExternalFunctionAbi { name = name, sourceTyping = ExternalFunctionTyping { directType = directType } } -> CoreExternalFunctionLayout(name = name, abi = abi, scheme = TypeScheme(quantified = [], body = directType, constraints = []))
+
+let recursive externalLayoutsOf (functions: List(ExternalFunctionAbi)) =
+    match functions with
+        | [] -> []
+        | abi :: rest -> externalLayoutOf(abi) :: externalLayoutsOf(rest)
+
+let registerProgramExternals (items: List(TopLevelItem)) (state: CoreLoweringState) =
+    match collectExternalDeclarationsOf(items)([]) with
+        | [] -> Ok(state)
+        | declarations ->
+            match Unit
+            |> standardExternalResolutionContext
+            |> externalResolutionContextOf(items)
+            |> validateExternalProgramAbi(declarations) with
+                | ExternalAbiValidation { metadata = Some(ExternalProgramAbi { functions = functions, opaqueTypes = opaqueTypes }), error = None } ->
+                    Ok((state with externalLayouts = append(state.externalLayouts)(externalLayoutsOf(functions)), externalFunctions = append(state.externalFunctions)(functions), externalOpaqueTypes = append(state.externalOpaqueTypes)(opaqueTypes)))
+                | ExternalAbiValidation { error = Some(error) } ->
+                    error
+                    |> Ashes.Trait.Show.show
+                    |> UnsupportedCoreExternalLowering
+                    |> Error
+                | _ -> Ok(state)
+
 let lowerProgramWithCapabilities items trailingBody environment state =
     match registerProgramCapabilities(items)(state) with
         | Error(error) -> failure(state)(error)
@@ -18590,9 +18661,12 @@ let lowerProgramWithCapabilities items trailingBody environment state =
             match registerProgramTypes(items)(registered) with
                 | Error(error) -> failure(registered)(error)
                 | Ok(typed) ->
-                    typed
-                    |> ensureResultRcEligibility
-                    |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
+                    match registerProgramExternals(items)(typed) with
+                        | Error(error) -> failure(typed)(error)
+                        | Ok(withExternals) ->
+                            withExternals
+                            |> ensureResultRcEligibility
+                            |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

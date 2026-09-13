@@ -247,7 +247,10 @@ let addExternal declaration span order collection =
     match declaration with
         | ExternalOpaqueType(name, _resource) -> addPendingWith(true)(name)(StitchedType)(span)(order)(false)(collection)
         | ExternalFunction(name, _parameters, _result, _symbol, _ownership, _needs) ->
-            addPending(
+            // Stage 0 hoists an `external` function program-wide under its own name (never
+            // exported, never renamed), so a destructor reference inside a native-string
+            // signature or a resource declaration keeps naming it.
+            addPendingWith(true)(
                 name,
                 StitchedExternal,
                 span,
