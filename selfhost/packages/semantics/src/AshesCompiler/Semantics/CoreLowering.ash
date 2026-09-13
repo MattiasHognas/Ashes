@@ -361,6 +361,21 @@ type CoreTcoReset =
     | argumentRuntime: List(Bool)
     | argumentExpressions: List(Expr)
 
+// A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
+// `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the
+// instruction at `position` in the function's final order, and the copy-out block resolved once
+// the body is lowered belongs right before that reload (or, when the resolved type needs no
+// copy-out, the store and the reload are removed and the reload's temp reads the result itself).
+type CorePendingCallCopyOut =
+    | deferredReloadIndex: Int
+    | deferredCursorSlot: Int
+    | deferredEndSlot: Int
+    | deferredPreRestoreSlot: Int
+    | deferredResultSlot: Int
+    | deferredResultTemp: Int
+    | deferredReloadTemp: Int
+    | deferredType: SemanticType
+
 type CoreLoweringState =
     | reversedInstructions: List(IrInstruction)
     | functions: List(IrFunction)
@@ -460,6 +475,14 @@ type CoreLoweringState =
     | resultRcEligibility: (Int, List((Str, Bool)))
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
     | pendingTcoResets: List(CoreTcoReset)
+    // The call results of this function whose copy-out kind was undecidable when their window
+    // closed, resolved with the pending resets once the body is lowered.
+    | pendingCallCopyOuts: List(CorePendingCallCopyOut)
+    // The recursive bindings whose result type was still unresolved when the body being lowered
+    // began: a call to one of them sees a fresh result type, stage 0's lowering-local self arrow.
+    | selfResultDeferredNames: List(Str)
+    // Each such call's fresh result type beside the binding's own, unified once the body is done.
+    | selfCallResultUnifications: List((SemanticType, SemanticType))
     | retiredLocals: List(Int)
     | recursiveDeclarationSpan: Maybe(TextSpan)
     | ownerReleasePlans: List((Int, SemanticType, OwnedReleasePlan))
@@ -822,6 +845,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         resultRcEligibility = (0, []),
         tcoLoopFrame = None,
         pendingTcoResets = [],
+        pendingCallCopyOuts = [],
+        selfResultDeferredNames = [],
+        selfCallResultUnifications = [],
         recursiveDeclarationSpan = None,
         ownerReleasePlans = [],
         pendingOwnerPlan = None,
@@ -3936,7 +3962,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
-        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
+        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
@@ -5755,32 +5781,143 @@ let recursive lookupTcoReset (resetId: Int) (resets: List(CoreTcoReset)) =
             then Some(reset)
             else lookupTcoReset(resetId)(rest)
 
-let recursive spliceTcoResets (instructions: List(IrInstruction)) (resets: List(CoreTcoReset)) (state: CoreLoweringState) =
+// Stage 0's `GetCallCopyOutKind`: the scope copy-outs plus the list results whose elements are
+// strings or scalar lists.
+let callCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match scopeCopyOutOf(semanticType)(state) with
+        | Some(ShallowScopeCopyOut(staticSizeBytes)) -> Some(ShallowCallCopyOut(staticSizeBytes))
+        | Some(ListScopeCopyOut) -> Some(ListCallCopyOut(InlineListHead))
+        | None ->
+            match resolveType(state)(semanticType) with
+                | SemList(element) ->
+                    match element
+                    |> resolveType(state)
+                    |> listHeadCopyOf with
+                        | Some(headCopy) -> Some(ListCallCopyOut(headCopy))
+                        | None -> None
+                | _ -> None
+
+let recursive pendingCopyOutAt (index: Int) (copyOuts: List(CorePendingCallCopyOut)) =
+    match copyOuts with
+        | [] -> None
+        | (CorePendingCallCopyOut { deferredReloadIndex = reloadIndex } as pending) :: rest ->
+            if reloadIndex == index
+            then Some(pending)
+            else pendingCopyOutAt(index)(rest)
+
+let recursive renamedTemp (renames: List((Int, Int))) (temp: Int) =
+    match renames with
+        | [] -> temp
+        | (from, to) :: rest ->
+            if temp == from
+            then to
+            else renamedTemp(rest)(temp)
+
+// The temps a removed slot round trip left behind read the result they stood for.
+let renameInstructionTemps (renames: List((Int, Int))) (instruction: IrInstruction) =
+    match renames with
+        | [] -> instruction
+        | _ ->
+            instruction with instruction = mapInstructionTemps(renamedTemp(renames))(instruction.instruction)
+
+// Stage 0's `LowerCallCopyOutResult` for a deferred block: the window reset, the copy of the
+// resolved kind, and the reclaim, all unlocated. The conditional variant never reaches here: a
+// result whose type was unresolved at the call read no returns flag.
+let emitPlainCallCopyOut copyOut (resultTemp: Int) cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
+    match state
+    |> unlocatedInstruction(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+    |> freshTemp with
+        | FreshTemp { state = restored, temp = copiedTemp } ->
+            (restored
+            |> unlocatedInstruction(callCopyOutInstruction(copyOut)(copiedTemp)(resultTemp))
+            |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+            |> unlocatedInstruction(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false)), copiedTemp)
+
+// Stage 0's `EmitDeferredCallResultCopyOut`: the copy-out block the call would have received had
+// its type been known, storing the copy back into the slot the result travels through; nothing
+// when the resolved type needs no copy-out.
+let resolveDeferredCallCopyOut (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
+    match callCopyOutOf(pending.deferredType)(state) with
+        | None -> (state, false)
+        | Some(copyOut) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = currentTemp } ->
+                    match allocated
+                    |> unlocatedInstruction(LoadLocal(currentTemp)(pending.deferredResultSlot))
+                    |> emitPlainCallCopyOut(copyOut)(currentTemp)(pending.deferredCursorSlot)(pending.deferredEndSlot)(pending.deferredPreRestoreSlot) with
+                        | (copied, copiedTemp) ->
+                            (unlocatedInstruction(StoreLocal(pending.deferredResultSlot)(copiedTemp))(copied), true)
+
+// The store a deferred result travelled through, the instruction just re-emitted, when its block
+// resolved to nothing: removed, so the reload's temp reads the result itself.
+let dropDeferredStore (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
+    match state.reversedInstructions with
+        | IrInstruction { instruction = StoreLocal(slot, _source) } :: rest ->
+            if slot == pending.deferredResultSlot
+            then state with reversedInstructions = rest
+            else state
+        | _ -> state
+
+let keepSplicedInstruction (renames: List((Int, Int))) (instruction: IrInstruction) (state: CoreLoweringState) = state with reversedInstructions = renameInstructionTemps(renames)(instruction) :: state.reversedInstructions
+
+// Every placeholder of a lowered body becomes its block in one walk, in instruction order, as
+// stage 0's `ResolvePendingBlocks` does: a `TcoResetPending` its arena block, a deferred
+// call-result copy-out (found by the position of its reload) the copy-out block ahead of the
+// reload, or, resolved to nothing, the removal of the store before it and of the reload itself,
+// every later read of the reload's temp renamed to the result.
+let recursive splicePendingBlocks (instructions: List(IrInstruction)) (index: Int) (resets: List(CoreTcoReset)) (copyOuts: List(CorePendingCallCopyOut)) (renames: List((Int, Int))) (state: CoreLoweringState) =
     match instructions with
         | [] -> state
-        | (IrInstruction { instruction = TcoResetPending(resetId, _usedTemps, _readLocals) } as instruction) :: rest ->
-            match lookupTcoReset(resetId)(resets) with
-                | Some(reset) ->
-                    state
-                    |> emitResolvedTcoReset(reset)
-                    |> spliceTcoResets(rest)(resets)
-                | None -> spliceTcoResets(rest)(resets)((state with reversedInstructions = instruction :: state.reversedInstructions))
-        | instruction :: rest -> spliceTcoResets(rest)(resets)((state with reversedInstructions = instruction :: state.reversedInstructions))
+        | instruction :: rest ->
+            match pendingCopyOutAt(index)(copyOuts) with
+                | Some(pending) ->
+                    match resolveDeferredCallCopyOut(pending)(state) with
+                        | (resolved, true) ->
+                            resolved
+                            |> keepSplicedInstruction(renames)(instruction)
+                            |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
+                        | (unchanged, false) ->
+                            unchanged
+                            |> dropDeferredStore(pending)
+                            |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)((pending.deferredReloadTemp, renamedTemp(renames)(pending.deferredResultTemp)) :: renames)
+                | None ->
+                    match instruction with
+                        | IrInstruction { instruction = TcoResetPending(resetId, _usedTemps, _readLocals) } ->
+                            match lookupTcoReset(resetId)(resets) with
+                                | Some(reset) ->
+                                    state
+                                    |> emitResolvedTcoReset(reset)
+                                    |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
+                                | None ->
+                                    state
+                                    |> keepSplicedInstruction(renames)(instruction)
+                                    |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
+                        | _ ->
+                            state
+                            |> keepSplicedInstruction(renames)(instruction)
+                            |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
 
 // Stage 0's `ResolveDeferredTcoResets` for one function, once its whole body is lowered: every
-// `TcoResetPending` placeholder becomes its arena block, whose slots and temps are allocated
-// after the body's own and carry no location. Stage 0 resolves the blocks once the whole
-// program is lowered, so their labels are numbered after every later function's; the blocks
-// take their labels from a separate high range here, recorded as one group per function, and
-// `numberDeferredLabels` gives them stage 0's ids at the end.
+// `TcoResetPending` placeholder becomes its arena block and every deferred call-result copy-out
+// its block, whose slots and temps are allocated after the body's own and carry no location.
+// Stage 0 resolves the blocks once the whole program is lowered, so their labels are numbered
+// after every later function's; the blocks take their labels from a separate high range here,
+// recorded as one group per function, and `numberDeferredLabels` gives them stage 0's ids at
+// the end.
 let resolvePendingTcoResets (state: CoreLoweringState) =
-    match state.pendingTcoResets with
-        | [] -> state
-        | resets ->
+    match (state.pendingTcoResets, state.pendingCallCopyOuts) with
+        | ([], []) -> state
+        | (resets, copyOuts) ->
             state.reversedInstructions
             |> reverse
-            |> (given (instructions: List(IrInstruction)) -> spliceTcoResets(instructions)(resets)((state with reversedInstructions = [], pendingTcoResets = [], nextLabelId = state.deferredLabelNext)))
+            |> (given (instructions: List(IrInstruction)) -> splicePendingBlocks(instructions)(0)(resets)(copyOuts)([])((state with reversedInstructions = [], pendingTcoResets = [], pendingCallCopyOuts = [], nextLabelId = state.deferredLabelNext)))
             |> (given (resolved: CoreLoweringState) -> resolved with nextLabelId = state.nextLabelId, deferredLabelNext = resolved.nextLabelId, deferredLabelGroups = (state.deferredLabelNext, resolved.nextLabelId - state.deferredLabelNext) :: resolved.deferredLabelGroups)
+
+// The program entry's own pending blocks, resolved as a lifted function's are.
+let resolveLoweredPendingBlocks (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state } -> lowered with state = resolvePendingTcoResets(state)
 
 let arenaDeepCopySupported (facts: HeapLayoutFacts) =
     match facts with
@@ -6007,6 +6144,26 @@ let closeTmcChainPrepared (prepared: PreparedCoreRecursiveBinding) (lowered: Low
     match prepared with
         | PreparedCoreRecursiveBinding { label = label } -> closeTmcChainLowered(label)(lowered)
 
+let recursive bindSelfCallResults (pairs: List((SemanticType, SemanticType))) (state: CoreLoweringState) =
+    match pairs with
+        | [] -> (state, None)
+        | (deferred, original) :: rest ->
+            match bindType(original)(deferred)(state) with
+                | (failedState, Some(error)) -> (failedState, Some(error))
+                | (bound, None) -> bindSelfCallResults(rest)(bound)
+
+// Stage 0's end-of-body unification of a recursive binding's lowering-local result type, for the
+// self calls that took a fresh result type (`deferSelfCallResultType`): each meets the binding's
+// own once the body is done, so a deferred copy-out resolves against the type the body settled
+// on. Applied right after the spine closes, before any ownership step reads the body's type.
+let unifySelfCallResults (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match bindSelfCallResults(reverse(state.selfCallResultUnifications))(state) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (bound, None) -> LoweredCoreValue(state = (bound with selfCallResultUnifications = []), temp = temp, semanticType = semanticType, error = None)
+
 // Stage 0's `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops` reserves the exit-transfer selection
 // slot whenever a loop's result is reference-counted, before it walks the runtime-managed
 // parameter slots; a loop that placed no parameter has nothing to walk and the zero store stays.
@@ -6032,7 +6189,9 @@ let reserveTcoExitTransferSlot (label: Str) (bodyTemp: Int) (state: CoreLowering
 // the spine is closed at this return too. Wrapping the lowered body keeps the close ahead of every
 // ownership step without disturbing the shape of the function below it.
 let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
-    match closeTmcChainLowered(label)(lowered) with
+    match lowered
+    |> closeTmcChainLowered(label)
+    |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
             let loweredBody =
@@ -8237,6 +8396,14 @@ type CoreCallContext =
     | calleeName: Maybe(Str)
     | argumentCount: Int
 
+// A self callee whose result type was unresolved when the body being lowered began: its call's
+// result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
+// asking for the body to be lowered again once that type resolves.
+let selfResultDeferred (context: CoreCallContext) (state: CoreLoweringState) =
+    match context.calleeName with
+        | Some(name) -> context.selfCallee && containsLabel(name)(state.selfResultDeferredNames)
+        | None -> false
+
 // A fresh reference-counted argument the callee did not take, released after the call; the
 // release preserves the argument's escaped children when the callee's result may keep them.
 type CoreConsumedArgument =
@@ -8611,22 +8778,6 @@ let isRuntimeManageableResultType (semanticType: SemanticType) (state: CoreLower
         | SemNamed(_symbolId, _name, _arguments) as named -> ownedChildrenDroppable(named)(state)
         | _ -> false)
 
-// Stage 0's `GetCallCopyOutKind`: the scope copy-outs plus the list results whose elements are
-// strings or scalar lists.
-let callCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
-    match scopeCopyOutOf(semanticType)(state) with
-        | Some(ShallowScopeCopyOut(staticSizeBytes)) -> Some(ShallowCallCopyOut(staticSizeBytes))
-        | Some(ListScopeCopyOut) -> Some(ListCallCopyOut(InlineListHead))
-        | None ->
-            match resolveType(state)(semanticType) with
-                | SemList(element) ->
-                    match element
-                    |> resolveType(state)
-                    |> listHeadCopyOf with
-                        | Some(headCopy) -> Some(ListCallCopyOut(headCopy))
-                        | None -> None
-                | _ -> None
-
 let hasCallCopyOut (semanticType: SemanticType) (state: CoreLoweringState) =
     match callCopyOutOf(semanticType)(state) with
         | Some(_copyOut) -> true
@@ -8663,10 +8814,12 @@ let emitResultOwnershipFlag (context: CoreCallContext) (arity: Int) (resultType:
 
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one.
-let emitArenaResultRequestWord (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if requestsArenaResult(resultType)(state)
     then
-        match freshTemp((state with unresolvedCallResults = resultType :: state.unresolvedCallResults)) with
+        match freshTemp((if selfResultDeferred(context)(state)
+        then state
+        else state with unresolvedCallResults = resultType :: state.unresolvedCallResults)) with
             | FreshTemp { state = requestState, temp = requestTemp } ->
                 let loaded =
                     emit(LoadConstInt(requestTemp)(2))(requestState)
@@ -8686,7 +8839,7 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                 | (flaggedState, resultFlagTemp) ->
                     match freshTemp(flaggedState) with
                         | FreshTemp { state = targetState, temp = target } ->
-                            match emitArenaResultRequestWord(argumentFlagTemp)(resultType)(targetState) with
+                            match emitArenaResultRequestWord(context)(argumentFlagTemp)(resultType)(targetState) with
                                 | (wordState, wordTemp) ->
                                     CoreCallStage(
                                         lowered = wordState
@@ -8743,6 +8896,22 @@ let lowerCoreCallArgument (context: CoreCallContext) arity argument consumed fun
             |> locateArgumentMismatch(argumentSite(context.calleeName)(context.argumentCount - arity + 1)(argumentState))
             |> finishCoreCall(context)(arity)(argument)(argumentType)(consumed)(functionTemp)(argumentTemp)(resultType)
 
+// Stage 0 lowers a recursive binding's body against a lowering-local arrow whose result type is
+// unified only once the body is done, so a self call's result is unresolved at the call however
+// much of the body has been lowered before it: the call asks for an arena result and defers its
+// copy-out. This lowering resolves as it goes, so the last application of such a self call takes
+// a fresh result type here, remembered beside the binding's own for `unifySelfCallResults` at
+// the body's end; a partial application's arrow result stays as it is.
+let deferSelfCallResultType (context: CoreCallContext) (arity: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    if arity == 1 && selfResultDeferred(context)(state)
+    then
+        match resolveType(state)(resultType) with
+            | SemFunction(_argument, _result, _row) -> (state, resultType)
+            | _ ->
+                match freshType(state) with
+                    | FreshType { state = fresh, semanticType = deferred } -> ((fresh with selfCallResultUnifications = (deferred, resultType) :: fresh.selfCallResultUnifications), deferred)
+    else (state, resultType)
+
 // An argument is expected to have the callee's parameter type. A tail self-call's argument
 // becomes the next iteration's parameter, so it is lowered under the children transfer and its
 // own read of a live owner is retained (stage 0's `LowerCallTcoEvalArg`).
@@ -8753,13 +8922,15 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
             |> failure(typedState)
             |> callStageOf
         | FunctionTypeResolution { state = typedState, argumentType = expectedType, resultType = resultType, error = None } ->
-            typedState
-            |> withArgumentRequest(Some(expectedType))(typedState
-            |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
-            |> Some)(transfers)
-            |> lower(argument)
-            |> retainTransferredChild(argument)(transfers)
-            |> lowerCoreCallArgument(context)(arity)(argument)(consumed)(functionTemp)(expectedType)(resultType)
+            match deferSelfCallResultType(context)(arity)(resultType)(typedState) with
+                | (deferredState, callResultType) ->
+                    deferredState
+                    |> withArgumentRequest(Some(expectedType))(deferredState
+                    |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
+                    |> Some)(transfers)
+                    |> lower(argument)
+                    |> retainTransferredChild(argument)(transfers)
+                    |> lowerCoreCallArgument(context)(arity)(argument)(consumed)(functionTemp)(expectedType)(callResultType)
 
 let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: Bool) lower (stage: CoreCallStage) =
     match stage with
@@ -9299,19 +9470,34 @@ let genericListDeepCopyPlanOf (context: CoreCallContext) (semanticType: Semantic
 
 let closedCallStage (stage: CoreCallStage) (normalized: Bool) (deepCopied: Bool) (lowered: LoweredCoreValue) = stage with lowered = lowered, resultNormalized = normalized, resultDeepCopied = deepCopied
 
-// Stage 0's `DeferCallResultCopyOut` takes a slot and a reload temp for the copy-out block it
-// emits once the result's type is known, and a block that resolves to nothing removes the slot
-// round trip but keeps the numbering. The self-hosted lowering lowers the body again once such
-// a type resolves, so a result whose type still holds an unresolved layout only takes the same
-// slot and temp here.
-let reserveDeferredCopyOut (semanticType: SemanticType) (state: CoreLoweringState) =
+// Stage 0's `DeferCallResultCopyOut`: a result whose type still holds an unresolved layout is
+// routed through a local slot and read back out of it, and the copy-out block that belongs
+// between the store and the reload is emitted by `resolvePendingTcoResets` once the body is
+// lowered and the type known; a block that resolves to nothing removes the slot round trip but
+// keeps the numbering. The reload temp is what the rest of the body reads.
+let deferCallCopyOut cursorSlot endSlot preRestoreSlot (resultTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     if containsUnresolvedLayout(semanticType)(state)
     then
         match freshLocal(state) with
-            | FreshLocal { state = allocated } ->
-                match freshTemp(allocated) with
-                    | FreshTemp { state = reserved } -> reserved
-    else state
+            | FreshLocal { state = allocated, local = resultSlot } ->
+                match allocated
+                |> emit(StoreLocal(resultSlot)(resultTemp))
+                |> freshTemp with
+                    | FreshTemp { state = stored, temp = reloadTemp } ->
+                        let pending =
+                            CorePendingCallCopyOut(
+                                deferredReloadIndex = length(stored.reversedInstructions),
+                                deferredCursorSlot = cursorSlot,
+                                deferredEndSlot = endSlot,
+                                deferredPreRestoreSlot = preRestoreSlot,
+                                deferredResultSlot = resultSlot,
+                                deferredResultTemp = resultTemp,
+                                deferredReloadTemp = reloadTemp,
+                                deferredType = semanticType
+                            )
+                        in
+                            ((stored with pendingCallCopyOuts = pending :: stored.pendingCallCopyOuts) |> emit(LoadLocal(reloadTemp)(resultSlot)), reloadTemp)
+    else (state, resultTemp)
 
 // Closes a call's arena window after its last application, stage 0's `LowerCallRestoreArena`:
 // the pre-restore end slot is allocated first either way; a result that survives the reset or
@@ -9348,10 +9534,11 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                                                 |> success(resultTemp)(semanticType)
                                                 |> closedCallStage(stage)(true)(true)
                                     | None ->
-                                        allocated
-                                        |> reserveDeferredCopyOut(semanticType)
-                                        |> success(temp)(semanticType)
-                                        |> closedCallStage(stage)(false)(false)
+                                        match deferCallCopyOut(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(allocated) with
+                                            | (deferred, resultTemp) ->
+                                                deferred
+                                                |> success(resultTemp)(semanticType)
+                                                |> closedCallStage(stage)(false)(false)
                             | _ ->
                                 allocated
                                 |> success(temp)(semanticType)
@@ -11934,9 +12121,27 @@ let recursive bindingNames (bindings: List(CoreBinding)) =
         | [] -> []
         | CoreBinding { name = name } :: rest -> name :: bindingNames(rest)
 
+let recursive innermostResultType (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemFunction(_argument, result, _row) -> innermostResultType(result)(state)
+        | other -> other
+
+// The member whose body is being lowered, when its arrow's innermost result is still unresolved
+// as the body begins: a self call to it takes a fresh result type, the way stage 0's
+// lowering-local self arrow stays unresolved until the member's body is done. A sibling of a
+// recursive group is left alone: stage 0 reaches its siblings through the group's merged
+// dispatch, whose shape is OPT-19's.
+let recursive deferredResultNames (selfName: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> []
+        | CoreBinding { name = name, scheme = TypeScheme { body = bindingType } } :: rest ->
+            if name == selfName && containsUnresolvedLayout(innermostResultType(bindingType)(state))(state)
+            then name :: deferredResultNames(selfName)(rest)(state)
+            else deferredResultNames(selfName)(rest)(state)
+
 // The recursive group's member names are remembered for the body and everything lifted out of
 // it, so a member captured into an inner curried stage is still known as a self callee.
-let prepareRecursiveBodyState parameter parameterType captures selfBindings origin state =
+let prepareRecursiveBodyState selfName parameter parameterType captures selfBindings origin state =
     (let functionBindings =
         CoreBinding(
             name = parameter,
@@ -11951,11 +12156,13 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> (given (current: CoreLoweringState) -> current with recursiveGroupNames = bindingNames(selfBindings))
+        |> (given (current: CoreLoweringState) ->
+            current with selfResultDeferredNames = append(deferredResultNames(selfName)(selfBindings)(current))(current.selfResultDeferredNames))
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with runtimeTemps = [], recursiveProducerResultSlots = [], backEdgeDummyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
-        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], retiredLocals = [])
+        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
@@ -11963,7 +12170,9 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
 // A recursive member's result meets the callers the same way a plain lambda's does: a
 // reference-counted result is copied into the arena when the caller asked for one.
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
-    match (prepared, closeTmcChainPrepared(prepared)(lowered)) with
+    match (prepared, lowered
+    |> closeTmcChainPrepared(prepared)
+    |> unifySelfCallResults) with
         | (_prepared, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None }) ->
             match bindType(resultType)(bodyType)(bodyState) with
@@ -12020,7 +12229,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                     |> (given (origin) ->
                         labeled
                         |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
-                        |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
+                        |> prepareRecursiveBodyState(name)(parameter)(parameterType)(captures)(selfBindings)(origin)
                         |> lowerFunctionBodyResolvingCalls(sugarChainBody(body)(labeled.recursiveDeclarationSpan))(given (entered: CoreLoweringState) ->
                             entered
                             |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
@@ -17616,7 +17825,7 @@ let numberDeferredLabels (state: CoreLoweringState) (entryInstructions: List(IrI
                         | (numberedFunctions, _final) -> (numberedEntry, numberedFunctions)
 
 let buildProgram lowered =
-    match lowered with
+    match resolveLoweredPendingBlocks(lowered) with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match state with
