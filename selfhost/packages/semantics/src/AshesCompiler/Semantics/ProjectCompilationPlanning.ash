@@ -19,6 +19,7 @@ import Ashes.IO.Path
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.ImportHeader
 import AshesCompiler.Frontend.ImportHeader.ImportHeaderError
+import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.InlineModules
 import AshesCompiler.Frontend.ModuleInterface
 import AshesCompiler.Frontend.ModuleInterface.ModuleInterfaceBuildError
@@ -42,6 +43,7 @@ export (
     type ProjectCompilationPlan(..),
     type ProjectCompilationError(..),
     value plannedProgram,
+    value readSourceText,
     value buildProjectCompilationPlan,
     value buildProjectCompilationPlanWithShipped,
 )
@@ -527,8 +529,19 @@ let parseLoadedModule entryModuleName shipped name path sources source =
         | Ok(ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports }) ->
             expandLoadedModule(entryModuleName)(name)(path)(sources)(deepCopy(imports))(qualifiedShippedModulesNeedingSource(shippedNames(shipped))(sourceWithoutImports))(sourceWithoutImports)
 
+// A source file read whole: `readAllBytes` has no size cap where `readText` stops at 1 MiB, and
+// a compiler module can be larger than that. The bytes are taken as the UTF-8 text they hold.
+let readSourceText (path: Str) =
+    match Ashes.IO.File.readAllBytes(path) with
+        | Error(message) -> Error(message)
+        | Ok(bytes) ->
+            bytes
+            |> Ashes.Byte.length
+            |> Ashes.Byte.subText(bytes)(0)
+            |> Ok
+
 let readIndexedModule entryModuleName shipped name path sources =
-    match Ashes.IO.File.readText(path) with
+    match readSourceText(path) with
         | Error(error) ->
             error
             |> ProjectCompilationReadError(path)
@@ -603,9 +616,28 @@ let parseShippedModule shipped name path source =
                         diagnosticSources = [ProjectDiagnosticSource(sourcePath = path, diagnostics = diagnostics)]
                     ))
 
-// An intrinsic builtin module has no source: its members are reached through qualified access,
-// so it plans as an empty module whose interface exports nothing.
-let intrinsicModule name = shippedUnit(name)("<builtin>")([])([])(ProgramSyntax(items = [], body = None))
+// The value exports of an intrinsic builtin module: every member the core builtin table
+// registers under the module's name, so a selector import (`import Ashes.Internal.deepCopy`)
+// resolves against it the way stage 0 resolves one against `BuiltinRegistry`.
+let recursive intrinsicValueExports (layouts: List(CoreBuiltinLayout)) (moduleName: Str) =
+    match layouts with
+        | [] -> []
+        | CoreBuiltinLayout { moduleName = candidate, memberName = memberName } :: rest ->
+            if candidate == moduleName
+            then
+                ImportValueExport(deepCopy(memberName)) :: intrinsicValueExports(rest)(moduleName)
+            else intrinsicValueExports(rest)(moduleName)
+
+// An intrinsic builtin module has no source: it plans as an empty program whose interface
+// exports its builtin members by name.
+let intrinsicModule name =
+    Ok(LoadedProjectModule(
+        units = [cu(deepCopy(name))(ShippedModuleSource("<builtin>"))([])(ModuleImportInterface(name = deepCopy(name), exports = intrinsicValueExports(standardBuiltinLayouts)(name)))([])],
+        programs = [PlannedModuleProgram(name = deepCopy(name), program = ProgramSyntax(items = [], body = None))],
+        dependencies = [],
+        names = [deepCopy(name)],
+        diagnosticSources = []
+    ))
 
 let loadShippedModule (name: Str) (shipped: List(ShippedModuleText)) (sources: List(IndexedProjectSource)) =
     match findShippedText(name)(shipped) with

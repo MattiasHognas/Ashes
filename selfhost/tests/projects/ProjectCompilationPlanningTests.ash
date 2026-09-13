@@ -93,6 +93,42 @@ let checkReachablePlanning root =
             | Ok(layout) -> buildProjectCompilationPlan(Unix)(layout))
     |> expectReachablePlan
 
+// A selector import of an intrinsic builtin module's member (`import Ashes.Internal.deepCopy`):
+// the module has no source, so its interface is synthesized from the core builtin table.
+let prepareIntrinsicSelectorFixture root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale intrinsic selector fixture")
+    |> (given (_) ->
+        "src"
+        |> join(Unix)(root)
+        |> Ashes.IO.Directory.createAll
+        |> requireUnit("create intrinsic selector source root"))
+    |> (given (_) -> writeFile(root)("ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeFile(root)("src/Main.ash")("import Ashes.Internal.deepCopy\ndeepCopy(42)"))
+
+let expectIntrinsicSelectorPlan (result: Result(ProjectCompilationError, ProjectCompilationPlan)) =
+    match result with
+        | Error(error) -> test.fail("an intrinsic selector import should plan: " + Ashes.Trait.Show.show(error))
+        | Ok(ProjectCompilationPlan { modules = modules }) ->
+            modules
+            |> plannedMainImports
+            |> test.assertEqual([ResolvedValueImport("Ashes.Internal")("deepCopy")("deepCopy")(1)("import Ashes.Internal.deepCopy")])
+            |> (given (_) ->
+                modules
+                |> plannedNames
+                |> test.assertEqual(["Ashes.Internal", "Main"]))
+
+let checkIntrinsicSelectorPlanning root =
+    "ashes.json"
+    |> join(Unix)(root)
+    |> loadProject(Unix)
+    |> (given (loaded) ->
+        match loaded with
+            | Error(_error) -> test.fail("intrinsic selector project should load")
+            | Ok(layout) -> buildProjectCompilationPlan(Unix)(layout))
+    |> expectIntrinsicSelectorPlan
+
 let prepareInlineFixture root =
     root
     |> Ashes.IO.Directory.removeTree
@@ -327,6 +363,14 @@ let runProjectCompilationPlanningTests unit =
     |> (given (root) ->
         root
         |> checkReachablePlanning
+        |> (given (_) -> root))
+    |> (given (root) ->
+        root
+        |> prepareIntrinsicSelectorFixture
+        |> (given (_) -> root))
+    |> (given (root) ->
+        root
+        |> checkIntrinsicSelectorPlanning
         |> (given (_) -> root))
     |> (given (root) ->
         root

@@ -3053,6 +3053,38 @@ same public behavior.
   un-stitched numbering and no dictionary closures appear), regenerate the six, and compare them
   again; a fixture that turns trait-polymorphic under declared traits (`closure_capture`'s
   `makeAdder`) belongs to the trait milestone instead.
+- [ ] **OPT-71** A tail-recursive loop whose accumulator is a record holding growing lists
+  (`InlineModuleCollection(names, outer, modules)` rebuilt once per source line) copies those
+  lists out of the per-iteration arena at every back edge: the cells the iteration consed live
+  in the window the reset reclaims, so the successor record's whole graph is copied to survive
+  it, and a loop over n lines costs n^2 memory. Measured 2026-09-13 with the frontend's
+  inline-module scanner on a flat source: 4,000 lines 2.1 GiB, 8,000 lines 8.5 GiB, 16,000
+  lines 30 GiB, where the same loop over three list parameters (a grown-cons shape each, placed
+  on the reference-counted heap) takes 32 MiB at 8,000 lines. The scanner now carries the three
+  lists as parameters and builds the record at the end (`collectInlineModules`), and its
+  qualifier rewrite walks the source by byte index (`rewriteQualifierBytes`) instead of taking
+  a fresh tail per character; the model gap stays: a record loop parameter whose owned children
+  are lists the body extends should place those children on the reference-counted heap the way
+  a bare list parameter is (OPT-25's owned-child record accumulator copies the record but not
+  a cons chain the body grows), so a record accumulator costs what its fields would cost as
+  parameters. Both compilers, since stage 0 emits the copy and the self-hosted lowering mirrors
+  it.
+- [ ] **OPT-72** The self-hosted lowering's memory on a whole stitched project. Measured
+  2026-09-13 with BOOT-2's phase probe: `lowerCoreProgramWithSourceAndReuse` over the stitched
+  frontend package (325 KB of source) reaches 8.2 GiB resident, the formatter package 9.0 GiB,
+  and the CLI package (frontend, semantics, backend, and CLI stitched together, about 5 MB)
+  exhausts 24 GiB in six seconds, where stage 0 compiles the same package in about 9 GiB. Find
+  the dominators the way OPT-57 did for the single-file case (gdb breakpoints on source lines
+  with a resident-set printer at each phase boundary; a stack-sampling profiler pointed at the
+  wrong code there), starting with what the lowering keeps alive across modules: the per-module
+  re-lowering of `lowerFunctionBodyResolvingCalls` lowers every closed body twice, the
+  instruction lists of finished functions are appended with `append` (a copy of the whole
+  prefix per function), and every `deepCopy` on the resolution paths copies a definition per
+  reference. Stage 1 cannot compile itself before this is within reach of a developer machine;
+  BOOT-9's acceptance is the same peak memory as stage 0. Related: the standard library's
+  `append` is not tail-recursive, so a 13,000-element append (one declaration's tokens in the
+  parser) already needs 8 MB of stack at `-O0`; a stack-safe `append` belongs to the same
+  arc.
 
 #### LLVM code generation and runtime integration
 
@@ -3219,7 +3251,12 @@ same public behavior.
   directories/memory maps, subprocesses (LNK-4), and the terminal (`IrCodegen.Console.ash`:
   `enableRawInput`/`restoreInput` over `TCGETS`/`TCSETS` with the saved termios and raw-active
   flag as module globals, `pollInput` over `ppoll` plus one `read`, `monotonicMillis` over
-  `clock_gettime`). Open: the buffered stdout ring (writes are immediate), program arguments,
+  `clock_gettime`), and the trusted foreign-memory copy (`Ashes.Ffi.copyBytes`: the intrinsic
+  module, its `*u8 -> u64 -> Result(Str, Bytes)` scheme and `CopyFfiBytes` lowering in
+  `CoreBuiltinLowering.ash`, and `IrCodegen.Support.ash`'s `emitCopyFfiBytes` with stage 0's four
+  ranges: over 1 GiB is `Error`, zero length is `Ok` of the empty bytes whatever the pointer, a
+  null pointer with a nonzero length is `Error`, otherwise one `memcpy` into fresh reference-counted
+  bytes). Open: the buffered stdout ring (writes are immediate), program arguments,
   entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
   `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the
@@ -3569,14 +3606,29 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
 - [ ] **BOOT-1** Define a reproducible stage-0 input consisting of the released C# compiler, pinned LLVM/runtime
   payloads, restored source dependencies, and the pure-Ashes compiler sources.
 - [ ] **BOOT-2** Build a stage-1 host compiler with stage 0, then use stage 1 to build stage 2 without invoking C#,
-  Python, shell, or Node.js as an implementation step. Probe (2026-09-13, the first run of
-  `ashes compile --project selfhost/packages/cli/ashes.json` through stage 1, possible since
-  CLI-2's project form): planning stops at `Ashes.Ffi`, a builtin module with neither a shipped
-  source nor an intrinsic entry (CG-11's FFI slice; `Compile.ash` copies LLVM buffers with
-  `Ashes.Ffi.copyBytes`); the bare qualified shipped references the self-hosted sources rely on
-  (`Ashes.Text.join` with no import) are resolved since LNK-2's port of stage 0's token scan.
-  Re-run the probe after each blocker closes; it is the cheapest honest signal of what still
-  blocks self-compilation.
+  Python, shell, or Node.js as an implementation step. Probe: `ashes compile --project
+  selfhost/packages/cli/ashes.json` through stage 1 (possible since CLI-2's project form). Its
+  first run (2026-09-13) stopped at `Ashes.Ffi`, a builtin module with neither a shipped source
+  nor an intrinsic entry; closing that (CG-11's FFI slice) uncovered, in order, and each is
+  fixed: the inline-module scanner's character-by-character `"\r\n"` normalization overflowing
+  the stack on a 1 MB module; `Ashes.IO.File.readText`'s 1 MiB cap refusing `CoreLowering.ash`
+  (the planner and the CLI now read sources through `readAllBytes`, `readSourceText`); the
+  same scanner's record accumulator costing quadratic memory (OPT-71); a selector import of an
+  intrinsic builtin member (`import Ashes.Internal.deepCopy as deepCopy`) unknown to the
+  planner's interface and to the stitcher (the intrinsic module's interface is now synthesized
+  from the builtin table and the stitcher keeps such selectors as `intrinsicSelectors`); and
+  the stitcher's `findModule` deep-copying a whole module scope at every name lookup. Planning
+  and stitching of the CLI package now complete in 0.5 s and 1.7 GiB. The next blocker is the
+  self-hosted lowering's memory: lowering the stitched CLI package exhausts 24 GiB in 6 s, and
+  the same probe on the frontend package alone (325 KB of source) reaches 8.2 GiB before
+  failing on `Ashes.Internal.Regex.compileRaw` (a builtin `standardBuiltinLayouts` lacks; CG-11)
+  and on the formatter package 9.0 GiB before `UnsupportedTypeDeclaration` for a bare
+  `AshesCompiler.Frontend.Syntax.Expr` (a stitched generic type used without its argument; a
+  stitching gap to file with its repro). OPT-72 owns the memory. The measurement tool is a
+  scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
+  and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
+  the growing process trips the machine's memory watchdog. Re-run the probe after each blocker
+  closes; it is the cheapest honest signal of what still blocks self-compilation.
 - [ ] **BOOT-3** Compare stage-1/stage-2 deterministic artifacts where possible and otherwise compare normalized
   tokens, diagnostics, schemes, IR, object structure, executable behavior, and reports.
 - [ ] **BOOT-4** Compile and run the compiler, standard library, examples, and complete test corpus with the

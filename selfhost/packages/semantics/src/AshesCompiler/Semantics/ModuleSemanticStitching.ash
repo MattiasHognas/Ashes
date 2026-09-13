@@ -11,12 +11,15 @@ import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
+import AshesCompiler.Semantics.CoreBuiltinLowering.coreBuiltinKind
+import AshesCompiler.Semantics.CoreBuiltinLowering.isIntrinsicBuiltinModule
 import AshesCompiler.Semantics.ExprMentions.programMentionsVariable
 export (
     type StitchedNameKind(..),
     type SemanticStitchUnit(..),
     type StitchedDefinition(..),
     type StitchedImportBinding(..),
+    type IntrinsicSelector(..),
     type StitchedModuleScope(..),
     type StitchedSemanticProject(..),
     type ModuleSemanticStitchError(..),
@@ -24,6 +27,7 @@ export (
     value resolveStitchedUnqualified,
     value resolveStitchedQualified,
     value resolveStitchedModuleAlias,
+    value resolveStitchedIntrinsicSelector,
     value stitchedModulePlainImports,
 )
 
@@ -66,6 +70,15 @@ type StitchedImportBinding =
     | target: StitchedDefinition
     deriving {Eq, Show}
 
+// A selector import of an intrinsic builtin module's member (`import Ashes.Internal.deepCopy as
+// copy`): the local name the importing module reads it by, the module, and the member, since the
+// module has no definition to bind the name to.
+type IntrinsicSelector =
+    | localName: Str
+    | moduleName: Str
+    | memberName: Str
+    deriving {Eq, Show}
+
 type StitchedModuleScope =
     | name: Str
     | packageId: Str
@@ -73,6 +86,7 @@ type StitchedModuleScope =
     | imports: List(StitchedImportBinding)
     | moduleAliases: List((Str, Str))
     | plainWholeModuleImports: List(Str)
+    | intrinsicSelectors: List(IntrinsicSelector)
     | definitions: List(StitchedDefinition)
     deriving {Eq, Show}
 
@@ -133,15 +147,15 @@ let sameNamespace left right =
         | (StitchedTrait, StitchedTrait) -> true
         | _ -> false
 
+// The scope is returned as it sits in the list: the reference rewriter looks a module up once
+// per name it resolves, and copying the scope with its thousands of definitions at every lookup
+// cost the stage-1 compiler more memory than a machine has while rewriting its own sources.
 let recursive findModule (name: Str) (modules: List(StitchedModuleScope)) =
     match modules with
         | [] -> None
         | (StitchedModuleScope { name = candidate, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = _definitions } as moduleScope) :: rest ->
             if candidate == name
-            then
-                moduleScope
-                |> deepCopy
-                |> Some
+            then Some(moduleScope)
             else findModule(name)(rest)
 
 let hasModule (name: Str) (modules: List(StitchedModuleScope)) =
@@ -594,14 +608,28 @@ let addWholeModuleImport ownerModule fatalConflict (imported: StitchedModuleScop
                                                 bindings
                                             )
 
+// A selector import of an intrinsic builtin module's member binds no definition: the module has
+// none, and the reference rewriter resolves the local name through the scope's
+// `intrinsicSelectors` instead.
+let isIntrinsicMember (moduleName: Str) (memberName: Str) =
+    if isIntrinsicBuiltinModule(moduleName)
+    then
+        match coreBuiltinKind(moduleName)(memberName) with
+            | Some(_kind) -> true
+            | None -> false
+    else false
+
 let addSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) exportName localName kind bindings =
     match imported with
         | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
             match findExportedDefinition(exportName)(kind)(definitions) with
                 | None ->
-                    exportName
-                    |> MissingStitchedImportExport(ownerModule)(importedName)
-                    |> Error
+                    if isIntrinsicMember(importedName)(exportName)
+                    then Ok(bindings)
+                    else
+                        exportName
+                        |> MissingStitchedImportExport(ownerModule)(importedName)
+                        |> Error
                 | Some(definition) ->
                     addImportBindings(
                         ownerModule,
@@ -685,6 +713,17 @@ let recursive collectModuleAliases resolvedImports =
                         |> appendList(leafEntries)
         | _ :: rest -> collectModuleAliases(rest)
 
+// The selector imports naming an intrinsic builtin module's member, each as the local name the
+// importing module reads it by, the module, and the member.
+let recursive collectIntrinsicSelectors resolvedImports =
+    match resolvedImports with
+        | [] -> []
+        | ResolvedValueImport(importedName, exportName, localName, _line, _written) :: rest ->
+            if isIntrinsicMember(importedName)(exportName)
+            then IntrinsicSelector(localName = deepCopy(localName), moduleName = deepCopy(importedName), memberName = deepCopy(exportName)) :: collectIntrinsicSelectors(rest)
+            else collectIntrinsicSelectors(rest)
+        | _ :: rest -> collectIntrinsicSelectors(rest)
+
 let recursive findModuleAlias (qualifier: Str) (aliases: List((Str, Str))) =
     match aliases with
         | [] -> None
@@ -720,6 +759,20 @@ let stitchedModulePlainImports moduleName (project: StitchedSemanticProject) =
         | None -> []
         | Some(moduleScope) -> moduleScope.plainWholeModuleImports
 
+// The intrinsic module and member a module's selector import binds `localName` to, if any.
+let recursive findIntrinsicSelector (localName: Str) (selectors: List(IntrinsicSelector)) =
+    match selectors with
+        | [] -> None
+        | IntrinsicSelector { localName = candidate, moduleName = moduleName, memberName = memberName } :: rest ->
+            if candidate == localName
+            then Some((deepCopy(moduleName), deepCopy(memberName)))
+            else findIntrinsicSelector(localName)(rest)
+
+let resolveStitchedIntrinsicSelector moduleName localName (project: StitchedSemanticProject) =
+    match findModule(moduleName)(project.scopes) with
+        | None -> None
+        | Some(moduleScope) -> findIntrinsicSelector(localName)(moduleScope.intrinsicSelectors)
+
 let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
     match (unit, state) with
         | (SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = resolvedImports, interface = _moduleInterface, program = program, isEntry = _isEntry }, StitchState { reversedModules = completedModules, nextDefinitionId = nextDefinitionId }) ->
@@ -751,7 +804,7 @@ let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
                                                 | Error(error) -> Error(error)
                                                 | Ok(imports) ->
                                                     Ok(
-                                                        StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, moduleAliases = collectModuleAliases(resolvedImports), plainWholeModuleImports = collectPlainWholeModuleImports(resolvedImports), definitions = definitions) :: completedModules, nextDefinitionId = nextId)
+                                                        StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, moduleAliases = collectModuleAliases(resolvedImports), plainWholeModuleImports = collectPlainWholeModuleImports(resolvedImports), intrinsicSelectors = collectIntrinsicSelectors(resolvedImports), definitions = definitions) :: completedModules, nextDefinitionId = nextId)
                                                     )
 
 let recursive buildModules (units: List(SemanticStitchUnit)) (state: StitchState) =
