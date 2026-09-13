@@ -1,0 +1,13 @@
+Reuse report
+============
+
+Function: fill [fill]
+  entry copy: omitted [tree]
+    reason: path rebuild not amortized (reuse_path_rebuild_declines_copy.ash:16:34)
+  specialization candidate qualification: rejected [tree]
+    reason: accumulator not proven unique (reuse_path_rebuild_declines_copy.ash:19:26)
+
+Function: _start_main
+  specialization candidate qualification: rejected [shared]
+    reason: accumulator not proven unique (reuse_path_rebuild_declines_copy.ash:23:14)
+

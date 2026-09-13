@@ -80,6 +80,8 @@ internal enum ReuseDecisionReason
     OwnershipMoveSafe,
     OwnershipMoveSafetyRejected,
     NoStructuralReuse,
+    NoSpecializedCall,
+    PathRebuildNotAmortized,
     RuntimeManagedReuseCandidate,
     StaticallyUniqueReuseCandidate,
     CalleeBindingUnavailable,

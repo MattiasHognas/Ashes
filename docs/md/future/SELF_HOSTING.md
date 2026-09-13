@@ -3201,7 +3201,15 @@ same public behavior.
   list of strings, where stage 0 synthesizes one. Neither shape is in a parity fixture; the
   scratch dumper (`dumpir`) on the two snippets shows both. Mirror stage 0's
   `CanBuildRuntimeManagedCell` decline for an unresolved element type and its structural
-  dropper synthesis for the pattern owner, and add both shapes as fixtures.
+  dropper synthesis for the pattern owner, and add both shapes as fixtures. Two more found
+  while writing OPT-77's fixture (2026-09-13): for a whole-tree rebuild with two self calls in
+  one constructor (`Node(double(left))(value + value)(double(right))`) stage 0 passes a
+  runtime-managed argument flag (value 2) on the first self call only, where the current
+  self-hosted lowering passes none and the one on `main` before OPT-74 passed it on both; and
+  for a single-parameter reader with a nested pattern (`Node(Leaf, value, _right)`, or a
+  nested match on the bound child) stage 0 synthesizes the direct-reuse copier and produces
+  the arms' `DropReuse` tokens (then discards them), where the self-hosted lowering emits
+  neither. Both shapes were kept out of the fixture; add them once mirrored.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
@@ -3227,7 +3235,7 @@ same public behavior.
   the owner's release balances, which is the OPT-71 model gap for record loop parameters seen
   from the child's side. Until then a stage-1 builder that stores a `let`-bound call result
   into a record and accumulates the records on a loop parameter keeps the recursive shape.
-- [ ] **OPT-77** Stage 0 deep-copies a loop's accumulator at entry for an in-place reuse
+- [x] **OPT-77** Stage 0 deep-copies a loop's accumulator at entry for an in-place reuse
   specialization that never runs, and for one that does but cannot pay for the copy. A loop
   parameter passed to a specializable function is scanned as a specialization candidate and,
   when the whole-program move analysis cannot prove it unique, deep-copied once at loop entry
@@ -3245,7 +3253,19 @@ same public behavior.
   elision can prove the argument moved, or a cost gate that declines the copy when the
   clone's rebuild is a path rather than the whole accumulator; measured with the copies
   disabled, the probe's lowering still needs 43 GiB (OPT-74 dominates), so this is not the
-  first blocker.
+  first blocker. Fixed in both compilers (2026-09-13) with the cost gate: a specialization
+  candidate whose accumulator is unproven takes no entry copy when the callee's recursive body
+  (its nested `go` or its own innermost body) makes at most one self call on any path over a
+  type whose constructors hold two or more children of their own type
+  (`SpecializationRebuildsOnlyAPath`, reported as `path rebuild not amortized`), and none
+  either when no call was routed to a clone for it (`no specialized call`); the copier is
+  synthesized only once the copy is wanted, so a declined copy leaves no dead copier. A
+  whole-structure rebuild (`update` with two self calls, a list map) keeps the gamble. The
+  self-hosted lowering mirrors both on the single-parameter candidates it scans, with a
+  path-sensitive `maxPathOccurrences`. Tests: `ReuseDecisionTests` (reader over a chain, path
+  rebuild versus whole rebuild) and the parity fixture `reuse_path_rebuild_declines_copy`.
+  The BOOT-2 probe went from 28 GiB to 12.9 GiB and 21 s, reaching MOD-14; the map copies
+  under `enqueueDependents` and `shadowNames` that dominated the gdb sampling are gone.
 
 #### LLVM code generation and runtime integration
 
@@ -3789,10 +3809,12 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   stack-safe, and fixed a stage-0 use after unmap it exposed; OPT-73 made the provenance and
   reach fixpoints once-per-program worklists. MOD-13 closed the two stitching gaps that
   stopped the lowering at 15 GiB; the lowering then ran on past them and exhausted 45 GiB.
-  OPT-74 (the builder head copies) brought it to MOD-14's diagnostic in 25 s and 28 GiB with
-  the stock stage 0, against the 9 GiB stage 0 itself needs for the same package, so the
-  remaining memory (OPT-77's entry copies and whatever the next gdb `mmap` sampling names) and
-  MOD-14 are the next blockers. The measurement tool is a
+  OPT-74 (the builder head copies) brought it to MOD-14's diagnostic in 25 s and 28 GiB, and
+  OPT-77 (the specialization entry copies) to 21 s and 12.9 GiB, against the 9 GiB stage 0
+  itself needs for the same package, so MOD-14 is the next blocker and the remaining memory
+  (whatever the next gdb `mmap` sampling names: the `constructorInferenceDefinitionsFromLayouts`
+  record builder, the curried `Ashes.Trait` operator closures behind linear name scans) comes
+  after it. The measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker
