@@ -1793,9 +1793,10 @@ public sealed partial class Lowering
                 return bodyTemp;
             }
 
-            int duplicatedTemp = NewTemp();
-            Emit(new IrInst.RcDup(duplicatedTemp, bodyTemp, RuntimeManaged: true));
-            return duplicatedTemp;
+            // Through the shared retain, which is null-tolerant for a list: the empty list IS the null
+            // representation, so a plain retain of a captured empty list returned from an arm
+            // dereferences null. Every sibling retain here already went through it.
+            return DuplicateRuntimeManagedMatchResult(bodyTemp, owner);
         }
 
         if (owner.PerceusPatternOwner)
