@@ -1,32 +1,42 @@
-// The `ashes compile` and `ashes run` commands: compile one `.ash` file to a linux-x64 executable
-// through the self-hosted pipeline, and optionally run it with forwarded arguments.
+// The `ashes compile` and `ashes run` commands: compile one `.ash` file or a whole project to a
+// linux-x64 executable through the self-hosted pipeline, and optionally run it with forwarded
+// arguments.
 //
 // Invariants:
 // - The pipeline is the same one `selfhost/tests/backend` proves end to end: the entry source and
-//   the shipped standard-library texts go through `stitchWithShippedModules`, the stitched program
-//   through `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram` through
-//   `codegenProgram`, and the emitted object through `linkLinuxExecutable`. Nothing here parses,
-//   infers, lowers, or generates code on its own.
+//   the shipped standard-library texts go through `stitchWithShippedModules` (a project's modules,
+//   its dependencies' modules, and the shipped texts through `stitchProject`), the stitched
+//   program through `lowerCoreProgramWithSource` and `optimizeIrProgram`, the lowered `IrProgram`
+//   through `codegenProgram`, and the emitted object through `linkLinuxExecutable`. Nothing here
+//   parses, infers, lowers, or generates code on its own.
 // - Matches stage 0's observable contract (docs/md/reference/cli.md#ashes-compile) for the
-//   single-file form: the positional input must end in `.ash`, `-o`/`--out` selects the output,
-//   the default output drops the `.ash` suffix, success prints the `OK Wrote <size> to <output>`
-//   confirmation with its `Target:` line on stdout, diagnostics and command errors go to stderr,
-//   and the exit codes are 0/1/2 for success, compilation or input failure, and usage error.
-//   `ashes run` compiles to the host temporary directory, forwards everything after `--` to the
-//   program, and propagates the program's own exit code.
+//   single-file and project forms: the positional input must end in `.ash`, `--project <manifest>`
+//   compiles the project rooted at that manifest and cannot be combined with a positional input,
+//   no input at all discovers `ashes.json` upward from the working directory, `-o`/`--out` selects
+//   the output, the default output drops the `.ash` suffix (a project's is `<outDir>/<name>`, the
+//   entry file's stem when the manifest names nothing), success prints the `OK Wrote <size> to
+//   <output>` confirmation with its `Target:` line on stdout, diagnostics and command errors go to
+//   stderr, and the exit codes are 0/1/2 for success, compilation or input failure, and usage
+//   error. `ashes run` compiles to the host temporary directory, forwards everything after `--`
+//   to the program, and propagates the program's own exit code.
+// - Source locations in a project build are computed against the entry module's text: the
+//   stitched program keeps every module's original spans, but the lowering's source context takes
+//   one text, so a diagnostic or debug line in a non-entry module is not yet mapped to that
+//   module's own lines.
 // - `--explain <kind>[:<selector>]` is accepted by both commands, repeats, and prints the requested
 //   compiler reports to stderr between optimization and code generation
 //   (docs/md/reference/cli.md#compiler-reports). Reporting reads the decision snapshot and the
 //   optimized program and writes neither, so the emitted image is the same whether or not a
 //   report was asked for. An unknown kind or a missing value is a usage error listing the valid
 //   values.
-// - Deliberately narrower than stage 0 for now: only the linux-x64 target and the file form
-//   (`--expr`, `--project`, target/optimization/debug options, and IR dumps are not parsed), no
-//   elapsed time in the confirmation (no monotonic clock capability is shipped yet), a program's
-//   stdout and stderr are relayed line by line rather than inherited, and the shipped standard
-//   library is located by probing `lib/Ashes` beside the executable, beside its parent directory,
-//   and under the working directory, in that order. Any program shape the backend does not
-//   support yet surfaces exactly as `AshesCompiler.Backend.IrCodegen` reports it.
+// - Deliberately narrower than stage 0 for now: only the linux-x64 target and the file and
+//   project forms (`--expr`, target/optimization/debug options, and IR dumps are not parsed), no
+//   automatic restore of a project's registry dependencies before compiling, no elapsed time in
+//   the confirmation (no monotonic clock capability is shipped yet), a program's stdout and stderr
+//   are relayed line by line rather than inherited, and the shipped standard library is located by
+//   probing `lib/Ashes` beside the executable, beside its parent directory, and under the working
+//   directory, in that order. Any program shape the backend does not support yet surfaces exactly
+//   as `AshesCompiler.Backend.IrCodegen` reports it.
 
 import Ashes.Byte
 import Ashes.Ffi
@@ -48,9 +58,13 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrExplainReporter
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ModuleSemanticStitching
+import AshesCompiler.Semantics.ProjectDiscovery
+import AshesCompiler.Semantics.ProjectManifest
+import AshesCompiler.Semantics.ProjectStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 import AshesCompiler.Semantics.ShippedModuleStitching
 export (
+    type CompileInput(..),
     type CompileArguments(..),
     type CompileParse(..),
     type CompileOutcome(..),
@@ -59,19 +73,29 @@ export (
     value parseCompileArguments,
     value parseRunArguments,
     value defaultOutputPath,
+    value projectOutputPath,
     value formatByteSize,
     value inputStem,
     value explainValidValuesText,
     value compileFileToExecutable,
+    value compileProjectToExecutable,
     value runCompileWithArguments,
     value runCompile,
     value runRun,
 )
 
+// What a compile or run command was pointed at: a positional `.ash` file, the project rooted at
+// an explicit `--project` manifest, or (neither given) the `ashes.json` discovered upward from
+// the working directory when the command runs.
+type CompileInput =
+    | CompileFile(Str)
+    | CompileProject(Str)
+    | CompileDiscoveredProject
+
 // `disableReuse` is stage 0's hidden `--debug-disable-reuse`: the program is lowered with every
 // reuse token withheld, so a reuse-related miscompile can be bisected against fresh allocation.
 type CompileArguments =
-    | inputPath: Str
+    | input: CompileInput
     | outputPath: Maybe(Str)
     | explain: ExplainRequest
     | disableReuse: Bool
@@ -87,10 +111,15 @@ type CompileOutcome =
     | CompileFailed(Str)
 
 type RunArguments =
-    | runInputPath: Str
+    | runInput: CompileInput
     | programArguments: List(Str)
     | runExplain: ExplainRequest
     | runDisableReuse: Bool
+
+// The input once its manifest, if any, is loaded.
+type ResolvedCompileInput =
+    | ResolvedFileInput(Str)
+    | ResolvedProjectInput(ProjectLayout)
 
 type RunParse =
     | RunHelpRequested
@@ -120,48 +149,68 @@ let addExplainOption (value: Str) (explain: ExplainRequest) =
             |> Ok
         | Error(message) -> Error(message + explainValidValuesText)
 
-let recursive partitionCompileFlags args output inputs explain disableReuse =
+let recursive partitionCompileFlags args output inputs project explain disableReuse =
     match args with
-        | [] -> Ok((output, inputs, explain, disableReuse))
-        | "-o" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)(disableReuse)
-        | "--out" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)(disableReuse)
+        | [] -> Ok((output, inputs, project, explain, disableReuse))
+        | "-o" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(project)(explain)(disableReuse)
+        | "--out" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(project)(explain)(disableReuse)
         | "-o" :: [] -> Error("Missing value for -o.")
         | "--out" :: [] -> Error("Missing value for --out.")
+        | "--project" :: value :: rest -> partitionCompileFlags(rest)(output)(inputs)(Some(value))(explain)(disableReuse)
+        | "--project" :: [] -> Error("Missing value for --project.")
         | "--explain" :: value :: rest ->
             match addExplainOption(value)(explain) with
                 | Error(message) -> Error(message)
-                | Ok(added) -> partitionCompileFlags(rest)(output)(inputs)(added)(disableReuse)
+                | Ok(added) -> partitionCompileFlags(rest)(output)(inputs)(project)(added)(disableReuse)
         | "--explain" :: [] -> Error("--explain requires a value." + explainValidValuesText)
-        | "--debug-disable-reuse" :: rest -> partitionCompileFlags(rest)(output)(inputs)(explain)(true)
+        | "--debug-disable-reuse" :: rest -> partitionCompileFlags(rest)(output)(inputs)(project)(explain)(true)
         | other :: rest ->
             if isOptionLike(other)
             then Error("Unknown option '" + other + "'.")
             else
-                partitionCompileFlags(rest)(output)(append(inputs)([other]))(explain)(disableReuse)
+                partitionCompileFlags(rest)(output)(append(inputs)([other]))(project)(explain)(disableReuse)
 
 let checkInputPath input =
     if hasAshExtension(input)
     then Ok(input)
     else Error("Input file must have a .ash extension: " + input)
 
-// A bare `--help`/`-h` short-circuits; no arguments at all is a missing input (exit 1, like stage
-// 0's own "no input" error); an unknown option, a bad `--explain` value, or more than one
-// positional input is a usage error (exit 2); a positional input without the `.ash` extension is
-// an input error (exit 1).
+type CompileInputSelection =
+    | SelectedInput(CompileInput)
+    | SelectionInputError(Str)
+    | SelectionUsageError(Str)
+
+// The positional inputs and the `--project` option select one `CompileInput`: neither is the
+// project discovered when the command runs, `--project` alone is that project, exactly one
+// positional file is the file form (an input error without the `.ash` extension), and the two
+// together or several files are usage errors, with stage 0's own messages.
+let selectCompileInput inputs project =
+    match (inputs, project) with
+        | ([], None) -> SelectedInput(CompileDiscoveredProject)
+        | ([], Some(manifest)) -> SelectedInput(CompileProject(manifest))
+        | (input :: [], None) ->
+            match checkInputPath(input) with
+                | Error(message) -> SelectionInputError(message)
+                | Ok(checked) -> SelectedInput(CompileFile(checked))
+        | (_input :: [], Some(_manifest)) -> SelectionUsageError("Cannot combine --project with input file or --expr.")
+        | (_inputs, _project) -> SelectionUsageError("Provide exactly one input file.")
+
+// A bare `--help`/`-h` short-circuits; an unknown option, a bad `--explain` value, a missing
+// option value, or a conflicting input selection is a usage error (exit 2); a positional input
+// without the `.ash` extension is an input error (exit 1). No input at all parses as the
+// discovered project: whether an `ashes.json` exists is only known when the command runs.
 let parseCompileArguments args =
     match args with
         | "--help" :: [] -> CompileHelpRequested
         | "-h" :: [] -> CompileHelpRequested
-        | [] -> CompileInputError("Missing input: provide a .ash file.")
         | _ ->
-            match partitionCompileFlags(args)(None)([])(explainRequestNone)(false) with
+            match partitionCompileFlags(args)(None)([])(None)(explainRequestNone)(false) with
                 | Error(message) -> CompileUsageError(message)
-                | Ok((_, [], _, _)) -> CompileInputError("Missing input: provide a .ash file.")
-                | Ok((output, input :: [], explain, disableReuse)) ->
-                    match checkInputPath(input) with
-                        | Error(message) -> CompileInputError(message)
-                        | Ok(checked) -> CompileParsedArguments(CompileArguments(inputPath = checked, outputPath = output, explain = explain, disableReuse = disableReuse))
-                | Ok((_, _, _, _)) -> CompileUsageError("Provide exactly one input file.")
+                | Ok((output, inputs, project, explain, disableReuse)) ->
+                    match selectCompileInput(inputs)(project) with
+                        | SelectionInputError(message) -> CompileInputError(message)
+                        | SelectionUsageError(message) -> CompileUsageError(message)
+                        | SelectedInput(input) -> CompileParsedArguments(CompileArguments(input = input, outputPath = output, explain = explain, disableReuse = disableReuse))
 
 let recursive splitProgramArguments args before =
     match args with
@@ -169,37 +218,37 @@ let recursive splitProgramArguments args before =
         | "--" :: rest -> (reverseList(before), rest)
         | other :: rest -> splitProgramArguments(rest)(other :: before)
 
-let recursive partitionRunFlags args inputs explain disableReuse =
+let recursive partitionRunFlags args inputs project explain disableReuse =
     match args with
-        | [] -> Ok((inputs, explain, disableReuse))
+        | [] -> Ok((inputs, project, explain, disableReuse))
+        | "--project" :: value :: rest -> partitionRunFlags(rest)(inputs)(Some(value))(explain)(disableReuse)
+        | "--project" :: [] -> Error("Missing value for --project.")
         | "--explain" :: value :: rest ->
             match addExplainOption(value)(explain) with
                 | Error(message) -> Error(message)
-                | Ok(added) -> partitionRunFlags(rest)(inputs)(added)(disableReuse)
+                | Ok(added) -> partitionRunFlags(rest)(inputs)(project)(added)(disableReuse)
         | "--explain" :: [] -> Error("--explain requires a value." + explainValidValuesText)
-        | "--debug-disable-reuse" :: rest -> partitionRunFlags(rest)(inputs)(explain)(true)
+        | "--debug-disable-reuse" :: rest -> partitionRunFlags(rest)(inputs)(project)(explain)(true)
         | other :: rest ->
             if isOptionLike(other)
             then Error("Unknown option '" + other + "'.")
             else
-                partitionRunFlags(rest)(append(inputs)([other]))(explain)(disableReuse)
+                partitionRunFlags(rest)(append(inputs)([other]))(project)(explain)(disableReuse)
 
 let parseRunArguments args =
     match args with
         | "--help" :: [] -> RunHelpRequested
         | "-h" :: [] -> RunHelpRequested
-        | [] -> RunInputError("Missing input: provide a .ash file.")
         | _ ->
             match splitProgramArguments(args)([]) with
                 | (before, programArguments) ->
-                    match partitionRunFlags(before)([])(explainRequestNone)(false) with
+                    match partitionRunFlags(before)([])(None)(explainRequestNone)(false) with
                         | Error(message) -> RunUsageError(message)
-                        | Ok(([], _, _)) -> RunInputError("Missing input: provide a .ash file.")
-                        | Ok((input :: [], explain, disableReuse)) ->
-                            match checkInputPath(input) with
-                                | Error(message) -> RunInputError(message)
-                                | Ok(checked) -> RunParsedArguments(RunArguments(runInputPath = checked, programArguments = programArguments, runExplain = explain, runDisableReuse = disableReuse))
-                        | Ok((_, _, _)) -> RunUsageError("Provide exactly one input file.")
+                        | Ok((inputs, project, explain, disableReuse)) ->
+                            match selectCompileInput(inputs)(project) with
+                                | SelectionInputError(message) -> RunInputError(message)
+                                | SelectionUsageError(message) -> RunUsageError(message)
+                                | SelectedInput(input) -> RunParsedArguments(RunArguments(runInput = input, programArguments = programArguments, runExplain = explain, runDisableReuse = disableReuse))
 
 // `examples/hello.ash` compiles to `examples/hello`: the `.ash` suffix is dropped in place.
 let defaultOutputPath inputPath = Ashes.Text.substring(inputPath)(0)(Ashes.Text.length(inputPath) - 4)
@@ -302,13 +351,10 @@ let lowerStitchedProgram reuseEnabled inputPath source program =
             |> Error
         | _ -> Error("Lowering produced no program.")
 
-let lowerFileSource reuseEnabled inputPath source shipped =
-    match stitchWithShippedModules(inputStem(inputPath))(inputPath)(source)(shipped) with
-        | Error(error) ->
-            error
-            |> Ashes.Trait.Show.show
-            |> Error
-        | Ok(StitchedSyntaxProject { program = program } as stitched) ->
+// The stitched project lowered and optimized, with the placement facts the reports read.
+let lowerStitched reuseEnabled inputPath source stitched =
+    match stitched with
+        | StitchedSyntaxProject { program = program } ->
             match lowerStitchedProgram(reuseEnabled)(inputPath)(source)(program) with
                 | Error(message) -> Error(message)
                 | Ok((lowered, optimized, valuePlacements)) -> Ok((stitched, lowered, optimized, valuePlacements))
@@ -431,16 +477,31 @@ let emitObject lowered =
 
 let linkExecutable objectBytes = linkLinuxExecutable(objectBytes)(entrySymbolName)
 
+// The output's directory is created first, as stage 0 does, so a fresh project's
+// `<outDir>/<name>` needs no prior `mkdir`.
+let ensureOutputDirectory outputPath =
+    (let directory = Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(outputPath)
+    in
+        if directory == "" || directory == "."
+        then Ok(Unit)
+        else
+            match Ashes.IO.Directory.createAll(directory) with
+                | Error(message) -> Error("Could not create " + directory + ": " + message)
+                | Ok(_) -> Ok(Unit))
+
 let writeExecutable outputPath executableBytes =
-    match Ashes.IO.File.writeBytes(outputPath)(executableBytes) with
-        | Error(message) -> Error("Could not write " + outputPath + ": " + message)
+    match ensureOutputDirectory(outputPath) with
+        | Error(message) -> Error(message)
         | Ok(_) ->
-            match Ashes.IO.File.makeExecutable(outputPath) with
-                | Error(message) -> Error("Could not make " + outputPath + " executable: " + message)
+            match Ashes.IO.File.writeBytes(outputPath)(executableBytes) with
+                | Error(message) -> Error("Could not write " + outputPath + ": " + message)
                 | Ok(_) ->
-                    executableBytes
-                    |> Ashes.Byte.length
-                    |> Ok
+                    match Ashes.IO.File.makeExecutable(outputPath) with
+                        | Error(message) -> Error("Could not make " + outputPath + " executable: " + message)
+                        | Ok(_) ->
+                            executableBytes
+                            |> Ashes.Byte.length
+                            |> Ok
 
 let emitAndLink outputPath optimized =
     match emitObject(optimized) with
@@ -449,6 +510,16 @@ let emitAndLink outputPath optimized =
             match linkExecutable(objectBytes) with
                 | Error(message) -> Error(message)
                 | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+
+// Lowers, reports, emits, and links an already stitched program to `outputPath`, returning the
+// written byte count; `inputPath` and `source` are the text source locations are computed from.
+let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabled: Bool) inputPath source stitched =
+    match lowerStitched(reuseEnabled)(inputPath)(source)(stitched) with
+        | Error(message) -> Error(message)
+        | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
+            optimized
+            |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
+            |> (given (_) -> emitAndLink(outputPath)(optimized))
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
@@ -459,35 +530,126 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
             match loadShippedModules(Unit) with
                 | Error(message) -> Error(message)
                 | Ok(shipped) ->
-                    match lowerFileSource(reuseEnabled)(inputPath)(source)(shipped) with
-                        | Error(message) -> Error(message)
-                        | Ok((stitched, lowered, optimized, valuePlacements)) ->
-                            optimized
-                            |> writeExplainReport(explain)(stitched)(lowered)(valuePlacements)
-                            |> (given (_) -> emitAndLink(outputPath)(optimized))
+                    match stitchWithShippedModules(inputStem(inputPath))(inputPath)(source)(shipped) with
+                        | Error(error) ->
+                            error
+                            |> Ashes.Trait.Show.show
+                            |> Error
+                        | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(inputPath)(source)(stitched)
+
+// Compiles the project at `layout` to the executable at `outputPath`: its modules, its
+// dependencies' modules, and the shipped modules they reach are stitched into one program,
+// lowered against the entry module's text, and emitted exactly like the single-file form.
+let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    match Ashes.IO.File.readText(layout.entryPath) with
+        | Error(message) -> Error("Could not read " + layout.entryPath + ": " + message)
+        | Ok(source) ->
+            match loadShippedModules(Unit) with
+                | Error(message) -> Error(message)
+                | Ok(shipped) ->
+                    match stitchProject(Ashes.IO.Path.Unix)(layout)(shipped) with
+                        | Error(error) ->
+                            error
+                            |> Ashes.Trait.Show.show
+                            |> Error
+                        | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(layout.entryPath)(source)(stitched)
+
+let compileResolvedInput resolved outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
+    match resolved with
+        | ResolvedFileInput(inputPath) -> compileFileToExecutable(inputPath)(outputPath)(explain)(reuseEnabled)
+        | ResolvedProjectInput(layout) -> compileProjectToExecutable(layout)(outputPath)(explain)(reuseEnabled)
+
+// A project's output name: the manifest's name, or the entry file's stem when it names nothing.
+let projectOutputName (layout: ProjectLayout) =
+    match layout with
+        | ProjectLayout { entryPath = entryPath, manifest = ProjectManifest { name = name } } ->
+            match name with
+                | Some(text) ->
+                    if Ashes.Text.trim(text) == ""
+                    then inputStem(entryPath)
+                    else text
+                | None -> inputStem(entryPath)
+
+// Stage 0's default project output, `<outDir>/<name>`, with the manifest's `outDir` already
+// resolved against the project directory.
+let projectOutputPath (layout: ProjectLayout) =
+    layout
+    |> projectOutputName
+    |> Ashes.IO.Path.join(Ashes.IO.Path.Unix)(layout.outDir)
+
+let defaultOutputFor resolved =
+    match resolved with
+        | ResolvedFileInput(inputPath) -> defaultOutputPath(inputPath)
+        | ResolvedProjectInput(layout) -> projectOutputPath(layout)
+
+// The name a `run` temporary executable takes: the file's stem, or the project's output name.
+let resolvedInputStem resolved =
+    match resolved with
+        | ResolvedFileInput(inputPath) -> inputStem(inputPath)
+        | ResolvedProjectInput(layout) -> projectOutputName(layout)
+
+// `written` is the manifest path as the user gave it, named in stage 0's "Project file not
+// found" message; `manifestPath` is where it resolved to.
+let loadProjectInput written manifestPath =
+    match loadProject(Ashes.IO.Path.Unix)(manifestPath) with
+        | Error(ProjectReadError(_path, _message)) -> Error("Project file not found: " + written)
+        | Error(error) ->
+            error
+            |> Ashes.Trait.Show.show
+            |> Error
+        | Ok(layout) -> Ok(ResolvedProjectInput(layout))
+
+let currentDirectory unit =
+    match Ashes.IO.Environment.currentDirectory(Unit) with
+        | Error(message) -> Error("Could not determine the working directory: " + message)
+        | Ok(directory) -> Ok(directory)
+
+// The input once resolved: a file as given, an explicit manifest loaded relative to the working
+// directory (as stage 0 resolves it), or the manifest discovered upward from the working
+// directory; nothing to compile at all is stage 0's "Missing input file or --expr.".
+let resolveCompileInput input =
+    match input with
+        | CompileFile(inputPath) -> Ok(ResolvedFileInput(inputPath))
+        | CompileProject(written) ->
+            match currentDirectory(Unit) with
+                | Error(message) -> Error(message)
+                | Ok(directory) ->
+                    match selectProjectFile(Ashes.IO.Path.Unix)(directory)(Some(written)) with
+                        | Ok(Some(manifestPath)) -> loadProjectInput(written)(manifestPath)
+                        | _ -> Error("Project file not found: " + written)
+        | CompileDiscoveredProject ->
+            match currentDirectory(Unit) with
+                | Error(message) -> Error(message)
+                | Ok(directory) ->
+                    match selectProjectFile(Ashes.IO.Path.Unix)(directory)(None) with
+                        | Ok(Some(manifestPath)) -> loadProjectInput(manifestPath)(manifestPath)
+                        | _ -> Error("Missing input file or --expr.")
 
 let runCompileWithArguments arguments =
     match arguments with
-        | CompileArguments { inputPath = inputPath, outputPath = outputPath, explain = explain, disableReuse = disableReuse } ->
-            let output =
-                match outputPath with
-                    | Some(explicit) -> explicit
-                    | None -> defaultOutputPath(inputPath)
-            in
-                match compileFileToExecutable(inputPath)(output)(explain)(disableReuse == false) with
-                    | Error(message) -> CompileFailed(message)
-                    | Ok(size) ->
-                        Unit
-                        |> (given (_) -> Ashes.IO.print("OK Wrote " + formatByteSize(size) + " to " + output))
-                        |> (given (_) -> Ashes.IO.print("     Target: linux-x64"))
-                        |> (given (_) -> CompileSucceeded(0))
+        | CompileArguments { input = input, outputPath = outputPath, explain = explain, disableReuse = disableReuse } ->
+            match resolveCompileInput(input) with
+                | Error(message) -> CompileFailed(message)
+                | Ok(resolved) ->
+                    let output =
+                        match outputPath with
+                            | Some(explicit) -> explicit
+                            | None -> defaultOutputFor(resolved)
+                    in
+                        match compileResolvedInput(resolved)(output)(explain)(disableReuse == false) with
+                            | Error(message) -> CompileFailed(message)
+                            | Ok(size) ->
+                                Unit
+                                |> (given (_) -> Ashes.IO.print("OK Wrote " + formatByteSize(size) + " to " + output))
+                                |> (given (_) -> Ashes.IO.print("     Target: linux-x64"))
+                                |> (given (_) -> CompileSucceeded(0))
 
 // The full `ashes compile` entry point: parses `args`, prints the help, usage-error, input-error,
 // and failure messages, and returns the process exit code.
 let runCompile args =
     match parseCompileArguments(args) with
         | CompileHelpRequested ->
-            let _ = Ashes.IO.writeLine("Usage: ashes compile [--explain <kind>] [-o <output>] <input.ash>")
+            let _ = Ashes.IO.writeLine("Usage: ashes compile [--project <manifest>] [--explain <kind>] [-o <output>] [<input.ash>]")
             in 0
         | CompileInputError(message) ->
             let _ = Ashes.IO.writeErrorLine(message)
@@ -517,7 +679,7 @@ let recursive relayStderr process =
             let _ = Ashes.IO.writeErrorLine(line)
             in relayStderr(process)
 
-let temporaryExecutablePath inputPath =
+let temporaryExecutablePath stem =
     match Ashes.IO.Environment.temporaryDirectory(Unit) with
         | Error(message) -> Error("Could not locate the temporary directory: " + message)
         | Ok(temporary) ->
@@ -526,8 +688,7 @@ let temporaryExecutablePath inputPath =
                 match Ashes.IO.Directory.createAll(directory) with
                     | Error(message) -> Error("Could not create " + directory + ": " + message)
                     | Ok(_) ->
-                        inputPath
-                        |> inputStem
+                        stem
                         |> Ashes.IO.Path.join(Ashes.IO.Path.Unix)(directory)
                         |> Ok
 
@@ -543,20 +704,25 @@ let spawnCompiledProgram executablePath programArguments =
             |> Ashes.IO.Process.waitForExit
             |> Ok
 
-let runProgramFile inputPath programArguments (explain: ExplainRequest) (reuseEnabled: Bool) =
-    match temporaryExecutablePath(inputPath) with
+let runProgram input programArguments (explain: ExplainRequest) (reuseEnabled: Bool) =
+    match resolveCompileInput(input) with
         | Error(message) -> Error(message)
-        | Ok(executablePath) ->
-            match compileFileToExecutable(inputPath)(executablePath)(explain)(reuseEnabled) with
+        | Ok(resolved) ->
+            match resolved
+            |> resolvedInputStem
+            |> temporaryExecutablePath with
                 | Error(message) -> Error(message)
-                | Ok(_) -> spawnCompiledProgram(executablePath)(programArguments)
+                | Ok(executablePath) ->
+                    match compileResolvedInput(resolved)(executablePath)(explain)(reuseEnabled) with
+                        | Error(message) -> Error(message)
+                        | Ok(_) -> spawnCompiledProgram(executablePath)(programArguments)
 
 // The full `ashes run` entry point: compiles to the temporary directory, runs the program with the
 // arguments after `--`, and returns the program's own exit code (1 for a failure before it starts).
 let runRun args =
     match parseRunArguments(args) with
         | RunHelpRequested ->
-            let _ = Ashes.IO.writeLine("Usage: ashes run [--explain <kind>] <input.ash> [-- <args...>]")
+            let _ = Ashes.IO.writeLine("Usage: ashes run [--project <manifest>] [--explain <kind>] [<input.ash>] [-- <args...>]")
             in 0
         | RunInputError(message) ->
             let _ = Ashes.IO.writeErrorLine(message)
@@ -564,8 +730,8 @@ let runRun args =
         | RunUsageError(message) ->
             let _ = Ashes.IO.writeErrorLine(message)
             in 2
-        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = programArguments, runExplain = explain, runDisableReuse = disableReuse }) ->
-            match runProgramFile(inputPath)(programArguments)(explain)(disableReuse == false) with
+        | RunParsedArguments(RunArguments { runInput = input, programArguments = programArguments, runExplain = explain, runDisableReuse = disableReuse }) ->
+            match runProgram(input)(programArguments)(explain)(disableReuse == false) with
                 | Error(message) ->
                     let _ = Ashes.IO.writeErrorLine(message)
                     in 1

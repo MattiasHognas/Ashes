@@ -3349,13 +3349,27 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
 - [~] **CLI-2** `compile` for files, expressions, projects, output selection, IR dumps, and compiler reports.
   Done: the single-file form through the full self-hosted pipeline to a linux-x64 executable, with
   `-o`/`--out`, default output naming, the `OK Wrote ...` confirmation, stage 0's exit codes,
-  `--explain` parsing/report dispatch (CLI-9), and `--debug-disable-reuse` (OPT-44).
-  Open: `--expr`, `--project`, other targets, optimization and the remaining debug options,
-  IR dumps (CLI-10), elapsed time, and installed-layout library discovery. Missing report data
-  remains under CLI-9/IR-9, not an unported `--explain` option.
+  `--explain` parsing/report dispatch (CLI-9), and `--debug-disable-reuse` (OPT-44); the project
+  form (`--project <manifest>`, or the `ashes.json` discovered upward from the working directory
+  when no input is given): `ProjectCompilationPlanning` loads the shipped `Ashes.*` modules a
+  project's modules import (`buildProjectCompilationPlanWithShipped`, the name itself or its
+  parent module for a type import, intrinsic modules as empty units) and keeps every parsed
+  program and the resolved dependency graph in the plan, `ProjectStitching.stitchProject`
+  turns the plan into one stitched program with stage 0's package identities (`ashes-core`, the
+  dependency's name, the project's manifest name or path), and the CLI compiles it like a file
+  with stage 0's `<outDir>/<name>` default output, output-directory creation, and its
+  "Cannot combine --project with input file or --expr." / "Project file not found" / "Missing
+  input file or --expr." messages (`selfhost/tests/projects/ProjectStitchingTests.ash`, the
+  `--as-cli` project tests in `selfhost/tests/cli`).
+  Open: `--expr`, other targets, optimization and the remaining debug options, IR dumps
+  (CLI-10), elapsed time, installed-layout library discovery, the automatic registry restore
+  stage 0 runs before a project compile, and per-module source locations for a project build
+  (the lowering's source context takes the entry text only; MOD-8's anchors). Missing report
+  data remains under CLI-9/IR-9, not an unported `--explain` option.
 - [~] **CLI-3** `run` with argument forwarding, temporary outputs, and exit-status propagation. Done: the file
-  form (temp output, `--` forwarding, line-relayed stdio, the program's own exit code). Open:
-  `--expr`, `--project`, uniquely named temp outputs, and the compile options above.
+  and project forms (temp output named by the file's stem or the project's output name, `--`
+  forwarding, line-relayed stdio, the program's own exit code). Open: `--expr`, uniquely named
+  temp outputs, and the compile options above.
 - [ ] **CLI-4** The stateful `repl`, target/optimization commands, recovery after diagnostics, and
   deterministic cleanup.
 - [~] **CLI-5** `fmt` discovery, preview/write behavior, malformed-file handling, and canonical exit codes.
@@ -3458,7 +3472,14 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
 - [ ] **BOOT-1** Define a reproducible stage-0 input consisting of the released C# compiler, pinned LLVM/runtime
   payloads, restored source dependencies, and the pure-Ashes compiler sources.
 - [ ] **BOOT-2** Build a stage-1 host compiler with stage 0, then use stage 1 to build stage 2 without invoking C#,
-  Python, shell, or Node.js as an implementation step.
+  Python, shell, or Node.js as an implementation step. Probe (2026-09-13, the first run of
+  `ashes compile --project selfhost/packages/cli/ashes.json` through stage 1, possible since
+  CLI-2's project form): planning stops at `Ashes.Ffi`, a builtin module with neither a shipped
+  source nor an intrinsic entry (CG-11's FFI slice; `Compile.ash` copies LLVM buffers with
+  `Ashes.Ffi.copyBytes`), and the self-hosted sources rely on bare qualified references to
+  shipped members without an import (`Ashes.Text.join`, LNK-2's open tail), which stage 1
+  rejects as `UnknownLoweringBinding`. Re-run the probe after each of those closes; it is the
+  cheapest honest signal of what still blocks self-compilation.
 - [ ] **BOOT-3** Compare stage-1/stage-2 deterministic artifacts where possible and otherwise compare normalized
   tokens, diagnostics, schemes, IR, object structure, executable behavior, and reports.
 - [ ] **BOOT-4** Compile and run the compiler, standard library, examples, and complete test corpus with the

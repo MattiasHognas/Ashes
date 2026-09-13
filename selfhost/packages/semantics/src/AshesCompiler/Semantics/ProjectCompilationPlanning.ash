@@ -5,6 +5,13 @@
 // - Imports are parsed and resolved against built interfaces before modules are ordered.
 // - Ambiguous, missing, or cyclic modules fail planning rather than selecting an arbitrary source.
 // - Reachable parse diagnostics retain source attribution and deterministic discovery order.
+// - A reserved `Ashes.*` import resolves only against the supplied shipped module texts (or an
+//   intrinsic builtin module, which has no source): the module itself when a text carries its
+//   name, otherwise its parent module (a type import such as `Ashes.IO.Path.Style`), and every
+//   shipped module's own imports are followed the same way. Without shipped texts only the
+//   intrinsic modules resolve.
+// - The plan keeps every parsed program beside its planned module, so a consumer that stitches
+//   the project never parses a source twice.
 
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
@@ -21,21 +28,34 @@ import AshesCompiler.Frontend.ModulePlan.ModulePlanUnit
 import AshesCompiler.Frontend.ModulePlan.PlannedModule
 import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Frontend.Parser
+import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.ProjectDependencyGraph
 import AshesCompiler.Semantics.ProjectDiagnostics
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectSourceEnumeration
 import AshesCompiler.Semantics.ProjectSourceEnumeration.ProjectSourceEnumerationError
+import AshesCompiler.Semantics.ShippedModuleStitching
 export (
+    type PlannedModuleProgram(..),
     type ProjectCompilationPlan(..),
     type ProjectCompilationError(..),
+    value plannedProgram,
     value buildProjectCompilationPlan,
+    value buildProjectCompilationPlanWithShipped,
 )
 
+type PlannedModuleProgram =
+    | name: Str
+    | program: ProgramSyntax
+
+// `dependencies` is the resolved graph the plan was built over, so a consumer can attribute each
+// planned module to the package whose source root contains it without resolving the graph again.
 type ProjectCompilationPlan =
     | sourceFiles: List(Str)
     | modules: List(PlannedModule)
-    deriving {Eq, Show}
+    | programs: List(PlannedModuleProgram)
+    | dependencies: List(ResolvedProjectDependency)
 
 type ProjectCompilationError =
     | ProjectCompilationDependencyGraphError(ProjectDependencyGraphError)
@@ -59,6 +79,7 @@ type IndexedProjectSource =
 
 type LoadedProjectModule =
     | units: List(ModulePlanUnit)
+    | programs: List(PlannedModuleProgram)
     | dependencies: List(Str)
     | names: List(Str)
     | diagnosticSources: List(ProjectDiagnosticSource)
@@ -66,14 +87,17 @@ type LoadedProjectModule =
 type ReachableModuleSet =
     | names: List(Str)
     | units: List(ModulePlanUnit)
+    | programs: List(PlannedModuleProgram)
     | diagnosticSources: List(ProjectDiagnosticSource)
 
 type ParsedProjectModuleResult =
     | unit: Maybe(ModulePlanUnit)
+    | program: Maybe(PlannedModuleProgram)
     | diagnosticSource: Maybe(ProjectDiagnosticSource)
 
 type ParsedProjectModuleCollection =
     | units: List(ModulePlanUnit)
+    | programs: List(PlannedModuleProgram)
     | diagnosticSources: List(ProjectDiagnosticSource)
 
 type ExpandedProjectModuleContext =
@@ -280,11 +304,12 @@ let finishParsedProjectModule path module parsed =
                     |> cu(deepCopy(n))(deepCopy(s))(deepCopy(i))(
                         deepCopy(moduleInterface)
                     ))
-                    |> (given (unit) -> ParsedProjectModuleResult(unit = unit, diagnosticSource = None))
+                    |> (given (unit) -> ParsedProjectModuleResult(unit = unit, program = Some(PlannedModuleProgram(name = deepCopy(n), program = program)), diagnosticSource = None))
                     |> Ok
         | (_module, ProgramParseResult { diagnostics = diagnostics }) ->
             Ok(ParsedProjectModuleResult(
                 unit = None,
+                program = None,
                 diagnosticSource = Some(ProjectDiagnosticSource(
                     sourcePath = path,
                     diagnostics = diagnostics
@@ -310,6 +335,11 @@ let parsedProjectModuleUnits result =
         | ParsedProjectModuleResult { unit = Some(unit) } -> [unit]
         | ParsedProjectModuleResult { unit = None } -> []
 
+let parsedProjectModulePrograms result =
+    match result with
+        | ParsedProjectModuleResult { program = Some(program) } -> [program]
+        | ParsedProjectModuleResult { program = None } -> []
+
 let parsedProjectModuleDiagnostics result =
     match result with
         | ParsedProjectModuleResult { diagnosticSource = Some(source) } -> [source]
@@ -317,9 +347,10 @@ let parsedProjectModuleDiagnostics result =
 
 let prependParsedProjectModule result collection =
     match collection with
-        | ParsedProjectModuleCollection { units = units, diagnosticSources = diagnosticSources } ->
+        | ParsedProjectModuleCollection { units = units, programs = programs, diagnosticSources = diagnosticSources } ->
             ParsedProjectModuleCollection(
                 units = appendList(parsedProjectModuleUnits(result))(units),
+                programs = appendList(parsedProjectModulePrograms(result))(programs),
                 diagnosticSources = appendList(parsedProjectModuleDiagnostics(result))(diagnosticSources)
             )
 
@@ -333,7 +364,7 @@ let continueInlineModuleParsing parsed tailResult =
 
 let recursive parseInlineModules (path: Str) (names: List(Str)) (modules: List(InlineModuleInfo)) =
     match modules with
-        | [] -> Ok(ParsedProjectModuleCollection(units = [], diagnosticSources = []))
+        | [] -> Ok(ParsedProjectModuleCollection(units = [], programs = [], diagnosticSources = []))
         | InlineModuleInfo { name = name, source = text } :: rest ->
             text
             |> parseProjectModule(path + "#" + name)(inlineParsedProjectModule(path)(names)(name)(text))
@@ -369,11 +400,14 @@ let recursive validateInlineModuleSources path sources modules =
 
 let appendOuterParsedModule outer collection =
     match collection with
-        | ParsedProjectModuleCollection { units = units, diagnosticSources = diagnosticSources } ->
+        | ParsedProjectModuleCollection { units = units, programs = programs, diagnosticSources = diagnosticSources } ->
             ParsedProjectModuleCollection(
                 units = outer
                 |> parsedProjectModuleUnits
                 |> appendList(units),
+                programs = outer
+                |> parsedProjectModulePrograms
+                |> appendList(programs),
                 diagnosticSources = outer
                 |> parsedProjectModuleDiagnostics
                 |> appendList(diagnosticSources)
@@ -381,9 +415,10 @@ let appendOuterParsedModule outer collection =
 
 let completeExpandedModule context collection =
     match (context, collection) with
-        | (ExpandedProjectModuleContext { name = name, sources = sources, imports = imports, inlineNames = inlineNames }, ParsedProjectModuleCollection { units = units, diagnosticSources = diagnosticSources }) ->
+        | (ExpandedProjectModuleContext { name = name, sources = sources, imports = imports, inlineNames = inlineNames }, ParsedProjectModuleCollection { units = units, programs = programs, diagnosticSources = diagnosticSources }) ->
             LoadedProjectModule(
                 units = units,
+                programs = programs,
                 dependencies = deps(sources)(name :: deepCopy(inlineNames))(imports),
                 names = appendList(inlineNames)([name]),
                 diagnosticSources = diagnosticSources
@@ -485,57 +520,153 @@ let readIndexedModule entryModuleName name path sources =
             |> Error
         | Ok(source) -> parseLoadedModule(entryModuleName)(name)(path)(sources)(source)
 
-let loadNamedModule entryModuleName (name: Str) (sources: List(IndexedProjectSource)) =
-    match pathsForModule(name)(sources) with
-        | [] ->
-            sources
-            |> indexedModuleNames
-            |> ProjectCompilationMissingModule(name)
-            |> Error
-        | path :: [] -> readIndexedModule(entryModuleName)(name)(path)(sources)
-        | paths ->
-            paths
-            |> ProjectCompilationAmbiguousModule(name)
-            |> Error
+let recursive findShippedText (name: Str) (shipped: List(ShippedModuleText)) =
+    match shipped with
+        | [] -> None
+        | candidate :: rest ->
+            if candidate.moduleName == name
+            then Some(candidate)
+            else findShippedText(name)(rest)
 
-let recursive loadReachableModules entryModuleName pending loaded reversedUnits reversedDiagnosticSources sources =
+let isShippedOrIntrinsic (name: Str) (shipped: List(ShippedModuleText)) =
+    match findShippedText(name)(shipped) with
+        | Some(_) -> true
+        | None -> isIntrinsicBuiltinModule(name)
+
+// The module a reserved import name loads: the name itself when it is a shipped or intrinsic
+// module, otherwise its parent (an `Ashes.IO.Path.Style`-style type import names a type of the
+// parent module), otherwise the name itself so the load reports it as missing.
+let shippedLoadTarget (name: Str) (shipped: List(ShippedModuleText)) =
+    if isShippedOrIntrinsic(name)(shipped)
+    then name
+    else
+        match parentModuleName(name) with
+            | Some(parent) ->
+                if isShippedOrIntrinsic(parent)(shipped)
+                then parent
+                else name
+            | None -> name
+
+let recursive importedModulePaths (entries: List(ImportHeaderEntry)) =
+    match entries with
+        | [] -> []
+        | ImportHeaderEntry { modulePath = modulePath } :: rest -> deepCopy(modulePath) :: importedModulePaths(rest)
+
+let shippedUnit name path imports program =
+    match buildModuleInterface(name)([])(program) with
+        | Error(error) ->
+            error
+            |> ProjectCompilationInterfaceError(path)
+            |> Error
+        | Ok(moduleInterface) ->
+            LoadedProjectModule(
+                units = [cu(deepCopy(name))(ShippedModuleSource(path))(deepCopy(imports))(deepCopy(moduleInterface))([])],
+                programs = [PlannedModuleProgram(name = deepCopy(name), program = program)],
+                dependencies = importedModulePaths(imports),
+                names = [deepCopy(name)],
+                diagnosticSources = []
+            ) |> Ok
+
+let parseShippedModule name path source =
+    match parseImportHeader(source) with
+        | Error(error) ->
+            error
+            |> ProjectCompilationImportHeaderError(path)
+            |> Error
+        | Ok(ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports }) ->
+            match parseProgram(sourceWithoutImports) with
+                | ProgramParseResult { program = program, diagnostics = [] } -> shippedUnit(name)(path)(imports)(program)
+                | ProgramParseResult { diagnostics = diagnostics } ->
+                    Ok(LoadedProjectModule(
+                        units = [],
+                        programs = [],
+                        dependencies = [],
+                        names = [deepCopy(name)],
+                        diagnosticSources = [ProjectDiagnosticSource(sourcePath = path, diagnostics = diagnostics)]
+                    ))
+
+// An intrinsic builtin module has no source: its members are reached through qualified access,
+// so it plans as an empty module whose interface exports nothing.
+let intrinsicModule name = shippedUnit(name)("<builtin>")([])(ProgramSyntax(items = [], body = None))
+
+let loadShippedModule (name: Str) (shipped: List(ShippedModuleText)) (sources: List(IndexedProjectSource)) =
+    match findShippedText(name)(shipped) with
+        | Some(ShippedModuleText { sourcePath = path, source = source }) -> parseShippedModule(name)(path)(source)
+        | None ->
+            if isIntrinsicBuiltinModule(name)
+            then intrinsicModule(name)
+            else
+                sources
+                |> indexedModuleNames
+                |> ProjectCompilationMissingModule(name)
+                |> Error
+
+let loadNamedModule entryModuleName shipped (name: Str) (sources: List(IndexedProjectSource)) =
+    if Ashes.Text.startsWith(name)("Ashes.")
+    then loadShippedModule(name)(shipped)(sources)
+    else
+        match pathsForModule(name)(sources) with
+            | [] ->
+                sources
+                |> indexedModuleNames
+                |> ProjectCompilationMissingModule(name)
+                |> Error
+            | path :: [] -> readIndexedModule(entryModuleName)(name)(path)(sources)
+            | paths ->
+                paths
+                |> ProjectCompilationAmbiguousModule(name)
+                |> Error
+
+let loadTargetName (name: Str) (shipped: List(ShippedModuleText)) =
+    if Ashes.Text.startsWith(name)("Ashes.")
+    then shippedLoadTarget(name)(shipped)
+    else name
+
+let recursive loadReachableModules entryModuleName shipped pending loaded reversedUnits reversedPrograms reversedDiagnosticSources sources =
     match pending with
         | [] ->
             Ok(ReachableModuleSet(
                 names = loaded,
                 units = reverseList(reversedUnits),
+                programs = reverseList(reversedPrograms),
                 diagnosticSources = reverseList(reversedDiagnosticSources)
             ))
-        | name :: rest ->
-            if containsText(name)(loaded)
-            then
-                loadReachableModules(
-                    entryModuleName,
-                    rest,
-                    loaded,
-                    reversedUnits,
-                    reversedDiagnosticSources,
-                    sources
-                )
-            else
-                match loadNamedModule(deepCopy(entryModuleName))(name)(sources) with
-                    | Error(error) -> Error(error)
-                    | Ok(LoadedProjectModule { units = units, dependencies = dependencies, names = names, diagnosticSources = diagnosticSources }) ->
-                        loadReachableModules(
-                            entryModuleName,
-                            appendList(deepCopy(dependencies))(rest),
-                            appendList(deepCopy(names))(loaded),
-                            appendList(units
-                            |> deepCopy
-                            |> reverseList)(reversedUnits),
-                            appendList(
-                                diagnosticSources
+        | pendingName :: rest ->
+            let name = loadTargetName(pendingName)(shipped)
+            in
+                if containsText(name)(loaded)
+                then
+                    loadReachableModules(
+                        entryModuleName,
+                        shipped,
+                        rest,
+                        loaded,
+                        reversedUnits,
+                        reversedPrograms,
+                        reversedDiagnosticSources,
+                        sources
+                    )
+                else
+                    match loadNamedModule(deepCopy(entryModuleName))(shipped)(name)(sources) with
+                        | Error(error) -> Error(error)
+                        | Ok(LoadedProjectModule { units = units, programs = programs, dependencies = dependencies, names = names, diagnosticSources = diagnosticSources }) ->
+                            loadReachableModules(
+                                entryModuleName,
+                                shipped,
+                                appendList(deepCopy(dependencies))(rest),
+                                appendList(deepCopy(names))(loaded),
+                                appendList(units
                                 |> deepCopy
-                                |> reverseList,
-                                reversedDiagnosticSources
-                            ),
-                            sources
-                        )
+                                |> reverseList)(reversedUnits),
+                                appendList(reverseList(programs))(reversedPrograms),
+                                appendList(
+                                    diagnosticSources
+                                    |> deepCopy
+                                    |> reverseList,
+                                    reversedDiagnosticSources
+                                ),
+                                sources
+                            )
 
 let recursive lastModuleName names =
     match names with
@@ -546,12 +677,14 @@ let recursive lastModuleName names =
             |> Some
         | _name :: rest -> lastModuleName(rest)
 
-let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List(IndexedProjectSource)) =
+let planIndexedSources (layout: ProjectLayout) shipped (dependencies: List(ResolvedProjectDependency)) (paths: List(Str)) (sources: List(IndexedProjectSource)) =
     (let loadLayout = deepCopy(layout)
     in
         match loadReachableModules(
             projectEntryModuleName(loadLayout),
+            shipped,
             [projectEntryModuleName(layout)],
+            [],
             [],
             [],
             [],
@@ -563,7 +696,7 @@ let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List
                 |> orderProjectDiagnostics
                 |> ProjectCompilationParseError
                 |> Error
-            | Ok(ReachableModuleSet { names = names, units = units, diagnosticSources = [] }) ->
+            | Ok(ReachableModuleSet { names = names, units = units, programs = programs, diagnosticSources = [] }) ->
                 match lastModuleName(names) with
                     | None ->
                         []
@@ -572,9 +705,9 @@ let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List
                     | Some(entryModuleName) ->
                         match buildModulePlan(entryModuleName)(units) with
                             | Error(error) -> Error(ProjectCompilationModulePlanError(error))
-                            | Ok(modules) -> Ok(ProjectCompilationPlan(sourceFiles = paths, modules = modules)))
+                            | Ok(modules) -> Ok(ProjectCompilationPlan(sourceFiles = paths, modules = modules, programs = programs, dependencies = dependencies)))
 
-let indexEnumeratedSources (style: Style) (layout: ProjectLayout) (roots: List(Str)) (paths: List(Str)) =
+let indexEnumeratedSources (style: Style) (layout: ProjectLayout) shipped dependencies (roots: List(Str)) (paths: List(Str)) =
     (let retainedLayout = deepCopy(layout)
     in
         match paths
@@ -583,7 +716,7 @@ let indexEnumeratedSources (style: Style) (layout: ProjectLayout) (roots: List(S
         |> deepCopy
         |> projectEntryPath)(projectEntryModuleName(layout)) with
             | Error(error) -> Error(error)
-            | Ok(sources) -> planIndexedSources(retainedLayout)(paths)(sources))
+            | Ok(sources) -> planIndexedSources(retainedLayout)(shipped)(dependencies)(paths)(sources))
 
 let projectSourceRoots (layout: ProjectLayout) =
     match layout with
@@ -601,31 +734,42 @@ let recursive dependencySourceRoots dependencies =
             |> dependencySourceRoots
             |> appendList(roots)
 
-let compilationSourceRoots (layout: ProjectLayout) (graph: ProjectDependencyGraph) =
-    match graph with
-        | ProjectDependencyGraph { dependencies = dependencies } ->
-            dependencies
-            |> dependencySourceRoots
-            |> appendList(projectSourceRoots(layout))
+let compilationSourceRoots (layout: ProjectLayout) (dependencies: List(ResolvedProjectDependency)) =
+    dependencies
+    |> dependencySourceRoots
+    |> appendList(projectSourceRoots(layout))
 
-let planCompilationRoots style (layout: ProjectLayout) roots =
+let planCompilationRoots style (layout: ProjectLayout) shipped dependencies roots =
     match enumerateProjectSourceFiles(style)(roots) with
         | Error(error) -> Error(ProjectCompilationSourceEnumerationError(error))
         | Ok(enumerated) ->
             enumerated
             |> ensureEntrySource(deepCopy(layout))
-            |> indexEnumeratedSources(style)(layout)(roots)
+            |> indexEnumeratedSources(style)(layout)(shipped)(dependencies)(roots)
 
-let continueProjectDependencyGraph style (layout: ProjectLayout) graphResult =
+let continueProjectDependencyGraph style (layout: ProjectLayout) shipped graphResult =
     match graphResult with
         | Error(error) -> Error(ProjectCompilationDependencyGraphError(error))
-        | Ok(graph) ->
-            graph
+        | Ok(ProjectDependencyGraph { dependencies = dependencies }) ->
+            dependencies
             |> compilationSourceRoots(deepCopy(layout))
-            |> planCompilationRoots(style)(layout)
+            |> planCompilationRoots(style)(layout)(shipped)(dependencies)
 
-let buildProjectCompilationPlan (style: Style) (layout: ProjectLayout) =
+// Plans the project with the reserved `Ashes.*` imports resolved against `shipped`, the in-memory
+// standard-library texts a compile driver has read from the installed layout.
+let buildProjectCompilationPlanWithShipped (style: Style) (layout: ProjectLayout) (shipped: List(ShippedModuleText)) =
     layout
     |> deepCopy
     |> resolveProjectDependencyGraph(style)
-    |> continueProjectDependencyGraph(style)(layout)
+    |> continueProjectDependencyGraph(style)(layout)(shipped)
+
+let buildProjectCompilationPlan (style: Style) (layout: ProjectLayout) = buildProjectCompilationPlanWithShipped(style)(layout)([])
+
+// The parsed program planned under `name`, if the plan loaded one.
+let recursive plannedProgram (name: Str) (programs: List(PlannedModuleProgram)) =
+    match programs with
+        | [] -> None
+        | PlannedModuleProgram { name = candidate, program = program } :: rest ->
+            if candidate == name
+            then Some(program)
+            else plannedProgram(name)(rest)
