@@ -1265,6 +1265,12 @@ let codegenInstructionKind cx builder kind state =
                                                 |> lookupIndexed(path)
                                                 |> emitFileReadAllBytes(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
+                                        | CopyFfiBytes(target, pointer, length) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(length)
+                                                |> emitCopyFfiBytes(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(pointer)(tempEnv))
+                                            in ((target, resultValue) :: tempEnv, terminated)
                                         | FileMmap(target, path) ->
                                             let resultValue =
                                                 tempEnv

@@ -138,8 +138,35 @@ let checkMalformedBodyDefersToParser unit =
     |> expectExpansion
     |> checkMalformedExpansion
 
+let recursive numberedLines (count: Int) (lines: List(Str)) =
+    if count <= 0
+    then lines
+    else numberedLines(count - 1)("let value" + Ashes.Text.fromInt(count) + " = " + Ashes.Text.fromInt(count) :: "" :: lines)
+
+// A source the size of a compiler module with `"\r\n"` line ends and one inline module at its
+// end is expanded in one pass: every `"\r\n"` of the outer text becomes `"\n"`, an empty line
+// between two of them stays empty, and a lone `"\r"` inside a line is kept. A
+// character-by-character rebuild of the text overflowed the stack here, and a record
+// accumulator over the lines cost quadratic memory.
+let checkLargeCrLfSource unit =
+    (let outerLines = "let lone = \"\r\"" :: numberedLines(40000)([])
+    in
+        ["module Nested =", "    let answer = 42"]
+        |> Ashes.Collection.List.append(outerLines)
+        |> Ashes.Text.join("\r\n")
+        |> expandInlineModules("Example")
+        |> expectExpansion
+        |> (given (expansion: InlineModuleExpansion) ->
+            match expansion with
+                | InlineModuleExpansion { source = source, modules = modules } ->
+                    unit
+                    |> (given (_) ->
+                        assertNamed("normalized large source")(Ashes.Text.join("\n")(outerLines))(source))
+                    |> (given (_) -> assertNamed("large source modules")([moduleInfo("Example.Nested")("let answer = 42")])(modules))))
+
 let run unit =
     unit
+    |> checkLargeCrLfSource
     |> checkHeaderRecognition
     |> checkFlatExpansion
     |> checkEntryExpansion

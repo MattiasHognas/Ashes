@@ -129,6 +129,7 @@ let builtinCases =
         (CoreBytesGetU64Le, binaryArguments, binaryTypes),
         (CoreUIntToInt, unaryArguments, unaryTypes),
         (CoreUIntFromInt, unaryArguments, unaryTypes),
+        (CoreFfiCopyBytes, binaryArguments, binaryTypes),
         (CoreSpawnProcess, binaryArguments, binaryTypes),
         (CoreProcessWriteStdin, binaryArguments, binaryTypes),
         (CoreProcessReadStdoutLine, unaryArguments, unaryTypes),
@@ -180,11 +181,25 @@ let expectRepresentativeInstructions unit =
                     | CoreBuiltinEmission { instructions = LoadConstInt(10, 255) :: AndInt(11, 1, 10) :: [] } -> Unit
                     | _ -> test.fail("UInt.fromInt emitted the wrong masking instructions")
             | _ -> test.fail("UInt.fromInt did not retain its stage-0 u8 mask"))
+    |> (given (_) ->
+        match emitCoreBuiltin(CoreFfiCopyBytes)(false)(10)(binaryArguments)(binaryTypes) with
+            | CoreBuiltinEmission { instructions = CopyFfiBytes(10, 1, 2) :: [], nextTemp = 11, result = CoreBuiltinTemp(10), error = None } -> Unit
+            | _ -> test.fail("Ffi.copyBytes did not lower to one CopyFfiBytes over its pointer and length"))
 
 let expectArityFailure unit =
     match emitCoreBuiltin(CoreRegexFind)(false)(10)(unaryArguments)(unaryTypes) with
         | CoreBuiltinEmission { error = Some(_) } -> unit
         | _ -> test.fail("builtin lowering accepted the wrong arity")
+
+let recursive builtinSchemeIn (layouts: List(CoreBuiltinLayout)) (moduleName: Str) (memberName: Str) =
+    match layouts with
+        | [] -> None
+        | CoreBuiltinLayout { moduleName = candidateModule, memberName = candidateMember, scheme = scheme } :: rest ->
+            if candidateModule == moduleName && candidateMember == memberName
+            then Some(scheme)
+            else builtinSchemeIn(rest)(moduleName)(memberName)
+
+let builtinScheme (moduleName: Str) (memberName: Str) = builtinSchemeIn(standardBuiltinLayouts)(moduleName)(memberName)
 
 let expectBuiltinRegistry unit =
     unit
@@ -208,6 +223,18 @@ let expectBuiltinRegistry unit =
         match coreBuiltinKind("Ashes.Task")("run") with
             | None -> Unit
             | _ -> test.fail("the builtin registry consumed an operation owned by async lowering"))
+    |> (given (_) ->
+        match coreBuiltinKind("Ashes.Ffi")("copyBytes") with
+            | Some(CoreFfiCopyBytes) -> Unit
+            | _ -> test.fail("the foreign byte copy is absent from the core builtin registry"))
+    |> (given (_) ->
+        if isIntrinsicBuiltinModule("Ashes.Ffi")
+        then Unit
+        else test.fail("Ashes.Ffi is not an intrinsic builtin module, so a project using it would look for a shipped source"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Ffi")("copyBytes") with
+            | Some(TypeScheme { body = SemFunction(SemPointer(SemUInt(8)), SemFunction(SemUInt(64), SemNamed(_, "Result", SemString :: SemBytes :: []), _row), _outerRow) }) -> Unit
+            | _ -> test.fail("Ffi.copyBytes is not typed as *u8 -> u64 -> Result(Str, Bytes)"))
 
 let runCoreBuiltinLoweringTests unit =
     unit

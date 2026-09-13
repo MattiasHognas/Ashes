@@ -69,7 +69,10 @@ let mainProgram =
     |> ExprHandle(ExprQualifiedVar("Util.Logging")("write"))
     |> binding("handled"))(false), TopLevelTypeAlias(
         TypeAliasDecl(name = "Local", typeParameters = [], target = TypeNamed("Foo.Util.Tree"))
-    )], body = Some(ExprTuple([ExprVar("before"), ExprVar("later")])))
+    ), TopLevelLet(binding("copied")(ExprVar("copy")))(false)], body = Some(ExprTuple([ExprVar("before"), ExprVar("later")])))
+
+// An intrinsic builtin module plans as an empty program whose interface names its members.
+let intrinsicUnit = SemanticStitchUnit(name = "Ashes.Internal", packageId = "ashes-core", sourcePath = "<builtin>", imports = [], interface = ModuleImportInterface(name = "Ashes.Internal", exports = [ImportValueExport("deepCopy")]), program = ProgramSyntax(items = [], body = None), isEntry = false)
 
 let mainInterface =
     ModuleImportInterface(name = "Main", exports = [ImportValueExport(
@@ -78,7 +81,7 @@ let mainInterface =
         "shadow"
     ), ImportValueExport(
         "qualified"
-    ), ImportValueExport("matched"), ImportValueExport("method"), ImportValueExport("handled"), ImportTypeExport("Local")])
+    ), ImportValueExport("matched"), ImportValueExport("method"), ImportValueExport("handled"), ImportTypeExport("Local"), ImportValueExport("copied")])
 
 let mainUnit =
     SemanticStitchUnit(name = "Main", packageId = "app", sourcePath = "/app/Main.ash", imports = [ResolvedModuleImport(
@@ -86,7 +89,7 @@ let mainUnit =
         None,
         1,
         "import Foo.Util"
-    )], interface = mainInterface, program = mainProgram, isEntry = true)
+    ), ResolvedValueImport("Ashes.Internal")("deepCopy")("copy")(2)("import Ashes.Internal.deepCopy as copy")], interface = mainInterface, program = mainProgram, isEntry = true)
 
 let requireProject result =
     match result with
@@ -145,7 +148,7 @@ let expectHandlerBinding item =
 
 let expectMainRewriting units =
     match requireProgram("Main")(units) with
-        | ProgramSyntax { items = TopLevelLet(LetBindingSyntax { name = "before", value = ExprVar("later") }, false) :: TopLevelAt(TextSpan { start = 20, end = 40 }, TopLevelLet(LetBindingSyntax { name = "later", value = ExprVar("Foo_Util_value") }, false)) :: TopLevelLet(LetBindingSyntax { name = "shadow", value = ExprLambda("value", ExprVar("value"), None) }, false) :: TopLevelLet(LetBindingSyntax { name = "qualified", value = ExprVar("Foo_Util_value") }, false) :: matched :: TopLevelLet(LetBindingSyntax { name = "method", value = ExprQualifiedVar("Foo_Util_Render", "render") }, false) :: handler :: TopLevelTypeAlias(TypeAliasDecl { name = "Local", target = TypeNamed("Foo_Util_Tree") }) :: [], body = Some(ExprTuple(ExprVar("before") :: ExprVar("later") :: [])) } ->
+        | ProgramSyntax { items = TopLevelLet(LetBindingSyntax { name = "before", value = ExprVar("later") }, false) :: TopLevelAt(TextSpan { start = 20, end = 40 }, TopLevelLet(LetBindingSyntax { name = "later", value = ExprVar("Foo_Util_value") }, false)) :: TopLevelLet(LetBindingSyntax { name = "shadow", value = ExprLambda("value", ExprVar("value"), None) }, false) :: TopLevelLet(LetBindingSyntax { name = "qualified", value = ExprVar("Foo_Util_value") }, false) :: matched :: TopLevelLet(LetBindingSyntax { name = "method", value = ExprQualifiedVar("Foo_Util_Render", "render") }, false) :: handler :: TopLevelTypeAlias(TypeAliasDecl { name = "Local", target = TypeNamed("Foo_Util_Tree") }) :: TopLevelLet(LetBindingSyntax { name = "copied", value = ExprQualifiedVar("Ashes.Internal", "deepCopy") }, false) :: [], body = Some(ExprTuple(ExprVar("before") :: ExprVar("later") :: [])) } ->
             matched
             |> expectMatchedBinding
             |> (given (_) -> expectHandlerBinding(handler))
@@ -153,9 +156,9 @@ let expectMainRewriting units =
         | _ -> test.fail("imports, qualifiers, types, spans, and lexical shadows should rewrite deterministically")
 
 let runModuleReferenceRewritingTests unit =
-    [utilUnit, mainUnit]
+    [utilUnit, intrinsicUnit, mainUnit]
     |> buildStitchedSemanticProject
     |> requireProject
-    |> (given (project) -> rewriteStitchedProjectReferences(project)([utilUnit, mainUnit]))
+    |> (given (project) -> rewriteStitchedProjectReferences(project)([utilUnit, intrinsicUnit, mainUnit]))
     |> expectUtilRewriting
     |> (given (units) -> expectMainRewriting(units))

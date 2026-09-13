@@ -97,16 +97,14 @@ let isIdentifierStart character =
         | (false, false, false) -> false
         | _ -> true
 
-let recursive normalizeCrLf source =
-    match Ashes.Text.unconsText(source) with
-        | None -> ""
-        | Some((head, tail)) ->
-            if head == "\r"
-            then
-                match Ashes.Text.unconsText(tail) with
-                    | Some(("\n", rest)) -> "\n" + normalizeCrLf(rest)
-                    | _ -> head + normalizeCrLf(tail)
-            else head + normalizeCrLf(tail)
+// Every `"\r\n"` line end becomes `"\n"`; a lone `"\r"` stays. One split and one join walk the
+// whole source in linear time and constant stack, where a character-by-character rebuild
+// nested one frame per character and copied the remaining text at every level, so a source
+// the size of a compiler module overflowed the stack before it was ever parsed.
+let normalizeCrLf source =
+    "\r\n"
+    |> Ashes.Text.split(source)
+    |> Ashes.Text.join("\n")
 
 let recursive leadingWhitespaceWidthFrom line width =
     match Ashes.Text.unconsText(line) with
@@ -213,28 +211,10 @@ let recursive collectBody headerIndent lines reversed =
                 then collectBody(headerIndent)(rest)(line :: reversed)
                 else InlineModuleBody(lines = reverseList(reversed), remaining = lines)
 
-let collectedNames (collection: InlineModuleCollection) = collection.names
-
-let collectedOuter (collection: InlineModuleCollection) = collection.outer
-
-let collectedModules (collection: InlineModuleCollection) = collection.modules
-
-let addCollectedModule name body collection =
-    (let names = name :: collectedNames(collection)
-    in
-        let modules = DirectInlineModule(name = name, body = body) :: collectedModules(collection)
-        in InlineModuleCollection(names = names, outer = collectedOuter(collection), modules = modules))
-
-let addOuterLine line collection =
-    (let outer = line :: collectedOuter(collection)
-    in
-        let names = collectedNames(collection)
-        in InlineModuleCollection(names = names, outer = outer, modules = collectedModules(collection)))
-
-let finishCollectedModule name body collection remaining = Ok((addCollectedModule(name)(body)(collection), remaining))
-
-let collectInlineModule scope (header: InlineModuleHeader) remaining (collection: InlineModuleCollection) =
-    if containsName(header.name)(collection.names)
+// One module header and its body taken off the lines: the name and the module join the
+// collected lists, and the lines after the body remain.
+let collectInlineModule scope (header: InlineModuleHeader) remaining names modules =
+    if containsName(header.name)(names)
     then
         header.name
         |> DuplicateInlineModule(scope)
@@ -249,27 +229,22 @@ let collectInlineModule scope (header: InlineModuleHeader) remaining (collection
             then Error(ReservedInlineModule(composedName))
             else
                 match collectBody(header.indent)(remaining)([]) with
-                    | InlineModuleBody { lines = body, remaining = afterBody } ->
-                        finishCollectedModule(
-                            header.name,
-                            body,
-                            collection,
-                            afterBody
-                        )
+                    | InlineModuleBody { lines = body, remaining = afterBody } -> Ok((header.name :: names, DirectInlineModule(name = header.name, body = body) :: modules, afterBody))
 
-let recursive collectInlineModules scope lines (collection: InlineModuleCollection) =
+// The collected names, outer lines, and modules travel as three list parameters, each grown by
+// one cell at a time. A record accumulator holding the three lists was rebuilt every iteration
+// and its lists copied out of the arena at every back edge, so a source of n lines cost n^2
+// memory before it was ever parsed.
+let recursive collectInlineModules scope lines names outer modules =
     match lines with
-        | [] -> Ok(collection)
+        | [] -> Ok(InlineModuleCollection(names = names, outer = outer, modules = modules))
         | line :: rest ->
             match parseInlineModuleHeader(line) with
-                | None ->
-                    collection
-                    |> addOuterLine(line)
-                    |> collectInlineModules(scope)(rest)
+                | None -> collectInlineModules(scope)(rest)(names)(line :: outer)(modules)
                 | Some(header) ->
-                    match collectInlineModule(scope)(header)(rest)(collection) with
+                    match collectInlineModule(scope)(header)(rest)(names)(modules) with
                         | Error(error) -> Error(error)
-                        | Ok((next, remaining)) -> collectInlineModules(scope)(remaining)(next)
+                        | Ok((nextNames, nextModules, remaining)) -> collectInlineModules(scope)(remaining)(nextNames)(outer)(nextModules)
 
 let recursive minimumIndent lines current =
     match lines with
@@ -306,83 +281,106 @@ let dedent lines =
             |> dedentLines(lines)
             |> Ashes.Text.join("\n")
 
-let previousAllowsQualifier previous =
-    match previous with
-        | None -> true
-        | Some(character) ->
-            if isNameCharacter(character)
+let byteAt bytes index =
+    index
+    |> Ashes.Byte.get(bytes)
+    |> Ashes.Number.UInt.toInt
+
+let isNameByte code =
+    match (code >= 65 && code <= 90, code >= 97 && code <= 122, code >= 48 && code <= 57, code == 95) with
+        | (false, false, false, false) -> false
+        | _ -> true
+
+let isIdentifierStartByte code =
+    match (code >= 65 && code <= 90, code >= 97 && code <= 122, code == 95) with
+        | (false, false, false) -> false
+        | _ -> true
+
+// A qualifier may start at `index` unless the byte before it continues a name or is another
+// `.` (a longer qualified path). A byte of a multi-byte character is neither.
+let previousAllowsQualifierAt bytes index =
+    if index == 0
+    then true
+    else
+        let code = byteAt(bytes)(index - 1)
+        in
+            if isNameByte(code)
             then false
-            else character != "."
+            else code != 46
 
-let childMatchesQualifier source name =
-    (let prefix = name + "."
+let recursive bytesMatchAt bytes length index (needle: Bytes) needleIndex needleLength =
+    if needleIndex >= needleLength
+    then true
+    else
+        if index >= length
+        then false
+        else
+            if byteAt(bytes)(index) == byteAt(needle)(needleIndex)
+            then bytesMatchAt(bytes)(length)(index + 1)(needle)(needleIndex + 1)(needleLength)
+            else false
+
+// `name + "."` sits at `index` and an identifier start follows it.
+let childMatchesQualifierAt bytes length index name =
+    (let prefix = Ashes.Byte.fromText(name + ".")
     in
-        if Ashes.Text.startsWith(source)(prefix)
-        then
-            match source
-            |> (given (text) ->
-                prefix
-                |> Ashes.Text.length
-                |> Ashes.Text.drop(text))
-            |> Ashes.Text.unconsText with
-                | Some((next, _tail)) -> isIdentifierStart(next)
-                | None -> false
-        else false)
+        let prefixLength = Ashes.Byte.length(prefix)
+        in
+            if bytesMatchAt(bytes)(length)(index)(prefix)(0)(prefixLength)
+            then
+                if index + prefixLength < length
+                then
+                    index + prefixLength
+                    |> byteAt(bytes)
+                    |> isIdentifierStartByte
+                else false
+            else false)
 
-let recursive findQualifiedChild source childNames =
+let recursive findQualifiedChildAt bytes length index childNames =
     match childNames with
         | [] -> None
         | name :: rest ->
-            if childMatchesQualifier(source)(name)
+            if childMatchesQualifierAt(bytes)(length)(index)(name)
             then Some(name)
-            else findQualifiedChild(source)(rest)
+            else findQualifiedChildAt(bytes)(length)(index)(rest)
 
-let recursive rewriteQualifierText scope childNames source previous inString =
-    match Ashes.Text.unconsText(source) with
-        | None -> ""
-        | Some((head, tail)) ->
+// The source is walked by byte index and copied out in segments: the text between two
+// rewritten qualifiers is one `subText`, so a module with no qualifier to rewrite costs one copy
+// of its source. A character-by-character walk took a fresh tail of the text at every step and
+// nested one frame per character, which cost quadratic memory on a module-sized source.
+let recursive rewriteQualifierBytes scope childNames bytes length index segmentStart inString chunks =
+    if index >= length
+    then
+        Ashes.Byte.subText(bytes)(segmentStart)(length - segmentStart) :: chunks
+        |> reverseList
+        |> Ashes.Text.join("")
+    else
+        let code = byteAt(bytes)(index)
+        in
             if inString
             then
-                if head == "\\"
-                then
-                    match Ashes.Text.unconsText(tail) with
-                        | None -> head
-                        | Some((escaped, rest)) ->
-                            head + escaped + rewriteQualifierText(
-                                scope,
-                                childNames,
-                                rest,
-                                Some(escaped),
-                                true
-                            )
-                else
-                    if head == "\""
-                    then head + rewriteQualifierText(scope)(childNames)(tail)(Some(head))(false)
-                    else head + rewriteQualifierText(scope)(childNames)(tail)(Some(head))(true)
+                if code == 92
+                then rewriteQualifierBytes(scope)(childNames)(bytes)(length)(index + 2)(segmentStart)(true)(chunks)
+                else rewriteQualifierBytes(scope)(childNames)(bytes)(length)(index + 1)(segmentStart)(code != 34)(chunks)
             else
-                if head == "\""
-                then head + rewriteQualifierText(scope)(childNames)(tail)(Some(head))(true)
+                if code == 34
+                then rewriteQualifierBytes(scope)(childNames)(bytes)(length)(index + 1)(segmentStart)(true)(chunks)
                 else
-                    if previousAllowsQualifier(previous)
+                    if previousAllowsQualifierAt(bytes)(index)
                     then
-                        match findQualifiedChild(source)(childNames) with
+                        match findQualifiedChildAt(bytes)(length)(index)(childNames) with
                             | Some(name) ->
-                                let consumed = Ashes.Text.length(name) + 1
-                                in
-                                    scope + "." + name + "." + rewriteQualifierText(
-                                        scope,
-                                        childNames,
-                                        Ashes.Text.drop(source)(consumed),
-                                        Some("."),
-                                        false
-                                    )
-                            | None -> head + rewriteQualifierText(scope)(childNames)(tail)(Some(head))(false)
-                    else head + rewriteQualifierText(scope)(childNames)(tail)(Some(head))(false)
+                                let consumed = Ashes.Text.byteLength(name) + 1
+                                in rewriteQualifierBytes(scope)(childNames)(bytes)(length)(index + consumed)(index + consumed)(false)(scope + "." + name + "." :: Ashes.Byte.subText(bytes)(segmentStart)(index - segmentStart) :: chunks)
+                            | None -> rewriteQualifierBytes(scope)(childNames)(bytes)(length)(index + 1)(segmentStart)(false)(chunks)
+                    else rewriteQualifierBytes(scope)(childNames)(bytes)(length)(index + 1)(segmentStart)(false)(chunks)
 
 let rewriteInlineQualifiers scope childNames source =
     if scope == ""
     then source
-    else rewriteQualifierText(scope)(childNames)(source)(None)(false)
+    else
+        let bytes = Ashes.Byte.fromText(source)
+        in
+            rewriteQualifierBytes(scope)(childNames)(bytes)(Ashes.Byte.length(bytes))(0)(0)(false)([])
 
 let recursive containsImportLine lines =
     match lines with
@@ -482,9 +480,9 @@ let recursive expandCollectedModules scope childNames modules =
 and expandInlineModules scope source =
     (let normalized = normalizeCrLf(source)
     in
-        let initial = InlineModuleCollection(names = [], outer = [], modules = [])
+        let lines = Ashes.Text.split(normalized)("\n")
         in
-            match collectInlineModules(scope)(Ashes.Text.split(normalized)("\n"))(initial) with
+            match collectInlineModules(scope)(lines)([])([])([]) with
                 | Error(error) -> Error(error)
                 | Ok(collection) ->
                     let modules = reverseList(collection.modules)

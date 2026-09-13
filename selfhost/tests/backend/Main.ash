@@ -4561,6 +4561,88 @@ let buildRcClosureDropModule name context =
 
 let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
 
+// `CopyFfiBytes` over the four ranges stage 0's `EmitCopyFfiBytes` distinguishes. A foreign
+// pointer is any `i64` address, so the copy path reads a string literal's own payload (its bytes
+// start eight past the payload word, after the length) and prints the copied bytes as text; a
+// zero length is `Ok` of the empty bytes even for a null pointer; a null pointer with a nonzero
+// length and a length past 1 GiB are the two `Error` messages. Each result cell's tag selects
+// what is printed: the `Ok` payload through `PrintStr` (bytes and text share the layout), the
+// `Error` message as is.
+let copyFfiBytesResultPrint (resultTemp: Int) (scratch: Int) (suffix: Str) =
+    [
+        resultTemp
+        |> GetAdtTag(scratch)
+        |> irOf,
+        0
+        |> LoadConstInt(scratch + 1)
+        |> irOf,
+        scratch + 1
+        |> CmpIntEq(scratch + 2)(scratch)
+        |> irOf,
+        "ffi_error_" + suffix
+        |> JumpIfFalse(scratch + 2)
+        |> irOf,
+        false
+        |> GetAdtField(scratch + 3)(resultTemp)(0)
+        |> irOf,
+        irOf(PrintStr(scratch + 3)),
+        irOf(Jump("ffi_done_" + suffix)),
+        irOf(Label("ffi_error_" + suffix)),
+        false
+        |> GetAdtField(scratch + 4)(resultTemp)(0)
+        |> irOf,
+        irOf(PrintStr(scratch + 4)),
+        irOf(Label("ffi_done_" + suffix))
+    ]
+
+let buildCopyFfiBytesModule name context =
+    [
+        "s0"
+        |> LoadConstStr(0)
+        |> irOf,
+        8
+        |> LoadConstInt(1)
+        |> irOf,
+        1
+        |> AddInt(2)(0)
+        |> irOf,
+        5
+        |> LoadConstInt(3)
+        |> irOf,
+        3
+        |> CopyFfiBytes(4)(2)
+        |> irOf,
+        0
+        |> LoadConstInt(10)
+        |> irOf,
+        10
+        |> CopyFfiBytes(11)(10)
+        |> irOf,
+        3
+        |> CopyFfiBytes(12)(10)
+        |> irOf,
+        1073741825
+        |> LoadConstInt(13)
+        |> irOf,
+        13
+        |> CopyFfiBytes(14)(2)
+        |> irOf
+    ]
+    |> (given (copies) ->
+        Ashes.Collection.List.append("long"
+        |> copyFfiBytesResultPrint(14)(50)
+        |> Ashes.Collection.List.append("null"
+        |> copyFfiBytesResultPrint(12)(40)
+        |> Ashes.Collection.List.append("empty"
+        |> copyFfiBytesResultPrint(11)(30)
+        |> Ashes.Collection.List.append("copy"
+        |> copyFfiBytesResultPrint(4)(20)
+        |> Ashes.Collection.List.append(copies)))))([irOf(Return(10))]))
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(60))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "hello")]))
+
+let testCopyFfiBytes unit = assertProgramPrintsLines(buildCopyFfiBytesModule)("selfhostBackendCopyFfiBytes")("selfhost_backend_copy_ffi_bytes_e2e")(["hello", "", "Foreign byte pointer was null for a nonzero length.", "Foreign byte length exceeds 1073741824 bytes."])
+
 let testRcMayBeEmpty unit = assertProgramPrints(buildRcMayBeEmptyModule)("selfhostBackendRcMayBeEmpty")("selfhost_backend_rc_may_be_empty_e2e")("7")
 
 let testRcStructuralDrop unit = assertProgramPrintsLines(buildRcStructuralDropModule)("selfhostBackendRcStructuralDrop")("selfhost_backend_rc_structural_drop_e2e")(["42", "7"])
@@ -5262,6 +5344,7 @@ let run shipped =
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
     |> testRcDupDrop
+    |> testCopyFfiBytes
     |> testRcMayBeEmpty
     |> testRcStructuralDrop
     |> testRcDropReuse

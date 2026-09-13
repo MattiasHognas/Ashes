@@ -328,9 +328,12 @@ let resolveExpressionVariable project moduleName boundary locals name =
                 |> definitionCompilerName
                 |> ExprVar
             | None ->
-                match resolveIntrinsicPlainImportMember(project)(moduleName)(name) with
-                    | Some(intrinsicModule) -> ExprQualifiedVar(intrinsicModule)(name)
-                    | None -> ExprVar(name)
+                match resolveStitchedIntrinsicSelector(moduleName)(name)(project) with
+                    | Some((intrinsicModule, memberName)) -> ExprQualifiedVar(intrinsicModule)(memberName)
+                    | None ->
+                        match resolveIntrinsicPlainImportMember(project)(moduleName)(name) with
+                            | Some(intrinsicModule) -> ExprQualifiedVar(intrinsicModule)(name)
+                            | None -> ExprVar(name)
 
 let rewriteQualifiedExpression project moduleName boundary qualifier name =
     match resolveStitchedQualified(moduleName)(qualifier)(StitchedValue)(name)(project) with

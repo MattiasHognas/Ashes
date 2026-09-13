@@ -138,6 +138,7 @@ type CoreBuiltinKind =
     | CoreUIntToInt
     | CoreUIntFromInt
     | CoreUIntFromInt64
+    | CoreFfiCopyBytes
     | CoreSpawnProcess
     | CoreProcessWriteStdin
     | CoreProcessReadStdoutLine
@@ -393,6 +394,10 @@ let coreBuiltinKind moduleName memberName =
                 | "fromInt" -> Some(CoreUIntFromInt)
                 | "fromInt64" -> Some(CoreUIntFromInt64)
                 | _ -> None
+        | "Ashes.Ffi" ->
+            match memberName with
+                | "copyBytes" -> Some(CoreFfiCopyBytes)
+                | _ -> None
         | "Ashes.Net.Http" ->
             match memberName with
                 | "get" -> Some(CoreHttpGet)
@@ -427,6 +432,7 @@ let intrinsicBuiltinModuleNames =
         "Ashes.Internal.Regex",
         "Ashes.Byte",
         "Ashes.Number.UInt",
+        "Ashes.Ffi",
         "Ashes.Net.Http",
         "Ashes.Net.Tcp",
         "Ashes.Net.Tcp.Server",
@@ -799,6 +805,13 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.Number.UInt")("fromInt")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(SemUInt(8))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Ffi")("copyBytes")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemPointer(SemUInt(8)))(SemFunction(SemUInt(64))(SemNamed(0)("Result")([SemString, SemBytes]))(None))(None),
+                constraints = []
+            )
         ),
         standardBuiltinLayout("Ashes.Text")("unconsText")(
             TypeScheme(
@@ -1237,6 +1250,7 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
         | (CoreUIntToInt, value :: [], _types) -> identity(start)(value)
         | (CoreUIntFromInt64, value :: [], _types) -> identity(start)(value)
         | (CoreUIntFromInt, value :: [], _types) -> uintFromInt(start)(value)
+        | (CoreFfiCopyBytes, pointer :: length :: [], _types) -> target2(start)(pointer)(length)(CopyFfiBytes)
         | (CoreSpawnProcess, executable :: args :: [], _types) -> target2(start)(executable)(args)(SpawnProcess)
         | (CoreProcessWriteStdin, process :: text :: [], _types) -> target2(start)(process)(text)(ProcessWriteStdin)
         | (CoreProcessReadStdoutLine, process :: [], _types) -> target1(start)(process)(ProcessReadStdoutLine)

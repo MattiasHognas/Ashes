@@ -58,6 +58,7 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrExplainReporter
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ModuleSemanticStitching
+import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectManifest
 import AshesCompiler.Semantics.ProjectStitching
@@ -287,7 +288,7 @@ let recursive readShippedModules root names loaded =
             else
                 let path = Ashes.IO.Path.join(Ashes.IO.Path.Unix)(root)(name)
                 in
-                    match Ashes.IO.File.readText(path) with
+                    match readSourceText(path) with
                         | Error(message) -> Error("Could not read shipped module " + path + ": " + message)
                         | Ok(source) ->
                             readShippedModules(root)(rest)(
@@ -524,7 +525,7 @@ let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabl
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
 let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
-    match Ashes.IO.File.readText(inputPath) with
+    match readSourceText(inputPath) with
         | Error(message) -> Error("Could not read " + inputPath + ": " + message)
         | Ok(source) ->
             match loadShippedModules(Unit) with
@@ -541,7 +542,7 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
 // dependencies' modules, and the shipped modules they reach are stitched into one program,
 // lowered against the entry module's text, and emitted exactly like the single-file form.
 let compileProjectToExecutable (layout: ProjectLayout) outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
-    match Ashes.IO.File.readText(layout.entryPath) with
+    match readSourceText(layout.entryPath) with
         | Error(message) -> Error("Could not read " + layout.entryPath + ": " + message)
         | Ok(source) ->
             match loadShippedModules(Unit) with
