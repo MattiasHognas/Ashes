@@ -681,6 +681,17 @@ same public behavior.
   diagnostic ordering across files. Declaration-only entries infer Unit, non-entry trailing bodies
   are ignored, and reachable parse diagnostics retain their structured source/span data in stable
   discovery, span, and emission order.
+- [ ] **MOD-13** A stitched generic type used without its argument. The BOOT-2 probe (the stage-1
+  CLI compiling its own CLI package) stops in the lowering with
+  `UnsupportedTypeDeclaration("Type 'AshesCompiler_Frontend_Syntax_Expr' expects 1 type
+  argument(s) but got 0.")`, and the formatter package alone the same way (2026-09-13):
+  `Expr` is declared without type parameters, so the stitched declaration gets one from
+  `collectImplicitTypeParametersFromConstructors` (a constructor field naming a type the walk
+  does not know yet reads as an implicit parameter), and every later bare use of the name then
+  fails the arity check. Stage 0 compiles the same packages. Find the field that turns into the
+  implicit parameter (a type from another module registered later in the stitched order, or a
+  module-qualified name the stitcher rewrote) and register the declaration the way stage 0 does;
+  a reduced two-module repro belongs in `selfhost/tests/projects`.
 
 #### IR model and lowering
 
@@ -3108,22 +3119,33 @@ same public behavior.
   call site after every recorded lambda (OPT-73). The standard library's `append` is still not
   tail-recursive (a stack-safe `append` belongs to OPT-73's arc, since the stitched CLI's
   instruction lists are the first place it will matter).
-- [ ] **OPT-73** Compute the result-provenance fixpoint once per program, keyed by function
-  identity, as stage 0's `ComputeFunctionResultProvenanceFixpoint` over `_maFuncs` does. The
-  self-hosted `ensureResultRcEligibility` recomputes `resultProvenanceNodes` and
-  `resolveResultProvenances` over every lambda recorded so far whenever a lambda was recorded
-  since the last call site, so a program of n calling functions pays n fixpoints of size n
-  (measured 2026-09-13: 10 GiB per 1,000 such functions, the reason the stitched CLI package
-  still exhausts 16 GiB in 8 s of lowering); it also resolves forward targets by name against
-  the latest recorded lambda of that name, so a nested helper shared by several functions (a
-  `go`) resolves to whichever was lowered last. The reach registry already registers every
-  function of the program with its identity and a lexical scope from names to keys
-  (`ReachFunction.scope`); build the provenance nodes from it (`CallResultProvenance` takes a
-  key-resolving scope instead of a by-name function list), solve once at
-  `withProgramParameterOwnership`, and look a callee up by `name@identity` the way
-  `calleeReachSummary` does, falling back by name for a callee outside the registry. Parity
-  fixtures pin the verdicts; the `call_N` generated programs (each function calling the
-  previous one) pin the cost.
+- [x] **OPT-73** The result-provenance fixpoint is computed once per program, keyed by function
+  identity, as stage 0's `ComputeFunctionResultProvenanceFixpoint` over `_maFuncs` is. The
+  self-hosted `ensureResultRcEligibility` recomputed the nodes and the SCC fixpoint over every
+  lambda recorded so far whenever a lambda was recorded since the last call site, so a program
+  of n calling functions paid n fixpoints of size n (10 GiB per 1,000 such functions), and it
+  resolved forward targets by name against the latest recorded lambda of that name, so a nested
+  helper shared by several functions (a `go`) resolved to whichever was lowered last. The nodes
+  are now built from the reach registry's functions (`ReachFunction`'s key, registered
+  parameters and body, and lexical scope from names to keys; `CallResultProvenance` extends that
+  scope through nested bindings the way stage 0's `ExtendFuncScope` does), solved once right
+  after the type declarations are registered (stage 0 registers every type declaration before
+  it lowers a value, so the item walk now does the same, `registerProgramTypes`), and a call site
+  resolves its callee by `name@identity` through the summaries' indexes (`calleeSummaryOf`),
+  never eligible outside the registry, as stage 0's memo default. The let-lambda tables a call
+  site consulted per call (`letLambdas`, `letLambdaLabels`, `letLambdaIdentities`) and the reach
+  summaries (`reachSummaryFor`, `reachSummaryNamed`) were lists walked per call site and are
+  indexed by maps. The whole-program reach fixpoint itself re-summarized every function per
+  sweep until nothing changed; it is now stage 0's worklist (`solveReach`): a function is
+  re-summarized only when a summary it depends on grew, the dependents coming from a syntactic
+  walk of each body over its scope (`dependencyKeys`, a superset of what the reach walk
+  consults). Measured on the lowering-only driver: 4,000 functions each calling the previous
+  one went from 74 s and an out-of-memory kill at 58 GiB to 1.5 s and 1.2 GiB; 8,000
+  independent functions stay at 0.7 s and 1.9 GiB. The BOOT-2 probe now lowers the whole
+  stitched CLI package (10 s, 15 GiB, against stage 0's 9 GiB) and stops at the next blocker,
+  MOD-13. Found on the way, and filed as OPT-76 with its reproduction: a stage-0 use after
+  free that the accumulate-and-reverse shape of a record builder triggers, which is why
+  `buildComponents` keeps its recursive shape.
 - [ ] **OPT-74** Stage 0 copies the partial result of a list builder out at every return when
   the element consed around the recursive call is a string or list borrowed from a record
   (`| Node { functionName = name } :: tail -> name :: getNodeNames(tail)`), so a builder over n
@@ -3143,6 +3165,24 @@ same public behavior.
   default stack on a 20,000-instruction entry function). Lower `e |> (given (x) -> body)` as
   `let x = e in body`, which keeps tail position, in both compilers; the two placement walks
   are rewritten with `let` meanwhile.
+- [ ] **OPT-76** Stage 0 frees a reference-counted value an arena record still holds when the
+  record is consed onto a loop parameter. A `let`-bound call result placed on the
+  reference-counted heap and stored into an arena record's field is a borrow (an arena cell
+  never releases its fields, so the owner is expected to outlive the cell), and the owner's
+  release is placed at the iteration's end; a record consed onto a list the loop carries
+  outlives the iteration, so the next iteration's allocation reuses the freed cells and the
+  record reads another value's data, or a freed page. Reproduction (2026-09-13, segfaults):
+  `let recursive build groups ids index built = match groups with | [] -> reverse(built)
+  | (name, targets) :: rest -> let deps = depsOf(targets)(ids)(index) in let comp =
+  Comp(id = index, members = [name], deps = deps) in build(rest)(ids)(index + 1)(comp :: built)`
+  where `depsOf` conses Ints from a map lookup, over five groups; the same builder as
+  `comp :: buildAux(rest)` (a call result, not a loop argument) is sound because the result
+  crosses the callee's boundary with its children retained. The arena aggregate handed to a
+  loop parameter needs the same treatment as one returned: retain the reference-counted
+  children it embeds (or place the aggregate on the reference-counted heap with a dropper) so
+  the owner's release balances, which is the OPT-71 model gap for record loop parameters seen
+  from the child's side. Until then a stage-1 builder that stores a `let`-bound call result
+  into a record and accumulates the records on a loop parameter keeps the recursive shape.
 
 #### LLVM code generation and runtime integration
 
@@ -3682,10 +3722,10 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   failing on `Ashes.Internal.Regex.compileRaw` (a builtin `standardBuiltinLayouts` lacks; CG-11)
   and on the formatter package 9.0 GiB before `UnsupportedTypeDeclaration` for a bare
   `AshesCompiler.Frontend.Syntax.Expr` (a stitched generic type used without its argument; a
-  stitching gap to file with its repro). OPT-72 made the lowering linear in the number of
-  declarations and stack-safe, and fixed a stage-0 use after unmap it exposed; the probe still
-  exhausts 16 GiB in 8 s of lowering, now because the result-provenance fixpoint is recomputed
-  at the first call site after every recorded lambda (OPT-73 owns it). The measurement tool is a
+  stitching gap, now MOD-13). OPT-72 made the lowering linear in the number of declarations and
+  stack-safe, and fixed a stage-0 use after unmap it exposed; OPT-73 made the provenance and
+  reach fixpoints once-per-program worklists. The probe now lowers the whole stitched CLI
+  package in 10 s and 15 GiB and stops at MOD-13's diagnostic, the next blocker. The measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker

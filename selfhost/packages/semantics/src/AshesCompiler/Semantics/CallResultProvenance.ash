@@ -18,6 +18,8 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Semantics.OwnershipProvenance
 import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.ResultReachSummaries.functionKeyOf
+import AshesCompiler.Semantics.ResultReachSummaries.lambdaIdentityOf
 import Ashes.Collection.Map.MapTree
 export (
     type ProvenanceFunction(..),
@@ -27,12 +29,16 @@ export (
     value lookupRcEligible,
 )
 
-// A let-bound function the classification knows: its name, its parameters, and its innermost
-// body.
+// A let-bound function the classification knows, identified by its key (stage 0's FuncKey: the
+// reach registry's `name@identity`, prefixed by the enclosing function's key): its name, its
+// parameters, its innermost body, and the functions in scope of that body by name, each mapped
+// to its key (a shadowed name maps to the empty key, which no function has).
 type ProvenanceFunction =
+    | key: Str
     | name: Str
     | parameters: List(Str)
     | body: Expr
+    | scope: MapTree(Str, Str)
 
 // The constructors in scope: every constructor's arity by name, and the nullary constructors that
 // are the only nullary constructor of their type (a fresh tag cell rather than a shared
@@ -41,18 +47,18 @@ type ProvenanceConstructors =
     | arities: List((Str, Int))
     | soleNullary: List(Str)
 
-// A plain `let` alias with the aliases and hidden function names in force at its binding site.
+// A plain `let` alias with the aliases and the function scope in force at its binding site.
 type ProvenanceAlias =
     | aliasName: Str
     | aliasValue: Expr
     | aliasScope: List(ProvenanceAlias)
-    | aliasHidden: List(Str)
+    | aliasFunctions: MapTree(Str, Str)
 
-// One terminal arm with the aliases and hidden function names in force where it was found.
+// One terminal arm with the aliases and the function scope in force where it was found.
 type ProvenanceArm =
     | expression: Expr
     | aliases: List(ProvenanceAlias)
-    | hidden: List(Str)
+    | functions: MapTree(Str, Str)
 
 let recursive containsName (name: Str) (names: List(Str)) =
     match names with
@@ -80,26 +86,37 @@ let recursive removeAliases (names: List(Str)) (aliases: List(ProvenanceAlias)) 
             then removeAliases(names)(rest)
             else alias :: removeAliases(names)(rest)
 
-let recursive removeNames (names: List(Str)) (from: List(Str)) =
-    match from with
-        | [] -> []
-        | name :: rest ->
-            if containsName(name)(names)
-            then removeNames(names)(rest)
-            else name :: removeNames(names)(rest)
-
 let recursive isLambda (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> isLambda(inner)
         | ExprLambda(_parameter, _body, _annotation) -> true
         | _ -> false
 
-// Stage 0's `ExtendFuncScope`: a `let` whose value is a lambda names a function again, any other
-// `let` hides a function of the same name.
-let extendHidden (name: Str) (value: Expr) (hidden: List(Str)) =
+// Stage 0's `ExtendFuncScope`: a `let` whose value is a lambda names the function the reach
+// registry registered for it (keyed under the enclosing function, by the lambda's identity),
+// any other `let` hides a function of the same name.
+let extendFunctions (enclosingKey: Str) (name: Str) (value: Expr) (functions: MapTree(Str, Str)) =
     if isLambda(value)
-    then removeNames([name])(hidden)
-    else name :: removeNames([name])(hidden)
+    then
+        Ashes.Collection.Map.setStr(name)(value
+        |> lambdaIdentityOf
+        |> functionKeyOf(Some(enclosingKey))(name))(functions)
+    else Ashes.Collection.Map.setStr(name)("")(functions)
+
+let recursive shadowNames (names: List(Str)) (functions: MapTree(Str, Str)) =
+    match names with
+        | [] -> functions
+        | name :: rest ->
+            functions
+            |> Ashes.Collection.Map.setStr(name)("")
+            |> shadowNames(rest)
+
+// The key a name resolves to in the scope, `None` for an unknown or shadowed name.
+let functionKeyIn (name: Str) (functions: MapTree(Str, Str)) =
+    match Ashes.Collection.Map.getStr(name)(functions) with
+        | Some("") -> None
+        | Some(key) -> Some(key)
+        | None -> None
 
 let recursive patternBinders (pattern: Pattern) (names: List(Str)) =
     match pattern with
@@ -132,34 +149,34 @@ and patternFieldBinders (fields: List((Str, Pattern))) (names: List(Str)) =
 
 // Stage 0's `CollectResultProvenanceTerminalArms`: the arms of `body` in source order, in front
 // of `arms`.
-let recursive collectArms (body: Expr) (aliases: List(ProvenanceAlias)) (hidden: List(Str)) (arms: List(ProvenanceArm)) =
+let recursive collectArms (enclosingKey: Str) (body: Expr) (aliases: List(ProvenanceAlias)) (functions: MapTree(Str, Str)) (arms: List(ProvenanceArm)) =
     match body with
-        | ExprAt(_span, inner) -> collectArms(inner)(aliases)(hidden)(arms)
+        | ExprAt(_span, inner) -> collectArms(enclosingKey)(inner)(aliases)(functions)(arms)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             arms
-            |> collectArms(thenBranch)(aliases)(hidden)
-            |> collectArms(elseBranch)(aliases)(hidden)
-        | ExprMatch(_scrutinee, cases, _fallback) -> collectCaseArms(cases)(aliases)(hidden)(arms)
+            |> collectArms(enclosingKey)(thenBranch)(aliases)(functions)
+            |> collectArms(enclosingKey)(elseBranch)(aliases)(functions)
+        | ExprMatch(_scrutinee, cases, _fallback) -> collectCaseArms(enclosingKey)(cases)(aliases)(functions)(arms)
         | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
-            collectArms(letBody)(ProvenanceAlias(aliasName = name, aliasValue = value, aliasScope = aliases, aliasHidden = hidden) :: removeAliases([name])(aliases))(extendHidden(name)(value)(hidden))(arms)
+            collectArms(enclosingKey)(letBody)(ProvenanceAlias(aliasName = name, aliasValue = value, aliasScope = aliases, aliasFunctions = functions) :: removeAliases([name])(aliases))(extendFunctions(enclosingKey)(name)(value)(functions))(arms)
         | ExprLetResult(name, value, letBody) ->
-            collectArms(letBody)(ProvenanceAlias(aliasName = name, aliasValue = value, aliasScope = aliases, aliasHidden = hidden) :: removeAliases([name])(aliases))(extendHidden(name)(value)(hidden))(arms)
+            collectArms(enclosingKey)(letBody)(ProvenanceAlias(aliasName = name, aliasValue = value, aliasScope = aliases, aliasFunctions = functions) :: removeAliases([name])(aliases))(extendFunctions(enclosingKey)(name)(value)(functions))(arms)
         | ExprLetRecursive(name, value, letBody, _parameters, _annotation, _requirements) ->
-            collectArms(letBody)(removeAliases([name])(aliases))(extendHidden(name)(value)(hidden))(arms)
+            collectArms(enclosingKey)(letBody)(removeAliases([name])(aliases))(extendFunctions(enclosingKey)(name)(value)(functions))(arms)
         | ExprVar(name) ->
             match lookupAlias(name)(aliases) with
-                | Some(ProvenanceAlias { aliasValue = value, aliasScope = scope, aliasHidden = aliasHidden }) -> collectArms(value)(scope)(aliasHidden)(arms)
-                | None -> ProvenanceArm(expression = body, aliases = aliases, hidden = hidden) :: arms
-        | _ -> ProvenanceArm(expression = body, aliases = aliases, hidden = hidden) :: arms
-and collectCaseArms (cases: List((Pattern, Expr, Maybe(Expr)))) (aliases: List(ProvenanceAlias)) (hidden: List(Str)) (arms: List(ProvenanceArm)) =
+                | Some(ProvenanceAlias { aliasValue = value, aliasScope = scope, aliasFunctions = aliasFunctions }) -> collectArms(enclosingKey)(value)(scope)(aliasFunctions)(arms)
+                | None -> ProvenanceArm(expression = body, aliases = aliases, functions = functions) :: arms
+        | _ -> ProvenanceArm(expression = body, aliases = aliases, functions = functions) :: arms
+and collectCaseArms (enclosingKey: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) (aliases: List(ProvenanceAlias)) (functions: MapTree(Str, Str)) (arms: List(ProvenanceArm)) =
     match cases with
         | [] -> arms
         | (pattern, caseBody, _guard) :: rest ->
             match patternBinders(pattern)([]) with
                 | binders ->
                     arms
-                    |> collectArms(caseBody)(removeAliases(binders)(aliases))(append(binders)(hidden))
-                    |> collectCaseArms(rest)(aliases)(hidden)
+                    |> collectArms(enclosingKey)(caseBody)(removeAliases(binders)(aliases))(shadowNames(binders)(functions))
+                    |> collectCaseArms(enclosingKey)(rest)(aliases)(functions)
 
 // The head name and argument count of a call spine, `None` for a head that is not a bare name.
 let recursive callHead (expression: Expr) (argumentCount: Int) =
@@ -177,17 +194,17 @@ let recursive lookupArity (name: Str) (arities: List((Str, Int))) =
             then Some(arity)
             else lookupArity(name)(rest)
 
-// The functions by name, the earliest entry of a repeated name standing for it, so a call target
+// The functions by key, the earliest entry of a repeated key standing for it, so a call target
 // resolves in logarithmic time.
-let recursive functionsByName (functions: List(ProvenanceFunction)) (byName: MapTree(Str, ProvenanceFunction)) =
+let recursive functionsByKey (functions: List(ProvenanceFunction)) (byKey: MapTree(Str, ProvenanceFunction)) =
     match functions with
-        | [] -> byName
-        | (ProvenanceFunction { name = name } as function) :: rest ->
-            byName
-            |> Ashes.Collection.Map.upsertStr(name)(function)(given (existing) -> existing)
-            |> functionsByName(rest)
+        | [] -> byKey
+        | (ProvenanceFunction { key = key } as function) :: rest ->
+            byKey
+            |> Ashes.Collection.Map.upsertStr(key)(function)(given (existing) -> existing)
+            |> functionsByKey(rest)
 
-let lookupFunction (name: Str) (functions: MapTree(Str, ProvenanceFunction)) = Ashes.Collection.Map.getStr(name)(functions)
+let lookupFunction (key: Str) (functions: MapTree(Str, ProvenanceFunction)) = Ashes.Collection.Map.getStr(key)(functions)
 
 let isLiteral (expression: Expr) =
     match expression with
@@ -254,11 +271,14 @@ and callArguments (expression: Expr) (arguments: List(Expr)) =
 let forwardTarget (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (arm: ProvenanceArm) =
     match callHead(arm.expression)(0) with
         | Some((name, argumentCount)) ->
-            match (lookupArity(name)(constructors.arities), containsName(name)(arm.hidden), lookupFunction(name)(functions)) with
-                | (None, false, Some(ProvenanceFunction { parameters = parameters })) ->
-                    if length(parameters) == argumentCount
-                    then Some(name)
-                    else None
+            match (lookupArity(name)(constructors.arities), functionKeyIn(name)(arm.functions)) with
+                | (None, Some(key)) ->
+                    match lookupFunction(key)(functions) with
+                        | Some(ProvenanceFunction { parameters = parameters }) ->
+                            if length(parameters) == argumentCount
+                            then Some(key)
+                            else None
+                        | None -> None
                 | _ -> None
         | None -> None
 
@@ -280,7 +300,7 @@ let recursive classifyArms (function: ProvenanceFunction) (functions: MapTree(St
         | arm :: rest ->
             match forwardTarget(functions)(constructors)(arm) with
                 | Some(target) ->
-                    if target == function.name
+                    if target == function.key
                     then classifyArms(function)(functions)(constructors)(isFreshBuiltin)(rest)(facts)
                     else classifyArms(function)(functions)(constructors)(isFreshBuiltin)(rest)((facts with considered = facts.considered + 1, targets = addTarget(target)(facts.targets)))
                 | None ->
@@ -297,32 +317,21 @@ let functionBodyArms (function: ProvenanceFunction) =
         | ExprString(_value) -> None
         | body ->
             []
-            |> collectArms(body)([])([])
+            |> collectArms(function.key)(body)([])(function.scope)
             |> reverse
             |> Some
 
-// The provenance node of one function: a directly returned string literal is a fresh string by
-// itself; any other body is classified arm by arm.
+// The provenance node of one function, keyed by the function's key: a directly returned string
+// literal is a fresh string by itself; any other body is classified arm by arm.
 let provenanceNodeOf (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (function: ProvenanceFunction) =
     match functionBodyArms(function) with
-        | None -> buildProvenanceNode(function.name)(true)(false)(1)([])(None)([])(true)
+        | None -> buildProvenanceNode(function.key)(true)(false)(1)([])(None)([])(true)
         | Some(arms) ->
             match classifyArms(function)(functions)(constructors)(isFreshBuiltin)(arms)(ArmFacts(direct = false, rejected = false, considered = 0, targets = [])) with
                 | ArmFacts { direct = direct, rejected = rejected, considered = considered, targets = targets } ->
                     match targets with
-                        | target :: [] -> buildProvenanceNode(function.name)(direct)(rejected)(considered)(targets)(Some(target))([])(true)
-                        | _ -> buildProvenanceNode(function.name)(direct)(rejected)(considered)(targets)(None)([])(true)
-
-let recursive dedupeFunctionsInto (functions: List(ProvenanceFunction)) (seen: MapTree(Str, Bool)) (unique: List(ProvenanceFunction)) =
-    match functions with
-        | [] -> reverse(unique)
-        | (ProvenanceFunction { name = name } as function) :: rest ->
-            match Ashes.Collection.Map.getStr(name)(seen) with
-                | Some(_present) -> dedupeFunctionsInto(rest)(seen)(unique)
-                | None ->
-                    dedupeFunctionsInto(rest)(Ashes.Collection.Map.setStr(name)(true)(seen))(function :: unique)
-
-let dedupeFunctions (functions: List(ProvenanceFunction)) (seen: MapTree(Str, Bool)) = dedupeFunctionsInto(functions)(seen)([])
+                        | target :: [] -> buildProvenanceNode(function.key)(direct)(rejected)(considered)(targets)(Some(target))([])(true)
+                        | _ -> buildProvenanceNode(function.key)(direct)(rejected)(considered)(targets)(None)([])(true)
 
 // The nodes accumulate and are reversed once: a node holds names borrowed from its function, and
 // stage 0 copies such a list out at every return of a builder that conses around its recursive
@@ -332,11 +341,10 @@ let recursive nodesOf (functions: MapTree(Str, ProvenanceFunction)) (constructor
         | [] -> reverse(nodes)
         | function :: rest -> nodesOf(functions)(constructors)(isFreshBuiltin)(rest)(provenanceNodeOf(functions)(constructors)(isFreshBuiltin)(function) :: nodes)
 
-// The provenance nodes of every function, the earliest entry of a repeated name standing for it.
+// The provenance nodes of every function of the program, once, the way stage 0's
+// `ComputeFunctionResultProvenanceFixpoint` classifies every registered function.
 let resultProvenanceNodes (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) =
-    match dedupeFunctions(functions)(Ashes.Collection.Map.empty) with
-        | unique ->
-            nodesOf(functionsByName(unique)(Ashes.Collection.Map.empty))(constructors)(isFreshBuiltin)(unique)([])
+    nodesOf(functionsByKey(functions)(Ashes.Collection.Map.empty))(constructors)(isFreshBuiltin)(functions)([])
 
 let recursive eligibilityOf (eligibility: MapTree(Str, Bool)) (provenances: List((Str, FunctionResultProvenance))) =
     match provenances with

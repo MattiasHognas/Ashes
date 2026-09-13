@@ -36,6 +36,7 @@ export (
     value builtinReachConstructors,
     value reachConstructorsOf,
     value lambdaIdentityOf,
+    value functionKeyOf,
     value buildReachRegistry,
     value computeReachSummaries,
     value programReachSummaries,
@@ -890,15 +891,15 @@ let qualifiedReach (env: List((Str, ResultReachState))) (qualifier: Str) (name: 
         | [] -> reachPoisoned(GlobalOrTopLevelReach)
 
 // The scope inside a binding's body: the name resolves to its registered function, or shadows one.
-let bindingScope (context: ReachContext) (scope: ReachScope) (name: Str) (value: Expr) =
+let bindingScopeOf (registry: ReachRegistry) (scope: ReachScope) (name: Str) (value: Expr) =
     match lambdaChainOf(value)([]) with
         | ([], _innerBody) -> removeScopeName(name)(scope)
         | _ ->
-            match value
-            |> lambdaIdentityOf
-            |> functionByIdentityIn(context)(name) with
+            match Ashes.Collection.Map.getStr(name + "@" + Ashes.Text.fromInt(lambdaIdentityOf(value)))(registry.byIdentity) with
                 | Some(ReachFunction { key = key }) -> setScopeName(name)(key)(scope)
                 | None -> removeScopeName(name)(scope)
+
+let bindingScope (context: ReachContext) (scope: ReachScope) (name: Str) (value: Expr) = bindingScopeOf(context.registry)(scope)(name)(value)
 
 let recursive callSpineOf (expr: Expr) (arguments: List(Expr)) =
     match expr with
@@ -1389,29 +1390,222 @@ let functionReach (registry: ReachRegistry) (table: ReachTable) (function: Reach
             match reachOf(ReachContext(registry = registry, table = table, current = function, overDepth = 0))(parameterEnv(parameters))(scope)(0)(body) with
                 | ReachStep { reach = reach } -> stripSyntheticTokens(reach)
 
-let recursive sweepFunctions (registry: ReachRegistry) (functions: List(ReachFunction)) (table: ReachTable) (changed: Bool) =
-    match functions with
-        | [] -> (table, changed)
-        | (ReachFunction { key = key } as function) :: rest ->
-            let previous = lookupTable(key)(table)
+// The keys a body can consult the summary of: every name it resolves through its scope to a
+// registered function, whether called or referred to, with nested bindings, lambda parameters,
+// and pattern binders extending or shadowing the scope the way the walk does. A superset of
+// what the walk consults, so a summary's change re-summarizes at least the functions stage 0's
+// dependents queue would.
+let recursive dependencyKeys (registry: ReachRegistry) (scope: ReachScope) (expr: Expr) (keys: MapTree(Str, Bool)) =
+    match expr with
+        | ExprAt(_span, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
+        | ExprInt(_value) -> keys
+        | ExprBigInt(_value) -> keys
+        | ExprUInt(_value, _width, _text) -> keys
+        | ExprFloat(_value, _text) -> keys
+        | ExprString(_value) -> keys
+        | ExprRune(_value) -> keys
+        | ExprBool(_value) -> keys
+        | ExprVar(name) ->
+            match lookupScope(name)(scope) with
+                | Some(key) -> Ashes.Collection.Map.setStr(key)(true)(keys)
+                | None -> keys
+        | ExprQualifiedVar(_moduleName, _memberName) -> keys
+        | ExprAdd(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprSubtract(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprMultiply(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprDivide(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprModulo(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprBitwiseAnd(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprBitwiseOr(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprBitwiseXor(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprShiftLeft(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprShiftRight(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprBitwiseNot(operand) -> dependencyKeys(registry)(scope)(operand)(keys)
+        | ExprLogicalNot(operand) -> dependencyKeys(registry)(scope)(operand)(keys)
+        | ExprLogicalAnd(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprLogicalOr(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprGreaterThan(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprLessThan(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprGreaterOrEqual(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprLessOrEqual(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprEqual(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprNotEqual(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprResultPipe(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprResultMapErrorPipe(left, right) -> pairDependencyKeys(registry)(scope)(left)(right)(keys)
+        | ExprLet(name, value, body, _parameters, _annotation, _requirements) ->
+            keys
+            |> dependencyKeys(registry)(scope)(value)
+            |> dependencyKeys(registry)(bindingScopeOf(registry)(scope)(name)(value))(body)
+        | ExprLetResult(name, value, body) ->
+            keys
+            |> dependencyKeys(registry)(scope)(value)
+            |> dependencyKeys(registry)(bindingScopeOf(registry)(scope)(name)(value))(body)
+        | ExprLetRecursive(name, value, body, _parameters, _annotation, _requirements) ->
+            let recursiveScope = bindingScopeOf(registry)(scope)(name)(value)
             in
-                let merged =
-                    function
-                    |> functionReach(registry)(table)
-                    |> reachJoin(previous)
+                keys
+                |> dependencyKeys(registry)(recursiveScope)(value)
+                |> dependencyKeys(registry)(recursiveScope)(body)
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            keys
+            |> dependencyKeys(registry)(scope)(condition)
+            |> pairDependencyKeys(registry)(scope)(thenBranch)(elseBranch)
+        | ExprLambda(parameter, body, _annotation) ->
+            dependencyKeys(registry)(removeScopeNames([parameter])(scope))(body)(keys)
+        | ExprCall(function, argument, _isSugar, _layout) -> pairDependencyKeys(registry)(scope)(function)(argument)(keys)
+        | ExprTuple(elements) -> listDependencyKeys(registry)(scope)(elements)(keys)
+        | ExprList(elements, _isMultiline) -> listDependencyKeys(registry)(scope)(elements)(keys)
+        | ExprCons(head, tail) -> pairDependencyKeys(registry)(scope)(head)(tail)(keys)
+        | ExprMatch(scrutinee, arms, _defaultArm) ->
+            keys
+            |> dependencyKeys(registry)(scope)(scrutinee)
+            |> armDependencyKeys(registry)(scope)(arms)
+        | ExprAwait(inner) -> dependencyKeys(registry)(scope)(inner)(keys)
+        | ExprRecord(_typeName, fields, _isMultiline) -> fieldDependencyKeys(registry)(scope)(fields)(keys)
+        | ExprRecordUpdate(record, fields) ->
+            keys
+            |> dependencyKeys(registry)(scope)(record)
+            |> fieldDependencyKeys(registry)(scope)(fields)
+        | ExprPerform(inner) -> dependencyKeys(registry)(scope)(inner)(keys)
+        | ExprHandle(inner, arms) ->
+            keys
+            |> dependencyKeys(registry)(scope)(inner)
+            |> handleArmDependencyKeys(registry)(scope)(arms)
+and pairDependencyKeys (registry: ReachRegistry) (scope: ReachScope) (left: Expr) (right: Expr) (keys: MapTree(Str, Bool)) =
+    keys
+    |> dependencyKeys(registry)(scope)(left)
+    |> dependencyKeys(registry)(scope)(right)
+and listDependencyKeys (registry: ReachRegistry) (scope: ReachScope) (expressions: List(Expr)) (keys: MapTree(Str, Bool)) =
+    match expressions with
+        | [] -> keys
+        | expression :: rest ->
+            keys
+            |> dependencyKeys(registry)(scope)(expression)
+            |> listDependencyKeys(registry)(scope)(rest)
+and fieldDependencyKeys (registry: ReachRegistry) (scope: ReachScope) (fields: List((Str, Expr))) (keys: MapTree(Str, Bool)) =
+    match fields with
+        | [] -> keys
+        | (_field, expression) :: rest ->
+            keys
+            |> dependencyKeys(registry)(scope)(expression)
+            |> fieldDependencyKeys(registry)(scope)(rest)
+and armDependencyKeys (registry: ReachRegistry) (scope: ReachScope) (arms: List((Pattern, Expr, Maybe(Expr)))) (keys: MapTree(Str, Bool)) =
+    match arms with
+        | [] -> keys
+        | (pattern, body, guard) :: rest ->
+            let armScope =
+                removeScopeNames(patternBinders(pattern)([]))(scope)
+            in
+                let withGuard =
+                    match guard with
+                        | Some(guardExpr) -> dependencyKeys(registry)(armScope)(guardExpr)(keys)
+                        | None -> keys
                 in
-                    if reachEquals(previous)(merged)
-                    then sweepFunctions(registry)(rest)(table)(changed)
-                    else
-                        sweepFunctions(registry)(rest)(setTable(key)(merged)(table))(true)
+                    withGuard
+                    |> dependencyKeys(registry)(armScope)(body)
+                    |> armDependencyKeys(registry)(scope)(rest)
+and handleArmDependencyKeys (registry: ReachRegistry) (scope: ReachScope) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) (keys: MapTree(Str, Bool)) =
+    match arms with
+        | [] -> keys
+        | (resumeName, _operation, patterns, body) :: rest ->
+            let boundNames =
+                match resumeName with
+                    | Some(name) -> name :: patternsBinders(patterns)([])
+                    | None -> patternsBinders(patterns)([])
+            in
+                keys
+                |> dependencyKeys(registry)(removeScopeNames(boundNames)(scope))(body)
+                |> handleArmDependencyKeys(registry)(scope)(rest)
 
-let recursive sweepUntilStable (registry: ReachRegistry) (table: ReachTable) (fuel: Int) =
-    if fuel <= 0
-    then table
-    else
-        match sweepFunctions(registry)(registry.functions)(table)(false) with
-            | (next, true) -> sweepUntilStable(registry)(next)(fuel - 1)
-            | (next, false) -> next
+// The functions to re-summarize when a function's summary changes: every function whose body
+// depends on it, stage 0's result-reach dependents.
+let recursive addDependents (function: Str) (dependencies: List((Str, Bool))) (dependents: MapTree(Str, List(Str))) =
+    match dependencies with
+        | [] -> dependents
+        | (dependency, _present) :: rest ->
+            dependents
+            |> Ashes.Collection.Map.upsertStr(dependency)([function])(given (existing: List(Str)) -> function :: existing)
+            |> addDependents(function)(rest)
+
+let recursive dependentsOf (registry: ReachRegistry) (functions: List(ReachFunction)) (dependents: MapTree(Str, List(Str))) =
+    match functions with
+        | [] -> dependents
+        | ReachFunction { key = key, body = body, scope = scope } :: rest ->
+            dependents
+            |> addDependents(key)(Ashes.Collection.Map.empty
+            |> dependencyKeys(registry)(scope)(body)
+            |> Ashes.Collection.Map.toList)
+            |> dependentsOf(registry)(rest)
+
+let recursive enqueueDependents (pending: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) =
+    match pending with
+        | [] -> (back, queued)
+        | key :: rest ->
+            match Ashes.Collection.Map.getStr(key)(queued) with
+                | Some(true) -> enqueueDependents(rest)(back)(queued)
+                | _ ->
+                    queued
+                    |> Ashes.Collection.Map.setStr(key)(true)
+                    |> enqueueDependents(rest)(key :: back)
+
+// Stage 0's `ComputeResultReach` worklist: every function starts queued at bottom; a function
+// taken off the queue is re-summarized under the summaries so far, and a summary that grew
+// re-queues the functions that depend on it. The queue is two lists, taken from the front and
+// added to the back, so the order is stage 0's first-in first-out. The fuel bounds the total
+// work at the sweeps-times-functions the sweep-until-stable form spent at most.
+let recursive solveReach (registry: ReachRegistry) (dependents: MapTree(Str, List(Str))) (table: ReachTable) (front: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) (fuel: Int) =
+    match front with
+        | [] ->
+            match back with
+                | [] -> table
+                | _ ->
+                    solveReach(registry)(dependents)(table)(reverse(back))([])(queued)(fuel)
+        | key :: rest ->
+            if fuel <= 0
+            then table
+            else
+                match Ashes.Collection.Map.getStr(key)(registry.byKey) with
+                    | None ->
+                        solveReach(registry)(dependents)(table)(rest)(back)(Ashes.Collection.Map.setStr(key)(false)(queued))(fuel - 1)
+                    | Some(function) ->
+                        let dequeued = Ashes.Collection.Map.setStr(key)(false)(queued)
+                        in
+                            let previous = lookupTable(key)(table)
+                            in
+                                let merged =
+                                    function
+                                    |> functionReach(registry)(table)
+                                    |> reachJoin(previous)
+                                in
+                                    if reachEquals(previous)(merged)
+                                    then solveReach(registry)(dependents)(table)(rest)(back)(dequeued)(fuel - 1)
+                                    else
+                                        let waiting =
+                                            match Ashes.Collection.Map.getStr(key)(dependents) with
+                                                | Some(callers) -> callers
+                                                | None -> []
+                                        in
+                                            match enqueueDependents(waiting)(back)(dequeued) with
+                                                | (nextBack, nextQueued) ->
+                                                    solveReach(registry)(dependents)(setTable(key)(merged)(table))(rest)(nextBack)(nextQueued)(fuel - 1)
+
+let recursive functionKeys (functions: List(ReachFunction)) (keys: List(Str)) =
+    match functions with
+        | [] -> reverse(keys)
+        | ReachFunction { key = key } :: rest -> functionKeys(rest)(key :: keys)
+
+let recursive allQueued (keys: List(Str)) (queued: MapTree(Str, Bool)) =
+    match keys with
+        | [] -> queued
+        | key :: rest ->
+            queued
+            |> Ashes.Collection.Map.setStr(key)(true)
+            |> allQueued(rest)
+
+let sweepUntilStable (registry: ReachRegistry) (table: ReachTable) (fuel: Int) =
+    (let keys = functionKeys(registry.functions)([])
+    in
+        solveReach(registry)(dependentsOf(registry)(registry.functions)(Ashes.Collection.Map.empty))(table)(keys)([])(allQueued(keys)(Ashes.Collection.Map.empty))(fuel * length(registry.functions)))
 
 let recursive initialTableInto (functions: List(ReachFunction)) (table: ReachTable) =
     match functions with
