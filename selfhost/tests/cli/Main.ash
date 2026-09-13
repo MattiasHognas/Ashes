@@ -1113,10 +1113,40 @@ let testParseCompileArgumentsHelp unit =
         | CompileHelpRequested -> test.assertEqual(true)(true)
         | _ -> test.fail("expected --help to request help")
 
+// No input at all is the project discovered when the command runs, as stage 0 searches upward
+// from the working directory only then.
 let testParseCompileArgumentsMissingInput unit =
     match parseCompileArguments([]) with
-        | CompileInputError(message) -> test.assertEqual("Missing input: provide a .ash file.")(message)
-        | _ -> test.fail("expected zero arguments to be an input error")
+        | CompileParsedArguments(CompileArguments { input = CompileDiscoveredProject, outputPath = None }) -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected zero arguments to select the discovered project")
+
+let testParseCompileArgumentsProjectOption unit =
+    match parseCompileArguments(["--project", "app/ashes.json", "-o", "build/app"]) with
+        | CompileParsedArguments(CompileArguments { input = CompileProject(manifest), outputPath = Some(outputPath) }) ->
+            manifest
+            |> test.assertEqual("app/ashes.json")
+            |> (given (_) -> test.assertEqual("build/app")(outputPath))
+        | _ -> test.fail("expected --project to select the project form")
+
+let testParseCompileArgumentsProjectRequiresValue unit =
+    match parseCompileArguments(["--project"]) with
+        | CompileUsageError(message) -> test.assertEqual("Missing value for --project.")(message)
+        | _ -> test.fail("expected a bare --project to be a usage error")
+
+let testParseCompileArgumentsRejectsProjectWithInput unit =
+    match parseCompileArguments(["--project", "app/ashes.json", "examples/hello.ash"]) with
+        | CompileUsageError(message) -> test.assertEqual("Cannot combine --project with input file or --expr.")(message)
+        | _ -> test.fail("expected --project with a positional input to be a usage error")
+
+let testParseRunArgumentsProjectOption unit =
+    match parseRunArguments(["--project", "app/ashes.json", "--", "x"]) with
+        | RunParsedArguments(RunArguments { runInput = CompileProject(manifest), programArguments = "x" :: [] }) -> test.assertEqual("app/ashes.json")(manifest)
+        | _ -> test.fail("expected --project to select the project form for run")
+
+let testParseRunArgumentsRejectsProjectWithInput unit =
+    match parseRunArguments(["examples/hello.ash", "--project", "app/ashes.json"]) with
+        | RunUsageError(message) -> test.assertEqual("Cannot combine --project with input file or --expr.")(message)
+        | _ -> test.fail("expected --project with a positional input to be a usage error for run")
 
 let testParseCompileArgumentsRejectsUnknownOption unit =
     match parseCompileArguments(["--bogus", "a.ash"]) with
@@ -1135,7 +1165,7 @@ let testParseCompileArgumentsAmbiguousInputs unit =
 
 let testParseCompileArgumentsOutputOption unit =
     match parseCompileArguments(["-o", "build/hello", "examples/hello.ash"]) with
-        | CompileParsedArguments(CompileArguments { inputPath = inputPath, outputPath = Some(outputPath) }) ->
+        | CompileParsedArguments(CompileArguments { input = CompileFile(inputPath), outputPath = Some(outputPath) }) ->
             inputPath
             |> test.assertEqual("examples/hello.ash")
             |> (given (_) -> test.assertEqual("build/hello")(outputPath))
@@ -1143,7 +1173,7 @@ let testParseCompileArgumentsOutputOption unit =
 
 let testParseCompileArgumentsDisableReuse unit =
     match parseCompileArguments(["--debug-disable-reuse", "examples/hello.ash"]) with
-        | CompileParsedArguments(CompileArguments { inputPath = inputPath, disableReuse = disableReuse }) ->
+        | CompileParsedArguments(CompileArguments { input = CompileFile(inputPath), disableReuse = disableReuse }) ->
             inputPath
             |> test.assertEqual("examples/hello.ash")
             |> (given (_) -> test.assertEqual(true)(disableReuse))
@@ -1156,7 +1186,7 @@ let testParseCompileArgumentsReuseEnabledByDefault unit =
 
 let testParseRunArgumentsDisableReuse unit =
     match parseRunArguments(["--debug-disable-reuse", "examples/hello.ash", "--", "a"]) with
-        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = programArguments, runDisableReuse = disableReuse }) ->
+        | RunParsedArguments(RunArguments { runInput = CompileFile(inputPath), programArguments = programArguments, runDisableReuse = disableReuse }) ->
             inputPath
             |> test.assertEqual("examples/hello.ash")
             |> (given (_) -> test.assertEqual(["a"])(programArguments))
@@ -1195,7 +1225,7 @@ let testFormatByteSizeMegabytes unit =
 
 let testParseRunArgumentsForwardsProgramArguments unit =
     match parseRunArguments(["examples/hello.ash", "--", "hello", "world"]) with
-        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = "hello" :: "world" :: [] }) -> test.assertEqual("examples/hello.ash")(inputPath)
+        | RunParsedArguments(RunArguments { runInput = CompileFile(inputPath), programArguments = "hello" :: "world" :: [] }) -> test.assertEqual("examples/hello.ash")(inputPath)
         | _ -> test.fail("expected the arguments after -- to be forwarded")
 
 let testParseRunArgumentsWithoutSeparatorHasNoProgramArguments unit =
@@ -1211,7 +1241,7 @@ let testParseRunArgumentsRejectsOption unit =
 // Repeats of a kind deduplicate and the last selector wins, as stage 0 accumulates them.
 let testParseCompileArgumentsExplainOptions unit =
     match parseCompileArguments(["--explain", "rc", "--explain", "ownership:map", "--explain", "rc", "examples/hello.ash"]) with
-        | CompileParsedArguments(CompileArguments { inputPath = inputPath, explain = ExplainRequest { kinds = ExplainRc :: ExplainOwnership :: [], functionFilter = Some("map") } }) -> test.assertEqual("examples/hello.ash")(inputPath)
+        | CompileParsedArguments(CompileArguments { input = CompileFile(inputPath), explain = ExplainRequest { kinds = ExplainRc :: ExplainOwnership :: [], functionFilter = Some("map") } }) -> test.assertEqual("examples/hello.ash")(inputPath)
         | _ -> test.fail("expected repeated --explain options to accumulate into one request")
 
 let testParseCompileArgumentsWithoutExplainHasEmptyRequest unit =
@@ -1234,7 +1264,7 @@ let testParseCompileArgumentsExplainRequiresValue unit =
 
 let testParseRunArgumentsAcceptsExplain unit =
     match parseRunArguments(["--explain", "memory", "examples/hello.ash", "--", "arg"]) with
-        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = "arg" :: [], runExplain = ExplainRequest { kinds = ExplainMemory :: [], functionFilter = None } }) -> test.assertEqual("examples/hello.ash")(inputPath)
+        | RunParsedArguments(RunArguments { runInput = CompileFile(inputPath), programArguments = "arg" :: [], runExplain = ExplainRequest { kinds = ExplainMemory :: [], functionFilter = None } }) -> test.assertEqual("examples/hello.ash")(inputPath)
         | _ -> test.fail("expected --explain before the input to parse for run")
 
 let testParseRunArgumentsRejectsUnknownExplainKind unit =
@@ -1315,6 +1345,103 @@ let testCompileExplainRcPrintsReportToStderr unit =
                             Unit
                             |> removeExplainScratch
                             |> (given (_) -> test.assertEqual(0)(exitCode))))
+
+let projectScratchRoot = "cli-project-scratch"
+
+let removeProjectScratch unit =
+    match Ashes.IO.Directory.removeTree(projectScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up project scratch directory: " + message)
+
+// A two-module project whose entry uses a sibling module and a shipped selector import; it
+// prints `a,b 6`.
+let writeProjectScratch unit =
+    (let _ = removeProjectScratch(Unit)
+    in
+        let _ =
+            projectScratchRoot + "/src"
+            |> Ashes.IO.Directory.createAll
+            |> requireOk("create project scratch directory")
+        in
+            let _ =
+                "{\"name\":\"scratch-app\",\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}\n"
+                |> Ashes.IO.File.writeText(projectScratchRoot + "/ashes.json")
+                |> requireOk("write project scratch manifest")
+            in
+                let _ =
+                    "import Ashes.Collection.List.append\nimport Ashes.Text.join\nimport Util.twice\nAshes.IO.print(join(\",\")(append([\"a\"])([\"b\"])) + \" \" + Ashes.Text.fromInt(twice(3)))\n"
+                    |> Ashes.IO.File.writeText(projectScratchRoot + "/src/Main.ash")
+                    |> requireOk("write project scratch entry")
+                in
+                    "export (value twice)\n\nlet twice n = n * 2\n"
+                    |> Ashes.IO.File.writeText(projectScratchRoot + "/src/Util.ash")
+                    |> requireOk("write project scratch module"))
+
+let expectStdoutLine (expected: Str) process =
+    match Ashes.IO.Process.readStdoutLine(process) with
+        | None -> test.fail("expected the line " + expected + " on stdout, got none")
+        | Some(line) ->
+            line
+            |> test.assertEqual(expected)
+            |> (given (_) -> process)
+
+// The compiled project's executable prints what its modules compute.
+let runProjectScratchExecutable executablePath =
+    match Ashes.IO.Process.spawn(executablePath)([]) with
+        | Error(message) -> test.fail("could not start the compiled project: " + message)
+        | Ok(process) ->
+            process
+            |> expectStdoutLine("a,b 6")
+            |> drainStdout
+            |> drainStderr
+            |> Ashes.IO.Process.waitForExit
+            |> test.assertEqual(0)
+
+// `ashes compile --project <manifest> -o <output>` stitches the project's modules with the
+// shipped modules they import, writes the executable (creating the output directory), and the
+// executable runs; the CLI is re-entered as a child process as in the explain test above.
+let testCompileProjectWritesRunnableExecutable unit =
+    (let _ = writeProjectScratch(Unit)
+    in
+        match Ashes.IO.Process.spawn("/proc/self/exe")(["--as-cli", "compile", "--project", projectScratchRoot + "/ashes.json", "-o", projectScratchRoot + "/build/app"]) with
+            | Error(message) -> test.fail("could not re-enter the test executable as the CLI: " + message)
+            | Ok(process) ->
+                process
+                |> expectConfirmation
+                |> drainStdout
+                |> drainStderr
+                |> Ashes.IO.Process.waitForExit
+                |> test.assertEqual(0)
+                |> (given (_) -> runProjectScratchExecutable(projectScratchRoot + "/build/app"))
+                |> (given (_) -> removeProjectScratch(Unit)))
+
+// `ashes run --project <manifest>` compiles the project to the temporary directory and relays
+// the program's output.
+let testRunProjectRelaysProgramOutput unit =
+    (let _ = writeProjectScratch(Unit)
+    in
+        match Ashes.IO.Process.spawn("/proc/self/exe")(["--as-cli", "run", "--project", projectScratchRoot + "/ashes.json"]) with
+            | Error(message) -> test.fail("could not re-enter the test executable as the CLI: " + message)
+            | Ok(process) ->
+                process
+                |> expectStdoutLine("a,b 6")
+                |> drainStdout
+                |> drainStderr
+                |> Ashes.IO.Process.waitForExit
+                |> test.assertEqual(0)
+                |> (given (_) -> removeProjectScratch(Unit)))
+
+// An explicit manifest that does not exist is stage 0's "Project file not found" input error.
+let testCompileMissingProjectReportsNotFound unit =
+    match Ashes.IO.Process.spawn("/proc/self/exe")(["--as-cli", "compile", "--project", "cli-no-such-dir/ashes.json"]) with
+        | Error(message) -> test.fail("could not re-enter the test executable as the CLI: " + message)
+        | Ok(process) ->
+            process
+            |> drainStdout
+            |> expectStderrLines(["Project file not found: cli-no-such-dir/ashes.json"])
+            |> drainStderr
+            |> Ashes.IO.Process.waitForExit
+            |> test.assertEqual(1)
 
 let testRunCliDispatchesToCompileHelp unit =
     ["COMPILE", "--help"]
@@ -1455,6 +1582,14 @@ let run unit =
     |> testParseRunArgumentsAcceptsExplain
     |> testParseRunArgumentsRejectsUnknownExplainKind
     |> testCompileExplainRcPrintsReportToStderr
+    |> testParseCompileArgumentsProjectOption
+    |> testParseCompileArgumentsProjectRequiresValue
+    |> testParseCompileArgumentsRejectsProjectWithInput
+    |> testParseRunArgumentsProjectOption
+    |> testParseRunArgumentsRejectsProjectWithInput
+    |> testCompileProjectWritesRunnableExecutable
+    |> testRunProjectRelaysProgramOutput
+    |> testCompileMissingProjectReportsNotFound
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 // `--as-cli <args...>` re-enters this executable as the `ashes` CLI itself, so a test can observe
