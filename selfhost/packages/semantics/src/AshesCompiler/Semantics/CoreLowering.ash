@@ -304,8 +304,10 @@ type CoreTcoLoop =
 // `listActiveSlots` pairs every parameter slot whose self-call shape could place a list on the
 // reference-counted heap with the local that says, at runtime, whether the slot currently holds
 // a reference of its own (stage 0's `RuntimeManagedParamActiveSlots`), allocated at the loop
-// entry ahead of the body's own locals; `runtimeManagedListSlots` are the ones the resolved
-// types admitted once the body was lowered, each with its active slot and element type.
+// entry ahead of the body's own locals for a parameter whose type is resolved there, and at the
+// back edge or the body's end that resolves it otherwise; `runtimeManagedListSlots` are the ones
+// the resolved types admitted once the body was lowered, each with its active slot and element
+// type.
 // `affineReservationSlots` pairs every affine accumulator's parameter slot with the reservation
 // start and end locals its in-place append grows (stage 0's `AffineResvSlots`), and
 // `runtimeManagedStrSlots` are the `Str` parameters admitted to the affine placement once the
@@ -7242,9 +7244,58 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> emitTcoExitDrops(bodyTemp)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
             |> success(bodyTemp)(semanticType)
 
-// The active flags allocated at the loop entry for list-shaped, copy-ADT and affine `Str`
-// parameters the resolved types did not admit: never written or read, they are retired from
-// the function's slots.
+// A parameter whose self-call shape, copy-ADT layout, or affine analysis could place it on the
+// reference-counted heap: the candidates whose active flag the loop allocates.
+let listActiveSlotCandidate (ordinal: Int) (runtimeManagedOrdinals: List(Int)) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(runtimeManagedOrdinals)
+
+// Stage 0 places a loop parameter on the reference-counted heap only once its type has a
+// resolved layout (`ResolvedLayoutEligible`), so a parameter whose type is still a variable at
+// the loop entry gets its active flag only when a back edge or the body's end resolves it,
+// after every local allocated in between.
+let loopSlotTypeResolved (slot: Int) (state: CoreLoweringState) =
+    match slotResolvedType(slot)(state.bindings)(state) with
+        | Some(SemVariable(_id)) -> false
+        | _ -> true
+
+// The active flags a resolution point after the loop entry allocates (stage 0's
+// `LowerCallTcoPromoteResolvedRuntimeParams` at a back edge, and the post-body refresh of
+// `LowerLambdaCoreIdentifyRuntimeManagedTcoParams`): every candidate still without a flag whose
+// type the point has resolved, in parameter order, appended to the frame's pairs.
+let recursive allocatePendingListActiveSlots (ordinal: Int) (loop: CoreTcoLoop) (slots: List(Int)) (resolved: List(Bool)) (pairs: List((Int, Int))) (state: CoreLoweringState) =
+    match (slots, resolved, loopShapeAtOrdinal(ordinal)(loop.argumentShapes)) with
+        | (slot :: restSlots, slotResolved :: restResolved, Some(shape)) ->
+            if slotResolved && lookupListActiveSlot(slot)(pairs) == None && listActiveSlotCandidate(ordinal)(loop.runtimeManagedOrdinals)(shape)(slot)(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = activeSlot } ->
+                        allocatePendingListActiveSlots(ordinal + 1)(loop)(restSlots)(restResolved)(append(pairs)([(slot, activeSlot)]))(allocated)
+            else allocatePendingListActiveSlots(ordinal + 1)(loop)(restSlots)(restResolved)(pairs)(state)
+        | _ -> (state, pairs)
+
+let recursive argumentTypesResolved (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match argumentTypes with
+        | [] -> []
+        | argumentType :: rest ->
+            (match resolveType(state)(argumentType) with
+                | SemVariable(_id) -> false
+                | _ -> true) :: argumentTypesResolved(rest)(state)
+
+let recursive allResolved (count: Int) =
+    if count <= 0
+    then []
+    else true :: allResolved(count - 1)
+
+// A back edge whose argument types resolve a parameter the entry left in the arena allocates
+// its active flag there, and the body's end allocates the flags of every remaining candidate,
+// which the resolved types then admit or retire.
+let allocateListActiveSlotsAt (resolved: List(Bool)) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match allocatePendingListActiveSlots(0)(loop)(frame.parameterSlots)(resolved)(frame.listActiveSlots)(state) with
+        | (allocated, pairs) ->
+            let refreshed = frame with listActiveSlots = pairs
+            in ((allocated with tcoLoopFrame = Some(refreshed)), refreshed)
+
+// The active flags allocated for list-shaped, copy-ADT and affine `Str` parameters the resolved
+// types did not admit: never written or read, they are retired from the function's slots.
 let recursive unusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) =
     match pairs with
         | [] -> []
@@ -7256,7 +7307,7 @@ let recursive unusedListActiveSlots (pairs: List((Int, Int))) (managedLists: Lis
 let retireUnusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     state with retiredLocals = append(state.retiredLocals)(unusedListActiveSlots(pairs)(managedLists)(managedAdts)(managedStrs))
 
-let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
     |> (given (candidates: List(TcoManagedCandidate)) ->
@@ -7275,6 +7326,14 @@ let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Co
         else tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots))(if anyBlockingSibling(candidates)(state)
         then []
         else tcoRuntimeManagedAdtSlotsOf(candidates)(frame.listActiveSlots)))
+
+// Stage 0's post-body refresh allocates the active flag of every candidate the loop entry and
+// the back edges left without one, ahead of the entry normalization's own locals.
+let finalizeTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match allocateListActiveSlotsAt(frame.parameterSlots
+    |> length
+    |> allResolved)(frame)(loop)(state) with
+        | (allocated, refreshed) -> finalizeTcoManagedPlacementResolved(label)(refreshed)(loop)(bodyTemp)(semanticType)(allocated)
 
 // Runs once the loop body's whole lowering has resolved every parameter's type: splices the
 // entry normalization in at the recorded loop-entry point and emits the exit drops right before
@@ -7571,13 +7630,13 @@ let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (f
 
 // The active-flag local of every parameter whose self-call shape may place a list on the
 // reference-counted heap, or that the affine analysis keeps as a `Str` accumulator candidate,
-// allocated in parameter order ahead of the body label the way stage 0 allocates
-// `RuntimeManagedParamActiveSlots` at its loop entry; a parameter the resolved types later keep
-// in the arena leaves its local unwritten.
+// and whose type is already resolved, allocated in parameter order ahead of the body label the
+// way stage 0 allocates `RuntimeManagedParamActiveSlots` at its loop entry; a parameter the
+// resolved types later keep in the arena leaves its local unwritten.
 let recursive allocateListActiveSlots (ordinal: Int) (runtimeManagedOrdinals: List(Int)) (shapes: List(TcoArgumentShape)) (slots: List(Int)) (state: CoreLoweringState) =
     match (shapes, slots) with
         | (shape :: restShapes, slot :: restSlots) ->
-            if isTcoListShape(shape) || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(runtimeManagedOrdinals)
+            if listActiveSlotCandidate(ordinal)(runtimeManagedOrdinals)(shape)(slot)(state) && loopSlotTypeResolved(slot)(state)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = allocated, local = activeSlot } ->
@@ -8112,13 +8171,27 @@ and handleArmsApplyMappedOperator (arms: List((Maybe(Str), Str, List(Pattern), E
         | [] -> false
         | (_binder, _operation, _patterns, body) :: rest -> exprAppliesMappedOperator(body) || handleArmsApplyMappedOperator(rest)
 
-// A scope binding a body reads through a slot or its environment, with no quantified type of
-// its own: a parameter, a capture, or a `let` of the enclosing body.
+// A scope binding a body reads through a slot, its environment, or its own closure, with no
+// quantified type of its own: a parameter, a capture, a `let` of the enclosing body, or the
+// recursive binding whose body this is (stage 0's closed inferred type covers the binding's own
+// arrow, its result included).
 let isMonomorphicScopeBinding (binding: CoreBinding) =
     match binding with
         | CoreBinding { location = CoreLocal(_slot), scheme = TypeScheme { quantified = [] } } -> true
         | CoreBinding { location = CoreEnvironment(_index), scheme = TypeScheme { quantified = [] } } -> true
+        | CoreBinding { location = CoreSelf(_label, _environmentSize), scheme = TypeScheme { quantified = [] } } -> true
         | _ -> false
+
+// The type a scope binding is judged closed by: the recursive binding whose body this is by its
+// arrow's innermost result (its parameters are the scope's own bindings, judged on their own),
+// any other binding by its whole type.
+let recursive judgedScopeType (binding: CoreBinding) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match binding.location with
+        | CoreSelf(_label, _environmentSize) ->
+            match resolveType(state)(semanticType) with
+                | SemFunction(_argument, result, _row) -> judgedScopeType(binding)(result)(state)
+                | other -> other
+        | _ -> semanticType
 
 // Whether every monomorphic scope binding's type is closed once the body is lowered, and at
 // least one of them held a variable when the body was entered.
@@ -8128,9 +8201,10 @@ let recursive scopeTypesClosedByBody (bindings: List(CoreBinding)) (entered: Cor
         | (CoreBinding { scheme = TypeScheme { body = bindingType } } as binding) :: rest ->
             if isMonomorphicScopeBinding(binding)
             then
-                if containsUnresolvedLayout(bindingType)(finished)
+                if containsUnresolvedLayout(judgedScopeType(binding)(bindingType)(finished))(finished)
                 then false
-                else scopeTypesClosedByBody(rest)(entered)(finished)(anyResolved || containsUnresolvedLayout(bindingType)(entered))
+                else
+                    scopeTypesClosedByBody(rest)(entered)(finished)(anyResolved || containsUnresolvedLayout(judgedScopeType(binding)(bindingType)(entered))(entered))
             else scopeTypesClosedByBody(rest)(entered)(finished)(anyResolved)
 
 // Stage 0 lowers a binding that encountered a trait requirement against the type its discovery
@@ -8140,18 +8214,32 @@ let recursive scopeTypesClosedByBody (bindings: List(CoreBinding)) (entered: Cor
 // with as a variable is lowered again for the same reason.
 let bodyEncounteredRequirementClosedScope (body: Expr) (entered: CoreLoweringState) (finished: CoreLoweringState) = exprAppliesMappedOperator(body) && scopeTypesClosedByBody(entered.bindings)(entered)(finished)(false)
 
-let lowerFunctionBodyResolvingCalls (body: Expr) prepare lower (entered: CoreLoweringState) =
+// The closed inferred type stage 0 elaborates a recursive binding with covers the binding's own
+// result, so the scope the body is lowered again against includes the result the body settled
+// on: `close` binds it into a copy of the first lowering's state before the scope is judged
+// closed, and the second lowering starts from that substitution. A body lowered again only
+// because a call result resolved keeps the first substitution, where the binding's result is
+// still the lowering-local variable its self calls defer to.
+let lowerFunctionBodyResolvingCalls (body: Expr) prepare close lower (entered: CoreLoweringState) =
     match entered
     |> prepare
     |> lower(body) with
         | LoweredCoreValue { error = Some(_error) } as failed -> failed
         | LoweredCoreValue { state = firstState } as first ->
-            if anyCallResultResolved(firstState.unresolvedCallResults)(firstState) || bodyEncounteredRequirementClosedScope(body)(entered)(firstState)
-            then
-                (entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply)
-                |> prepare
-                |> lower(body)
-            else first
+            match close(first) with
+                | LoweredCoreValue { state = closedState } ->
+                    if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
+                    then
+                        (entered with substitution = closedState.substitution, typeSupply = closedState.typeSupply)
+                        |> prepare
+                        |> lower(body)
+                    else
+                        if anyCallResultResolved(firstState.unresolvedCallResults)(firstState)
+                        then
+                            (entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply)
+                            |> prepare
+                            |> lower(body)
+                        else first
 
 let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin fresh =
     match fresh with
@@ -8163,7 +8251,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
                 |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
                 |> enterLambdaTcoLoop
                 |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
-                |> withFunctionBodyRequest(body))(lower)
+                |> withFunctionBodyRequest(body))(given (first: LoweredCoreValue) -> first)(lower)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
             |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
@@ -12139,6 +12227,20 @@ let recursive deferredResultNames (selfName: Str) (bindings: List(CoreBinding)) 
             then name :: deferredResultNames(selfName)(rest)(state)
             else deferredResultNames(selfName)(rest)(state)
 
+let recursive withoutFirstName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | candidate :: rest ->
+            if candidate == name
+            then rest
+            else candidate :: withoutFirstName(name)(rest)
+
+// Decided again each time the body is entered: a body lowered again against the scope its first
+// lowering closed sees its own binding's result resolved, so its self calls take the binding's
+// result the way stage 0's elaborated binding does, while a first lowering still defers them.
+let refreshSelfResultDeferral (selfName: Str) (state: CoreLoweringState) =
+    state with selfResultDeferredNames = append(deferredResultNames(selfName)(state.bindings)(state))(withoutFirstName(selfName)(state.selfResultDeferredNames))
+
 // The recursive group's member names are remembered for the body and everything lifted out of
 // it, so a member captured into an inner curried stage is still known as a self callee.
 let prepareRecursiveBodyState selfName parameter parameterType captures selfBindings origin state =
@@ -12217,6 +12319,18 @@ let sugarChainBody (body: Expr) (declarationSpan: Maybe(TextSpan)) =
             else ExprAt(TextSpan(start = start, end = start + 1))(body)
         | _ -> body
 
+// The member's own arrow closed the way stage 0's inferred annotation closes it: every deferred
+// self-call result meets the binding's result, and the result meets the body's type. Applied to
+// a copy of the first lowering to judge whether the body is lowered again against the closed
+// scope; the lowering that stands is closed the same way when it finishes.
+let closeRecursiveBodyResult (resultType: SemanticType) (lowered: LoweredCoreValue) =
+    match unifySelfCallResults(lowered) with
+        | LoweredCoreValue { error = Some(_error) } as failed -> failed
+        | LoweredCoreValue { state = unified, temp = temp, semanticType = bodyType, error = None } ->
+            match bindType(resultType)(bodyType)(unified) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (bound, None) -> LoweredCoreValue(state = bound, temp = temp, semanticType = bodyType, error = None)
+
 // A recursive member is a known callee like a let-bound lambda: its label is remembered under
 // its name, so a call through the name can consult the member's recorded body placement.
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
@@ -12232,9 +12346,10 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> prepareRecursiveBodyState(name)(parameter)(parameterType)(captures)(selfBindings)(origin)
                         |> lowerFunctionBodyResolvingCalls(sugarChainBody(body)(labeled.recursiveDeclarationSpan))(given (entered: CoreLoweringState) ->
                             entered
+                            |> refreshSelfResultDeferral(name)
                             |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
-                            |> withRecursiveBodyRequest(body)(resultType))(lower)
+                            |> withRecursiveBodyRequest(body)(resultType))(closeRecursiveBodyResult(resultType))(lower)
                         |> finalizeTcoRuntimeManagedParams(label)
                         |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(labeled))
 
@@ -16115,17 +16230,19 @@ let recursive releaseTransferredRoots (roots: List(Int)) (arguments: List(Expr))
 // their references and release their roots, the parameters' old values are loaded, the new
 // values stored into the parameter slots, the reset scheduled, the stack pointer restored to
 // the loop body's entry, and the body label re-entered.
-let emitTailSelfCallBackEdge (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (arguments: List(Expr)) (temps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
-    match transferPatternBindingArguments(arguments)(temps)(frame)(loop)(state)([])([]) with
-        | (transferred, transferredTemps, roots) ->
-            match loadOldParameters(frame.parameterSlots)(releaseTransferredRoots(roots)(arguments)(frame)(transferred))([]) with
-                | (loadedState, oldTemps) ->
-                    loadedState
-                    |> storeNewParameters(frame.parameterSlots)(transferredTemps)
-                    |> scheduleTcoReset(frame)(arguments)(transferredTemps)(oldTemps)(argumentTypes)
-                    |> emit(RestoreStackPointer(frame.stackPointerSlot))
-                    |> emit(Jump(frame.bodyLabel))
-                    |> emitBackEdgeDummy
+let emitTailSelfCallBackEdge (enteredFrame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (arguments: List(Expr)) (temps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match allocateListActiveSlotsAt(argumentTypesResolved(argumentTypes)(state))(enteredFrame)(loop)(state) with
+        | (resolvedState, frame) ->
+            match transferPatternBindingArguments(arguments)(temps)(frame)(loop)(resolvedState)([])([]) with
+                | (transferred, transferredTemps, roots) ->
+                    match loadOldParameters(frame.parameterSlots)(releaseTransferredRoots(roots)(arguments)(frame)(transferred))([]) with
+                        | (loadedState, oldTemps) ->
+                            loadedState
+                            |> storeNewParameters(frame.parameterSlots)(transferredTemps)
+                            |> scheduleTcoReset(frame)(arguments)(transferredTemps)(oldTemps)(argumentTypes)
+                            |> emit(RestoreStackPointer(frame.stackPointerSlot))
+                            |> emit(Jump(frame.bodyLabel))
+                            |> emitBackEdgeDummy
 
 // A tail self-call inside an emitted loop body is the loop's back edge rather than a call: the
 // loop function's own type gives each argument its expected parameter type.
