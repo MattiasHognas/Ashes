@@ -1,0 +1,7 @@
+Reuse report
+============
+
+Function: _start_main
+  specialization candidate qualification: rejected [impls]
+    reason: accumulator not proven unique (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+

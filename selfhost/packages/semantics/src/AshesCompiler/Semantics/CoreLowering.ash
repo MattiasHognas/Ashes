@@ -9366,7 +9366,11 @@ let deferSelfCallResultType (context: CoreCallContext) (arity: Int) (resultType:
 
 // An argument is expected to have the callee's parameter type. A tail self-call's argument
 // becomes the next iteration's parameter, so it is lowered under the children transfer and its
-// own read of a live owner is retained (stage 0's `LowerCallTcoEvalArg`).
+// own read of a live owner is retained (stage 0's `LowerCallTcoEvalArg`). An argument the
+// callee's result may reach travels on inside that result and escapes this function's binding
+// scopes the same way, so it too is lowered under the children transfer (stage 0's
+// `CalleeResultMayReachArgument`): an owned binding stored inside the aggregate is retained,
+// since the binding's own scope-exit release still fires.
 let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Bool) consumed lower functionTemp resolved =
     match resolved with
         | FunctionTypeResolution { state = typedState, error = Some(error) } ->
@@ -9379,7 +9383,7 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     deferredState
                     |> withArgumentRequest(Some(expectedType))(deferredState
                     |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
-                    |> Some)(transfers)
+                    |> Some)(transfers || calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
                     |> lower(argument)
                     |> retainTransferredChild(argument)(transfers)
                     |> lowerCoreCallArgument(context)(arity)(argument)(consumed)(functionTemp)(expectedType)(callResultType)

@@ -3276,7 +3276,27 @@ same public behavior.
   for a single-parameter reader with a nested pattern (`Node(Leaf, value, _right)`, or a
   nested match on the bound child) stage 0 synthesizes the direct-reuse copier and produces
   the arms' `DropReuse` tokens (then discards them), where the self-hosted lowering emits
-  neither. Both shapes were kept out of the fixture; add them once mirrored.
+  neither. Both shapes were kept out of the fixture; add them once mirrored. Two more found
+  while writing OPT-79's fixture (2026-09-14, `rc_child_of_call_argument_kept_by_callee_result`,
+  kept out of the exact-comparison list for them): the self-hosted lowering positions the
+  `LoadEnv` reads of a closure helper at the enclosing `let` (`53:5`) where stage 0 positions
+  each at the pipe stage that reads the capture (`54:8`, `55:8`, `56:8`); and stage 0
+  synthesizes a `__tospacecopy_adt_N` deep copier for an `Env(impls = [])` record passed to a
+  generic parameter, where the self-hosted lowering emits none.
+- [x] **OPT-79** Stage 0 released a `let`-bound reference-counted value that a callee's result
+  kept: `let methodName = nameOf(t) in add(t)([Method(name = methodName, ...)])(env)` stored the
+  string into an arena record inside a list literal passed to `add`, whose result embeds the
+  argument, and the caller borrowed the string into the record (an arena aggregate retains
+  nothing) then dropped the binding at scope exit, so every seeded standard trait
+  implementation of `standardTraitEnvironment` carried a dangling method name (`"default"`,
+  then whatever reused the memory). The fresh-argument transfer of #743 covered only a
+  reference-counted argument itself, not the owned bindings inside an arena aggregate argument.
+  Fixed (2026-09-14): a call argument the callee's result may reach is lowered under the
+  children transfer (`TransfersRuntimeManagedChildren`, the tail self-call argument's rule) in
+  stage 0's `LowerCallArgumentValue` and the self-hosted `lowerCoreCallTyped`, so the stored
+  binding is retained into the aggregate. Regression
+  `tests/rc_child_of_call_argument_kept_by_callee_result.ash`, oracle fixture of the same
+  name (the retain and release sequence of `addImpl` matches exactly in both compilers).
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
