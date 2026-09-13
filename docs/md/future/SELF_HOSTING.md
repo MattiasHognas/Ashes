@@ -696,13 +696,31 @@ same public behavior.
   which made `CopyOutRuntime`'s field an implicit parameter. Tests:
   `expectForwardTypeReferenceKeepsArity` and `expectExternalOpaqueFieldKeepsArity` in the
   semantics suite.
-- [ ] **MOD-14** The stage-1 lowering of the CLI package's entry expression fails with
-  `CoreCallTypeMismatch(TypeArityMismatch(0, 4))` at `Package.ash:20` (the trailing
-  `Ashes.IO.args |> runCli |> Ashes.IO.exit`, span 1709-1923), reached once MOD-13 closed
-  (2026-09-13, under a stage 0 with OPT-77's entry copies disabled; the stock stage 0 exhausts
-  45 GiB first, see OPT-74). Stage 0 compiles the package. Find which of `runCli` and
-  `Ashes.IO.exit` the stage-1 core inference gives the wrong arity (a capability row or the
-  `Never`-returning `exit`), with a reduced repro in `selfhost/tests/cli`.
+- [x] **MOD-14** The stage-1 lowering of the CLI package failed with
+  `CoreCallTypeMismatch(TypeArityMismatch(0, 4))` reported at `Package.ash:20`, reached once
+  MOD-13 closed (2026-09-13). The location was borrowed from the entry file (the stitched
+  line-mapping gap); the span was `ProjectManifest.ash`'s `findField (key: Str) (json:
+  ManifestJson)`, where `type alias ManifestJson = Json(Bool, Int, Float, Str)`. Two causes,
+  both fixed: the core lowering never expanded type aliases, so an alias in an annotation
+  became a bare nominal type with no arguments and failed to unify with the four-argument
+  constructor patterns (stage 0's `ResolveTypeAlias`); `registerProgramTypes` now collects every
+  alias into `typeAliases` and `expandTypeAliases` substitutes its target, parameters bound to
+  the written arguments, wherever a type expression is converted (annotations, constructor
+  fields, capability signatures), with a fuel against alias cycles. And `Ashes.IO.args` had no
+  standard builtin layout (`UnknownLoweringBinding` in a single-file compile), added as the
+  nullary `List(Str)` value. Tests: `expectTypeAliasAnnotationKeepsArguments` (an alias chain
+  over a generic tree) and `expectStandardProgramArgsValue` in the semantics suite; the
+  reduced programs compile with the stage-1 CLI and run correctly.
+- [ ] **MOD-15** The stage-1 lowering of the CLI package fails with
+  `UnknownLoweringBinding("__ashes_private_external_AshesCompiler_Backend_Llvm_LLVMContextCreate")`,
+  reached once MOD-14 closed (2026-09-13, 24 s and 13.8 GiB): a stitched private module's
+  `external` function, renamed by the stitcher, is not a binding the core lowering knows. The
+  program-mode entry (`lowerCoreProgramWithSourceAndReuse`) builds its state with
+  `initialStateWithContext` and never registers the stitched program's external function
+  declarations as callable bindings the way stage 0's `RegisterExternalFunctions` does. Register
+  every `TopLevelExternal(ExternalFunction ...)` of the stitched program under its compiler name
+  before the items are lowered; a reduced two-module repro with an `external` function belongs
+  in `selfhost/tests/projects`.
 
 #### IR model and lowering
 
@@ -3811,10 +3829,13 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   stopped the lowering at 15 GiB; the lowering then ran on past them and exhausted 45 GiB.
   OPT-74 (the builder head copies) brought it to MOD-14's diagnostic in 25 s and 28 GiB, and
   OPT-77 (the specialization entry copies) to 21 s and 12.9 GiB, against the 9 GiB stage 0
-  itself needs for the same package, so MOD-14 is the next blocker and the remaining memory
-  (whatever the next gdb `mmap` sampling names: the `constructorInferenceDefinitionsFromLayouts`
-  record builder, the curried `Ashes.Trait` operator closures behind linear name scans) comes
-  after it. The measurement tool is a
+  itself needs for the same package. MOD-14 (type aliases and the program-arguments value)
+  moved the stop to MOD-15's diagnostic at 24 s and 13.8 GiB, so MOD-15 (stitched external
+  functions) is the next blocker; a single-file program that reads `Ashes.IO.args` now lowers
+  but stops in the stage-1 backend, which has no `LoadProgramArgs` codegen yet (CG-11's open
+  program-arguments item). The remaining memory (whatever the next gdb `mmap` sampling names:
+  the `constructorInferenceDefinitionsFromLayouts` record builder, the curried `Ashes.Trait`
+  operator closures behind linear name scans) comes after. The measurement tool is a
   scratch driver that runs `loadProject`, `stitchProject`, `lowerCoreProgramWithSourceAndReuse`,
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker

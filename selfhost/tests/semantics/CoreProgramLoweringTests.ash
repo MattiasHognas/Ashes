@@ -69,6 +69,14 @@ let expectExternalOpaqueFieldKeepsArity unit =
     |> loweredProgramSource
     |> (given (_) -> Unit)
 
+// A type alias of an applied generic type keeps the type arguments wherever it is written: an
+// annotation `(tree: StrTree)` with `type alias StrTree = Tree(Str, Int)` unifies with the
+// constructor patterns of `Tree(K, V)`, and a chain of aliases expands through.
+let expectTypeAliasAnnotationKeepsArguments unit =
+    "type Tree(K, V) =\n    | Empty\n    | Node(Int, Tree, K, V, Tree)\n\ntype alias StrTree = Tree(Str, Int)\n\ntype alias Index = StrTree\n\nlet recursive find (key: Str) (tree: Index) =\n    match tree with\n        | Empty -> None\n        | Node(_height, left, candidate, value, _right) ->\n            if candidate == key\n            then Some(value)\n            else find(key)(left)\n\nlet document = Node(1)(Node(0)(Empty)(\"a\")(1)(Empty))(\"b\")(2)(Empty)\n\nmatch find(\"a\")(document) with\n    | Some(n) -> n\n    | None -> 0"
+    |> loweredProgramSource
+    |> (given (_) -> Unit)
+
 let expectSelfRecursiveTopLevelLetLowers unit =
     "let recursive fact n = if n <= 1 then 1 else n * fact(n - 1)\nfact(5)"
     |> loweredProgramSource
@@ -763,6 +771,7 @@ let runCoreProgramLoweringTests unit =
     |> expectSelfReferenceWithoutRecursiveIsRejected
     |> expectForwardTypeReferenceKeepsArity
     |> expectExternalOpaqueFieldKeepsArity
+    |> expectTypeAliasAnnotationKeepsArguments
     |> expectGenuinelyUnknownNameStillRejectedAsUnknown
     |> expectTraitConstrainedBindingLowersWithEnvironment
     |> expectTraitConstrainedBindingFailsWithoutEnvironment
