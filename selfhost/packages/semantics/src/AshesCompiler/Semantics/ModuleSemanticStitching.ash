@@ -651,6 +651,22 @@ let addSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) 
                         bindings
                     )
 
+// Stage 0 normalizes a type selector import (`import M.Type`) into a whole-module import of `M`
+// beside the selector (`NormalizeTypeSelectors`), so the module's exports, its constructors
+// among them, are in scope unqualified and qualified as by `import M`; a module the scope
+// already imports wholesale is not imported again.
+let addTypeSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) exportName localName bindings =
+    match imported with
+        | StitchedModuleScope { name = importedName } ->
+            let withModule =
+                match qualifierOwner(importedName)(bindings) with
+                    | Some(_owner) -> Ok(bindings)
+                    | None -> addWholeModuleImport(ownerModule)(fatalConflict)(imported)(None)(bindings)
+            in
+                match withModule with
+                    | Error(error) -> Error(error)
+                    | Ok(moduleBindings) -> addSelectorImport(ownerModule)(fatalConflict)(imported)(exportName)(localName)(StitchedType)(moduleBindings)
+
 let recursive buildImportBindings ownerModule fatalConflict imports completed bindings =
     match imports with
         | [] ->
@@ -686,13 +702,12 @@ let recursive buildImportBindings ownerModule fatalConflict imports completed bi
                                     bindings
                                 )
                             | ResolvedTypeImport(_moduleName, exportName, localName, _line, _written) ->
-                                addSelectorImport(
+                                addTypeSelectorImport(
                                     ownerModule,
                                     fatalConflict,
                                     imported,
                                     exportName,
                                     localName,
-                                    StitchedType,
                                     bindings
                                 )
                     in

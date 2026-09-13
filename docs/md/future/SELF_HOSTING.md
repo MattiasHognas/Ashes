@@ -783,12 +783,24 @@ same public behavior.
     (`Ashes.Trait.Show.show(x)`, which the selfhost source uses), sharing the dispatch of
     MOD-17a; default methods whose bodies call sibling methods (`less` via `compare`) need the
     concrete operand type pinned on the default lambda's parameters before it is lowered.
-- [ ] **MOD-18** The stage-1 compile of the CLI package fails with
+- [x] **MOD-18** The stage-1 compile of the CLI package failed with
   `UnsupportedCoreLoweringPattern("unknown constructor TypeAt")`, reached once MOD-17b closed
-  (2026-09-14, 31.6 s and 13.9 GiB): a constructor pattern on the frontend's `TypeExpr` whose
-  constructor the lowering does not know under that name. Find the site (a derived `Eq`
-  body over a stitched type whose constructors were renamed, or a match the stitcher left
-  with the bare name), mirror what stage 0 does there, and add the reduced program as a test.
+  (2026-09-14, 31.6 s and 13.9 GiB), in `TypeResolution.resolveTypeExpression`, which gets
+  `TypeExpr` through the type selector import `import AshesCompiler.Frontend.Syntax.TypeExpr`
+  and matches its constructors bare. Stage 0 normalizes a type selector into a whole-module
+  import of the parent beside the selector (`NormalizeTypeSelectors`), so the module's
+  constructors and other exports are in scope; the self-hosted stitcher bound the selected
+  type alone and left the constructor patterns unresolved (a nullary one became a variable
+  pattern). Done (2026-09-14): `addTypeSelectorImport` imports the module wholesale beside
+  the selector unless the scope already imports it; the language reference states the rule;
+  `tests/import_type_selector_project` and a stitching test cover it.
+- [ ] **MOD-19** The stage-1 compile of the CLI package fails with
+  `UnsupportedCoreLoweringPattern("unknown record AshesPrivateType_AshesCompiler_Semantics_TypeInference_HandlerOperationArmDefinition")`,
+  reached once MOD-18 closed (2026-09-14, 41.5 s and 14.1 GiB): a record pattern on a type
+  the stitcher renamed as private (`AshesPrivateType_` prefix) that the lowering does not
+  know under that name. Find where the record pattern's type name and the registered type's
+  name diverge (the pattern rewrite, the type registration, or a private type reached through
+  a selector), mirror stage 0, and add the reduced program as a test.
 
 #### IR model and lowering
 
@@ -3924,7 +3936,9 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   `Eq` dispatch) moved that stop to `UnsupportedCoreTraitDispatch("Eq", List(SemanticType))`
   at 28.9 s and 14.7 GiB, and MOD-17b (the structural implementations with their requirement
   evidence) to MOD-18's `UnsupportedCoreLoweringPattern("unknown constructor TypeAt")` at
-  31.6 s and 13.9 GiB, so MOD-18 is the next blocker; a single-file program that reads
+  31.6 s and 13.9 GiB, and MOD-18 (type selector imports bring their module in) to MOD-19's
+  `unknown record AshesPrivateType_..._HandlerOperationArmDefinition` at 41.5 s and 14.1 GiB,
+  so MOD-19 is the next blocker; a single-file program that reads
   `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
   codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
   codegen either, which the CLI package's LLVM bindings will need before its binary links. The

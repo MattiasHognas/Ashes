@@ -1917,8 +1917,8 @@ name into scope **unqualified**:
 | `import M as X` | module `M` under alias `X` |
 | `import M.binding` | `binding` (unqualified) |
 | `import M.binding as x` | `binding` under unqualified name `x` |
-| `import M.Type` | `Type` (unqualified) |
-| `import M.Type as T` | `Type` under unqualified name `T` |
+| `import M.Type` | `Type` (unqualified), and module `M` as by `import M` |
+| `import M.Type as T` | `Type` under unqualified name `T`, and module `M` as by `import M` |
 
 Examples:
 
@@ -1932,6 +1932,10 @@ Rules:
 
 - `import M.name` makes `name` (a binding or type exported by `M`) available
   unqualified. `import M.name as alias` makes it available as `alias` instead.
+- A type selector (`import M.Type`, `import M.Type as T`) also imports `M` as a whole, exactly
+  as `import M` would: `M`'s other exports, its constructors among them, are in scope
+  unqualified and through the `M` qualifier, so a pattern on `Type`'s constructors needs no
+  further import.
 - The selected name must be an export of `M` (see “Module Exports” below).
 - If two unqualified selectors bring the **same** unqualified name into scope, it is
   a compile-time error (diagnostic `ASH016`). Resolve the conflict with `as`.
