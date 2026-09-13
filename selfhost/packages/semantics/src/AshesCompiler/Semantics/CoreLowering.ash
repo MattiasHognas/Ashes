@@ -46,7 +46,6 @@ import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TraitResolution.resolveTraitEvidence
 import AshesCompiler.Semantics.TypeInference.addTraitImplementation
 import AshesCompiler.Semantics.TypeInference.resolveTraitBinding
-import AshesCompiler.Semantics.TypeInference.resolveTraitImplementations
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.ExternalAbi.validateExternalProgramAbi
 import AshesCompiler.Semantics.ExternalTyping
@@ -581,6 +580,10 @@ type CoreLoweringState =
     // active trait dictionary parameters: for each required trait's method at the requirement's
     // type argument, the hidden parameter binding that carries its closure.
     | activeTraitMethods: List((Str, SemanticType, Str, Str))
+    // The generic implementation head's type parameters by name, each standing for the fresh
+    // variable its method body is lowered against, so an annotation inside the body (a recursive
+    // let's declared type) names the same variables the active evidence carries.
+    | activeTypeParameters: List((Str, SemanticType))
     | valuePlacements: List((Int, Maybe(IrFunctionOrigin), SemanticType))
     // The representation the lowering itself decided for a control-flow join's result, by the
     // function it belongs to and the temp the join reloads. The `memory` report's post-hoc walk
@@ -923,6 +926,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         traitEnvironment = standardLoweringTraitEnvironment,
         traitMethodLabels = Ashes.Collection.Map.empty,
         activeTraitMethods = [],
+        activeTypeParameters = [],
         valuePlacements = [],
         joinRepresentations = [],
         unresolvedCallResults = [],
@@ -1018,7 +1022,6 @@ let standardConstructorLayouts =
 // is the "just give me sensible defaults" entry point (`lowerCoreProgram`/`lowerCoreProgramWithSource`
 // both go through it); `initialStateWithContext` and friends remain fully caller-controlled for
 // whoever genuinely needs a different (or additional) set.
-
 let initialState unit = initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)(unit)
 
 let withNextTemp nextTemp (state: CoreLoweringState) = state with nextTemp = nextTemp
@@ -6486,7 +6489,7 @@ let lowerLambdaParameterType annotation parameterType state =
     match annotation with
         | None -> (state, None)
         | Some(typeExpr) ->
-            match typeExprToSemanticType(expandTypeAliases(state.typeAliases)(32)(typeExpr))([]) with
+            match typeExprToSemanticType(expandTypeAliases(state.typeAliases)(32)(typeExpr))(state.activeTypeParameters) with
                 | None -> (state, None)
                 | Some(annotationType) -> bindType(parameterType)(annotationType)(state)
 
@@ -8610,7 +8613,24 @@ let lowerFunctionBodyResolvingCalls (body: Expr) prepare close lower (entered: C
                             |> lower(body)
                         else first
 
-let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin fresh =
+// A lambda lowered against an expected function type hands the expected result type on to its
+// body, as a recursive member does: a nested lambda of a curried chain then pins its own
+// parameter before the body is lowered, so a trait-mapped operator inside it sees the type the
+// context already knows rather than a variable no active evidence covers.
+let withLambdaBodyRequest (body: Expr) (expectedResult: Maybe(SemanticType)) (prepared: CoreLoweringState) =
+    match expectedResult with
+        | Some(resultType) -> withRecursiveBodyRequest(body)(resultType)(prepared)
+        | None -> withFunctionBodyRequest(body)(prepared)
+
+let expectedLambdaResultType (state: CoreLoweringState) =
+    match expectedTypeOf(state) with
+        | Some(expected) ->
+            match resolveType(state)(expected) with
+                | SemFunction(_argument, result, _row) -> Some(result)
+                | _ -> None
+        | None -> None
+
+let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin expectedResult fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
@@ -8620,7 +8640,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
                 |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
                 |> enterLambdaTcoLoop
                 |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
-                |> withFunctionBodyRequest(body))(given (first: LoweredCoreValue) -> first)(lower)
+                |> withLambdaBodyRequest(body)(expectedResult))(given (first: LoweredCoreValue) -> first)(lower)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
             |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
@@ -8699,7 +8719,8 @@ let lowerLambda parameter body annotation stackAllocate lower state =
                                 | (expectedState, None) ->
                                     match lowerLambdaParameterType(annotation)(parameterType)(expectedState) with
                                         | (checkedState, Some(error)) -> failure(checkedState)(error)
-                                        | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = seedParameterFromConstructorFields(parameter)(parameterType)(body)(checkedState), semanticType = parameterType))
+                                        | (checkedState, None) ->
+                                            lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(expectedLambdaResultType(freshState))(FreshType(state = seedParameterFromConstructorFields(parameter)(parameterType)(body)(checkedState), semanticType = parameterType))
 
 let recursive constructorAritiesOf (layouts: List(CoreConstructorLayout)) =
     match layouts with
@@ -12963,12 +12984,32 @@ let relabelSingleRecursive lambdaId prepared =
             )
         | _ -> prepared
 
-let lowerLetRecursive name value body lower state =
+// A recursive let's declared type inside a generic implementation method body names the head's
+// type parameters (`let recursive equalLists : List(a) -> List(a) -> Bool requires {Eq(a)}`):
+// the binding's fresh function type is unified with the annotation read against the active type
+// parameters before the body is lowered, so a comparison inside the body sees the variable the
+// active evidence carries. Outside such a body the annotation is left to the ordinary inference.
+let pinRecursiveAnnotation (annotation: Maybe(TypeExpr)) (prepared: PreparedCoreRecursiveGroup) =
+    match (annotation, prepared) with
+        | (Some(typeExpr), PreparedCoreRecursiveGroup { state = state, members = (PreparedCoreRecursiveBinding { semanticType = semanticType } as member) :: [], error = None }) ->
+            match state.activeTypeParameters with
+                | [] -> prepared
+                | parameters ->
+                    match typeExprToSemanticType(expandTypeAliases(state.typeAliases)(32)(typeExpr))(parameters) with
+                        | None -> prepared
+                        | Some(annotationType) ->
+                            match bindType(semanticType)(annotationType)(state) with
+                                | (boundState, None) -> PreparedCoreRecursiveGroup(state = boundState, members = [member], error = None)
+                                | (failedState, Some(error)) -> PreparedCoreRecursiveGroup(state = failedState, members = [member], error = Some(error))
+        | _ -> prepared
+
+let lowerLetRecursive name value body annotation lower state =
     match state with
         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId, currentSpan = declarationSpan } ->
             []
             |> prepareRecursiveGroup([(name, value)])((state with recursiveDeclarationSpan = declarationSpan))
             |> relabelSingleRecursive(lambdaId)
+            |> pinRecursiveAnnotation(annotation)
             |> lowerPreparedRecursiveGroup([(name, value)])(body)(lower)(outerBindings)
 
 let recursive emitTupleFields baseTemp index temps state =
@@ -15198,7 +15239,7 @@ let emitTraitMethodClosureFromLabel (label: Str) (semanticType: SemanticType) (s
 // closed term) and no consumer request. A capture-free lambda is remembered under its predicted
 // label before its body is lowered; a body that then lowers to a different label is refused
 // rather than left calling the wrong function.
-let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (expectedType: SemanticType) (evidence: List((Str, SemanticType, Str, Str))) (implementation: Expr) lower (state: CoreLoweringState) =
+let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (expectedType: SemanticType) (evidence: List((Str, SemanticType, Str, Str))) (parameters: List((Str, SemanticType))) (implementation: Expr) lower (state: CoreLoweringState) =
     match Ashes.Collection.Map.getStr(key)(state.traitMethodLabels) with
         | Some((label, semanticType)) -> emitTraitMethodClosureFromLabel(label)(semanticType)(state)
         | None ->
@@ -15209,9 +15250,9 @@ let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (expectedType
                         | Some(label) -> rememberTraitMethodLabel(key)(label)(expectedType)(state)
                         | None -> state
                 in
-                    match (primed with activeTraitMethods = evidence) |> withOnlyExpectedType(Some(expectedType)) |> lower(implementation) with
+                    match (primed with activeTraitMethods = evidence, activeTypeParameters = parameters) |> withOnlyExpectedType(Some(expectedType)) |> lower(implementation) with
                         | LoweredCoreValue { state = loweredState, temp = temp, semanticType = semanticType, error = None } ->
-                            let restored = (loweredState with activeTraitMethods = state.activeTraitMethods) |> withConsumerRequest(state.consumerRequest)
+                            let restored = (loweredState with activeTraitMethods = state.activeTraitMethods, activeTypeParameters = state.activeTypeParameters) |> withConsumerRequest(state.consumerRequest)
                             in
                                 match (predicted, emptyEnvironmentClosureLabel(temp)(loweredState.reversedInstructions)) with
                                     | (Some(expected), Some(label)) ->
@@ -15233,7 +15274,7 @@ let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (expectedType
                                         |> rememberTraitMethodLabel(key)(label)(semanticType)
                                         |> success(temp)(semanticType)
                                     | (None, None) -> success(temp)(semanticType)(restored)
-                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with activeTraitMethods = state.activeTraitMethods))(error)
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with activeTraitMethods = state.activeTraitMethods, activeTypeParameters = state.activeTypeParameters))(error)
 
 // The two closure calls stage 0's `RecordMappedBinaryTrait` emits: the method applied to the left
 // operand, the partial application to the right.
@@ -15456,6 +15497,7 @@ type PreparedTraitMethod =
     | expectedType: SemanticType
     | evidence: List((Str, SemanticType, Str, Str))
     | requirements: List(TraitConstraint)
+    | parameters: List((Str, SemanticType))
     | state: CoreLoweringState
     | error: Maybe(CoreLoweringError)
 
@@ -15463,6 +15505,12 @@ let recursive substituteConstraintArguments (pairs: List((SemanticType, Semantic
     match constraints with
         | [] -> []
         | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: rest -> TraitConstraint(traitName = traitName, typeArguments = substituteTraitParametersIn(pairs)(typeArguments)) :: substituteConstraintArguments(pairs)(rest)
+
+let recursive namedHeadParameters (pairs: List((SemanticType, SemanticType))) =
+    match pairs with
+        | [] -> []
+        | (SemParameter(_id, name), variable) :: rest -> (name, variable) :: namedHeadParameters(rest)
+        | _pair :: rest -> namedHeadParameters(rest)
 
 let prepareTraitMethod (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) (body: Expr) (state: CoreLoweringState) =
     match implementation with
@@ -15472,10 +15520,10 @@ let prepareTraitMethod (traitName: Str) (methodName: Str) (implementation: Trait
                     let instantiatedRequirements = substituteConstraintArguments(pairs)(requirements)
                     in
                         match (traitMethodTypeAt(traitName)(methodName)(substituteTraitParametersIn(pairs)(headTypes))(freshState), evidenceParametersFor(0)(instantiatedRequirements)(freshState)) with
-                            | (Some(methodType), TraitEvidenceParameters { entries = entries, names = names, types = types, error = None }) -> PreparedTraitMethod(wrapper = wrapEvidenceLambdas(names)(body), expectedType = wrapEvidenceTypes(types)(methodType), evidence = entries, requirements = instantiatedRequirements, state = freshState, error = None)
-                            | (_methodType, TraitEvidenceParameters { error = Some(error) }) -> PreparedTraitMethod(wrapper = body, expectedType = SemNever, evidence = [], requirements = [], state = freshState, error = Some(error))
+                            | (Some(methodType), TraitEvidenceParameters { entries = entries, names = names, types = types, error = None }) -> PreparedTraitMethod(wrapper = wrapEvidenceLambdas(names)(body), expectedType = wrapEvidenceTypes(types)(methodType), evidence = entries, requirements = instantiatedRequirements, parameters = namedHeadParameters(pairs), state = freshState, error = None)
+                            | (_methodType, TraitEvidenceParameters { error = Some(error) }) -> PreparedTraitMethod(wrapper = body, expectedType = SemNever, evidence = [], requirements = [], parameters = [], state = freshState, error = Some(error))
                             | (None, _parameters) ->
-                                PreparedTraitMethod(wrapper = body, expectedType = SemNever, evidence = [], requirements = [], state = freshState, error = SemTuple(headTypes)
+                                PreparedTraitMethod(wrapper = body, expectedType = SemNever, evidence = [], requirements = [], parameters = [], state = freshState, error = SemTuple(headTypes)
                                 |> UnsupportedCoreTraitDispatch(traitName)
                                 |> Some)
 
@@ -15493,15 +15541,6 @@ let hasActiveTraitEvidence (traitName: Str) (typeArgument: SemanticType) (state:
     match sortedTraitMethodNames(traitName)(state) with
         | [] -> false
         | methodName :: _rest -> activeTraitMethod(traitName)(typeArgument)(methodName)(state)(state.activeTraitMethods) != None
-
-let recursive implementationMethodNamesOf (methods: List(TraitImplementationMethodInferenceDefinition)) =
-    match methods with
-        | [] -> []
-        | TraitImplementationMethodInferenceDefinition { name = name } :: rest -> name :: implementationMethodNamesOf(rest)
-
-let implementationMethodNames (implementation: TraitImplementationInferenceDefinition) =
-    match implementation with
-        | TraitImplementationInferenceDefinition { methods = methods } -> implementationMethodNamesOf(methods)
 
 let traitMethodLabelKeyOf (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) =
     match implementation with
@@ -15531,12 +15570,15 @@ let recursive buildTraitMethodClosure (plan: TraitEvidencePlan) (methodName: Str
                     |> failure(state)
         | TraitEvidenceInstance(TraitConstraint { traitName = traitName, typeArguments = goal :: [] }, implementation, requirementPlans, []) ->
             match traitMethodBody(traitName)(methodName)(implementation)(state) with
-                | None -> failure(state)(UnsupportedCoreImplementationHead(traitName + "/" + methodName + "/" + Ashes.Trait.Show.show(implementationMethodNames(implementation)) + "/" + Ashes.Trait.Show.show(goal)))
+                | None ->
+                    goal
+                    |> UnsupportedCoreTraitDispatch(traitName)
+                    |> failure(state)
                 | Some(body) ->
                     match prepareTraitMethod(traitName)(methodName)(implementation)(body)(state) with
                         | PreparedTraitMethod { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                        | PreparedTraitMethod { wrapper = wrapper, expectedType = expectedType, evidence = evidence, requirements = requirements, state = preparedState, error = None } ->
-                            match lowerTraitMethodClosure(traitMethodLabelKeyOf(traitName)(methodName)(implementation))(goal)(expectedType)(evidence)(wrapper)(lower)(preparedState) with
+                        | PreparedTraitMethod { wrapper = wrapper, expectedType = expectedType, evidence = evidence, requirements = requirements, parameters = parameters, state = preparedState, error = None } ->
+                            match lowerTraitMethodClosure(traitMethodLabelKeyOf(traitName)(methodName)(implementation))(goal)(expectedType)(evidence)(parameters)(wrapper)(lower)(preparedState) with
                                 | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> applyRequirementMethods(requirementPlans)(requirements)(closureTemp)(lower)(closureState)
                                 | failed -> failed
         | TraitEvidenceInstance(TraitConstraint { traitName = traitName, typeArguments = typeArguments }, _implementation, _requirementPlans, _supertraitPlans) ->
@@ -17940,11 +17982,12 @@ let lowerCoreDispatch expression lowerCore state =
                 lowerCore,
                 state
             )
-        | ExprLetRecursive(name, value, body, _parameters, _annotation, _requirements) ->
+        | ExprLetRecursive(name, value, body, _parameters, annotation, _requirements) ->
             lowerLetRecursive(
                 name,
                 value,
                 body,
+                annotation,
                 lowerCore,
                 state
             )
@@ -19378,16 +19421,7 @@ let recursive implementationDeclarationsOf (items: List(TopLevelItem)) (reversed
 // before it lowers any value: each head with its type parameters, its requirements, and its
 // method bodies joins the standard trait environment the trait-mapped operators resolve
 // against.
-let recursive debugImplementationText (implementations: List(TraitImplementationInferenceDefinition)) =
-    match implementations with
-        | [] -> ""
-        | (TraitImplementationInferenceDefinition { typeArguments = typeArguments } as implementation) :: rest -> Ashes.Trait.Show.show(typeArguments) + "->" + Ashes.Trait.Show.show(implementationMethodNames(implementation)) + "; " + debugImplementationText(rest)
-
 let registerProgramImplementations (items: List(TopLevelItem)) (state: CoreLoweringState) =
-    match debugImplementationText(resolveTraitImplementations("Eq")(state.traitEnvironment)) with
-        | text -> Error(UnsupportedCoreImplementationHead("DEBUG " + text))
-
-let registerProgramImplementationsReal (items: List(TopLevelItem)) (state: CoreLoweringState) =
     match expandDerivedImplementations(ProgramSyntax(items = items, body = None)) with
         | Error(error) ->
             error

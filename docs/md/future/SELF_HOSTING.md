@@ -758,18 +758,37 @@ same public behavior.
     closure helper (cached by label like stage 0's TRT-16 instance cache) and call it on the two
     operand temps; an unsupplied `notEqual` negates `equal`. `Eq.equal(a)(b)` calls, which the
     derived bodies use per field, lower as `a == b`. Done (2026-09-13).
-  - [ ] **MOD-17b** Structural standard implementations with requirement dictionaries: bind the
-    stitched `Ashes.Trait` bodies for `List(a)`, `Maybe(a)`, `Result(e, a)` and tuples to the
-    seeded placeholder heads, thread each requirement's dictionary into the method (the
-    `x == y` inside `equalLists` dispatches through the active `Eq(a)` evidence, stage 0's
-    `TryLowerActiveTraitMethod`), and derived implementations of parameterized types. Closes
-    the CLI-package sites above and the shared fixture
-    `tests/reuse_specialization_declines_unreachable_helper.ash` (`==` on `List(Live)`).
+  - [x] **MOD-17b** Structural standard implementations with requirement dictionaries. Done
+    (2026-09-14): the stitchers load `Ashes.Trait` into every program as a dependency of the
+    entry (stage 0's implicit prelude), and a stitched implementation replaces the seeded
+    placeholder of the same trait and head shape (`Ashes_Trait_Eq` normalizes to `Eq`). A
+    method of an implementation with requirements is lowered once per implementation head as a
+    generic closure taking one hidden parameter per method of each required trait (in
+    requirement order, methods by name), the body pinned to the head with fresh variables for
+    its type parameters; a site applies that closure to the requirement plans' method closures
+    (recursively for nested evidence) and calls the result. Inside the body, `==` on the
+    parameter type dispatches through the active evidence (stage 0's
+    `TryLowerActiveTraitMethod`): a comparison of two still-variable operands covered by active
+    evidence skips the speculative integer compare, a recursive let's declared type is read
+    against the head's parameters (`equalLists : List(a) -> List(a) -> Bool`), a lambda hands
+    its expected result type on to its body so a curried chain's inner parameters pin before
+    the body is lowered, and nested lambdas capture the evidence parameters (dead captures are
+    pruned). Derived implementations of parameterized types take the same path. Runtime-checked
+    against stage 0 on lists, nested lists, `Maybe`, tuples, and `Box(a)` over unit, record,
+    and integer elements; `tests/reuse_specialization_declines_unreachable_helper.ash` compiles
+    and prints `2` under the stage-1 CLI. Found and fixed OPT-79 on the way (the seeded method
+    names were dangling).
   - [ ] **MOD-17c** The other mapped operators (`<`..`>=` through `Ord` with its `Eq`
     supertrait, `+` through `Add` on a user type) and trait method calls at a concrete type
     (`Ashes.Trait.Show.show(x)`, which the selfhost source uses), sharing the dispatch of
     MOD-17a; default methods whose bodies call sibling methods (`less` via `compare`) need the
     concrete operand type pinned on the default lambda's parameters before it is lowered.
+- [ ] **MOD-18** The stage-1 compile of the CLI package fails with
+  `UnsupportedCoreLoweringPattern("unknown constructor TypeAt")`, reached once MOD-17b closed
+  (2026-09-14, 31.6 s and 13.9 GiB): a constructor pattern on the frontend's `TypeExpr` whose
+  constructor the lowering does not know under that name. Find the site (a derived `Eq`
+  body over a stitched type whose constructors were renamed, or a match the stitcher left
+  with the bare name), mirror what stage 0 does there, and add the reduced program as a test.
 
 #### IR model and lowering
 
@@ -3903,8 +3922,9 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   unrenamed, nullary calls) to MOD-16's, and MOD-16 (native-string results typed as `Result`)
   to MOD-17's `CoreOperatorTypeMismatch("==", ...)` at 29 s and 14.6 GiB. MOD-17a (concrete
   `Eq` dispatch) moved that stop to `UnsupportedCoreTraitDispatch("Eq", List(SemanticType))`
-  at 28.9 s and 14.7 GiB, the structural list implementation MOD-17b supplies, so MOD-17b is
-  the next blocker; a single-file program that reads
+  at 28.9 s and 14.7 GiB, and MOD-17b (the structural implementations with their requirement
+  evidence) to MOD-18's `UnsupportedCoreLoweringPattern("unknown constructor TypeAt")` at
+  31.6 s and 13.9 GiB, so MOD-18 is the next blocker; a single-file program that reads
   `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
   codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
   codegen either, which the CLI package's LLVM bindings will need before its binary links. The

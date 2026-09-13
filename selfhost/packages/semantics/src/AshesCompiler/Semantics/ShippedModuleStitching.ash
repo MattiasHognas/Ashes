@@ -212,7 +212,9 @@ let recursive stitchUnits (entryName: Str) (loaded: List(LoadedShippedModule)) (
 // The entry (`entryName`, its `entrySource` including any import header) plus every shipped module
 // it reaches, as one stitched project whose `program` lowers like any single program.
 // Stage 0 loads `Ashes.Trait` into every program whether or not the program names it: the
-// standard trait implementations a trait-mapped operator dispatches through live there.
+// standard trait implementations a trait-mapped operator dispatches through live there. The
+// module joins the entry's qualified modules, so it is loaded and planned as a dependency of
+// the entry rather than dropped by the plan as unreached.
 let standardTraitModuleNames (shipped: List(ShippedModuleText)) =
     match findShipped("Ashes.Trait")(shipped) with
         | Some(_module) -> ["Ashes.Trait"]
@@ -221,20 +223,21 @@ let standardTraitModuleNames (shipped: List(ShippedModuleText)) =
 let stitchWithShippedModules (entryName: Str) (entryPath: Str) (entrySource: Str) (shipped: List(ShippedModuleText)) =
     match loadModuleText(shipped)(entryName)(entryPath)(entrySource) with
         | Error(error) -> Error(error)
-        | Ok(entry) ->
-            match loadReachable(entryName)(shipped
-            |> standardTraitModuleNames
-            |> appendList(reachedModuleNames(entry)))([entry])(shipped) with
-                | Error(error) -> Error(error)
-                | Ok(loaded) ->
-                    match loaded
-                    |> planUnits(entryName)
-                    |> buildModulePlan(entryName) with
-                        | Error(error) -> Error(ShippedPlanError(error))
-                        | Ok(planned) ->
-                            match stitchUnits(entryName)(loaded)(planned) with
-                                | Error(error) -> Error(error)
-                                | Ok(units) ->
-                                    match stitchProjectSyntax(units) with
-                                        | Error(error) -> Error(ShippedSyntaxStitchError(error))
-                                        | Ok(project) -> Ok(project)
+        | Ok(loadedEntry) ->
+            let entry =
+                loadedEntry with qualifiedModules = appendList(loadedEntry.qualifiedModules)(standardTraitModuleNames(shipped))
+            in
+                match loadReachable(entryName)(reachedModuleNames(entry))([entry])(shipped) with
+                    | Error(error) -> Error(error)
+                    | Ok(loaded) ->
+                        match loaded
+                        |> planUnits(entryName)
+                        |> buildModulePlan(entryName) with
+                            | Error(error) -> Error(ShippedPlanError(error))
+                            | Ok(planned) ->
+                                match stitchUnits(entryName)(loaded)(planned) with
+                                    | Error(error) -> Error(error)
+                                    | Ok(units) ->
+                                        match stitchProjectSyntax(units) with
+                                            | Error(error) -> Error(ShippedSyntaxStitchError(error))
+                                            | Ok(project) -> Ok(project)
