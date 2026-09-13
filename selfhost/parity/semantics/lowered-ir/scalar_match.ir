@@ -5,7 +5,7 @@ function _start_main  [ProgramEntry]
   locals=13 temps=8
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=3   (scalar_match.ash:1:9)
-    StoreLocal            Slot=2 Source=0
+    StoreLocal            Slot=2 Source=0   (scalar_match.ash:1:1)
     LoadLocal             Target=1 Slot=2   (scalar_match.ash:2:7)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadConstInt          Target=2 Value=1   (scalar_match.ash:2:1)

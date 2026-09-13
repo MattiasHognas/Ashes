@@ -1,9 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-
 function lambda_2  [ClosureHelper from total]
   locals=36 temps=103
     LoadEnv               Target=0 Index=0   (tco_consumed_record_list_tuple_result.ash:10:1)
@@ -265,13 +262,13 @@ function lambda_0  [SourceFunction from total]
     LoadLocal             Target=1 Slot=1   (tco_consumed_record_list_tuple_result.ash:10:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_consumed_record_list_tuple_result.ash:10:1)
     MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_consumed_record_list_tuple_result.ash:10:1)
-    Return                Source=4
+    Return                Source=4   (tco_consumed_record_list_tuple_result.ash:10:1)
 
 function _start_main  [ProgramEntry]
   locals=12 temps=28
-    LoadConstInt          Target=0 Value=0
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=0 Source=1
+    LoadConstInt          Target=0 Value=0   (tco_consumed_record_list_tuple_result.ash:10:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_consumed_record_list_tuple_result.ash:10:1)
+    StoreLocal            Slot=0 Source=1   (tco_consumed_record_list_tuple_result.ash:10:1)
     SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
     LoadLocal             Target=2 Slot=0   (tco_consumed_record_list_tuple_result.ash:15:7)
     LoadConstInt          Target=3 Value=0   (tco_consumed_record_list_tuple_result.ash:15:13)

@@ -1,9 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-
 function lambda_0  [SourceFunction from double]
   locals=4 temps=15
     LoadConstInt          Target=0 Value=0   (helper_call_without_inline_trigger.ash:1:23)
@@ -15,34 +12,34 @@ function lambda_0  [SourceFunction from double]
     Alloc                 Target=4 SizeBytes=16 RuntimeManaged=true   (helper_call_without_inline_trigger.ash:1:23)
     StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=3   (helper_call_without_inline_trigger.ash:1:23)
     StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=2   (helper_call_without_inline_trigger.ash:1:23)
-    LoadArgumentOwnership Target=5
-    LoadConstInt          Target=6 Value=1
-    ShrInt                Target=7 Left=5 Right=6
-    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0
-    CopyOutList           DestTemp=8 SrcTemp=4 HeadCopy=Inline Purpose=ArenaResultBoundary
-    StoreLocal            Slot=3 Source=4
+    LoadArgumentOwnership Target=5   (helper_call_without_inline_trigger.ash:1:1)
+    LoadConstInt          Target=6 Value=1   (helper_call_without_inline_trigger.ash:1:1)
+    ShrInt                Target=7 Left=5 Right=6   (helper_call_without_inline_trigger.ash:1:1)
+    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0   (helper_call_without_inline_trigger.ash:1:1)
+    CopyOutList           DestTemp=8 SrcTemp=4 HeadCopy=Inline Purpose=ArenaResultBoundary   (helper_call_without_inline_trigger.ash:1:1)
+    StoreLocal            Slot=3 Source=4   (helper_call_without_inline_trigger.ash:1:1)
   rcdrop_list_2:
-    LoadLocal             Target=9 Slot=3
-    LoadConstInt          Target=10 Value=0
-    CmpIntNe              Target=11 Left=9 Right=10
-    JumpIfFalse           CondTemp=11 Target=rcdrop_list_end_4
+    LoadLocal             Target=9 Slot=3   (helper_call_without_inline_trigger.ash:1:1)
+    LoadConstInt          Target=10 Value=0   (helper_call_without_inline_trigger.ash:1:1)
+    CmpIntNe              Target=11 Left=9 Right=10   (helper_call_without_inline_trigger.ash:1:1)
+    JumpIfFalse           CondTemp=11 Target=rcdrop_list_end_4   (helper_call_without_inline_trigger.ash:1:1)
     RcIsUnique            Target=12 SourceTemp=9
-    JumpIfFalse           CondTemp=12 Target=rcdrop_list_shared_3
-    LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=8
+    JumpIfFalse           CondTemp=12 Target=rcdrop_list_shared_3   (helper_call_without_inline_trigger.ash:1:1)
+    LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=8   (helper_call_without_inline_trigger.ash:1:1)
     RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=3 Source=13
-    Jump                  Target=rcdrop_list_2
+    StoreLocal            Slot=3 Source=13   (helper_call_without_inline_trigger.ash:1:1)
+    Jump                  Target=rcdrop_list_2   (helper_call_without_inline_trigger.ash:1:1)
   rcdrop_list_shared_3:
     RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_4
+    Jump                  Target=rcdrop_list_end_4   (helper_call_without_inline_trigger.ash:1:1)
   rcdrop_list_end_4:
-    StoreLocal            Slot=2 Source=8
-    Jump                  Target=rc_result_done_1
+    StoreLocal            Slot=2 Source=8   (helper_call_without_inline_trigger.ash:1:1)
+    Jump                  Target=rc_result_done_1   (helper_call_without_inline_trigger.ash:1:1)
   rc_result_owned_0:
-    StoreLocal            Slot=2 Source=4
+    StoreLocal            Slot=2 Source=4   (helper_call_without_inline_trigger.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=14 Slot=2
-    Return                Source=14
+    LoadLocal             Target=14 Slot=2   (helper_call_without_inline_trigger.ash:1:1)
+    Return                Source=14   (helper_call_without_inline_trigger.ash:1:1)
 
 function lambda_3  [ClosureHelper from go]
   locals=22 temps=21
@@ -136,18 +133,18 @@ function lambda_1  [SourceFunction from count]
     CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (helper_call_without_inline_trigger.ash:8:8)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Return                Source=6
+    Return                Source=6   (helper_call_without_inline_trigger.ash:3:1)
 
 function _start_main  [ProgramEntry]
   locals=22 temps=30
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (helper_call_without_inline_trigger.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (helper_call_without_inline_trigger.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (helper_call_without_inline_trigger.ash:1:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
-    LoadConstInt          Target=2 Value=0
-    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
-    StoreLocal            Slot=5 Source=3
+    LoadConstInt          Target=2 Value=0   (helper_call_without_inline_trigger.ash:3:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0   (helper_call_without_inline_trigger.ash:3:1)
+    StoreLocal            Slot=5 Source=3   (helper_call_without_inline_trigger.ash:3:1)
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
     LoadLocal             Target=4 Slot=5   (helper_call_without_inline_trigger.ash:10:13)
@@ -189,22 +186,22 @@ function _start_main  [ProgramEntry]
     RcDrop                SourceTemp=18 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_13   (helper_call_without_inline_trigger.ash:10:13)
   rcdrop_list_end_13:
-    StoreLocal            Slot=16 Source=17
+    StoreLocal            Slot=16 Source=17   (helper_call_without_inline_trigger.ash:10:1)
     LoadLocal             Target=23 Slot=16   (helper_call_without_inline_trigger.ash:12:35)
     TextFromInt           Target=24 ValueTemp=23   (helper_call_without_inline_trigger.ash:12:16)
     PrintStr              Source=24   (helper_call_without_inline_trigger.ash:12:1)
     AllocAdt              Target=25 Tag=0 FieldCount=0   (helper_call_without_inline_trigger.ash:12:1)
-    StoreLocal            Slot=18 Source=25
-    LoadLocal             Target=26 Slot=5
+    StoreLocal            Slot=18 Source=25   (helper_call_without_inline_trigger.ash:3:1)
+    LoadLocal             Target=26 Slot=5   (helper_call_without_inline_trigger.ash:3:1)
     CleanupResource       SourceTemp=26 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=19
     CopyOutArena          DestTemp=27 SrcTemp=25 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=19
-    StoreLocal            Slot=20 Source=27
-    LoadLocal             Target=28 Slot=2
+    StoreLocal            Slot=20 Source=27   (helper_call_without_inline_trigger.ash:1:1)
+    LoadLocal             Target=28 Slot=2   (helper_call_without_inline_trigger.ash:1:1)
     CleanupResource       SourceTemp=28 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=21
-    LoadLocal             Target=29 Slot=20
+    LoadLocal             Target=29 Slot=20   (helper_call_without_inline_trigger.ash:1:1)
     Return                Source=29
 

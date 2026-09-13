@@ -56,13 +56,13 @@ function lambda_0  [SourceFunction from countdown]
     LoadLocal             Target=1 Slot=1   (tco_scalar_loop.ash:1:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_scalar_loop.ash:1:1)
     MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_scalar_loop.ash:1:1)
-    Return                Source=4
+    Return                Source=4   (tco_scalar_loop.ash:1:1)
 
 function _start_main  [ProgramEntry]
   locals=4 temps=9
-    LoadConstInt          Target=0 Value=0
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=0 Source=1
+    LoadConstInt          Target=0 Value=0   (tco_scalar_loop.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_scalar_loop.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (tco_scalar_loop.ash:1:1)
     SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
     LoadLocal             Target=2 Slot=0   (tco_scalar_loop.ash:6:35)
     LoadConstInt          Target=3 Value=1000000   (tco_scalar_loop.ash:6:45)

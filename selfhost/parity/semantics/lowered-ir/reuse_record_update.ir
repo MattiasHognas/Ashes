@@ -1,9 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-
 function _start_main  [ProgramEntry]
   locals=11 temps=19
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
@@ -12,7 +9,7 @@ function _start_main  [ProgramEntry]
     AllocAdt              Target=2 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (reuse_record_update.ash:5:15)
     SetAdtField           Ptr=2 FieldIndex=0 Source=0 Tagless=true   (reuse_record_update.ash:5:15)
     SetAdtField           Ptr=2 FieldIndex=1 Source=1 Tagless=true   (reuse_record_update.ash:5:15)
-    StoreLocal            Slot=2 Source=2
+    StoreLocal            Slot=2 Source=2   (reuse_record_update.ash:5:1)
     LoadLocal             Target=3 Slot=2   (reuse_record_update.ash:7:7)
     Borrow                Target=4 SourceTemp=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5

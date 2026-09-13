@@ -7,7 +7,7 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=0 Value=42   (pattern_match.ash:5:20)
     AllocAdt              Target=1 Tag=1 FieldCount=1   (pattern_match.ash:5:13)
     SetAdtField           Ptr=1 FieldIndex=0 Source=0   (pattern_match.ash:5:13)
-    StoreLocal            Slot=2 Source=1
+    StoreLocal            Slot=2 Source=1   (pattern_match.ash:5:1)
     LoadLocal             Target=2 Slot=2   (pattern_match.ash:7:7)
     Borrow                Target=3 SourceTemp=2
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
@@ -56,10 +56,10 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=3 Source=19   (pattern_match.ash:7:1)
   match_end_0:
     LoadLocal             Target=20 Slot=3   (pattern_match.ash:7:1)
-    StoreLocal            Slot=13 Source=20
+    StoreLocal            Slot=13 Source=20   (pattern_match.ash:5:1)
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=14
-    LoadLocal             Target=22 Slot=13
+    LoadLocal             Target=22 Slot=13   (pattern_match.ash:5:1)
     Return                Source=22
   _start_main_rc_edge_2_4:
     RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2

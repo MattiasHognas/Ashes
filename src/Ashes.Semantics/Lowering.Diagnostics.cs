@@ -114,12 +114,9 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// The span to blame for something a binding as a whole got wrong. A flat top-level declaration's
-    /// node is synthesized by <c>DesugarTopLevel</c>, so the only span it carries is the name span the
-    /// desugaring copies from the declaration; the unspanned fallback is offset 0, which renders as the
-    /// first stitched standard-library module rather than the user's code. Deliberately separate from the
-    /// node's own span, which <c>Emit</c> reads to position instructions: a declaration's instruction
-    /// positions are a debug-info contract the self-hosted lowerer mirrors fixture for fixture.
+    /// The span to blame for something a binding as a whole got wrong. A synthesized binding node that
+    /// carries no span of its own falls back to its name span rather than to the unspanned default of
+    /// offset 0, which renders as the first stitched standard-library module rather than the user's code.
     /// </summary>
     private static TextSpan GetBindingSpan(Expr binding)
     {

@@ -3392,7 +3392,14 @@ public sealed partial class Lowering
         string Name,
         bool PopInlinableShadow,
         bool RemoveCoroutineHelperMarker,
-        bool SuppressArenaReclaim = false);
+        bool SuppressArenaReclaim = false)
+    {
+        /// <summary>
+        /// The binding this frame was pushed for, so the instructions it emits on the way out carry its
+        /// own source position rather than the chain head's.
+        /// </summary>
+        public Expr? Binding { get; init; }
+    }
 
     private (int, TypeRef) LowerLet(Expr.Let let, LoweredValueRequest request) =>
         LowerSequentialBindingChain(let, request);
@@ -3403,19 +3410,26 @@ public sealed partial class Lowering
     {
         List<SequentialBindingFrame> frames = [];
         Expr current = first;
+        Expr? enclosingSourceExpr = _currentSourceExpr;
+        // The chain is flattened here rather than recursed into, so without this every binding would
+        // emit under the chain head's source position: `let a = .. in let b = ..` put b's StoreLocal on
+        // a's line, and a breakpoint on b's line had nothing to bind to. Each binding is its own
+        // statement, so it lowers under its own position, on the way in and on the way out.
         while (current is Expr.Let or Expr.LetRecursive)
         {
+            _currentSourceExpr = current;
             if (current is Expr.Let binding)
             {
-                frames.Add(PushSequentialLet(binding, request));
+                frames.Add(PushSequentialLet(binding, request) with { Binding = binding });
                 current = binding.Body;
             }
             else if (current is Expr.LetRecursive recursive)
             {
-                frames.Add(PushSequentialRecursiveLet(recursive, request));
+                frames.Add(PushSequentialRecursiveLet(recursive, request) with { Binding = recursive });
                 current = recursive.Body;
             }
         }
+        _currentSourceExpr = enclosingSourceExpr;
 
         (int Temp, TypeRef Type) result = frames[^1].Kind == SequentialBindingKind.Ordinary
             ? LowerEscapingResult(current, request: request)
@@ -3431,10 +3445,12 @@ public sealed partial class Lowering
             {
                 _coroutineHelperArity.Remove(frame.Name);
             }
+            _currentSourceExpr = frame.Binding ?? enclosingSourceExpr;
             result = frame.Kind == SequentialBindingKind.Ordinary
                 ? PopLetScope(result.Temp, result.Type, frame.SuppressArenaReclaim)
                 : PopRecursiveLetScope(result);
         }
+        _currentSourceExpr = enclosingSourceExpr;
         return result;
     }
 

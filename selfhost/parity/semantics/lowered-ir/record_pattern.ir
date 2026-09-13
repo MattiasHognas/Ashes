@@ -44,14 +44,14 @@ function lambda_0  [SourceFunction from describe]
     StoreLocal            Slot=2 Source=12   (record_pattern.ash:6:5)
   match_end_0:
     LoadLocal             Target=13 Slot=2   (record_pattern.ash:6:5)
-    Return                Source=13
+    Return                Source=13   (record_pattern.ash:5:1)
 
 function _start_main  [ProgramEntry]
   locals=8 temps=12
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (record_pattern.ash:5:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (record_pattern.ash:5:1)
+    StoreLocal            Slot=2 Source=1   (record_pattern.ash:5:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=2 Slot=2   (record_pattern.ash:10:35)
     Borrow                Target=3 SourceTemp=2
@@ -66,8 +66,8 @@ function _start_main  [ProgramEntry]
     TextFromInt           Target=8 ValueTemp=7   (record_pattern.ash:10:16)
     PrintStr              Source=8   (record_pattern.ash:10:1)
     AllocAdt              Target=9 Tag=0 FieldCount=0   (record_pattern.ash:10:1)
-    StoreLocal            Slot=6 Source=9
-    LoadLocal             Target=10 Slot=2
+    StoreLocal            Slot=6 Source=9   (record_pattern.ash:5:1)
+    LoadLocal             Target=10 Slot=2   (record_pattern.ash:5:1)
     CleanupResource       SourceTemp=10 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=7
     CopyOutArena          DestTemp=11 SrcTemp=9 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization

@@ -1,12 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9024)
-  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
-
 function __deepcopy_2  [AdtDeepCopier]
   locals=2 temps=7
     LoadLocal             Target=0 Slot=1   (tco_record_string_field_into_successor.ash:11:1)
@@ -168,13 +162,13 @@ function lambda_0  [SourceFunction from step]
     LoadLocal             Target=1 Slot=1   (tco_record_string_field_into_successor.ash:11:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_record_string_field_into_successor.ash:11:1)
     MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_record_string_field_into_successor.ash:11:1)
-    Return                Source=4
+    Return                Source=4   (tco_record_string_field_into_successor.ash:11:1)
 
 function _start_main  [ProgramEntry]
   locals=9 temps=23
-    LoadConstInt          Target=0 Value=0
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=0 Source=1
+    LoadConstInt          Target=0 Value=0   (tco_record_string_field_into_successor.ash:11:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_record_string_field_into_successor.ash:11:1)
+    StoreLocal            Slot=0 Source=1   (tco_record_string_field_into_successor.ash:11:1)
     SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=2 Slot=0   (tco_record_string_field_into_successor.ash:16:13)
@@ -189,7 +183,7 @@ function _start_main  [ProgramEntry]
     CallClosure           Target=9 ClosureTemp=4 ArgTemp=8   (tco_record_string_field_into_successor.ash:16:13)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    StoreLocal            Slot=6 Source=9
+    StoreLocal            Slot=6 Source=9   (tco_record_string_field_into_successor.ash:16:1)
     LoadLocal             Target=10 Slot=6   (tco_record_string_field_into_successor.ash:18:16)
     GetAdtField           Target=11 Ptr=10 FieldIndex=0 Tagless=true   (tco_record_string_field_into_successor.ash:18:16)
     LoadConstStr          Target=12 StrLabel=str_0   (tco_record_string_field_into_successor.ash:18:30)
@@ -200,11 +194,11 @@ function _start_main  [ProgramEntry]
     ConcatStr             Target=17 Left=13 Right=16   (tco_record_string_field_into_successor.ash:18:16)
     PrintStr              Source=17   (tco_record_string_field_into_successor.ash:18:1)
     AllocAdt              Target=18 Tag=0 FieldCount=0   (tco_record_string_field_into_successor.ash:18:1)
-    StoreLocal            Slot=7 Source=18
-    LoadLocal             Target=19 Slot=6
+    StoreLocal            Slot=7 Source=18   (tco_record_string_field_into_successor.ash:16:1)
+    LoadLocal             Target=19 Slot=6   (tco_record_string_field_into_successor.ash:16:1)
     RcIsUnique            Target=20 SourceTemp=19
-    JumpIfFalse           CondTemp=20 Target=rc_drop_shared_11
-    GetAdtField           Target=21 Ptr=19 FieldIndex=0 Tagless=true
+    JumpIfFalse           CondTemp=20 Target=rc_drop_shared_11   (tco_record_string_field_into_successor.ash:16:1)
+    GetAdtField           Target=21 Ptr=19 FieldIndex=0 Tagless=true   (tco_record_string_field_into_successor.ash:16:1)
     RcDrop                SourceTemp=21 TypeName=String RuntimeManaged=true
   rc_drop_shared_11:
     RcDrop                SourceTemp=19 TypeName=State RuntimeManaged=true

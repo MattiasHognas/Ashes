@@ -1,11 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Ord(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:2928)
-  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
-
 function lambda_1  [ClosureHelper from build]
   locals=17 temps=52
     LoadEnv               Target=0 Index=0   (tco_consumed_list_parameter_returned_head.ash:6:1)
@@ -145,7 +140,7 @@ function lambda_0  [SourceFunction from build]
     LoadLocal             Target=1 Slot=1   (tco_consumed_list_parameter_returned_head.ash:6:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_consumed_list_parameter_returned_head.ash:6:1)
     MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_consumed_list_parameter_returned_head.ash:6:1)
-    Return                Source=4
+    Return                Source=4   (tco_consumed_list_parameter_returned_head.ash:6:1)
 
 function lambda_3  [ClosureHelper from findLong]
   locals=28 temps=73
@@ -335,7 +330,7 @@ function lambda_2  [SourceFunction from findLong]
     LoadLocal             Target=1 Slot=1   (tco_consumed_list_parameter_returned_head.ash:11:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_consumed_list_parameter_returned_head.ash:11:1)
     MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (tco_consumed_list_parameter_returned_head.ash:11:1)
-    Return                Source=4
+    Return                Source=4   (tco_consumed_list_parameter_returned_head.ash:11:1)
 
 function lambda_5  [ClosureHelper from run]
   locals=27 temps=57
@@ -475,23 +470,23 @@ function lambda_4  [SourceFunction from run]
     LoadEnv               Target=3 Index=1   (tco_consumed_list_parameter_returned_head.ash:19:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (tco_consumed_list_parameter_returned_head.ash:19:1)
     MakeClosure           Target=6 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=24   (tco_consumed_list_parameter_returned_head.ash:19:1)
-    Return                Source=6
+    Return                Source=6   (tco_consumed_list_parameter_returned_head.ash:19:1)
 
 function _start_main  [ProgramEntry]
   locals=6 temps=15
-    LoadConstInt          Target=0 Value=0
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=0 Source=1
-    LoadConstInt          Target=2 Value=0
-    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0
-    StoreLocal            Slot=1 Source=3
-    Alloc                 Target=4 SizeBytes=16
-    LoadLocal             Target=5 Slot=1
-    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5
-    LoadLocal             Target=6 Slot=0
-    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6
-    MakeClosure           Target=7 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=16
-    StoreLocal            Slot=2 Source=7
+    LoadConstInt          Target=0 Value=0   (tco_consumed_list_parameter_returned_head.ash:6:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_consumed_list_parameter_returned_head.ash:6:1)
+    StoreLocal            Slot=0 Source=1   (tco_consumed_list_parameter_returned_head.ash:6:1)
+    LoadConstInt          Target=2 Value=0   (tco_consumed_list_parameter_returned_head.ash:11:1)
+    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0   (tco_consumed_list_parameter_returned_head.ash:11:1)
+    StoreLocal            Slot=1 Source=3   (tco_consumed_list_parameter_returned_head.ash:11:1)
+    Alloc                 Target=4 SizeBytes=16   (tco_consumed_list_parameter_returned_head.ash:19:1)
+    LoadLocal             Target=5 Slot=1   (tco_consumed_list_parameter_returned_head.ash:19:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (tco_consumed_list_parameter_returned_head.ash:19:1)
+    LoadLocal             Target=6 Slot=0   (tco_consumed_list_parameter_returned_head.ash:19:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (tco_consumed_list_parameter_returned_head.ash:19:1)
+    MakeClosure           Target=7 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=16   (tco_consumed_list_parameter_returned_head.ash:19:1)
+    StoreLocal            Slot=2 Source=7   (tco_consumed_list_parameter_returned_head.ash:19:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=8 Slot=2   (tco_consumed_list_parameter_returned_head.ash:29:35)
     LoadConstInt          Target=9 Value=300000   (tco_consumed_list_parameter_returned_head.ash:29:39)

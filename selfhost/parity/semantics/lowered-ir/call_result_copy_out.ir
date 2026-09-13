@@ -6,14 +6,14 @@ function lambda_0  [SourceFunction from shout]
     LoadLocal             Target=0 Slot=1   (call_result_copy_out.ash:1:40)
     PrintStr              Source=0   (call_result_copy_out.ash:1:25)
     AllocAdt              Target=1 Tag=0 FieldCount=0   (call_result_copy_out.ash:1:25)
-    Return                Source=1
+    Return                Source=1   (call_result_copy_out.ash:1:1)
 
 function _start_main  [ProgramEntry]
   locals=9 temps=14
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (call_result_copy_out.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (call_result_copy_out.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (call_result_copy_out.ash:1:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=2 Slot=2   (call_result_copy_out.ash:3:1)
     Borrow                Target=3 SourceTemp=2
@@ -33,11 +33,11 @@ function _start_main  [ProgramEntry]
   call_reclaim_owned_result_1:
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
     LoadLocal             Target=11 Slot=6   (call_result_copy_out.ash:3:1)
-    StoreLocal            Slot=7 Source=11
-    LoadLocal             Target=12 Slot=2
+    StoreLocal            Slot=7 Source=11   (call_result_copy_out.ash:1:1)
+    LoadLocal             Target=12 Slot=2   (call_result_copy_out.ash:1:1)
     CleanupResource       SourceTemp=12 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=8
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=8
-    LoadLocal             Target=13 Slot=7
+    LoadLocal             Target=13 Slot=7   (call_result_copy_out.ash:1:1)
     Return                Source=13
 

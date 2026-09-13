@@ -1,12 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-  resolved requirement=Ashes.Trait.Eq(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:1912)
-  resolved requirement=Ashes.Trait.Ord(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:2928)
-  resolved requirement=Ashes.Trait.Subtract(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9123)
-
 function __deepcopy_3  [AdtDeepCopier]
   locals=2 temps=7
     LoadLocal             Target=0 Slot=1   (tco_returned_record_head.ash:11:1)
@@ -243,7 +237,7 @@ function lambda_0  [SourceFunction from build]
     LoadLocal             Target=1 Slot=1   (tco_returned_record_head.ash:11:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_returned_record_head.ash:11:1)
     MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_returned_record_head.ash:11:1)
-    Return                Source=4
+    Return                Source=4   (tco_returned_record_head.ash:11:1)
 
 function __rcdrop_structural_6  [StructuralOwnerDropper]
   locals=2 temps=4
@@ -504,7 +498,7 @@ function lambda_4  [SourceFunction from findHeavy]
     LoadLocal             Target=1 Slot=1   (tco_returned_record_head.ash:16:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_returned_record_head.ash:16:1)
     MakeClosure           Target=4 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (tco_returned_record_head.ash:16:1)
-    Return                Source=4
+    Return                Source=4   (tco_returned_record_head.ash:16:1)
 
 function lambda_8  [ClosureHelper from run]
   locals=26 temps=61
@@ -651,23 +645,23 @@ function lambda_7  [SourceFunction from run]
     LoadEnv               Target=3 Index=1   (tco_returned_record_head.ash:24:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (tco_returned_record_head.ash:24:1)
     MakeClosure           Target=6 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=24   (tco_returned_record_head.ash:24:1)
-    Return                Source=6
+    Return                Source=6   (tco_returned_record_head.ash:24:1)
 
 function _start_main  [ProgramEntry]
   locals=6 temps=15
-    LoadConstInt          Target=0 Value=0
-    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=0 Source=1
-    LoadConstInt          Target=2 Value=0
-    MakeClosure           Target=3 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=0
-    StoreLocal            Slot=1 Source=3
-    Alloc                 Target=4 SizeBytes=16
-    LoadLocal             Target=5 Slot=1
-    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5
-    LoadLocal             Target=6 Slot=0
-    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6
-    MakeClosure           Target=7 FuncLabel=lambda_7 EnvPtrTemp=4 EnvSizeBytes=16
-    StoreLocal            Slot=2 Source=7
+    LoadConstInt          Target=0 Value=0   (tco_returned_record_head.ash:11:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_returned_record_head.ash:11:1)
+    StoreLocal            Slot=0 Source=1   (tco_returned_record_head.ash:11:1)
+    LoadConstInt          Target=2 Value=0   (tco_returned_record_head.ash:16:1)
+    MakeClosure           Target=3 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=0   (tco_returned_record_head.ash:16:1)
+    StoreLocal            Slot=1 Source=3   (tco_returned_record_head.ash:16:1)
+    Alloc                 Target=4 SizeBytes=16   (tco_returned_record_head.ash:24:1)
+    LoadLocal             Target=5 Slot=1   (tco_returned_record_head.ash:24:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (tco_returned_record_head.ash:24:1)
+    LoadLocal             Target=6 Slot=0   (tco_returned_record_head.ash:24:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (tco_returned_record_head.ash:24:1)
+    MakeClosure           Target=7 FuncLabel=lambda_7 EnvPtrTemp=4 EnvSizeBytes=16   (tco_returned_record_head.ash:24:1)
+    StoreLocal            Slot=2 Source=7   (tco_returned_record_head.ash:24:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=8 Slot=2   (tco_returned_record_head.ash:34:35)
     LoadConstInt          Target=9 Value=300000   (tco_returned_record_head.ash:34:39)

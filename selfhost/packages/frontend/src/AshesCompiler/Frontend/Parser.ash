@@ -3563,7 +3563,13 @@ and parserParseTopLevelBinding sourceBytes declarationColumn state =
                                                     LetBindingSyntax(name = name.text, value = value, sugarParameters = parserParameterNames(
                                                         parameters
                                                     ), typeAnnotation = annotation, requirements = requirements)
-                                                in (binding, parserExprEnd(value), valueLeadsWithLet, afterValue)
+                                                    // The end comes from the raw value rather than the
+                                                    // sugar-wrapped one: parserBuildSugarLambdas
+                                                    // synthesizes its lambdas without spans, so a sugar
+                                                    // binding's end was 0 and a declaration at offset 0
+                                                    // collapsed to the unlocated TextSpan(0, 0), leaving
+                                                    // every instruction it emitted unpositioned.
+                                                in (binding, parserExprEnd(rawValue), valueLeadsWithLet, afterValue)
 and parserParseRecursiveGroup sourceBytes reversedItems start reversedBindings recursiveBinding state =
     (let checkedState =
         if recursiveBinding

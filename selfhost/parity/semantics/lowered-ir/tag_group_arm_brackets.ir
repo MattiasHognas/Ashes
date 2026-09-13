@@ -68,7 +68,7 @@ function lambda_0  [SourceFunction from weight]
     StoreLocal            Slot=2 Source=21   (tag_group_arm_brackets.ash:7:5)
   match_end_0:
     LoadLocal             Target=22 Slot=2   (tag_group_arm_brackets.ash:7:5)
-    Return                Source=22
+    Return                Source=22   (tag_group_arm_brackets.ash:6:1)
 
 function lambda_1  [SourceFunction from render]
   locals=17 temps=23
@@ -128,18 +128,18 @@ function lambda_1  [SourceFunction from render]
     StoreLocal            Slot=2 Source=21   (tag_group_arm_brackets.ash:14:5)
   match_end_8:
     LoadLocal             Target=22 Slot=2   (tag_group_arm_brackets.ash:14:5)
-    Return                Source=22
+    Return                Source=22   (tag_group_arm_brackets.ash:13:1)
 
 function _start_main  [ProgramEntry]
   locals=16 temps=18
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (tag_group_arm_brackets.ash:6:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tag_group_arm_brackets.ash:6:1)
+    StoreLocal            Slot=2 Source=1   (tag_group_arm_brackets.ash:6:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
-    LoadConstInt          Target=2 Value=0
-    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
-    StoreLocal            Slot=5 Source=3
+    LoadConstInt          Target=2 Value=0   (tag_group_arm_brackets.ash:13:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0   (tag_group_arm_brackets.ash:13:1)
+    StoreLocal            Slot=5 Source=3   (tag_group_arm_brackets.ash:13:1)
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     LoadLocal             Target=4 Slot=2   (tag_group_arm_brackets.ash:20:35)
     Borrow                Target=5 SourceTemp=4
@@ -158,17 +158,17 @@ function _start_main  [ProgramEntry]
     TextFromInt           Target=12 ValueTemp=11   (tag_group_arm_brackets.ash:20:16)
     PrintStr              Source=12   (tag_group_arm_brackets.ash:20:1)
     AllocAdt              Target=13 Tag=0 FieldCount=0   (tag_group_arm_brackets.ash:20:1)
-    StoreLocal            Slot=12 Source=13
-    LoadLocal             Target=14 Slot=5
+    StoreLocal            Slot=12 Source=13   (tag_group_arm_brackets.ash:13:1)
+    LoadLocal             Target=14 Slot=5   (tag_group_arm_brackets.ash:13:1)
     CleanupResource       SourceTemp=14 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=13
     CopyOutArena          DestTemp=15 SrcTemp=13 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=13
-    StoreLocal            Slot=14 Source=15
-    LoadLocal             Target=16 Slot=2
+    StoreLocal            Slot=14 Source=15   (tag_group_arm_brackets.ash:6:1)
+    LoadLocal             Target=16 Slot=2   (tag_group_arm_brackets.ash:6:1)
     CleanupResource       SourceTemp=16 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=15
-    LoadLocal             Target=17 Slot=14
+    LoadLocal             Target=17 Slot=14   (tag_group_arm_brackets.ash:6:1)
     Return                Source=17
 
