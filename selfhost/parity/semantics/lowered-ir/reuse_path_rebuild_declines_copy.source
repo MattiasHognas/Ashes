@@ -1,0 +1,32 @@
+// expect: 7 1
+// A loop that hands its accumulator to a specializable function rebuilding one path of a
+// two-way tree (`insertLeft`, one self call per arm) takes no defensive entry copy: the copy
+// would cost the whole tree on every entry for a logarithmic in-place saving, so the plain
+// call shares the untouched subtrees.
+
+type Tree =
+    | Leaf
+    | Node(Tree, Int, Tree)
+
+let recursive insertLeft (tree: Tree) =
+    match tree with
+        | Leaf -> Node(Leaf)(7)(Leaf)
+        | Node(left, value, right) -> Node(insertLeft(left))(value)(right)
+
+let recursive fill (count: Int) (tree: Tree) =
+    if count == 0
+    then tree
+    else fill(count - 1)(insertLeft(tree))
+
+let shared = Node(Leaf)(1)(Leaf)
+
+let filled = fill(2)(shared)
+
+let sharedRoot =
+    match shared with
+        | Node(_left, value, _right) -> value
+        | Leaf -> 0
+
+match filled with
+    | Node(Node(_innerLeft, innerValue, _innerRight), _value, _right) -> Ashes.IO.print(Ashes.Text.fromInt(innerValue) + " " + Ashes.Text.fromInt(sharedRoot))
+    | _ -> Ashes.IO.print("unexpected")

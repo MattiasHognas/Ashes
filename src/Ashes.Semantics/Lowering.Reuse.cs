@@ -1653,7 +1653,7 @@ public sealed partial class Lowering
         // back-edge stability check can trace through it, and (when the argument is a bare accumulator
         // name) mark that name reset-safe. The reset itself still requires the back-edge argument to be
         // proven address-stable — this marking is necessary, not sufficient.
-        RecordFullyReusingCall(label, callExpr, args[^1], prepared.SourceTypes[^1]);
+        RecordRoutedSpecializationCall(label, callExpr, args[^1], prepared.SourceTypes[^1]);
 
         int closureTemp = LowerReuseSpecializationClosure(label);
 
@@ -1717,6 +1717,23 @@ public sealed partial class Lowering
                 Accepted: false,
                 ReuseDecisionReason.AccumulatorLayoutNotPersistent),
             call);
+    }
+
+    // A call routed to a specialization clone: the accumulator name (when the argument is a bare
+    // name) is marked routed so its entry copy is kept, and a fully reusing clone additionally
+    // marks it reset-safe.
+    private void RecordRoutedSpecializationCall(
+        string label,
+        Expr call,
+        Expr accumulator,
+        TypeRef accumulatorType)
+    {
+        if (accumulator is Expr.Var routed)
+        {
+            _routedSpecializationAccumulators.Add(routed.Name);
+        }
+
+        RecordFullyReusingCall(label, call, accumulator, accumulatorType);
     }
 
     private void RecordFullyReusingCall(

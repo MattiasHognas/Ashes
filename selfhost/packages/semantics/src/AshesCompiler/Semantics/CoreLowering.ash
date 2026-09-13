@@ -531,6 +531,9 @@ type CoreLoweringState =
     // specialization may rewrite them in place. The only route by which a call whose accumulator
     // is a bare name — rather than a provably fresh call result — reaches a specialization.
     | linearSpecializationAccumulators: List(Str)
+    // Stage 0's `_routedSpecializationAccumulators`: the accumulators of the function being
+    // lowered, and of the lambdas nested in it, whose call was routed to a reuse specialization.
+    | routedSpecializationAccumulators: List(Str)
     // Stage 0's `_specializingReuseLabel`: the label of the function that bound the linear
     // parameter while a specialization was being generated, so the reset-safety scan runs over the
     // body that actually rebuilds the accumulator; and its `_fullyReusingLabels`/
@@ -875,6 +878,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         specializationFreshInputs = None,
         stackAllocateConstructor = false,
         linearSpecializationAccumulators = [],
+        routedSpecializationAccumulators = [],
         specializingReuseLabel = None,
         fullyReusingCallees = [],
         topLevelFunctionRefs = [],
@@ -3954,6 +3958,9 @@ let restoreOuterFrame outer bodyState =
             // being generated and read once it is finished, so it leaves the frame with it.
             |> (given (current: CoreLoweringState) -> current with specializingReuseLabel = bodyState.specializingReuseLabel, fullyReusingCallees = bodyState.fullyReusingCallees)
             |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = append(bodyState.unresolvedCallResults)(outer.unresolvedCallResults))
+            // A call routed inside a nested lambda rewrites the enclosing function's accumulator
+            // too, so the nested routings join the enclosing function's set.
+            |> (given (current: CoreLoweringState) -> current with routedSpecializationAccumulators = append(bodyState.routedSpecializationAccumulators)(outer.routedSpecializationAccumulators))
             |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels, dropperLabels = bodyState.dropperLabels)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
@@ -3993,7 +4000,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], routedSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -7428,11 +7435,22 @@ let recursive specializationEntryCopies (candidates: List((Int, SemanticType, St
         | (slot, semanticType, name, provesUnique, true) :: rest -> (slot, semanticType, name, provesUnique, true) :: specializationEntryCopies(rest)
         | _candidate :: rest -> specializationEntryCopies(rest)
 
+// Stage 0's `NoSpecializedCall` outcome: a specialization copy exists only so a clone may
+// rewrite the accumulator in place, so a scanned accumulator no call was routed for keeps none.
+let recursive routedReuseCandidates (candidates: List((Int, SemanticType, Str, Bool, Bool))) (routed: List(Str)) =
+    match candidates with
+        | [] -> []
+        | (slot, semanticType, name, provesUnique, true) :: rest ->
+            if containsName(name)(routed)
+            then (slot, semanticType, name, provesUnique, true) :: routedReuseCandidates(rest)(routed)
+            else routedReuseCandidates(rest)(routed)
+        | candidate :: rest -> candidate :: routedReuseCandidates(rest)(routed)
+
 let finalizeDirectReuse (frame: CoreTcoLoopFrame) lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = state, temp = bodyTemp, semanticType = semanticType, error = None } ->
-            match state.directReuseCandidates with
+            match routedReuseCandidates(state.directReuseCandidates)(state.routedSpecializationAccumulators) with
                 | [] -> lowered
                 | candidates ->
                     let bodyCount = length(state.reversedInstructions) - frame.entrySpliceCount
@@ -7893,6 +7911,178 @@ let reusableSpecializationAccumulatorType (accumulatorType: SemanticType) (state
         | SemNamed(_symbolId, typeName, _arguments) -> !isResourceTypeName(typeName) && accumulatorLayoutIsPersistable(accumulatorType)(state)
         | _ -> false
 
+// Stage 0's `MaxPathOccurrences`: how many times a name can be evaluated on one path through an
+// expression. Branches take their worst arm, sequenced parts add up, a capturing lambda or a
+// node the walk does not model counts as unbounded, and a binding of the same name shadows it.
+let occurrenceEscape = 1048576
+
+let largerOf (left: Int) (right: Int) =
+    if left > right
+    then left
+    else right
+
+let recursive maxPathOccurrences (name: Str) (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> maxPathOccurrences(name)(inner)
+        | ExprVar(candidate) ->
+            if candidate == name
+            then 1
+            else 0
+        | ExprQualifiedVar(_module, _member) -> 0
+        | ExprInt(_value) -> 0
+        | ExprBigInt(_value) -> 0
+        | ExprUInt(_value, _width, _text) -> 0
+        | ExprFloat(_value, _text) -> 0
+        | ExprString(_value) -> 0
+        | ExprRune(_value) -> 0
+        | ExprBool(_value) -> 0
+        | ExprIf(cond, thenBranch, elseBranch) ->
+            maxPathOccurrences(name)(cond) + largerOf(maxPathOccurrences(name)(thenBranch))(maxPathOccurrences(name)(elseBranch))
+        | ExprMatch(scrutinee, arms, _defaultArm) -> maxPathOccurrences(name)(scrutinee) + maxPathOccurrencesArms(name)(arms)(0)
+        | ExprLet(bound, value, body, _params, _annotation, _traits) ->
+            maxPathOccurrences(name)(value) + (if bound == name
+            then 0
+            else maxPathOccurrences(name)(body))
+        | ExprLetResult(bound, value, body) ->
+            maxPathOccurrences(name)(value) + (if bound == name
+            then 0
+            else maxPathOccurrences(name)(body))
+        | ExprLetRecursive(bound, value, body, _params, _annotation, _traits) ->
+            if bound == name
+            then 0
+            else maxPathOccurrences(name)(value) + maxPathOccurrences(name)(body)
+        | ExprLambda(parameter, body, _annotation) ->
+            if parameter == name
+            then 0
+            else
+                if maxPathOccurrences(name)(body) > 0
+                then occurrenceEscape
+                else 0
+        | ExprCall(function, argument, _isSugar, _layout) -> maxPathOccurrences(name)(function) + maxPathOccurrences(name)(argument)
+        | ExprAdd(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprSubtract(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprMultiply(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprDivide(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprModulo(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprBitwiseAnd(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprBitwiseOr(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprBitwiseXor(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprShiftLeft(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprShiftRight(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprBitwiseNot(operand) -> maxPathOccurrences(name)(operand)
+        | ExprLogicalNot(operand) -> maxPathOccurrences(name)(operand)
+        | ExprLogicalAnd(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprLogicalOr(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprGreaterThan(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprLessThan(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprGreaterOrEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprLessOrEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprNotEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprResultPipe(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprResultMapErrorPipe(left, right) -> maxPathOccurrencesPair(name)(left)(right)
+        | ExprCons(head, tail) -> maxPathOccurrencesPair(name)(head)(tail)
+        | ExprAwait(task) -> maxPathOccurrences(name)(task)
+        | ExprTuple(elements) -> maxPathOccurrencesList(name)(elements)(0)
+        | ExprList(elements, _isMultiline) -> maxPathOccurrencesList(name)(elements)(0)
+        | ExprRecord(_constructor, fields, _isMultiline) -> maxPathOccurrencesFields(name)(fields)(0)
+        | ExprRecordUpdate(target, fields) -> maxPathOccurrences(name)(target) + maxPathOccurrencesFields(name)(fields)(0)
+        | _ -> occurrenceEscape
+and maxPathOccurrencesPair (name: Str) (left: Expr) (right: Expr) = maxPathOccurrences(name)(left) + maxPathOccurrences(name)(right)
+and maxPathOccurrencesArms (name: Str) (arms: List((Pattern, Expr, Maybe(Expr)))) (worst: Int) =
+    match arms with
+        | [] -> worst
+        | (pattern, body, guard) :: rest ->
+            let arm =
+                if patternBindsName(name)(pattern)
+                then 0
+                else
+                    match guard with
+                        | Some(guardExpression) -> maxPathOccurrences(name)(body) + maxPathOccurrences(name)(guardExpression)
+                        | None -> maxPathOccurrences(name)(body)
+            in
+                arm
+                |> largerOf(worst)
+                |> maxPathOccurrencesArms(name)(rest)
+and maxPathOccurrencesList (name: Str) (elements: List(Expr)) (total: Int) =
+    match elements with
+        | [] -> total
+        | element :: rest -> maxPathOccurrencesList(name)(rest)(total + maxPathOccurrences(name)(element))
+and maxPathOccurrencesFields (name: Str) (fields: List((Str, Expr))) (total: Int) =
+    match fields with
+        | [] -> total
+        | (_field, value) :: rest -> maxPathOccurrencesFields(name)(rest)(total + maxPathOccurrences(name)(value))
+
+// Stage 0's `HasMultipleSelfTypedFields`: some constructor of the named type holds two or more
+// children of the type itself, so a rebuild can descend into one and share the others.
+let recursive countSelfTypedFields (typeName: Str) (fields: List(SemanticType)) (state: CoreLoweringState) (count: Int) =
+    match fields with
+        | [] -> count
+        | field :: rest ->
+            match resolveType(state)(field) with
+                | SemNamed(_id, fieldTypeName, _arguments) ->
+                    if fieldTypeName == typeName
+                    then countSelfTypedFields(typeName)(rest)(state)(count + 1)
+                    else countSelfTypedFields(typeName)(rest)(state)(count)
+                | _ -> countSelfTypedFields(typeName)(rest)(state)(count)
+
+let recursive typeHasMultipleSelfFields (typeName: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
+    match layouts with
+        | [] -> false
+        | layout :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName
+                    then
+                        match layoutFieldTypes(layout)(state) with
+                            | (fields, _resultType) ->
+                                if countSelfTypedFields(typeName)(fields)(state)(0) >= 2
+                                then true
+                                else typeHasMultipleSelfFields(typeName)(rest)(state)
+                    else typeHasMultipleSelfFields(typeName)(rest)(state)
+                | None -> typeHasMultipleSelfFields(typeName)(rest)(state)
+
+// The recursive body a specializable function's clone walks, with the name it recurses under:
+// the nested `go` of the Map.set shape behind its outer lambdas and leading lets, or the
+// function's own innermost body.
+let recursive specializationRecursiveBody (callee: Str) (value: Expr) =
+    match value with
+        | ExprAt(_span, inner) -> specializationRecursiveBody(callee)(inner)
+        | ExprLambda(_parameter, body, _annotation) -> specializationRecursiveBody(callee)(body)
+        | ExprLet(_bound, _value, body, _params, _annotation, _traits) -> specializationRecursiveBody(callee)(body)
+        | ExprLetRecursive(bound, ExprLambda(_parameter, recursiveBody, _annotation), body, _params, _typeAnnotation, _traits) ->
+            match unspanArgument(body) with
+                | ExprVar(reference) ->
+                    if reference == bound
+                    then (bound, recursiveBody)
+                    else (callee, value)
+                | _ -> (callee, value)
+        | _ -> (callee, value)
+
+let recursive specializationCandidateValueOf (callee: Str) (candidates: List((Str, List(Str), Expr))) =
+    match candidates with
+        | [] -> None
+        | (candidate, _parameters, value) :: rest ->
+            if candidate == callee
+            then Some(value)
+            else specializationCandidateValueOf(callee)(rest)
+
+// Stage 0's `SpecializationRebuildsOnlyAPath`: the clone descends into at most one child of the
+// accumulator on any path, over a type whose constructors hold two or more children of their own
+// type, so its in-place pass rewrites one root-to-leaf path per call rather than the structure.
+let specializationRebuildsOnlyAPath (callee: Str) (accumulatorType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(accumulatorType) with
+        | SemNamed(_id, typeName, _arguments) ->
+            if typeHasMultipleSelfFields(typeName)(state.constructorLayouts)(state)
+            then
+                match specializationCandidateValueOf(callee)(state.specializationCandidates) with
+                    | Some(value) ->
+                        match specializationRecursiveBody(callee)(value) with
+                            | (selfName, body) -> maxPathOccurrences(selfName)(body) == 1
+                    | None -> false
+            else false
+        | _ -> false
+
 // Stage 0's `LowerLambdaCoreScanSpecializationReuse`: a loop parameter handed straight to a
 // single-parameter specialization candidate is deep-copied once at loop entry so the
 // specialization may rewrite it in place, and its name joins
@@ -7908,9 +8098,14 @@ let recursive scanSpecializationAccumulators (loop: CoreTcoLoop) (slots: List(In
                         | (Some(slot), Some(CoreBinding { scheme = TypeScheme { body = parameterType } })) ->
                             if containsName(accumulator)(state.linearReuseNames) == false && !provisionallyRuntimeManagedLoopSlot(ordinal)(slot)(loop)(state) && reusableSpecializationAccumulatorType(calleeAccumulatorType)(state)
                             then
-                                state
-                                |> (given (scanned: CoreLoweringState) -> scanned with linearSpecializationAccumulators = accumulator :: scanned.linearSpecializationAccumulators, directReuseCandidates = append(scanned.directReuseCandidates)([(slot, resolveType(scanned)(parameterType), accumulator, reuseAccumulatorIsUnique(loop.selfName)(accumulator)(scanned), true)]))
-                                |> scanSpecializationAccumulators(loop)(slots)(rest)
+                                let unique = reuseAccumulatorIsUnique(loop.selfName)(accumulator)(state)
+                                in
+                                    if !unique && specializationRebuildsOnlyAPath(callee)(calleeAccumulatorType)(state)
+                                    then scanSpecializationAccumulators(loop)(slots)(rest)(state)
+                                    else
+                                        state
+                                        |> (given (scanned: CoreLoweringState) -> scanned with linearSpecializationAccumulators = accumulator :: scanned.linearSpecializationAccumulators, directReuseCandidates = append(scanned.directReuseCandidates)([(slot, resolveType(scanned)(parameterType), accumulator, unique, true)]))
+                                        |> scanSpecializationAccumulators(loop)(slots)(rest)
                             else scanSpecializationAccumulators(loop)(slots)(rest)(state)
                         | _ -> scanSpecializationAccumulators(loop)(slots)(rest)(state)
                 | _ -> scanSpecializationAccumulators(loop)(slots)(rest)(state)
@@ -12310,7 +12505,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], routedSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -16779,12 +16974,25 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: Lis
 // The specialization is generated once per concrete instantiation, stage 0's cache: a later call
 // at the same type takes a closure over the label already emitted instead of lowering the
 // candidate's body again.
+// Stage 0's `RecordRoutedSpecializationCall`: the accumulator a routed call names is marked so
+// its entry copy is kept; a scanned accumulator no call was routed for takes no copy.
+let recursive recordRoutedAccumulator (arguments: List(Expr)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> state
+        | accumulator :: [] ->
+            match unspanArgument(accumulator) with
+                | ExprVar(name) -> state with routedSpecializationAccumulators = name :: state.routedSpecializationAccumulators
+                | _ -> state
+        | _ :: rest -> recordRoutedAccumulator(rest)(state)
+
 let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let cacheKey = reuseSpecializationCacheKey(callee)(functionType)
     in
-        match lookupReuseSpecialization(cacheKey)(state.reuseSpecializations) with
-            | Some(label) -> lowerCachedReuseSpecializedCall(callee)(label)(functionType)(arguments)(lower)(state)
-            | None -> generateReuseSpecializedCall(callee)(parameter)(parameters)(value)(accumulatorType)(cacheKey)(arguments)(lower)(state))
+        let routed = recordRoutedAccumulator(arguments)(state)
+        in
+            match lookupReuseSpecialization(cacheKey)(routed.reuseSpecializations) with
+                | Some(label) -> lowerCachedReuseSpecializedCall(callee)(label)(functionType)(arguments)(lower)(routed)
+                | None -> generateReuseSpecializedCall(callee)(parameter)(parameters)(value)(accumulatorType)(cacheKey)(arguments)(lower)(routed))
 
 let lowerGeneralCall expression function argument lower state =
     match (isTailSelfCall(collectCallSpine(expression))(state), state.tcoLoopFrame, state.tcoLoop) with

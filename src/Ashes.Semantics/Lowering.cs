@@ -694,6 +694,11 @@ public sealed partial class Lowering
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
     private HashSet<string> _linearSpecializationAccumulators = new(StringComparer.Ordinal);
 
+    // The specialization accumulators of the function being lowered (and of the lambdas nested in
+    // it) whose call was actually routed to an f$reuse clone. An accumulator scanned as a
+    // candidate but never routed keeps no entry copy: nothing rewrites it in place.
+    private HashSet<string> _routedSpecializationAccumulators = new(StringComparer.Ordinal);
+
     // Per-function map from a let-bound local's slot to its binding value AST. Lets the reset-safety
     // check (IsStableAccumulatorExpr) trace a `let m2 = match … in loop(m2)` accumulator back to its
     // binding: m2 is address-stable when every leaf of that match/if is itself stable. Cleared at each
@@ -8295,6 +8300,7 @@ public sealed partial class Lowering
         HashSet<string> LinearReuseNames,
         List<ReuseToken> ReuseTokens,
         HashSet<string> SpecAccumulators,
+        HashSet<string> RoutedSpecAccumulators,
         HashSet<string> ResetSafe,
         HashSet<int> ReuseResultTemps,
         HashSet<int> PatternOwnerNormalizedTemps,
@@ -8364,6 +8370,8 @@ public sealed partial class Lowering
         _reuseTokens = [];
         var savedSpecAccumulators = _linearSpecializationAccumulators;
         _linearSpecializationAccumulators = new HashSet<string>(StringComparer.Ordinal);
+        var savedRoutedSpecAccumulators = _routedSpecializationAccumulators;
+        _routedSpecializationAccumulators = new HashSet<string>(StringComparer.Ordinal);
         var savedResetSafe = _resetSafeAccumulators;
         _resetSafeAccumulators = new HashSet<string>(StringComparer.Ordinal);
         var savedReuseResultTemps = _reuseResultTemps;
@@ -8390,7 +8398,7 @@ public sealed partial class Lowering
         return new LowerLambdaCoreFrame(
             savedInst, savedTemp, savedLocal, savedScopes, savedInCoroutineBody,
             savedLocalNames, savedLocalTypes, savedLinearReuseNames, savedReuseTokens,
-            savedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
+            savedSpecAccumulators, savedRoutedSpecAccumulators, savedResetSafe, savedReuseResultTemps,
             savedPatternOwnerNormalizedTemps,
             savedTempOwnershipFacts, savedPendingRuntimeArgumentFlags,
             savedPatternBindingPlacementSites, savedKnownFunctionLabelsBySlot,
@@ -8909,44 +8917,158 @@ public sealed partial class Lowering
                 && !tco.IsRuntimeManagedSlot(accL.Slot)
                 && Lookup(funcName) is { } funcBinding
                 && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
-                && IsReusableSpecializationAccumulatorType(
-                    NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1)))
+                && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is { } accumulatorType
+                && IsSpecializationAccumulatorShape(accumulatorType))
             {
-                _linearSpecializationAccumulators.Add(accName);
-
-                // Move/linearity elision: the entry deep-copy exists only to make the
-                // accumulator uniquely owned so f$reuse may overwrite it in place. When the
-                // whole-program move analysis proves the accumulator is already uniquely owned
-                // at every external call site of this fold (moved, unaliased, seeded from a
-                // never-overwritable value), the copy is redundant and re-executes on every
-                // re-entry (the nested-reuse leak). Skip it only when provably safe; the
-                // conservative default keeps the copy.
-                ParameterMoveSafetyCause moveSafetyCauses =
-                    ParameterMoveSafetyCause.ConservativeUnknown;
-                bool elide = tco.SelfName.Length > 0
-                    && ReuseAccumulatorIsUnique(
-                        tco.OwnershipFunction,
-                        tco.SelfName,
-                        accName,
-                        out moveSafetyCauses);
-                reuseEntryCopies.Add(
-                    CreateReuseEntryCopyCandidate(
-                        tco,
-                        accL.Slot,
-                        accL.T,
-                        accName,
-                        ReuseDecisionMechanism.Specialization,
-                        elide,
-                        moveSafetyCauses));
-                if (elide)
-                {
-                    specElidedAccs.Add(accName);
-                }
+                AdmitSpecializationAccumulator(
+                    tco, accName, accL, funcName, funcSpec.Lambda, accumulatorType, reuseEntryCopies, specElidedAccs);
             }
         }
     }
 
-    private bool IsReusableSpecializationAccumulatorType(TypeRef? type)
+    private void AdmitSpecializationAccumulator(
+        TcoContext tco,
+        string accName,
+        Binding.Local accL,
+        string funcName,
+        Expr.Lambda funcLambda,
+        TypeRef accumulatorType,
+        List<ReuseEntryCopyCandidate> reuseEntryCopies,
+        HashSet<string> specElidedAccs)
+    {
+        // Move/linearity elision: the entry deep-copy exists only to make the
+        // accumulator uniquely owned so f$reuse may overwrite it in place. When the
+        // whole-program move analysis proves the accumulator is already uniquely owned
+        // at every external call site of this fold (moved, unaliased, seeded from a
+        // never-overwritable value), the copy is redundant and re-executes on every
+        // re-entry (the nested-reuse leak). Skip it only when provably safe; the
+        // conservative default keeps the copy.
+        ParameterMoveSafetyCause moveSafetyCauses =
+            ParameterMoveSafetyCause.ConservativeUnknown;
+        bool elide = tco.SelfName.Length > 0
+            && ReuseAccumulatorIsUnique(
+                tco.OwnershipFunction,
+                tco.SelfName,
+                accName,
+                out moveSafetyCauses);
+
+        // The copy is worth its whole-accumulator cost only when the clone's in-place pass
+        // rewrites a comparable share of it. A clone that rebuilds one path of a multi-way tree
+        // (a map insert) saves a logarithmic rebuild per call, so an unproven accumulator would
+        // pay a linear copy at every entry of the loop for that; the plain call, which shares
+        // the untouched subtrees, is the better deal.
+        if (!elide && SpecializationRebuildsOnlyAPath(funcName, funcLambda, accumulatorType))
+        {
+            RecordReuseEntryCopyDecision(
+                CreateReuseEntryCopyCandidate(
+                    tco,
+                    accL.Slot,
+                    accL.T,
+                    accName,
+                    ReuseDecisionMechanism.Specialization,
+                    ownershipProvesUnique: false,
+                    moveSafetyCauses),
+                ReuseDecisionOutcome.Omitted,
+                ReuseDecisionReason.PathRebuildNotAmortized);
+            return;
+        }
+
+        if (!CanSynthesizeSpecializationAccumulatorCopier(accumulatorType))
+        {
+            return;
+        }
+
+        _linearSpecializationAccumulators.Add(accName);
+        reuseEntryCopies.Add(
+            CreateReuseEntryCopyCandidate(
+                tco,
+                accL.Slot,
+                accL.T,
+                accName,
+                ReuseDecisionMechanism.Specialization,
+                elide,
+                moveSafetyCauses));
+        if (elide)
+        {
+            specElidedAccs.Add(accName);
+        }
+    }
+
+    // Whether the specializable function's recursive body descends into at most one child of the
+    // accumulator on any path, over an accumulator whose constructors hold two or more children of
+    // their own type: an in-place clone of it rewrites one root-to-leaf path per call rather than
+    // the structure. The recursive body is the nested `go` of the Map.set shape or the function's
+    // own innermost body.
+    private bool SpecializationRebuildsOnlyAPath(string functionName, Expr.Lambda lambda, TypeRef accumulatorType)
+    {
+        if (!HasMultipleSelfTypedFields(accumulatorType))
+        {
+            return false;
+        }
+
+        Expr body = lambda;
+        while (body is Expr.Lambda inner)
+        {
+            body = inner.Body;
+        }
+
+        while (body is Expr.Let { Body: var letBody })
+        {
+            body = letBody;
+        }
+
+        (string selfName, Expr recursiveBody) = body is Expr.LetRecursive { Value: Expr.Lambda recursiveValue } letRecursive
+            && letRecursive.Body is Expr.Var recursiveRef
+            && string.Equals(letRecursive.Name, recursiveRef.Name, StringComparison.Ordinal)
+                ? (letRecursive.Name, recursiveValue.Body)
+                : (functionName, body);
+        return MaxPathOccurrences(selfName, recursiveBody) == 1;
+    }
+
+    private bool HasMultipleSelfTypedFields(TypeRef accumulatorType)
+    {
+        if (Prune(accumulatorType) is not TypeRef.TNamedType named || named.Symbol.Constructors.Count == 0)
+        {
+            return false;
+        }
+
+        var sym = named.Symbol;
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < sym.TypeParameters.Count; i++)
+            {
+                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        foreach (var constructor in sym.Constructors)
+        {
+            int selfFields = 0;
+            foreach (var fieldType in constructor.ParameterTypes)
+            {
+                if (Prune(ResolveFieldType(fieldType, typeParamMap)) is TypeRef.TNamedType fieldNamed
+                    && ReferenceEquals(fieldNamed.Symbol, sym))
+                {
+                    selfFields++;
+                }
+            }
+
+            if (selfFields >= 2)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The shape half of the accumulator check, with no side effect: a list of deep-copyable
+    // elements, or a non-resource recursive ADT the shallow copy-out cannot bound. Whether the
+    // ADT's copier can be synthesized is asked separately, once the copy is known to be wanted,
+    // so a declined copy leaves no dead copier behind.
+    private bool IsSpecializationAccumulatorShape(TypeRef? type)
     {
         TypeRef? accumulator = type is null ? null : Prune(type);
         return accumulator switch
@@ -8954,11 +9076,13 @@ public sealed partial class Lowering
             TypeRef.TList list => IsDeepCopyOutSafeType(Prune(list.Element)),
             TypeRef.TNamedType named => !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
                 && !IsResourceBearing(named)
-                && !CanCopyOutAdt(named, out _)
-                && TrySynthesizeAdtCopier(named) is not null,
+                && !CanCopyOutAdt(named, out _),
             _ => false,
         };
     }
+
+    private bool CanSynthesizeSpecializationAccumulatorCopier(TypeRef type)
+        => Prune(type) is not TypeRef.TNamedType named || TrySynthesizeAdtCopier(named) is not null;
 
     private void LowerLambdaCoreEmitTcoLoopEntry(string label, TcoContext tco)
     {
@@ -9100,13 +9224,9 @@ public sealed partial class Lowering
         int genStart = _inst.Count;
         foreach (ReuseEntryCopyCandidate candidate in reuseEntryCopies)
         {
-            if (candidate.Mechanism == ReuseDecisionMechanism.DirectInPlace
-                && !structuralReuse)
+            if (ReuseEntryCopyUnneeded(candidate, structuralReuse) is { } unneededReason)
             {
-                RecordReuseEntryCopyDecision(
-                    candidate,
-                    ReuseDecisionOutcome.Omitted,
-                    ReuseDecisionReason.NoStructuralReuse);
+                RecordReuseEntryCopyDecision(candidate, ReuseDecisionOutcome.Omitted, unneededReason);
                 continue;
             }
 
@@ -9133,6 +9253,27 @@ public sealed partial class Lowering
         var generated = _inst.GetRange(genStart, genCount);
         _inst.RemoveRange(genStart, genCount);
         _inst.InsertRange(reuseInsertIndex, generated);
+    }
+
+    // The reason an entry copy does no work at all, or null when a reuse may rewrite the
+    // accumulator in place. A specialization copy exists only so an f$reuse clone may rewrite the
+    // accumulator; when every call that scanned as specializable was qualified away (a pure reader
+    // such as a map lookup, whose result is not the accumulator), no clone runs on this
+    // accumulator and the copy would only duplicate the whole value on every entry.
+    private ReuseDecisionReason? ReuseEntryCopyUnneeded(ReuseEntryCopyCandidate candidate, bool structuralReuse)
+    {
+        if (candidate.Mechanism == ReuseDecisionMechanism.DirectInPlace && !structuralReuse)
+        {
+            return ReuseDecisionReason.NoStructuralReuse;
+        }
+
+        if (candidate.Mechanism == ReuseDecisionMechanism.Specialization
+            && !_routedSpecializationAccumulators.Contains(candidate.Parameter))
+        {
+            return ReuseDecisionReason.NoSpecializedCall;
+        }
+
+        return null;
     }
 
     private bool PrepareDirectReuseBody(int reuseInsertIndex)
@@ -9542,6 +9683,10 @@ public sealed partial class Lowering
 
         _linearReuseNames = frame.LinearReuseNames;
         _linearSpecializationAccumulators = frame.SpecAccumulators;
+        // A call routed inside a nested lambda rewrites the enclosing function's accumulator too,
+        // so the nested routings join the enclosing function's set.
+        frame.RoutedSpecAccumulators.UnionWith(_routedSpecializationAccumulators);
+        _routedSpecializationAccumulators = frame.RoutedSpecAccumulators;
         _resetSafeAccumulators = frame.ResetSafe;
         _reuseResultTemps = frame.ReuseResultTemps;
         _patternOwnerNormalizedTemps = frame.PatternOwnerNormalizedTemps;

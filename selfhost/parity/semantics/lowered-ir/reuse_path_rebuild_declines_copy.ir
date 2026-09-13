@@ -1,0 +1,296 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from insertLeft]
+  locals=18 temps=33
+    LoadLocal             Target=0 Slot=1   (reuse_path_rebuild_declines_copy.ash:12:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    CmpIntNe              Target=2 Left=0 Right=1   (reuse_path_rebuild_declines_copy.ash:12:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_3   (reuse_path_rebuild_declines_copy.ash:12:5)
+    GetAdtTag             Target=3 Ptr=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    LoadConstInt          Target=5 Value=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    CmpIntEq              Target=4 Left=3 Right=5   (reuse_path_rebuild_declines_copy.ash:12:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (reuse_path_rebuild_declines_copy.ash:12:5)
+    AllocAdt              Target=6 Tag=0 FieldCount=0   (reuse_path_rebuild_declines_copy.ash:13:24)
+    LoadConstInt          Target=7 Value=7   (reuse_path_rebuild_declines_copy.ash:13:30)
+    AllocAdt              Target=8 Tag=0 FieldCount=0   (reuse_path_rebuild_declines_copy.ash:13:33)
+    AllocAdt              Target=9 Tag=1 FieldCount=3   (reuse_path_rebuild_declines_copy.ash:13:19)
+    SetAdtField           Ptr=9 FieldIndex=0 Source=6   (reuse_path_rebuild_declines_copy.ash:13:19)
+    SetAdtField           Ptr=9 FieldIndex=1 Source=7   (reuse_path_rebuild_declines_copy.ash:13:19)
+    SetAdtField           Ptr=9 FieldIndex=2 Source=8   (reuse_path_rebuild_declines_copy.ash:13:19)
+    StoreLocal            Slot=2 Source=9   (reuse_path_rebuild_declines_copy.ash:12:5)
+    Jump                  Target=match_end_0   (reuse_path_rebuild_declines_copy.ash:12:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_next_2   (reuse_path_rebuild_declines_copy.ash:12:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=10 Value=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    CmpIntNe              Target=11 Left=0 Right=10   (reuse_path_rebuild_declines_copy.ash:12:5)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_4   (reuse_path_rebuild_declines_copy.ash:12:5)
+    GetAdtTag             Target=12 Ptr=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    LoadConstInt          Target=14 Value=1   (reuse_path_rebuild_declines_copy.ash:12:5)
+    CmpIntEq              Target=13 Left=12 Right=14   (reuse_path_rebuild_declines_copy.ash:12:5)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_4   (reuse_path_rebuild_declines_copy.ash:12:5)
+    GetAdtField           Target=15 Ptr=0 FieldIndex=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    StoreLocal            Slot=9 Source=15   (reuse_path_rebuild_declines_copy.ash:12:5)
+    GetAdtField           Target=16 Ptr=0 FieldIndex=1   (reuse_path_rebuild_declines_copy.ash:12:5)
+    StoreLocal            Slot=10 Source=16   (reuse_path_rebuild_declines_copy.ash:12:5)
+    GetAdtField           Target=17 Ptr=0 FieldIndex=2   (reuse_path_rebuild_declines_copy.ash:12:5)
+    StoreLocal            Slot=11 Source=17   (reuse_path_rebuild_declines_copy.ash:12:5)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=19 Slot=0   (reuse_path_rebuild_declines_copy.ash:14:44)
+    MakeClosure           Target=18 FuncLabel=lambda_0 EnvPtrTemp=19 EnvSizeBytes=0   (reuse_path_rebuild_declines_copy.ash:14:44)
+    LoadLocal             Target=20 Slot=9   (reuse_path_rebuild_declines_copy.ash:14:55)
+    Borrow                Target=21 SourceTemp=20
+    LoadConstInt          Target=23 Value=2   (reuse_path_rebuild_declines_copy.ash:14:44)
+    CallClosure           Target=22 ClosureTemp=18 ArgTemp=21 RuntimeManagedArgumentFlagTemp=23   (reuse_path_rebuild_declines_copy.ash:14:44)
+    LoadLocal             Target=25 Slot=10   (reuse_path_rebuild_declines_copy.ash:14:62)
+    LoadLocal             Target=26 Slot=11   (reuse_path_rebuild_declines_copy.ash:14:69)
+    Borrow                Target=27 SourceTemp=26
+    AllocAdt              Target=28 Tag=1 FieldCount=3   (reuse_path_rebuild_declines_copy.ash:14:39)
+    SetAdtField           Ptr=28 FieldIndex=0 Source=22   (reuse_path_rebuild_declines_copy.ash:14:39)
+    SetAdtField           Ptr=28 FieldIndex=1 Source=25   (reuse_path_rebuild_declines_copy.ash:14:39)
+    SetAdtField           Ptr=28 FieldIndex=2 Source=27   (reuse_path_rebuild_declines_copy.ash:14:39)
+    StoreLocal            Slot=2 Source=28   (reuse_path_rebuild_declines_copy.ash:12:5)
+    RcDrop                SourceTemp=17 TypeName=Tree OwnerSlot=11
+    RcDrop                SourceTemp=15 TypeName=Tree OwnerSlot=9
+    Jump                  Target=match_end_0   (reuse_path_rebuild_declines_copy.ash:12:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=17
+    Jump                  Target=match_none_1   (reuse_path_rebuild_declines_copy.ash:12:5)
+  match_none_1:
+    LoadConstInt          Target=31 Value=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    StoreLocal            Slot=2 Source=31   (reuse_path_rebuild_declines_copy.ash:12:5)
+  match_end_0:
+    LoadLocal             Target=32 Slot=2   (reuse_path_rebuild_declines_copy.ash:12:5)
+    Return                Source=32   (reuse_path_rebuild_declines_copy.ash:11:1)
+
+function lambda_2  [ClosureHelper from fill]
+  locals=15 temps=23
+    LoadEnv               Target=0 Index=0   (reuse_path_rebuild_declines_copy.ash:16:1)
+    StoreLocal            Slot=2 Source=0   (reuse_path_rebuild_declines_copy.ash:16:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (reuse_path_rebuild_declines_copy.ash:16:1)
+    StoreLocal            Slot=5 Source=1   (reuse_path_rebuild_declines_copy.ash:16:1)
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (reuse_path_rebuild_declines_copy.ash:16:1)
+    LoadLocal             Target=2 Slot=2   (reuse_path_rebuild_declines_copy.ash:17:8)
+    LoadConstInt          Target=3 Value=0   (reuse_path_rebuild_declines_copy.ash:17:17)
+    CmpIntEq              Target=4 Left=2 Right=3   (reuse_path_rebuild_declines_copy.ash:17:8)
+    JumpIfFalse           CondTemp=4 Target=else_5   (reuse_path_rebuild_declines_copy.ash:17:5)
+    LoadLocal             Target=5 Slot=1   (reuse_path_rebuild_declines_copy.ash:18:10)
+    StoreLocal            Slot=9 Source=5   (reuse_path_rebuild_declines_copy.ash:17:5)
+    Jump                  Target=endif_6   (reuse_path_rebuild_declines_copy.ash:17:5)
+  else_5:
+    LoadLocal             Target=6 Slot=2   (reuse_path_rebuild_declines_copy.ash:19:15)
+    LoadConstInt          Target=7 Value=1   (reuse_path_rebuild_declines_copy.ash:19:23)
+    SubInt                Target=8 Left=6 Right=7   (reuse_path_rebuild_declines_copy.ash:19:15)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadEnv               Target=9 Index=1   (reuse_path_rebuild_declines_copy.ash:19:26)
+    LoadLocal             Target=10 Slot=1   (reuse_path_rebuild_declines_copy.ash:19:37)
+    LoadMemOffset         Target=11 BasePtr=9 OffsetBytes=16   (reuse_path_rebuild_declines_copy.ash:19:26)
+    LoadConstInt          Target=12 Value=62   (reuse_path_rebuild_declines_copy.ash:19:26)
+    ShrInt                Target=13 Left=11 Right=12   (reuse_path_rebuild_declines_copy.ash:19:26)
+    LoadConstInt          Target=14 Value=1   (reuse_path_rebuild_declines_copy.ash:19:26)
+    LoadConstInt          Target=15 Value=0   (reuse_path_rebuild_declines_copy.ash:19:26)
+    StoreLocal            Slot=12 Source=10   (reuse_path_rebuild_declines_copy.ash:19:26)
+    JumpIfFalse           CondTemp=15 Target=rc_call_argument_not_retained_7   (reuse_path_rebuild_declines_copy.ash:19:26)
+    RcDup                 Target=16 SourceTemp=10 RuntimeManaged=true
+    StoreLocal            Slot=12 Source=16   (reuse_path_rebuild_declines_copy.ash:19:26)
+  rc_call_argument_not_retained_7:
+    LoadLocal             Target=17 Slot=12   (reuse_path_rebuild_declines_copy.ash:19:26)
+    CallClosure           Target=18 ClosureTemp=9 ArgTemp=17 RuntimeManagedArgumentFlagTemp=15   (reuse_path_rebuild_declines_copy.ash:19:26)
+    LoadLocal             Target=19 Slot=2   (reuse_path_rebuild_declines_copy.ash:19:10)
+    LoadLocal             Target=20 Slot=1   (reuse_path_rebuild_declines_copy.ash:19:10)
+    StoreLocal            Slot=2 Source=8   (reuse_path_rebuild_declines_copy.ash:19:10)
+    StoreLocal            Slot=1 Source=18   (reuse_path_rebuild_declines_copy.ash:19:10)
+    RestoreStackPointer   Slot=8   (reuse_path_rebuild_declines_copy.ash:19:10)
+    Jump                  Target=lambda_2_body   (reuse_path_rebuild_declines_copy.ash:19:10)
+    LoadConstInt          Target=21 Value=0   (reuse_path_rebuild_declines_copy.ash:19:10)
+    StoreLocal            Slot=9 Source=21   (reuse_path_rebuild_declines_copy.ash:17:5)
+  endif_6:
+    LoadLocal             Target=22 Slot=9   (reuse_path_rebuild_declines_copy.ash:17:5)
+    Return                Source=22   (reuse_path_rebuild_declines_copy.ash:16:1)
+
+function lambda_1  [SourceFunction from fill]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=16   (reuse_path_rebuild_declines_copy.ash:16:1)
+    LoadLocal             Target=1 Slot=1   (reuse_path_rebuild_declines_copy.ash:16:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (reuse_path_rebuild_declines_copy.ash:16:1)
+    LoadEnv               Target=4 Index=0   (reuse_path_rebuild_declines_copy.ash:16:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (reuse_path_rebuild_declines_copy.ash:16:1)
+    MakeClosure           Target=5 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16   (reuse_path_rebuild_declines_copy.ash:16:1)
+    Return                Source=5   (reuse_path_rebuild_declines_copy.ash:16:1)
+
+function _start_main  [ProgramEntry]
+  locals=45 temps=76
+    LoadConstInt          Target=0 Value=0   (reuse_path_rebuild_declines_copy.ash:11:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (reuse_path_rebuild_declines_copy.ash:11:1)
+    StoreLocal            Slot=0 Source=1   (reuse_path_rebuild_declines_copy.ash:11:1)
+    Alloc                 Target=2 SizeBytes=8   (reuse_path_rebuild_declines_copy.ash:16:1)
+    LoadLocal             Target=3 Slot=0   (reuse_path_rebuild_declines_copy.ash:16:1)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=3   (reuse_path_rebuild_declines_copy.ash:16:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8   (reuse_path_rebuild_declines_copy.ash:16:1)
+    StoreLocal            Slot=1 Source=4   (reuse_path_rebuild_declines_copy.ash:16:1)
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    AllocAdt              Target=5 Tag=0 FieldCount=0   (reuse_path_rebuild_declines_copy.ash:21:19)
+    LoadConstInt          Target=6 Value=1   (reuse_path_rebuild_declines_copy.ash:21:25)
+    AllocAdt              Target=7 Tag=0 FieldCount=0   (reuse_path_rebuild_declines_copy.ash:21:28)
+    AllocAdt              Target=8 Tag=1 FieldCount=3   (reuse_path_rebuild_declines_copy.ash:21:14)
+    SetAdtField           Ptr=8 FieldIndex=0 Source=5   (reuse_path_rebuild_declines_copy.ash:21:14)
+    SetAdtField           Ptr=8 FieldIndex=1 Source=6   (reuse_path_rebuild_declines_copy.ash:21:14)
+    SetAdtField           Ptr=8 FieldIndex=2 Source=7   (reuse_path_rebuild_declines_copy.ash:21:14)
+    StoreLocal            Slot=4 Source=8   (reuse_path_rebuild_declines_copy.ash:21:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadLocal             Target=9 Slot=1   (reuse_path_rebuild_declines_copy.ash:23:14)
+    LoadConstInt          Target=10 Value=2   (reuse_path_rebuild_declines_copy.ash:23:19)
+    CallClosure           Target=11 ClosureTemp=9 ArgTemp=10   (reuse_path_rebuild_declines_copy.ash:23:14)
+    LoadLocal             Target=12 Slot=4   (reuse_path_rebuild_declines_copy.ash:23:22)
+    Borrow                Target=13 SourceTemp=12
+    RcDup                 Target=75 SourceTemp=13   (reuse_path_rebuild_declines_copy.ash:23:14)
+    CallClosure           Target=14 ClosureTemp=11 ArgTemp=13   (reuse_path_rebuild_declines_copy.ash:23:14)
+    StoreLocal            Slot=10 Source=14   (reuse_path_rebuild_declines_copy.ash:23:1)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadLocal             Target=15 Slot=4   (reuse_path_rebuild_declines_copy.ash:26:11)
+    Borrow                Target=16 SourceTemp=15
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=17 Value=0   (reuse_path_rebuild_declines_copy.ash:26:5)
+    CmpIntNe              Target=18 Left=16 Right=17   (reuse_path_rebuild_declines_copy.ash:26:5)
+    JumpIfFalse           CondTemp=18 Target=match_arm_cleanup_11   (reuse_path_rebuild_declines_copy.ash:26:5)
+    GetAdtTag             Target=19 Ptr=16   (reuse_path_rebuild_declines_copy.ash:26:5)
+    LoadConstInt          Target=21 Value=1   (reuse_path_rebuild_declines_copy.ash:26:5)
+    CmpIntEq              Target=20 Left=19 Right=21   (reuse_path_rebuild_declines_copy.ash:26:5)
+    JumpIfFalse           CondTemp=20 Target=match_arm_cleanup_11   (reuse_path_rebuild_declines_copy.ash:26:5)
+    GetAdtField           Target=22 Ptr=16 FieldIndex=0   (reuse_path_rebuild_declines_copy.ash:26:5)
+    StoreLocal            Slot=16 Source=22   (reuse_path_rebuild_declines_copy.ash:26:5)
+    RcDrop                SourceTemp=22 TypeName=Tree OwnerSlot=16
+    GetAdtField           Target=23 Ptr=16 FieldIndex=1   (reuse_path_rebuild_declines_copy.ash:26:5)
+    StoreLocal            Slot=17 Source=23   (reuse_path_rebuild_declines_copy.ash:26:5)
+    GetAdtField           Target=24 Ptr=16 FieldIndex=2   (reuse_path_rebuild_declines_copy.ash:26:5)
+    StoreLocal            Slot=18 Source=24   (reuse_path_rebuild_declines_copy.ash:26:5)
+    RcDrop                SourceTemp=24 TypeName=Tree OwnerSlot=18
+    LoadLocal             Target=25 Slot=17   (reuse_path_rebuild_declines_copy.ash:27:41)
+    StoreLocal            Slot=13 Source=25   (reuse_path_rebuild_declines_copy.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
+    Jump                  Target=match_end_8   (reuse_path_rebuild_declines_copy.ash:26:5)
+  match_arm_cleanup_11:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=20
+    Jump                  Target=match_next_10   (reuse_path_rebuild_declines_copy.ash:26:5)
+  match_next_10:
+    SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
+    LoadConstInt          Target=28 Value=0   (reuse_path_rebuild_declines_copy.ash:26:5)
+    CmpIntNe              Target=29 Left=16 Right=28   (reuse_path_rebuild_declines_copy.ash:26:5)
+    JumpIfFalse           CondTemp=29 Target=match_arm_cleanup_12   (reuse_path_rebuild_declines_copy.ash:26:5)
+    GetAdtTag             Target=30 Ptr=16   (reuse_path_rebuild_declines_copy.ash:26:5)
+    LoadConstInt          Target=32 Value=0   (reuse_path_rebuild_declines_copy.ash:26:5)
+    CmpIntEq              Target=31 Left=30 Right=32   (reuse_path_rebuild_declines_copy.ash:26:5)
+    JumpIfFalse           CondTemp=31 Target=match_arm_cleanup_12   (reuse_path_rebuild_declines_copy.ash:26:5)
+    LoadConstInt          Target=33 Value=0   (reuse_path_rebuild_declines_copy.ash:28:19)
+    StoreLocal            Slot=13 Source=33   (reuse_path_rebuild_declines_copy.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=23
+    Jump                  Target=match_end_8   (reuse_path_rebuild_declines_copy.ash:26:5)
+  match_arm_cleanup_12:
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=24
+    Jump                  Target=match_none_9   (reuse_path_rebuild_declines_copy.ash:26:5)
+  match_none_9:
+    LoadConstInt          Target=34 Value=0   (reuse_path_rebuild_declines_copy.ash:26:5)
+    StoreLocal            Slot=13 Source=34   (reuse_path_rebuild_declines_copy.ash:26:5)
+  match_end_8:
+    LoadLocal             Target=35 Slot=13   (reuse_path_rebuild_declines_copy.ash:26:5)
+    StoreLocal            Slot=25 Source=35   (reuse_path_rebuild_declines_copy.ash:25:1)
+    LoadLocal             Target=36 Slot=10   (reuse_path_rebuild_declines_copy.ash:30:7)
+    Borrow                Target=37 SourceTemp=36
+    GetAdtTag             Target=38 Ptr=37   (reuse_path_rebuild_declines_copy.ash:30:1)
+    SwitchTag             TagTemp=38 Cases=[1] DefaultLabel=_start_main_rc_edge_10_9   (reuse_path_rebuild_declines_copy.ash:30:1)
+  match_group_15:
+    SaveArenaState        CursorLocalSlot=27 EndLocalSlot=28
+    LoadConstInt          Target=39 Value=0   (reuse_path_rebuild_declines_copy.ash:30:1)
+    CmpIntNe              Target=40 Left=37 Right=39   (reuse_path_rebuild_declines_copy.ash:30:1)
+    JumpIfFalse           CondTemp=40 Target=match_arm_cleanup_17   (reuse_path_rebuild_declines_copy.ash:30:1)
+    GetAdtTag             Target=41 Ptr=37   (reuse_path_rebuild_declines_copy.ash:30:1)
+    LoadConstInt          Target=43 Value=1   (reuse_path_rebuild_declines_copy.ash:30:1)
+    CmpIntEq              Target=42 Left=41 Right=43   (reuse_path_rebuild_declines_copy.ash:30:1)
+    JumpIfFalse           CondTemp=42 Target=match_arm_cleanup_17   (reuse_path_rebuild_declines_copy.ash:30:1)
+    GetAdtField           Target=44 Ptr=37 FieldIndex=0   (reuse_path_rebuild_declines_copy.ash:30:1)
+    LoadConstInt          Target=45 Value=0   (reuse_path_rebuild_declines_copy.ash:30:1)
+    CmpIntNe              Target=46 Left=44 Right=45   (reuse_path_rebuild_declines_copy.ash:30:1)
+    JumpIfFalse           CondTemp=46 Target=match_arm_cleanup_17   (reuse_path_rebuild_declines_copy.ash:30:1)
+    GetAdtTag             Target=47 Ptr=44   (reuse_path_rebuild_declines_copy.ash:30:1)
+    LoadConstInt          Target=49 Value=1   (reuse_path_rebuild_declines_copy.ash:30:1)
+    CmpIntEq              Target=48 Left=47 Right=49   (reuse_path_rebuild_declines_copy.ash:30:1)
+    JumpIfFalse           CondTemp=48 Target=match_arm_cleanup_17   (reuse_path_rebuild_declines_copy.ash:30:1)
+    GetAdtField           Target=50 Ptr=44 FieldIndex=0   (reuse_path_rebuild_declines_copy.ash:30:1)
+    StoreLocal            Slot=29 Source=50   (reuse_path_rebuild_declines_copy.ash:30:1)
+    RcDrop                SourceTemp=50 TypeName=Tree OwnerSlot=29
+    GetAdtField           Target=51 Ptr=44 FieldIndex=1   (reuse_path_rebuild_declines_copy.ash:30:1)
+    StoreLocal            Slot=30 Source=51   (reuse_path_rebuild_declines_copy.ash:30:1)
+    GetAdtField           Target=52 Ptr=44 FieldIndex=2   (reuse_path_rebuild_declines_copy.ash:30:1)
+    StoreLocal            Slot=31 Source=52   (reuse_path_rebuild_declines_copy.ash:30:1)
+    RcDrop                SourceTemp=52 TypeName=Tree OwnerSlot=31
+    GetAdtField           Target=53 Ptr=37 FieldIndex=1   (reuse_path_rebuild_declines_copy.ash:30:1)
+    StoreLocal            Slot=32 Source=53   (reuse_path_rebuild_declines_copy.ash:30:1)
+    GetAdtField           Target=54 Ptr=37 FieldIndex=2   (reuse_path_rebuild_declines_copy.ash:30:1)
+    RcDrop                SourceTemp=14 TypeName=Tree OwnerSlot=10
+    RcDrop                SourceTemp=8 TypeName=Tree OwnerSlot=4
+    StoreLocal            Slot=33 Source=54   (reuse_path_rebuild_declines_copy.ash:30:1)
+    RcDrop                SourceTemp=54 TypeName=Tree OwnerSlot=33
+    LoadLocal             Target=55 Slot=30   (reuse_path_rebuild_declines_copy.ash:31:108)
+    TextFromInt           Target=56 ValueTemp=55   (reuse_path_rebuild_declines_copy.ash:31:89)
+    LoadConstStr          Target=57 StrLabel=str_0   (reuse_path_rebuild_declines_copy.ash:31:122)
+    ConcatStr             Target=58 Left=56 Right=57   (reuse_path_rebuild_declines_copy.ash:31:89)
+    LoadLocal             Target=59 Slot=25   (reuse_path_rebuild_declines_copy.ash:31:147)
+    TextFromInt           Target=60 ValueTemp=59   (reuse_path_rebuild_declines_copy.ash:31:128)
+    ConcatStr             Target=61 Left=58 Right=60   (reuse_path_rebuild_declines_copy.ash:31:89)
+    PrintStr              Source=61   (reuse_path_rebuild_declines_copy.ash:31:74)
+    AllocAdt              Target=62 Tag=0 FieldCount=0   (reuse_path_rebuild_declines_copy.ash:31:74)
+    StoreLocal            Slot=26 Source=62   (reuse_path_rebuild_declines_copy.ash:30:1)
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=34
+    CopyOutArena          DestTemp=66 SrcTemp=62 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=34
+    StoreLocal            Slot=26 Source=66   (reuse_path_rebuild_declines_copy.ash:30:1)
+    Jump                  Target=match_end_13   (reuse_path_rebuild_declines_copy.ash:30:1)
+  match_arm_cleanup_17:
+    RcDrop                SourceTemp=14 TypeName=Tree OwnerSlot=10
+    RcDrop                SourceTemp=8 TypeName=Tree OwnerSlot=4
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=35
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=35
+    Jump                  Target=match_group_default_16   (reuse_path_rebuild_declines_copy.ash:30:1)
+  match_group_default_16:
+    SaveArenaState        CursorLocalSlot=36 EndLocalSlot=37
+    LoadConstStr          Target=67 StrLabel=str_1   (reuse_path_rebuild_declines_copy.ash:32:27)
+    PrintStr              Source=67   (reuse_path_rebuild_declines_copy.ash:32:12)
+    AllocAdt              Target=68 Tag=0 FieldCount=0   (reuse_path_rebuild_declines_copy.ash:32:12)
+    StoreLocal            Slot=26 Source=68   (reuse_path_rebuild_declines_copy.ash:30:1)
+    Jump                  Target=match_end_13   (reuse_path_rebuild_declines_copy.ash:30:1)
+  match_arm_cleanup_18:
+    RestoreArenaState     CursorLocalSlot=36 EndLocalSlot=37 PreRestoreEndSlot=39
+    ReclaimArenaChunks    SavedEndSlot=37 PreRestoreEndSlot=39
+    Jump                  Target=match_none_14   (reuse_path_rebuild_declines_copy.ash:30:1)
+  match_none_14:
+    LoadConstInt          Target=69 Value=0   (reuse_path_rebuild_declines_copy.ash:30:1)
+    StoreLocal            Slot=26 Source=69   (reuse_path_rebuild_declines_copy.ash:30:1)
+  match_end_13:
+    LoadLocal             Target=70 Slot=26   (reuse_path_rebuild_declines_copy.ash:30:1)
+    StoreLocal            Slot=41 Source=70   (reuse_path_rebuild_declines_copy.ash:23:1)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=42
+    CopyOutArena          DestTemp=72 SrcTemp=70 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=42
+    StoreLocal            Slot=43 Source=72   (reuse_path_rebuild_declines_copy.ash:21:1)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=44
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=44
+    LoadLocal             Target=74 Slot=43   (reuse_path_rebuild_declines_copy.ash:21:1)
+    Return                Source=74
+  _start_main_rc_edge_10_9:
+    RcDrop                SourceTemp=14 TypeName=Tree OwnerSlot=10
+    Jump                  Target=match_group_default_16
+

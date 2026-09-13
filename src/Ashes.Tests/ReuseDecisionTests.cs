@@ -245,6 +245,117 @@ public sealed class ReuseDecisionTests
     }
 
     [Test]
+    public void SpecializationCandidate_OmitsEntryCopyWhenNoCallIsSpecialized()
+    {
+        // A single-child chain rather than a tree: a reader over a multi-way tree is declined
+        // earlier, as a path rebuild, before any call is qualified.
+        const string source = """
+            type Chain =
+                | End
+                | Link(Int, Chain)
+
+            let find target =
+                (let recursive go chain =
+                    match chain with
+                        | End -> false
+                        | Link(value, next) ->
+                            if value == target
+                            then true
+                            else go(next)
+                in go)
+
+            let recursive visit pending seen chain =
+                match pending with
+                    | [] -> (seen, chain)
+                    | key :: rest ->
+                        if find(key)(chain)
+                        then visit(rest)(key :: seen)(chain)
+                        else visit(rest)(seen)(chain)
+
+            let shared = Link(1)(Link(2)(End))
+            let grown = visit([1, 2, 3])([])(shared)
+            in (shared, grown)
+            """;
+
+        IReadOnlyList<ReuseDecision> decisions =
+            LowerProgram(source, "specialization-copy.ash").ReuseDecisions
+                .Where(decision => decision.Decision == ReuseDecisionKind.EntryCopy)
+                .ToList();
+
+        ReuseDecision visit = EntryCopy(decisions, "visit");
+        visit.Mechanism.ShouldBe(ReuseDecisionMechanism.Specialization);
+        visit.Outcome.ShouldBe(ReuseDecisionOutcome.Omitted);
+        visit.Reason.ShouldBe(ReuseDecisionReason.NoSpecializedCall);
+        visit.Candidate.ShouldNotBeNull();
+        visit.Candidate.SourceName.ShouldBe("chain");
+    }
+
+    // `insert` rebuilds one root-to-leaf path of a two-way tree, so an in-place clone saves a
+    // logarithmic rebuild per call while the defensive copy of an unproven accumulator costs the
+    // whole tree on every entry of the loop; the copy is declined and the plain call shares the
+    // untouched subtrees. `update` rebuilds the whole tree, where the copy is paid back by the
+    // first in-place pass, so that loop keeps it.
+    private const string PathRebuildSource = """
+        type Tree =
+            | Leaf
+            | Node(Tree, Int, Tree)
+
+        let insert key =
+            (let recursive go tree =
+                match tree with
+                    | Leaf -> Node(Leaf)(key)(Leaf)
+                    | Node(left, value, right) ->
+                        if key < value
+                        then Node(go(left))(value)(right)
+                        else Node(left)(value)(go(right))
+            in go)
+
+        let update amount =
+            (let recursive go tree =
+                match tree with
+                    | Leaf -> Leaf
+                    | Node(left, value, right) ->
+                        Node(go(left))(value + amount)(go(right))
+            in go)
+
+        let recursive fill pending tree =
+            match pending with
+                | [] -> tree
+                | key :: rest -> fill(rest)(insert(key)(tree))
+
+        let recursive bump count tree =
+            if count <= 0
+            then tree
+            else bump(count - 1)(update(1)(tree))
+
+        let shared = Node(Leaf)(1)(Leaf)
+        let filled = fill([2, 3])(shared)
+        let bumped = bump(2)(shared)
+        in (shared, filled, bumped)
+        """;
+
+    [Test]
+    public void SpecializationCandidate_OmitsEntryCopyWhenTheCloneRebuildsOnlyAPath()
+    {
+        IReadOnlyList<ReuseDecision> decisions =
+            LowerProgram(PathRebuildSource, "path-rebuild.ash").ReuseDecisions
+                .Where(decision => decision.Decision == ReuseDecisionKind.EntryCopy)
+                .ToList();
+
+        ReuseDecision fill = EntryCopy(decisions, "fill");
+        fill.Mechanism.ShouldBe(ReuseDecisionMechanism.Specialization);
+        fill.Outcome.ShouldBe(ReuseDecisionOutcome.Omitted);
+        fill.Reason.ShouldBe(ReuseDecisionReason.PathRebuildNotAmortized);
+        fill.Candidate.ShouldNotBeNull();
+        fill.Candidate.SourceName.ShouldBe("tree");
+
+        ReuseDecision bump = EntryCopy(decisions, "bump");
+        bump.Mechanism.ShouldBe(ReuseDecisionMechanism.Specialization);
+        bump.Outcome.ShouldBe(ReuseDecisionOutcome.Retained);
+        bump.Reason.ShouldBe(ReuseDecisionReason.OwnershipMoveSafetyRejected);
+    }
+
+    [Test]
     public void ReuseTokens_DistinguishRuntimeChecksFromStaticUniqueness()
     {
         const string runtimeSource = """

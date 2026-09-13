@@ -1,0 +1,43 @@
+Memory report
+=============
+
+Function: fill
+  ownership
+    count: consumed, move-safe yes
+    tree: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_2__scalarenv0]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+  reuse: entry copy omitted
+  reuse: specialization candidate qualification rejected
+  representation [lambda_2]
+    conservative unknown: 5
+    runtime rc:           3
+    copy value:           6
+  representation [lambda_1]
+    region:               3
+    copy value:           1
+
+Function: insertLeft
+  ownership
+    tree: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_0]
+    conservative unknown: 8
+    region:               5
+    copy value:           2
+

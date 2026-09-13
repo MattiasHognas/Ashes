@@ -1,0 +1,31 @@
+Ownership report
+================
+
+Function: fill
+  Parameters
+    count
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    tree
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - tree
+
+Function: insertLeft
+  Parameters
+    tree
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - tree
+
