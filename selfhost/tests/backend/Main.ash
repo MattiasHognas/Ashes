@@ -3067,6 +3067,32 @@ let assertProgramPrints buildModule name executablePath expectedLine =
                                                         let _ = test.assertEqual(expectedLine)(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// `assertProgramPrints` with the executable invoked with `args`, so a program reading
+// `Ashes.IO.args` sees a real argument vector.
+let assertProgramPrintsWithArgs buildModule name executablePath args expectedLine =
+    match emitModule(buildModule)(name)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(name) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executablePath) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executablePath)(args) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual(expectedLine)(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // `assertProgramPrints` with `stdinText` written to the program's stdin before its first line
 // of stdout is read.
 let assertProgramPrintsWithStdin buildModule name executablePath stdinText expectedLine =
@@ -3379,6 +3405,18 @@ let testRunStaticExecutableForOwnedListInFunctionModule unit = assertProgramPrin
 let testRunStaticExecutableForLambdaReturnsRecordModule unit = assertProgramPrints(buildOptimizedIrLambdaReturnsRecordModule)("selfhostBackendRunLambdaReturnsRecord")("selfhost_backend_lambda_returns_record_e2e")("7")
 
 let testRunStaticExecutableForAggregateChildrenRetainModule unit = assertProgramPrints(buildOptimizedIrAggregateChildrenRetainModule)("selfhostBackendRunAggregateChildrenRetain")("selfhost_backend_aggregate_children_retain_e2e")("1")
+
+// The program arguments in argument order, read from inside a function rather than at the entry:
+// the list lives in a module global, so a read below the entry sees the same cells the entry
+// built (a per-function stack cell would leave this one empty, stage 0's #1030).
+let programArgsSource = "let recursive countArgs args n =\n    match args with\n        | [] -> n\n        | _ :: rest -> countArgs(rest)(n + 1)\nlet firstArg unit =\n    match Ashes.IO.args with\n        | [] -> \"none\"\n        | head :: _ -> head\nlet describe unit = firstArg(Unit) + \" \" + Ashes.Text.fromInt(countArgs(Ashes.IO.args)(0))\nAshes.IO.print(describe(Unit))"
+
+let buildOptimizedIrProgramArgsModule name context = codegenOptimizedRealSource(programArgsSource)(name)(context)
+
+let testRunStaticExecutableForProgramArgsModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgs")("selfhost_backend_program_args_e2e")(["alpha", "beta", "gamma"])("alpha 3")
+
+// The same program with no arguments at all: the walk publishes the empty list.
+let testRunStaticExecutableForProgramArgsEmptyModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgsEmpty")("selfhost_backend_program_args_empty_e2e")([])("none 0")
 
 let testRunStaticExecutableForOptimizedIrDeepTailLoopModule unit = assertProgramPrints(buildOptimizedIrDeepTailLoopModule)("selfhostBackendRunOptimizedDeepTailLoop")("selfhost_backend_deep_tail_loop_e2e")("2000000")
 
@@ -5368,6 +5406,8 @@ let run shipped =
     |> testRunStaticExecutableForOwnedListInFunctionModule
     |> testRunStaticExecutableForLambdaReturnsRecordModule
     |> testRunStaticExecutableForAggregateChildrenRetainModule
+    |> testRunStaticExecutableForProgramArgsModule
+    |> testRunStaticExecutableForProgramArgsEmptyModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

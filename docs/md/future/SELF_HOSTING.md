@@ -3856,9 +3856,13 @@ same public behavior.
   `CoreBuiltinLowering.ash`, and `IrCodegen.Support.ash`'s `emitCopyFfiBytes` with stage 0's four
   ranges: over 1 GiB is `Error`, zero length is `Ok` of the empty bytes whatever the pointer, a
   null pointer with a nonzero length is `Error`, otherwise one `memcpy` into fresh reference-counted
-  bytes). Open: the buffered stdout ring (writes are immediate), program arguments (one module
-  global the entry fills and every function loads; a per-function stack cell, as stage 0 had
-  until 2026-09-14, leaves every read below the entry an empty list), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
+  bytes). Done (2026-09-15): program arguments (`IrCodegen.ProgramArgs.ash`, stage 0's
+  `EmitLinuxProgramArgsInitialization`: the entry walks argv from the last argument back to
+  `argv[1]`, measures each NUL-terminated string, copies it into an arena string and conses it on,
+  so the descending walk leaves the list in argument order, published in one module global every
+  function's `LoadProgramArgs` loads; a per-function stack cell, as stage 0 had until 2026-09-14,
+  leaves every read below the entry an empty list). Open: the buffered stdout ring (writes are
+  immediate), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
   `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the
   [Standard Library reference](../reference/standard-library.md) and the architecture sections on
@@ -4254,9 +4258,9 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   memory wall: the lowering of the semantics package alone no longer fits in 50 GiB of address
   space (OPT-80, the next blocker, with its per-module measurements; its slices a to h left the
   wall standing, and OPT-80i names the record classifier gap behind it); a single-file program that reads
-  `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
-  codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
-  codegen either, which the CLI package's LLVM bindings will need before its binary links, and
+  `Ashes.IO.args` lowers and now links and runs through the stage-1 backend too (CG-11's
+  program-arguments item, 2026-09-15), while the backend still has no `CallExternal`
+  codegen, which the CLI package's LLVM bindings will need before its binary links, and
   a program importing `DerivingExpansion` stops in the backend at CG-18. The suspects for
   OPT-80 (whatever the next gdb `mmap` sampling names: the deriving expansion's `Ord` bodies
   at registration, the `constructorInferenceDefinitionsFromLayouts` record builder, the
