@@ -3627,6 +3627,21 @@ let isMaterializableStringChildRead (expression: Expr) (state: CoreLoweringState
                 | _ -> false
         | _ -> false
 
+// Stage 0's `IsLocalRecordFieldRead`: a field read out of a local binding, the record-field
+// spelling of the value a `match` arm binds by name. A binding the lookup does not find counts
+// too, since an escaping result is classified before the `let` that binds the receiver has
+// lowered; the parent's own lowering normalizes or retains whichever form the child turns out to
+// have.
+let isLocalRecordFieldRead (expression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprQualifiedVar(owner, _field) ->
+            match lookupBinding(owner)(state.bindings) with
+                | None -> true
+                | Some(CoreBinding { location = CoreLocal(_slot) }) -> true
+                | Some(CoreBinding { location = CoreEnvironment(_index) }) -> true
+                | _ -> false
+        | _ -> false
+
 // Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
 // recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer
 // or pattern-owner read, a list the runtime may own built fresh or read from a binding or call,
@@ -3638,7 +3653,7 @@ let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: Sem
     else
         match (resolveType(state)(fieldType), unspanArgument(expression)) with
             | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state) || isPatternOwnerRead(expression)(state) || isMaterializableStringChildRead(expression)(state)
-            | (SemList(element), _expression) -> tcoListElementFactsSupported(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression))
+            | (SemList(element), _expression) -> tcoListElementFactsSupported(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression) || isLocalRecordFieldRead(expression)(state))
             | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
             | (SemTuple(_elementTypes), _expression) -> isPatternOwnerRead(expression)(state)
             | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state) || isFreshRuntimeManageableAdtExpression(expression)(state) || isPatternOwnerRead(expression)(state)
@@ -12001,6 +12016,13 @@ let isImmediateSafeAdtMatchUse (name: Str) (value: Expr) (body: Expr) (state: Co
             match layoutFieldTypes(layout)(state) with
                 | (_fieldTypes, resultType) -> isImmediateAdtMatchUse(name)(body) && (canRuntimeManageRecursiveCopyAdt(resultType)(state) == false || immediateMatchArmsReuseSafe(body)(state))
 
+// The request a `let` value starts from, stage 0's `PushSequentialLet`: the enclosing request
+// without its expected type and with the transfer flag cleared, which each rule below then adds a
+// representation to. Starting from an empty request dropped the representation the enclosing
+// position had already asked for — a tuple an escaping result wants reference-counted lost its
+// request, and with it the retain its elements needed.
+let inheritedLetValueRequest (state: CoreLoweringState) = consumerRequestOf(state) with expectedType = None, argumentSite = None, transfersRuntimeManagedChildren = false
+
 // The representation a `let` asks of its aggregate value, stage 0's `TryLowerRuntimeRcRecordLet`,
 // `TryLowerRuntimeRcTupleLet`, `TryLowerRuntimeRcListLet`, and `TryLowerRuntimeRcAdtLet` in that
 // order: a record literal read only as a field receiver, matched by one constructor arm, or
@@ -12008,20 +12030,22 @@ let isImmediateSafeAdtMatchUse (name: Str) (value: Expr) (body: Expr) (state: Co
 // immediately (directly, or through a cons onto it) or returned directly; and a constructor
 // application matched immediately or returned directly as a fresh runtime-manageable value.
 let aggregateLetValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
-    (let directEscape = bodyReturnsBinding(name)(body)
+    (let inherited = inheritedLetValueRequest(state)
     in
-        if isRecordLiteral(value) && (isImmediateCopyUseOfRecord(name)(body) || isImmediateRecordMatchUse(name)(body) || directEscape && isFreshRuntimeManageableRecordTree(value)(state))
-        then emptyConsumerRequest with runtimeRecord = true
-        else
-            if isTupleLiteral(value) && directEscape
-            then emptyConsumerRequest with runtimeTuple = true
+        let directEscape = bodyReturnsBinding(name)(body)
+        in
+            if isRecordLiteral(value) && (isImmediateCopyUseOfRecord(name)(body) || isImmediateRecordMatchUse(name)(body) || directEscape && isFreshRuntimeManageableRecordTree(value)(state))
+            then inherited with runtimeRecord = true
             else
-                if isFreshListConstruction(value) && (isImmediateListMatchUse(name)(body) || isTailConsumedByImmediateListMatch(name)(body) || directEscape)
-                then emptyConsumerRequest with runtimeList = true
+                if isTupleLiteral(value) && directEscape
+                then inherited with runtimeTuple = true
                 else
-                    if isConstructorExpression(value)(state) && (isImmediateSafeAdtMatchUse(name)(value)(body)(state) || directEscape && isFreshRuntimeManageableAdtExpression(value)(state))
-                    then emptyConsumerRequest with runtimeAdt = true
-                    else emptyConsumerRequest)
+                    if isFreshListConstruction(value) && (isImmediateListMatchUse(name)(body) || isTailConsumedByImmediateListMatch(name)(body) || directEscape)
+                    then inherited with runtimeList = true
+                    else
+                        if isConstructorExpression(value)(state) && (isImmediateSafeAdtMatchUse(name)(value)(body)(state) || directEscape && isFreshRuntimeManageableAdtExpression(value)(state))
+                        then inherited with runtimeAdt = true
+                        else inherited)
 
 // Stage 0's `TryLowerRuntimeRcStringLet`: a `let` whose value is a fresh string producer and
 // whose body either returns the binding or hands it straight to a runtime-string consumer places
@@ -12031,7 +12055,7 @@ let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringS
     (let directEscape = isDirectBindingResult(body)(name)
     in
         if isRuntimeRcStringProducer(value)(state) && (directEscape || isImmediateRuntimeStringUse(body)(name)) && (isCaptureSafeStringProducer(value)(state) || directEscape == false)
-        then emptyConsumerRequest with runtimeString = true
+        then inheritedLetValueRequest(state) with runtimeString = true
         else aggregateLetValueRequest(name)(value)(body)(state))
 
 // Stage 0's `LowerSequentialBindingChain`: the innermost body of a `let` chain escapes the chain
@@ -13617,7 +13641,9 @@ let recursive allRuntimeManageableTupleElements (elements: List(Expr)) (temps: L
 // Stage 0's `RetainRuntimeManagedAggregateChild` on an already lowered child: the read of a
 // binding that still owns its reference is retained, any other child is stored as lowered. A
 // pattern owner is not (stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` skips it): its
-// identity marker, promoted once its root parameter is placed, is its retain.
+// identity marker, promoted once its root parameter is placed, is its retain. The owner is read
+// whole or a heap-typed field is taken out of it, and both retain alike: the field is a borrow of
+// a child the owner releases with itself, so a cell storing it needs a reference of its own.
 let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match unspanArgument(child) with
         | ExprVar(name) ->
@@ -13626,6 +13652,15 @@ let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticTy
                     match emitTransferRetain(temp)(semanticType)(state) with
                         | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
                 | _ -> (state, temp)
+        | ExprQualifiedVar(owner, _field) ->
+            if resultSurvivesReset(semanticType)(state)
+            then (state, temp)
+            else
+                match (liveRuntimeOwnerSlot(owner)(state), patternOwnerBinding(owner)(state)) with
+                    | (Some(_slot), None) ->
+                        match emitTransferRetain(temp)(semanticType)(state) with
+                            | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
+                    | _ -> (state, temp)
         | _ -> (state, temp)
 
 // Stage 0's `RetainRuntimeManagedTupleChildren`: a tuple element read from a live owner or a

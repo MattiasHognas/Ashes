@@ -4102,6 +4102,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_callee_result_field_reads_reassembled_into_record_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildCalleeResultFieldReadsReassembledMemoryProgram,
+            outputPerIteration: 64).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("two lists read out of a callee result by field name and reassembled into a record every round", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9635,6 +9650,52 @@ public sealed class LinuxBackendCoverageTests
                 else loop(remaining - 1)(mapFns(fns))(total + 1)
 
             Ashes.IO.print(loop({{iterations}})(buildFns(4)([]))(0))
+            """;
+
+    // A callee's reference-counted result taken apart by field reads and reassembled into another
+    // record: both lists are retained into the new cell so they outlive the callee result's own
+    // release, and nothing releases those retained references unless the new record is itself
+    // reference-counted. Reading the same two fields through a `match` arm instead already
+    // plateaued, which is what made the field-read spelling the whole difference.
+    private static string BuildCalleeResultFieldReadsReassembledMemoryProgram(int iterations)
+        => $$"""
+            type LexerResult =
+                | tokens: List(Str)
+                | diagnostics: List(Str)
+
+            type Program =
+                | items: List(Str)
+                | diagnostics: List(Str)
+
+            let recursive rev (remaining: List(Str)) (result: List(Str)) =
+                match remaining with
+                    | [] -> result
+                    | head :: tail -> rev(tail)(head :: result)
+
+            let recursive lexerScan (n: Int) (tokens: List(Str)) (diagnostics: List(Str)) =
+                (let next = n - 1
+                in
+                    if next < 0
+                    then LexerResult(tokens = rev(tokens)([]), diagnostics = rev(diagnostics)([]))
+                    else lexerScan(next)("tok" + "x" :: tokens)("warn" + "y" :: diagnostics))
+
+            let recursive countOf (values: List(Str)) (acc: Int) =
+                match values with
+                    | [] -> acc
+                    | _ :: tail -> countOf(tail)(acc + 1)
+
+            let parseProgram (n: Int) =
+                (let lexed = lexerScan(n)([])([])
+                in Program(items = lexed.tokens, diagnostics = lexed.diagnostics))
+
+            let recursive loop (remaining: Int) (total: Int) =
+                if remaining <= 0
+                then total
+                else
+                    match parseProgram(64) with
+                        | Program { diagnostics = diagnostics } -> loop(remaining - 1)(total + countOf(diagnostics)(0))
+
+            Ashes.IO.print(loop({{iterations}})(0))
             """;
 
     // The producer applied to its own non-tail recursive result: the recursive function's result
