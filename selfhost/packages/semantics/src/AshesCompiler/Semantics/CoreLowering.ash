@@ -517,6 +517,12 @@ type CoreLoweringState =
     | curryStage: Maybe((Str, Str))
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
+    // The body labels whose tail-modulo-constructor spine a cons actually linked a cell onto
+    // (stage 0's `TmcActivated`). The spine slots are reserved from the body's shape alone, before
+    // any head is lowered; a head the cell cannot own as a reference hands its cons back to the
+    // ordinary path, and then there is no spine to close at the return. Kept beside the frame
+    // rather than in it because a frame refreshed from a copy taken before the cons would drop it.
+    | tmcActivatedLabels: List(Str)
     | pendingTcoResets: List(CoreTcoReset)
     // The call results of this function whose copy-out kind was undecidable when their window
     // closed, resolved with the pending resets once the body is lowered.
@@ -925,6 +931,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         curryStage = None,
         resultRcEligibility = None,
         tcoLoopFrame = None,
+        tmcActivatedLabels = [],
         pendingTcoResets = [],
         pendingCallCopyOuts = [],
         selfResultDeferredNames = [],
@@ -6415,7 +6422,7 @@ let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (joinSlo
 let closeTmcChain (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
     match state.tcoLoopFrame with
         | Some(CoreTcoLoopFrame { bodyLabel = bodyLabel, tmcDestSlot = destSlot, tmcResultSlot = resultSlot }) ->
-            if destSlot < 0 || bodyLabel != label + "_body"
+            if destSlot < 0 || !containsName(bodyLabel)(state.tmcActivatedLabels) || bodyLabel != label + "_body"
             then (state, bodyTemp)
             else
                 match freshLocal(state) with
@@ -9238,6 +9245,9 @@ type CoreCallContext =
     | resultElementQuantified: Bool
     | calleeName: Maybe(Str)
     | argumentCount: Int
+    // The type the consumer asked the whole spine for, read before the general call cleared the
+    // consumer request.
+    | expectedResult: Maybe(SemanticType)
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -9758,10 +9768,20 @@ let emitResultOwnershipFlag (context: CoreCallContext) (arity: Int) (resultType:
             then emitReturnsRuntimeManagedFlag(functionTemp)(state)
             else (state, -1)
 
+// A deferred self call whose result the consumer already names: the cons that holds it asks for
+// `List(head)` before the tail is lowered, so the layout is known here even though the recursive
+// binding's own arrow is still open, and the call is lowered the way the compiler lowers it with a
+// complete inference behind it - adopting the result by the callee's returns bit rather than
+// asking for an arena one.
+let deferredSelfResultNamedByConsumer (context: CoreCallContext) (state: CoreLoweringState) =
+    selfResultDeferred(context)(state) && (match context.expectedResult with
+        | Some(expected) -> containsUnresolvedLayout(expected)(state) == false
+        | None -> false)
+
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one.
 let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if requestsArenaResult(resultType)(state)
+    if requestsArenaResult(resultType)(state) && deferredSelfResultNamedByConsumer(context)(state) == false
     then
         match freshTemp((if selfResultDeferred(context)(state)
         then state
@@ -10579,7 +10599,7 @@ let calleeDisplayName (root: Expr) =
         | ExprQualifiedVar(moduleName, name) -> Some(moduleName + "." + name)
         | _ -> None
 
-let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (state: CoreLoweringState) =
+let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(SemanticType)) (state: CoreLoweringState) =
     (let selfCallee = isSelfCallee(spine)(state)
     in
         CoreCallContext(
@@ -10588,7 +10608,8 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (state: CoreLoweringSt
             tailCall = selfCallee && tailCall,
             resultElementQuantified = calleeResultListElementQuantified(spine)(state),
             calleeName = calleeDisplayName(spine.root),
-            argumentCount = coreListLength(spine.arguments)
+            argumentCount = coreListLength(spine.arguments),
+            expectedResult = expected
         ))
 
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
@@ -10599,7 +10620,7 @@ let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(Cor
     |> openArenaBracket with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
-            |> callContextOf(spine)(tailCall)
+            |> callContextOf(spine)(tailCall)(expected)
             |> (given (context: CoreCallContext) ->
                 match opened
                 |> lowerCallSpineStage(function)(argument)(context)(expected)(site)(1)(transfers)(lower)
@@ -18425,6 +18446,12 @@ let lowerCallExpression expression function argument lower state =
                                 |> locateLoweredMismatch(argumentSiteOf(state))
                             else lowerGeneralCall(expression)(function)(argument)(lower)(state)
 
+// The spine of the loop being lowered now holds a cell, so its return has one to close.
+let activateTmcChain (state: CoreLoweringState) =
+    match state.tcoLoopFrame with
+        | Some(CoreTcoLoopFrame { bodyLabel = bodyLabel }) -> state with tmcActivatedLabels = bodyLabel :: state.tmcActivatedLabels
+        | None -> state
+
 // Stage 0's `EmitTmcLinkCell`: the first cell becomes the spine head, every later one is stored into
 // its predecessor's still-nil tail field, and the new cell becomes the pending destination.
 let emitTmcLinkCell (frame: CoreTcoLoopFrame) (cellTemp: Int) (state: CoreLoweringState) =
@@ -18449,6 +18476,7 @@ let emitTmcLinkCell (frame: CoreTcoLoopFrame) (cellTemp: Int) (state: CoreLoweri
                                             |> emit(StoreLocal(frame.tmcResultSlot)(cellTemp))
                                             |> emit(Label(doneLabel))
                                             |> emit(StoreLocal(frame.tmcDestSlot)(cellTemp))
+                                            |> activateTmcChain
 
 // Tail modulo constructor, stage 0's `LowerConsTmc`: one more cell on an iteratively built spine plus
 // the loop's own back edge, instead of a call whose pending constructor keeps a native frame alive per

@@ -188,7 +188,9 @@ let bodyEnvironment (body: DropperBody) =
     match body with
         | DropperBody { environment = environment } -> environment
 
-// The owned type name a whole-value `RcDrop` releases under.
+// The owned type name a whole-value `RcDrop` releases under. The backend releases a `Function`
+// through the closure protocol (its dropper at the closure's fourth word), so a user type of that
+// name is tagged apart from it, as stage 0's `RuntimeManagedAdtTypeName` does.
 let dropperTypeName (semanticType: SemanticType) =
     match semanticType with
         | SemString -> "String"
@@ -196,7 +198,10 @@ let dropperTypeName (semanticType: SemanticType) =
         | SemBigInt -> "BigInt"
         | SemList(_element) -> "List"
         | SemTuple(_elements) -> "Tuple"
-        | SemNamed(_symbolId, name, _arguments) -> name
+        | SemNamed(_symbolId, name, _arguments) ->
+            if name == "Function"
+            then "Function_"
+            else name
         | _ -> "Value"
 
 let emitRcDrop (valueTemp: Int) (typeName: Str) (body: DropperBody) =
