@@ -1,0 +1,32 @@
+type Inst =
+    | Add(Int, Int)
+    | Name(Str, Int)
+
+let recursive bump (insts: List(Inst)) =
+    match insts with
+        | [] -> []
+        | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+        | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+let bumpIf (flag: Int) (insts: List(Inst)) =
+    if flag == 0
+    then insts
+    else bump(insts)
+
+let keepOrBump (insts: List(Inst)) =
+    match insts with
+        | [] -> insts
+        | Add(_, _) :: _ -> insts
+        | _ -> bump(insts)
+
+let recursive bumpTimes (p: Int) (insts: List(Inst)) =
+    if p == 0
+    then insts
+    else bump(bumpTimes(p - 1)(insts))
+
+let recursive count (insts: List(Inst)) (acc: Int) =
+    match insts with
+        | [] -> acc
+        | _ :: tail -> count(tail)(acc + 1)
+
+Ashes.IO.print(Ashes.Text.fromInt(count(keepOrBump(bumpIf(1)(bumpTimes(2)([Name("x", 1), Add(0, 0)]))))(0)))

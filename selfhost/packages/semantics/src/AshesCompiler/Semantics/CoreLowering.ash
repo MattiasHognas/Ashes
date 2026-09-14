@@ -76,6 +76,7 @@ import AshesCompiler.Semantics.OwnershipInference.collectAllCallSites
 import AshesCompiler.Semantics.OwnershipInference.moveSafetyProof
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.ResultReach.resultAlwaysReachesVariable
+import AshesCompiler.Semantics.ParameterPassthrough.returnsParameterOrFreshValue
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.StructuralCopiers
 import AshesCompiler.Semantics.SourceContext
@@ -502,6 +503,18 @@ type CoreLoweringState =
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
     | functionReturnedClosureLabels: List((Str, Str))
+    // The parameter of the plain function being lowered whose body returns it on some arms and
+    // a fresh value on the others (stage 0's `_passthroughParameter`): its name, its slot, and
+    // its type. The arm returning it copies it into an owned reference-counted graph.
+    | passthroughParameter: Maybe((Str, Int, SemanticType))
+    // The labels whose result was promised reference-counted before their body was lowered, so
+    // their own recursive call sites hand the result over as an owned value; the promise is
+    // kept at the return.
+    | predictedRuntimeManagedResultLabels: List(Str)
+    // The curry stage whose body is the lambda about to be lowered, as the stage's label and
+    // the lambda's parameter name, so the returned-closure link is recorded before that body's
+    // own recursive calls walk it.
+    | curryStage: Maybe((Str, Str))
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
     | pendingTcoResets: List(CoreTcoReset)
@@ -900,6 +913,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         dropperLabels = emptyDropperLabelCache,
         tcoLoop = None,
         functionReturnedClosureLabels = [],
+        passthroughParameter = None,
+        predictedRuntimeManagedResultLabels = [],
+        curryStage = None,
         resultRcEligibility = None,
         tcoLoopFrame = None,
         pendingTcoResets = [],
@@ -4030,6 +4046,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with pendingClosureNormalizers = bodyState.pendingClosureNormalizers)
             |> (given (current: CoreLoweringState) -> current with bodyRuntimeManagedByLabel = bodyState.bodyRuntimeManagedByLabel)
             |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
+            |> (given (current: CoreLoweringState) -> current with predictedRuntimeManagedResultLabels = bodyState.predictedRuntimeManagedResultLabels, curryStage = bodyState.curryStage)
             |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements, joinRepresentations = bodyState.joinRepresentations)
             // The label that bound a specialization's linear parameter is decided inside the body
             // being generated and read once it is finished, so it leaves the frame with it.
@@ -6259,6 +6276,142 @@ let closeTmcChainLowered (label: Str) (lowered: LoweredCoreValue) =
             match closeTmcChain(label)(bodyTemp)(state) with
                 | (closedState, closedTemp) -> LoweredCoreValue(state = closedState, temp = closedTemp, semanticType = bodyType, error = None)
 
+let tcoListElementSupported (element: SemanticType) (state: CoreLoweringState) =
+    match state
+    |> coverageEnvironment
+    |> classifyHeapLayout(element) with
+        | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
+
+// Stage 0's `IsRuntimeOwnedCopyTupleLayout`: a tuple every element of which a runtime-managed
+// parent can own and the runtime-managed deep copy reproduces without reaching a recursive type.
+let recursive allRuntimeOwnedCopyElements (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest ->
+            heapRuntimeOwnedTupleElementLayout(element)(coverageEnvironment(state))([]) && allRuntimeOwnedCopyElements(rest)(state)
+
+// Stage 0's `IsPassthroughNormalizableParameterType`: the parameter types the passthrough arm
+// copies into an owned reference-counted graph. Strings stay out: their affine growth already
+// decides their placement.
+let isPassthroughNormalizableParameterType (parameterType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(parameterType) with
+        | SemList(element) -> tcoListElementSupported(element)(state)
+        | SemTuple(elements) -> allRuntimeOwnedCopyElements(elements)(state)
+        | SemNamed(_symbolId, _name, _arguments) as named ->
+            match argumentCopyPlanOf(named)(state) with
+                | Some(_plan) -> true
+                | None -> false
+        | _ -> false
+
+// Whether a call names the recursive binding being lowered or a member of its group.
+let isSelfCallName (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreSelf(_label, _environmentSize) }) -> true
+        | _ -> containsLabel(name)(state.recursiveGroupNames)
+
+// Stage 0's `ProducesFreshValue`: a terminal arm that builds its value — a constructor
+// application, a list, record or tuple literal, a cons, a call to a function compiled with a
+// reference-counted result, or a call to the function itself, whose result is promised
+// reference-counted.
+let producesFreshValue (expression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, _tail) -> true
+        | ExprRecord(_name, _fields, _multiline) -> true
+        | ExprRecordUpdate(_target, _updates) -> true
+        | ExprTuple(_elements) -> true
+        | ExprList(_elements, _multiline) -> true
+        | ExprCall(_callee, _argument, _sugar, _layout) as call ->
+            match callSpineRootAndArity(call)(0) with
+                | (ExprVar(name), applied) ->
+                    match constructorLayout(name)(state) with
+                        | Some(_layout) -> true
+                        | None ->
+                            isSelfCallName(name)(state) || (match lookupLetLambdaLabel(name)(state.letLambdaLabels) with
+                                | Some(label) ->
+                                    match innermostStageLabel(applied - 1)(label)(state.functionReturnedClosureLabels) with
+                                        | Some(stage) -> bodyReturnsRuntimeManaged(stage)(state)
+                                        | None -> false
+                                | None -> false)
+                | _ -> false
+        | _ -> false
+
+let isPlainFunctionBody (state: CoreLoweringState) =
+    match (state.tcoLoop, state.tcoLoopFrame, state.normalizedAlwaysReturnedParameter) with
+        | (None, None, None) -> true
+        | _ -> false
+
+// Stage 0's `ResolvePassthroughParameter`: the parameter of a plain function whose body returns
+// it on some arms and a fresh value on the others; the direct argument lives in local slot 1.
+let withPassthroughParameter (parameter: Str) (body: Expr) (parameterType: SemanticType) (state: CoreLoweringState) =
+    if isPlainFunctionBody(state) && returnsParameterOrFreshValue(given (arm: Expr) -> producesFreshValue(arm)(state))(parameter)(body)
+    then state with passthroughParameter = Some((parameter, 1, parameterType))
+    else state with passthroughParameter = None
+
+// Stage 0's `EmitRuntimeManagedTcoParamCopy` reserves the copy's result temp before it walks a
+// list whose heads have no spine copy; the walk allocates its own, so the reserved temp stays
+// unused.
+let emitOwnedPassthroughCopy (sourceTemp: Int) (parameterType: SemanticType) (state: CoreLoweringState) =
+    match argumentCopyPlanOf(parameterType)(state) with
+        | None -> (state, sourceTemp)
+        | Some(ListDeepArgumentCopy(elementPlan)) ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved, temp = _reservedTemp } ->
+                    match emitListDeepCopy(sourceTemp)(elementPlan)(reserved) with
+                        | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
+        | Some(plan) ->
+            match emitArgumentDeepCopy(sourceTemp)(plan)(state) with
+                | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
+
+let bindingIsLocalSlot (name: Str) (slot: Int) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(boundSlot) }) -> boundSlot == slot
+        | _ -> false
+
+// Stage 0's `NormalizeParameterPassthroughBranch`: a branch result that is a plain read of the
+// passthrough parameter is copied into an owned reference-counted graph, so the join it flows
+// into is reference-counted on every branch.
+let normalizeParameterPassthroughBranch (branch: Expr) (temp: Int) (state: CoreLoweringState) =
+    match (state.passthroughParameter, tailForwardedVariable(branch)) with
+        | (Some((name, slot, parameterType)), Some(variable)) ->
+            if variable == name && isRuntimeTemp(temp)(state) == false && bindingIsLocalSlot(name)(slot)(state) && isPassthroughNormalizableParameterType(parameterType)(state)
+            then emitOwnedPassthroughCopy(temp)(parameterType)(state)
+            else (state, temp)
+        | _ -> (state, temp)
+
+// Stage 0's `PredictRuntimeManagedResult`: the function's result is promised reference-counted
+// before its body is lowered when the passthrough parameter's type is already copyable, so the
+// body's own recursive call sites hand the result over as an owned value.
+let predictRuntimeManagedResult (label: Str) (parameterType: SemanticType) (state: CoreLoweringState) =
+    match state.passthroughParameter with
+        | Some(_parameter) ->
+            if isPassthroughNormalizableParameterType(parameterType)(state)
+            then (state with predictedRuntimeManagedResultLabels = label :: state.predictedRuntimeManagedResultLabels) |> recordBodyRuntimeManaged(label)(true)
+            else state
+        | None -> state
+
+// Stage 0's `KeepPredictedRuntimeManagedResult`: a promised body result that did not end up
+// reference-counted is copied into an owned graph before it is returned.
+let keepPredictedRuntimeManagedResult (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if containsLabel(label)(state.predictedRuntimeManagedResultLabels) && isRuntimeTemp(bodyTemp)(state) == false
+    then emitOwnedPassthroughCopy(bodyTemp)(bodyType)(state)
+    else (state, bodyTemp)
+
+// Stage 0's `BeginCurryStage` and `LinkCurryStage`: a stage whose body is a lambda records the
+// returned-closure link as soon as that lambda is entered, so a recursive call inside it
+// resolves through the chain while the body is still being lowered.
+let beginCurryStage (label: Str) (body: Expr) (state: CoreLoweringState) =
+    match unspanArgument(body) with
+        | ExprLambda(parameter, _inner, _annotation) -> state with curryStage = Some((label, parameter))
+        | _ -> state with curryStage = None
+
+let linkCurryStage (label: Str) (parameter: Str) (state: CoreLoweringState) =
+    match state.curryStage with
+        | Some((stageLabel, stageParameter)) ->
+            if stageParameter == parameter
+            then state with curryStage = None, functionReturnedClosureLabels = (stageLabel, label) :: state.functionReturnedClosureLabels
+            else state with curryStage = None
+        | None -> state
+
 let closeTmcChainPrepared (prepared: PreparedCoreRecursiveBinding) (lowered: LoweredCoreValue) =
     match prepared with
         | PreparedCoreRecursiveBinding { label = label } -> closeTmcChainLowered(label)(lowered)
@@ -6312,35 +6465,35 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
     |> closeTmcChainLowered(label)
     |> unifySelfCallResults with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
-        | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            let loweredBody =
-                bodyState
-                |> adoptNormalizedParameterResult(label)(bodyTemp)
-                |> reserveTcoExitTransferSlot(label)(bodyTemp)
-            in
-                let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(loweredBody)
-                in
-                    let returned =
-                        match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
-                            | (normalized, returnedTemp) ->
-                                normalized
-                                |> emit(Return(returnedTemp))
-                                |> resolvePendingTcoResets
+        | LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None } ->
+            match bodyState
+            |> adoptNormalizedParameterResult(label)(loweredTemp)
+            |> reserveTcoExitTransferSlot(label)(loweredTemp)
+            |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType) with
+                | (loweredBody, bodyTemp) ->
+                    let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(loweredBody)
                     in
-                        match pruneDeadCaptures(captures)(returned.reversedInstructions) with
-                            | (survivors, prunedInstructions) ->
-                                let finishedBody =
-                                    (returned with reversedInstructions = prunedInstructions)
-                                    |> backfillSelfClosureResultOwnership(label)(bodyRuntimeManaged)
-                                    |> finishLiftedFunction(label)(origin)
-                                in
-                                    finishedBody
-                                    |> restoreOuterFrame(typedOuter)
-                                    |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
-                                    |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
-                                    |> markCapturedResourcesMoved(survivors)
-                                    |> allocateEnvironment(captures)(survivors)(stackAllocate)
-                                    |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                        let returned =
+                            match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
+                                | (normalized, returnedTemp) ->
+                                    normalized
+                                    |> emit(Return(returnedTemp))
+                                    |> resolvePendingTcoResets
+                        in
+                            match pruneDeadCaptures(captures)(returned.reversedInstructions) with
+                                | (survivors, prunedInstructions) ->
+                                    let finishedBody =
+                                        (returned with reversedInstructions = prunedInstructions)
+                                        |> backfillSelfClosureResultOwnership(label)(bodyRuntimeManaged)
+                                        |> finishLiftedFunction(label)(origin)
+                                    in
+                                        finishedBody
+                                        |> restoreOuterFrame(typedOuter)
+                                        |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
+                                        |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
+                                        |> markCapturedResourcesMoved(survivors)
+                                        |> allocateEnvironment(captures)(survivors)(stackAllocate)
+                                        |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus
@@ -6688,12 +6841,6 @@ let spliceTcoEntryNormalization (entrySpliceCount: Int) (entries: List((Int, Arg
     in
         let recentCount = length(state.reversedInstructions) - entrySpliceCount
         in generated with reversedInstructions = spliceGeneratedInstructions(recentCount)([])(state.reversedInstructions)(generated.reversedInstructions))
-
-let tcoListElementSupported (element: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> coverageEnvironment
-    |> classifyHeapLayout(element) with
-        | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
 
 let recursive nthFlag (index: Int) (flags: List(Bool)) =
     match flags with
@@ -8666,12 +8813,16 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
+            |> linkCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
             |> lowerFunctionBodyResolvingCalls(body)(given (entered: CoreLoweringState) ->
                 entered
                 |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
                 |> enterLambdaTcoLoop
                 |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
+                |> withPassthroughParameter(parameter)(body)(parameterType)
+                |> predictRuntimeManagedResult("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
+                |> beginCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(body)
                 |> withLambdaBodyRequest(body)(expectedResult))(given (first: LoweredCoreValue) -> first)(lower)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finalizeTcoRuntimeManagedParams("lambda_" + Ashes.Text.fromInt(lambdaId))
@@ -9137,6 +9288,9 @@ type CoreArgumentHandOff =
     | runtimeArgument: Bool
     | mayReach: Bool
     | transfers: Bool
+    // The callee normalizes the argument on entry, so a transferred argument is adopted outright
+    // rather than handed over under the callee's adoption bit.
+    | normalizes: Bool
     | pendingRootSlot: Maybe(Int)
 
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
@@ -9150,6 +9304,7 @@ let argumentHandOffOf facts index argument argumentTemp state =
                 runtimeArgument = runtimeArgument || rootSlot != None,
                 mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || patternBindingArgumentRootSlot(argument)(state) != None && calleeResultReachesArgument(facts)(index),
                 transfers = transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
+                normalizes = calleeNormalizesArgument(facts)(index)(state),
                 pendingRootSlot = if runtimeArgument
                 then None
                 else rootSlot
@@ -9280,7 +9435,10 @@ let handedOverAdoptionFlag (context: CoreCallContext) (flagTemp: Int) =
         | Some(_facts) -> -1
         | None -> flagTemp
 
-// The fresh arguments the callee does not take, in argument order.
+// The fresh arguments the callee does not take, in argument order. A fresh argument transferred
+// to a callee whose result keeps it whole, but which does not normalize it on entry, travels
+// under the callee's adoption bit: the caller releases it after the call where the result was
+// copied out and so kept nothing of it (stage 0's second `RegisterConsumedRuntimeArgument` arm).
 let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: CoreArgumentHandOff) (argumentTemp: Int) (argumentType: SemanticType) (consumed: List(CoreConsumedArgument)) =
     match handOff with
         | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = false, mayReach = mayReach } ->
@@ -9290,6 +9448,16 @@ let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: C
                 preserveEscapedChildren = mayReach,
                 adoptionFlagTemp = handedOverAdoptionFlag(context)(flagTemp)
             )])
+        | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = true, normalizes = false } ->
+            if flagTemp >= 0
+            then
+                append(consumed)([CoreConsumedArgument(
+                    temp = argumentTemp,
+                    semanticType = argumentType,
+                    preserveEscapedChildren = true,
+                    adoptionFlagTemp = flagTemp
+                )])
+            else consumed
         | _ -> consumed
 
 let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -9297,14 +9465,6 @@ let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringStat
     |> coverageEnvironment
     |> classifyHeapLayout(semanticType) with
         | HeapLayoutFacts { ownedChildrenDroppable = droppable } -> droppable
-
-// Stage 0's `IsRuntimeOwnedCopyTupleLayout`: a tuple every element of which a runtime-managed
-// parent can own and the runtime-managed deep copy reproduces without reaching a recursive type.
-let recursive allRuntimeOwnedCopyElements (elements: List(SemanticType)) (state: CoreLoweringState) =
-    match elements with
-        | [] -> true
-        | element :: rest ->
-            heapRuntimeOwnedTupleElementLayout(element)(coverageEnvironment(state))([]) && allRuntimeOwnedCopyElements(rest)(state)
 
 // Stage 0's `IsConcretelyRuntimeManageableResultType`: a result type runtime RC holds — a
 // scalar, a string, `Bytes`, a `BigInt`, a list the runtime may own, a tuple the runtime-managed
@@ -9882,7 +10042,7 @@ let handedOverReleaseGuard (context: CoreCallContext) (resultType: SemanticType)
         if resultSurvivesReset(resolveType(state)(resultType))(state)
         then (true, -1)
         else
-            if knownResultRuntimeManaged(context.facts)(resultType)(state)
+            if callResultRuntimeManaged(context.facts)(resultType)(state)
             then (!stableReuse && calleeCompiledResultRuntimeManaged(context.facts)(state), -1)
             else (!stableReuse && hasCallCopyOut(resultType)(state), resultFlagTemp))
 
@@ -10355,20 +10515,22 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStri
                         thenArm = unknownArmResult,
                         error = Some(error)
                     )
-                | LoweredCoreValue { state = resultState, temp = temp, semanticType = semanticType, error = None } ->
-                    match transferBranchOwnerResult(thenBranch)(temp)(resultState) with
-                        | (transferred, branchTemp) ->
-                            CoreIfThen(
-                                state = transferred
-                                |> emit(StoreLocal(resultSlot)(branchTemp))
-                                |> emit(Jump(endLabel))
-                                |> emit(Label(elseLabel)),
-                                resultSlot = resultSlot,
-                                endLabel = endLabel,
-                                thenType = semanticType,
-                                thenArm = matchArmResultOf(thenBranch)(branchTemp)(semanticType)(transferred),
-                                error = None
-                            )
+                | LoweredCoreValue { state = resultState, temp = loweredTemp, semanticType = semanticType, error = None } ->
+                    match normalizeParameterPassthroughBranch(thenBranch)(loweredTemp)(resultState) with
+                        | (normalizedState, temp) ->
+                            match transferBranchOwnerResult(thenBranch)(temp)(normalizedState) with
+                                | (transferred, branchTemp) ->
+                                    CoreIfThen(
+                                        state = transferred
+                                        |> emit(StoreLocal(resultSlot)(branchTemp))
+                                        |> emit(Jump(endLabel))
+                                        |> emit(Label(elseLabel)),
+                                        resultSlot = resultSlot,
+                                        endLabel = endLabel,
+                                        thenType = semanticType,
+                                        thenArm = matchArmResultOf(thenBranch)(branchTemp)(semanticType)(transferred),
+                                        error = None
+                                    )
 
 let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStrings: Bool) lower loweredThen =
     match loweredThen with
@@ -10376,20 +10538,22 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStr
         | CoreIfThen { state = elseState, resultSlot = resultSlot, endLabel = endLabel, thenType = thenType, thenArm = thenArm, error = None } ->
             match lowerStaticStringNormalizedBody(elseBranch)(normalizeStaticStrings)(lower)(withConsumerRequest((request with expectedType = Some(thenType)))(elseState)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                | LoweredCoreValue { state = resultState, temp = temp, semanticType = elseType, error = None } ->
+                | LoweredCoreValue { state = resultState, temp = loweredTemp, semanticType = elseType, error = None } ->
                     match bindType(thenType)(elseType)(resultState) with
                         | (failedState, Some(error)) -> failure(failedState)(error)
                         | (typedState, None) ->
-                            match transferBranchOwnerResult(elseBranch)(temp)(typedState) with
-                                | (transferred, branchTemp) ->
-                                    match freshTemp(transferred) with
-                                        | FreshTemp { state = targetState, temp = target } ->
-                                            targetState
-                                            |> emit(StoreLocal(resultSlot)(branchTemp))
-                                            |> emit(Label(endLabel))
-                                            |> emit(LoadLocal(target)(resultSlot))
-                                            |> markControlFlowJoin(target)([thenArm, matchArmResultOf(elseBranch)(branchTemp)(elseType)(transferred)])
-                                            |> success(target)(resolveType(transferred)(thenType))
+                            match normalizeParameterPassthroughBranch(elseBranch)(loweredTemp)(typedState) with
+                                | (normalizedState, temp) ->
+                                    match transferBranchOwnerResult(elseBranch)(temp)(normalizedState) with
+                                        | (transferred, branchTemp) ->
+                                            match freshTemp(transferred) with
+                                                | FreshTemp { state = targetState, temp = target } ->
+                                                    targetState
+                                                    |> emit(StoreLocal(resultSlot)(branchTemp))
+                                                    |> emit(Label(endLabel))
+                                                    |> emit(LoadLocal(target)(resultSlot))
+                                                    |> markControlFlowJoin(target)([thenArm, matchArmResultOf(elseBranch)(branchTemp)(elseType)(transferred)])
+                                                    |> success(target)(resolveType(transferred)(thenType))
 
 // The then branch inherits the context's expected type; the else branch is expected to have the
 // then branch's type.
@@ -11395,20 +11559,22 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resul
                     match bindType(resultType)(bodyType)(resultState) with
                         | (failedState, Some(error)) -> failedMatchArm(failedState)(error)
                         | (typedState, None) ->
-                            match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(typedState) with
-                                | (transferredState, resultTemp) ->
-                                    match transferredState
-                                    |> transferArmBindingResult(body)(resultTemp)(outerBindings)
-                                    |> emit(StoreLocal(resultSlot)(resultTemp))
-                                    |> closeArmScope(body)(owners)(bracket)(resultSlot)(resultTemp)(bodyType) with
-                                        | (closed, finalTemp) ->
-                                            LoweredMatchArm(
-                                                lowered = closed
-                                                |> emit(Jump(endLabel))
-                                                |> restoreBindings(outerBindings)
-                                                |> success(resultTemp)(resultType),
-                                                armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
-                                            )
+                            match normalizeParameterPassthroughBranch(body)(temp)(typedState) with
+                                | (normalizedState, normalizedTemp) ->
+                                    match transferScrutineeChildResult(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
+                                        | (transferredState, resultTemp) ->
+                                            match transferredState
+                                            |> transferArmBindingResult(body)(resultTemp)(outerBindings)
+                                            |> emit(StoreLocal(resultSlot)(resultTemp))
+                                            |> closeArmScope(body)(owners)(bracket)(resultSlot)(resultTemp)(bodyType) with
+                                                | (closed, finalTemp) ->
+                                                    LoweredMatchArm(
+                                                        lowered = closed
+                                                        |> emit(Jump(endLabel))
+                                                        |> restoreBindings(outerBindings)
+                                                        |> success(resultTemp)(resultType),
+                                                        armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
+                                                    )
 
 let recursive allBindingsSurviveReset (state: CoreLoweringState) (bindings: List(CoreBinding)) =
     match bindings with
@@ -12739,35 +12905,35 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
     |> closeTmcChainPrepared(prepared)
     |> unifySelfCallResults) with
         | (_prepared, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
-        | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None }) ->
+        | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None }) ->
             match bindType(resultType)(bodyType)(bodyState) with
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (boundBody, None) ->
-                    let typedBody =
-                        boundBody
-                        |> adoptNormalizedParameterResult(label)(bodyTemp)
-                        |> reserveTcoExitTransferSlot(label)(bodyTemp)
-                    in
-                        let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(typedBody)
-                        in
-                            let finishedBody =
-                                match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
-                                    | (normalized, returnedTemp) ->
-                                        normalized
-                                        |> emit(Return(returnedTemp))
-                                        |> resolvePendingTcoResets
-                                        |> backfillSelfClosureResultOwnership(label)(bodyRuntimeManaged)
-                                        |> finishLiftedFunction(label)(origin)
+                    match boundBody
+                    |> adoptNormalizedParameterResult(label)(loweredTemp)
+                    |> reserveTcoExitTransferSlot(label)(loweredTemp)
+                    |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType) with
+                        | (typedBody, bodyTemp) ->
+                            let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(typedBody)
                             in
-                                let restored =
-                                    finishedBody
-                                    |> restoreOuterFrame(typedOuter)
-                                    |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
-                                    |> recordReturnedClosureLabel(label)(bodyTemp)(typedBody.reversedInstructions)
+                                let finishedBody =
+                                    match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
+                                        | (normalized, returnedTemp) ->
+                                            normalized
+                                            |> emit(Return(returnedTemp))
+                                            |> resolvePendingTcoResets
+                                            |> backfillSelfClosureResultOwnership(label)(bodyRuntimeManaged)
+                                            |> finishLiftedFunction(label)(origin)
                                 in
-                                    match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
-                                        | (closureState, closureTemp) ->
-                                            success(closureTemp)(resolveType(finishedBody)(semanticType))(closureState)
+                                    let restored =
+                                        finishedBody
+                                        |> restoreOuterFrame(typedOuter)
+                                        |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
+                                        |> recordReturnedClosureLabel(label)(bodyTemp)(typedBody.reversedInstructions)
+                                    in
+                                        match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
+                                            | (closureState, closureTemp) ->
+                                                success(closureTemp)(resolveType(finishedBody)(semanticType))(closureState)
 
 // A curried parameter lambda written as `let recursive f a b = ...` sugar carries its
 // declaration's span in stage 0's syntax tree, so the chain's inner lambdas are lowered under it.
@@ -12812,6 +12978,9 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                             |> refreshSelfResultDeferral(name)
                             |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
+                            |> withPassthroughParameter(parameter)(body)(parameterType)
+                            |> predictRuntimeManagedResult(label)(parameterType)
+                            |> beginCurryStage(label)(body)
                             |> withRecursiveBodyRequest(body)(resultType))(closeRecursiveBodyResult(resultType))(lower)
                         |> finalizeTcoRuntimeManagedParams(label)
                         |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(labeled))

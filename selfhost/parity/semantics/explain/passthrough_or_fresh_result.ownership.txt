@@ -1,0 +1,75 @@
+Ownership report
+================
+
+Function: bump
+  Parameters
+    insts
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - insts
+
+Function: bumpIf
+  Parameters
+    flag
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    insts
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - insts
+
+Function: bumpTimes
+  Parameters
+    p
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    insts
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - insts
+
+Function: count
+  Parameters
+    insts
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - acc
+
+Function: keepOrBump
+  Parameters
+    insts
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - insts
+

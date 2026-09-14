@@ -1,0 +1,15 @@
+Reuse report
+============
+
+Function: bumpIf [bumpIf]
+  specialization candidate qualification: rejected [insts]
+    reason: accumulator not proven unique (passthrough_or_fresh_result.ash:14:10)
+
+Function: bumpTimes [bumpTimes]
+  specialization candidate qualification: rejected [bumpTimes]
+    reason: fresh result not proven (passthrough_or_fresh_result.ash:25:10)
+
+Function: keepOrBump [keepOrBump]
+  specialization candidate qualification: rejected [insts]
+    reason: accumulator not proven unique (passthrough_or_fresh_result.ash:20:16)
+

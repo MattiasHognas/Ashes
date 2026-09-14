@@ -4005,6 +4005,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_passthrough_or_fresh_result_pipeline_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> passthrough = await MeasureMemoryGrowthAsync(
+            BuildPassthroughOrFreshResultPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> recursive = await MeasureMemoryGrowthAsync(
+            BuildRecursivePassthroughOrFreshResultPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("list of string-bearing variants returned unchanged or rebuilt by a pass every round", passthrough);
+        AssertMemoryPlateaus("list of string-bearing variants rebuilt by a producer applied to its own non-tail recursive result", recursive);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9347,6 +9366,72 @@ public sealed class LinuxBackendCoverageTests
                 if remaining <= 0
                 then total
                 else loop(remaining - 1)(bump(insts))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // A pass that returns its parameter unchanged on one arm and a rebuilt list on the other:
+    // the parameter arm copies the list into an owned graph, so the pass's result is
+    // reference-counted either way and the loop releases the previous list every round.
+    private static string BuildPassthroughOrFreshResultPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Name(Str, Int)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name("x", n) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+            let bumpIf (flag: Int) (insts: List(Inst)) =
+                if flag == 0
+                then insts
+                else bump(insts)
+
+            let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(bumpIf(remaining - (remaining / 2) * 2)(insts))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // The producer applied to its own non-tail recursive result: the recursive function's result
+    // is promised reference-counted before its body is lowered, so the inner call's result is
+    // handed to the producer as an owned value the producer releases.
+    private static string BuildRecursivePassthroughOrFreshResultPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Name(Str, Int)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name("x", n) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+            let recursive bumpTimes (p: Int) (insts: List(Inst)) =
+                if p == 0
+                then insts
+                else bump(bumpTimes(p - 1)(insts))
+
+            let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(bumpTimes(2)(insts))(total + 1)
 
             Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
             """;

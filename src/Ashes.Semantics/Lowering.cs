@@ -6515,6 +6515,7 @@ public sealed partial class Lowering
             ? LowerIfBranch(branch, request, normalizeStaticString)
             : LowerIfElseBranch(branch, request, expectedType, normalizeStaticString);
         EndExclusiveBranch(credits);
+        temp = NormalizeParameterPassthroughBranch(branch, temp);
         temp = TransferDirectRuntimeManagedBranchResult(branch, temp);
         Emit(new IrInst.StoreLocal(slot, temp));
         return (temp, Prune(type));
@@ -6596,6 +6597,7 @@ public sealed partial class Lowering
         if (LowerLambdaCoreReuseSharedTraitMethod(sharedTraitMethodKey, captures, envPtrTemp, stackAllocateClosure, request) is { } sharedClosureTemp) return (sharedClosureTemp, funTy);
 
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
+        LinkCurryStage(label, lam);
         var (placementFrame, savedFrame, argSlot) = LowerLambdaCoreEnterFunction(
             lam, label, paramTy, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, originSeed);
 
@@ -6616,7 +6618,7 @@ public sealed partial class Lowering
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
 
         bodyTemp = savedTcoCtx is { TmcActivated: true } tmc ? LowerLambdaCoreCloseTmcChain(tmc, bodyTemp) : bodyTemp;
-        bodyTemp = FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy);
+        bodyTemp = KeepPredictedRuntimeManagedResult(label, FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy), bodyType);
         RecordReturnedClosureLabel(label, bodyTemp);
         // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
         // representation, closure capture — see _bodyRuntimeManagedByLabel's own doc). Threaded to this
@@ -6981,11 +6983,16 @@ public sealed partial class Lowering
         string? selfName)
     {
         (string, int, TypeRef)? outerNormalizedParameter = _normalizedAlwaysReturnedParameter;
+        PassthroughParameter? outerPassthroughParameter = _passthroughParameter;
         _normalizedAlwaysReturnedParameter = NormalizesAlwaysReturnedParameter(lam, label, paramTy)
             ? (lam.ParamName, argSlot, paramTy)
             : null;
+        _passthroughParameter = ResolvePassthroughParameter(lam, argSlot, paramTy);
+        PredictRuntimeManagedResult(label, paramTy);
+        BeginCurryStage(label, lam);
         (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
         _normalizedAlwaysReturnedParameter = outerNormalizedParameter;
+        _passthroughParameter = outerPassthroughParameter;
         return body;
     }
 

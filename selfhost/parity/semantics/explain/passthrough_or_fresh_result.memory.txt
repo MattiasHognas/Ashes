@@ -1,0 +1,106 @@
+Memory report
+=============
+
+Function: bump
+  ownership
+    insts: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  2
+    drop:                 3
+    uniqueness checks:    1
+  representation [lambda_0]
+    conservative unknown: 10
+    region:               8
+    runtime rc:           13
+    copy value:           9
+
+Function: bumpIf
+  ownership
+    flag: consumed, move-safe yes
+    insts: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_5]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  perceus [lambda_4]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_4__scalarenv0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  reuse: specialization candidate qualification rejected
+  representation [lambda_5]
+    conservative unknown: 5
+    region:               2
+    runtime rc:           8
+    copy value:           3
+  representation [lambda_4]
+    region:               2
+    copy value:           1
+
+Function: bumpTimes
+  ownership
+    p: consumed, move-safe yes
+    insts: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_8]
+    dup:                  1
+    drop:                 4
+    uniqueness checks:    2
+  perceus [lambda_7]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  reuse: specialization candidate qualification rejected
+  representation [lambda_8]
+    conservative unknown: 8
+    region:               2
+    runtime rc:           11
+    copy value:           6
+  representation [lambda_7]
+    region:               3
+    copy value:           1
+
+Function: count
+  ownership
+    insts: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_10]
+    dup:                  1
+    drop:                 6
+    uniqueness checks:    3
+  perceus [lambda_9]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_10__scalarenv1]
+    dup:                  1
+    drop:                 6
+    uniqueness checks:    3
+  representation [lambda_10]
+    conservative unknown: 2
+    runtime rc:           10
+    copy value:           6
+  representation [lambda_9]
+    conservative unknown: 1
+    region:               3
+
+Function: keepOrBump
+  ownership
+    insts: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_6]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  reuse: specialization candidate qualification rejected
+  representation [lambda_6]
+    conservative unknown: 7
+    region:               2
+    runtime rc:           14
+

@@ -849,6 +849,7 @@ public sealed partial class Lowering
                 Unify(resultType, bodyType);
             }
         }
+        bodyTemp = NormalizeParameterPassthroughBranch(cases[i].Body, bodyTemp);
         bodyTemp = TransferDirectRuntimeManagedBranchResult(cases[i].Body, bodyTemp);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
