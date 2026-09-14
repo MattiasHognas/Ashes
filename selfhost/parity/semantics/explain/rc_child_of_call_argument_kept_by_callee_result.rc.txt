@@ -143,13 +143,13 @@ Function: count
 
 Function: firstNames
   Operations
-    dup:                  1
-    drop:                 1
-    uniqueness checks:    0
-    allocations:          0
+    dup:                  2
+    drop:                 28
+    uniqueness checks:    12
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               3
+    copies:               8
 
 Function: buildEnv
   Operations

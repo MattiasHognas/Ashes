@@ -1820,21 +1820,39 @@ public sealed partial class Lowering
 
         (int Temp, TypeRef Type) lowered = loweredValue.AsPair();
         if (runtimeManagedParent
-            && fieldType is TypeRef.TList list
-            && CanArenaReset(Prune(list.Element))
-            && !IsRuntimeManagedResultTemp(lowered.Temp))
+            && !IsRuntimeManagedResultTemp(lowered.Temp)
+            && RequiresRuntimeManagedChildCopy(fieldType))
         {
-            int normalizedTemp = NewTemp();
-            Emit(new IrInst.CopyOutList(
-                normalizedTemp,
-                lowered.Temp,
-                IrInst.ListHeadCopyKind.Inline,
-                RuntimeManaged: true,
-                IrInst.CopyOutPurpose.RcNormalization));
+            // The parent owns every child it stores: a child that is not already reference-counted
+            // (a list, tuple, or aggregate read out of a pattern owner, or an arena value) is
+            // cloned into an owned graph, and the clone carries its own reference, so no
+            // pattern-owner duplicate is taken on top of it.
+            int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(lowered.Temp, fieldType);
             MarkRuntimeManagedTemp(normalizedTemp);
+            _patternOwnerNormalizedTemps.Add(normalizedTemp);
             lowered = (normalizedTemp, lowered.Type);
         }
         return lowered;
+    }
+
+    // The field types whose non-reference-counted child a runtime-managed parent clones into an
+    // owned graph before storing it: a list, tuple, or aggregate the runtime-managed deep copy
+    // reproduces completely. A string child is retained instead, and a scalar is stored inline.
+    private bool RequiresRuntimeManagedChildCopy(TypeRef fieldType)
+    {
+        TypeRef pruned = Prune(fieldType);
+        if (CanArenaReset(pruned))
+        {
+            return false;
+        }
+
+        return pruned switch
+        {
+            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element),
+            TypeRef.TTuple tuple => IsRuntimeOwnedCopyTupleLayout(tuple),
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named),
+            _ => false,
+        };
     }
 
     // The representation a constructor field's producer may emit: a fresh producer of the field's

@@ -1995,7 +1995,7 @@ public sealed partial class Lowering
                     IrInst.CopyOutPurpose.RcNormalization));
                 break;
             default:
-                throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
+                throw new InvalidOperationException($"Unsupported runtime-managed TCO aggregate: {Pretty(valueType)}.");
         }
 
         MarkRuntimeManagedTemp(resultTemp);
@@ -2017,7 +2017,8 @@ public sealed partial class Lowering
     private bool CanRuntimeManageTcoAdt(TypeRef.TNamedType named)
         => CanRuntimeManageAdt(named)
             || CanRuntimeManageOwnedChildAdt(named)
-            || CanRuntimeManageTcoOwnedChildAdt(named);
+            || CanRuntimeManageTcoOwnedChildAdt(named)
+            || CanRuntimeManagePositionalAdt(named);
 
     private int EmitRuntimeManagedTcoListDeepCopy(int sourceTemp, TypeRef elementType)
     {
@@ -2342,7 +2343,7 @@ public sealed partial class Lowering
         {
             TypeRef.TBigInt => "BigInt",
             TypeRef.TTuple => "Tuple",
-            TypeRef.TNamedType named => named.Symbol.Name,
+            TypeRef.TNamedType named => RuntimeManagedAdtTypeName(named),
             TypeRef.TFun => "Function",
             _ => "String",
         };

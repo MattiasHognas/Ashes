@@ -3368,14 +3368,53 @@ same public behavior.
     borrows it (`bump(bumpTimes(p - 1)(insts))`) is never released: the self call's result
     placement is unknown while its own body is lowered, so `RegisterConsumedRuntimeArgument`
     records nothing for it. The map-shaped experiment grew from 336 to 536 MiB with slice a.
-  - [ ] **OPT-80c** The layout classifiers (`Lowering.LayoutCapability.cs`
+  - [x] **OPT-80c** The layout classifiers (`Lowering.LayoutCapability.cs`
     `IsRuntimeRecordAdtLayout`, `IsRuntimeOwnedChildAdtLayout`, and the `TList` arms that
-    admit only copy-type elements everywhere) reject a variant child inside a record, a
-    generic payload (`Maybe(Str)`, any type with parameters), and a list over variants, so
-    `IrInstruction { instruction: IrInst, location: Maybe(SourceLocation) }` and
-    `List(IrFunction)` never qualify; the runtime dropper and copier already walk those
-    shapes. Experiments `pipe_adt_nested`, `pipe_adt_maybe`, `pipe_adt_liststr` grow
-    23 bytes per element per pass.
+    admitted only copy-type elements everywhere) rejected a variant child inside a record, a
+    generic payload (`Maybe(Str)`, any type with parameters, any builtin variant), and a list
+    over variants, so `IrInstruction { instruction: IrInst, location: Maybe(SourceLocation) }`
+    and `List(IrFunction)` never qualified, while the runtime dropper and copier already
+    walked those shapes. Done (2026-09-14): one owned-field rule (`IsRuntimeOwnedFieldLayout`)
+    admits a scalar, string, bytes, or big integer, a list or tuple of owned fields, a record,
+    variant, positional single-constructor type (`IsRuntimePositionalAdtLayout`, a new
+    capability kept out of the record and outer-cell reuse paths), or closure, rejecting a
+    type that reaches itself (the inline runtime-managed copy of a recursive graph does not
+    terminate); the drop-graph walks recurse through list elements; a fresh constructor
+    application, a pattern-owner aggregate read, and a list over owned elements are accepted
+    as owned children, and a child that is not yet reference-counted is cloned into an owned
+    graph before the reference-counted parent stores it (`RequiresRuntimeManagedChildCopy`).
+    A user type named `Function` is now released through the reference-counted path, where the
+    backend took the `Function` tag for a closure and jumped through its fourth word: release
+    and cleanup instructions tag such a type `Function_` (`RuntimeManagedAdtTypeName`,
+    mirrored). Nested and string-list element experiments are flat; plateau test
+    `Linux_backend_llvm_nested_variant_list_producer_pipeline_memory_should_plateau`,
+    `tests/rc_nested_variant_list_producer_pipeline.ash`, parity fixtures
+    `producer_conses_nested_variant_head` and `user_type_named_function_release`. The builtin
+    variants stay out (OPT-80f).
+  - [ ] **OPT-80f** `Maybe` and `Result` do not qualify as owned-child variants
+    (`IsRuntimeOwnedChildAdtLayout` rejects builtin symbols). Admitting them keeps the
+    optional-string element experiment (`pipe_adt_maybe`, 200 MiB at 160 rounds) flat and is
+    what `IrInstruction { location: Maybe(SourceLocation) }` needs, but the stage 0 that
+    admits them miscompiles the self-hosted parity runner (found 2026-09-14: the runner
+    checking `heap_result_list`, a `List(Maybe(Int))` program, dies with `failed to allocate
+    heap memory` inside the IR text formatter, while the same runner compiled by the stage 0
+    that rejects them passes, and every stage-0 suite stays green either way). A `Maybe` or
+    `Result` cell reaches the reference-counted paths from somewhere the static rules do not
+    cover (a builtin producer's own cell, a generic callee's arena cell, or a pattern owner
+    whose root's placement is dynamic); audit those producers, pin the runner's shape as a
+    plateau test, then admit the two.
+  - [ ] **OPT-80g** Two self-hosted mirror gaps left by OPT-80c, seen as exact-IR divergences
+    the parity runner now lists among the fixtures it does not compare: for a producer over
+    variants carrying a nested variant, a string list, or an optional string
+    (`producer_conses_nested_variant_head`, `user_type_named_function_release`), stage 0 keeps
+    the consumed list parameter outside runtime management and zeroes the self call's retain
+    flag (`ResolvePendingRuntimeArgumentFlags`), where the self-hosted finalize admits the
+    parameter and keeps the callee's accepts bit; and a closure capturing a record whose field
+    is a list over owned elements (`parameter_reaches_result_record_update`, compared only by
+    the stage-0 oracle tests) gets an environment normalizer and a `__rc_cdrop` dropper from
+    stage 0 (`CanRuntimeNormalizeClosureCapture` admits the record), where the self-hosted
+    `captureCopyOf` declines a list over heap elements. Mirror both and return the fixtures to
+    the comparison.
   - [ ] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
     generic `reverse`) still leaks a whole list per round (827 MiB at 160 rounds of 50000):
     the accumulator's cells and the generic callee's deep copy need the same admission.

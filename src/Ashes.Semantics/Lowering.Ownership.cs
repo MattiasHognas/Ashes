@@ -44,11 +44,19 @@ public sealed partial class Lowering
             TypeRef.TList => "List",
             TypeRef.TTuple => "Tuple",
             TypeRef.TFun => "Function",
-            TypeRef.TNamedType named => named.Symbol.Name,
+            TypeRef.TNamedType named => RuntimeManagedAdtTypeName(named),
             TypeRef.TOpaque opaque when _externalResourceTypes.ContainsKey(opaque.Name) => opaque.Name,
             _ => null // Copy types (Int, Float, Bool), TNever, TVar, TTypeParam
         };
     }
+
+    // The type name a release or cleanup instruction carries for a user aggregate. The backend
+    // releases a `Function` through the closure protocol (its dropper at the closure's fourth
+    // word), so a user type of that name is tagged apart from it.
+    private static string RuntimeManagedAdtTypeName(TypeRef.TNamedType named)
+        => string.Equals(named.Symbol.Name, "Function", StringComparison.Ordinal)
+            ? "Function_"
+            : named.Symbol.Name;
 
     /// <summary>
     /// Returns the resource type name if the type is a resource type, otherwise null.
@@ -994,7 +1002,7 @@ public sealed partial class Lowering
                 // literal merged at an if/match join, whose spine still drops around this.
                 break;
             default:
-                throw new InvalidOperationException("Unsupported runtime-managed aggregate child.");
+                throw new InvalidOperationException($"Unsupported runtime-managed aggregate child: {Pretty(type)}.");
         }
     }
 
@@ -1040,7 +1048,7 @@ public sealed partial class Lowering
     {
         if (IsRuntimeManagedScalarResult(named))
         {
-            Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+            Emit(new IrInst.RcDrop(valueTemp, RuntimeManagedAdtTypeName(named), RuntimeManaged: true));
             return;
         }
 
@@ -1083,7 +1091,7 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(sharedLabel));
         }
 
-        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+        Emit(new IrInst.RcDrop(valueTemp, RuntimeManagedAdtTypeName(named), RuntimeManaged: true));
     }
 
     private static bool IsRuntimeManagedBigIntParseResult(TypeRef.TNamedType named)
@@ -1141,7 +1149,7 @@ public sealed partial class Lowering
 
         Emit(new IrInst.RcDrop(tupleTemp, "Tuple", RuntimeManaged: true));
         Emit(new IrInst.Label(sharedLabel));
-        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+        Emit(new IrInst.RcDrop(valueTemp, RuntimeManagedAdtTypeName(named), RuntimeManaged: true));
     }
 
     private void EmitRuntimeManagedBigIntParseResultDrop(int valueTemp, TypeRef.TNamedType named)
@@ -1165,7 +1173,7 @@ public sealed partial class Lowering
         Emit(new IrInst.GetAdtField(childTemp, valueTemp, 0));
         Emit(new IrInst.RcDrop(childTemp, "BigInt", RuntimeManaged: true));
         Emit(new IrInst.Label(sharedLabel));
-        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+        Emit(new IrInst.RcDrop(valueTemp, RuntimeManagedAdtTypeName(named), RuntimeManaged: true));
     }
 
     private void EmitKnownConstructorRuntimeManagedAdtDrop(
@@ -1185,7 +1193,7 @@ public sealed partial class Lowering
 
         if (childFields.Count == 0)
         {
-            Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+            Emit(new IrInst.RcDrop(valueTemp, RuntimeManagedAdtTypeName(named), RuntimeManaged: true));
             return;
         }
 
@@ -1209,7 +1217,7 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(sharedLabel));
         }
 
-        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+        Emit(new IrInst.RcDrop(valueTemp, RuntimeManagedAdtTypeName(named), RuntimeManaged: true));
     }
 
     private void EmitRuntimeReuseTokenChildrenDrop(
@@ -1400,7 +1408,7 @@ public sealed partial class Lowering
         }
 
         Emit(new IrInst.Label(sharedLabel));
-        Emit(new IrInst.RcDrop(valueTemp, named.Symbol.Name, RuntimeManaged: true));
+        Emit(new IrInst.RcDrop(valueTemp, RuntimeManagedAdtTypeName(named), RuntimeManaged: true));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(resultTemp, 0));
         Emit(new IrInst.Return(resultTemp));
@@ -2276,7 +2284,7 @@ public sealed partial class Lowering
         GetOrdinaryHeapLayoutCapability(named).RuntimeRecordAdtSupported;
 
     private bool CanRuntimeManageOwnedTupleType(TypeRef.TTuple tuple) =>
-        GetOrdinaryHeapLayoutCapability(tuple).OwnedChildrenDroppable;
+        IsRuntimeOwnedCopyTupleLayout(tuple);
 
     private bool TryGetRuntimeManagedListHeadCopy(
         TypeRef elementType,
@@ -2307,6 +2315,9 @@ public sealed partial class Lowering
 
     private bool CanRuntimeManageTcoListElement(TypeRef elementType) =>
         GetOrdinaryHeapLayoutCapability(elementType).RuntimeTcoListElementSupported;
+
+    private bool CanRuntimeManagePositionalAdt(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).RuntimePositionalAdtSupported;
 
     private bool CanRuntimeManageCopyAdt(TypeRef.TNamedType named) =>
         GetOrdinaryHeapLayoutCapability(named).RuntimeCopyAdtSupported;
@@ -2388,7 +2399,7 @@ public sealed partial class Lowering
                 // [40, 2]` the constructor merely reads) is NOT accepted here: nothing retains it, so
                 // treating the shell as RC would create an owning reference nobody ever established
                 // (Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed).
-                TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
                     && (IsFreshListConstructionExpression(arguments[i])
                         || IsEnclosingTcoLoopParameterReference(arguments[i])),
                 TypeRef.TTuple tuple => arguments[i] is Expr.TupleLit tupleExpression
@@ -2485,7 +2496,7 @@ public sealed partial class Lowering
                 TypeRef.TBytes => CanMaterializeOwnedBytes(element),
                 TypeRef.TBigInt => IsRuntimeRcBigIntProducer(element)
                     && IsRuntimeRcClosureCaptureSafeBigIntProducer(element),
-                TypeRef.TList list => CanArenaReset(Prune(list.Element))
+                TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
                     && IsFreshListConstructionExpression(element),
                 TypeRef.TTuple child => element is Expr.TupleLit childExpression
                     && CanRuntimeManageFreshTupleExpression(childExpression, child),
@@ -2519,14 +2530,17 @@ public sealed partial class Lowering
             TypeRef.TBytes => CanMaterializeOwnedBytes(expression),
             TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),
-            TypeRef.TList list => CanArenaReset(Prune(list.Element))
+            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
                 && (IsFreshListConstructionExpression(expression)
                     || expression is Expr.Var or Expr.Call),
-            TypeRef.TTuple tuple => expression is Expr.TupleLit tupleExpression
-                && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
+            TypeRef.TTuple tuple => (expression is Expr.TupleLit tupleExpression
+                    && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple))
+                || IsPerceusPatternOwnerRead(expression),
             TypeRef.TNamedType named => (expression is Expr.RecordLit
                     && IsFreshRuntimeManageableRecordTree(expression))
-                || IsFreshTcoOwnedChildAdtConstructorApplication(expression, named),
+                || IsFreshTcoOwnedChildAdtConstructorApplication(expression, named)
+                || IsFreshRuntimeManageableAdtExpression(expression)
+                || IsPerceusPatternOwnerRead(expression),
             TypeRef.TFun => IsRuntimeRcOwningClosureExpression(expression),
             _ => false,
         };

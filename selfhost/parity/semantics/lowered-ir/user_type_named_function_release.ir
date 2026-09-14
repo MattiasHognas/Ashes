@@ -1,0 +1,227 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from makeFunction]
+  locals=3 temps=9
+    LoadLocal             Target=3 Slot=1   (user_type_named_function_release.ash:5:1)
+    LoadArgumentOwnership Target=4   (user_type_named_function_release.ash:5:1)
+    LoadConstInt          Target=5 Value=1   (user_type_named_function_release.ash:5:1)
+    AndInt                Target=6 Left=4 Right=5   (user_type_named_function_release.ash:5:1)
+    JumpIfFalse           CondTemp=6 Target=rc_arg_normalize_copy_0   (user_type_named_function_release.ash:5:1)
+    StoreLocal            Slot=2 Source=3   (user_type_named_function_release.ash:5:1)
+    Jump                  Target=rc_arg_normalize_done_1   (user_type_named_function_release.ash:5:1)
+  rc_arg_normalize_copy_0:
+    CopyOutArena          DestTemp=7 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=7   (user_type_named_function_release.ash:5:1)
+  rc_arg_normalize_done_1:
+    LoadLocal             Target=8 Slot=2   (user_type_named_function_release.ash:5:1)
+    StoreLocal            Slot=1 Source=8   (user_type_named_function_release.ash:5:1)
+    LoadLocal             Target=0 Slot=1   (user_type_named_function_release.ash:5:48)
+    AllocAdt              Target=1 Tag=0 FieldCount=0   (user_type_named_function_release.ash:5:67)
+    AllocAdt              Target=2 Tag=0 FieldCount=2 Tagless=true   (user_type_named_function_release.ash:5:32)
+    SetAdtField           Ptr=2 FieldIndex=0 Source=0 Tagless=true   (user_type_named_function_release.ash:5:32)
+    SetAdtField           Ptr=2 FieldIndex=1 Source=1 Tagless=true   (user_type_named_function_release.ash:5:32)
+    Return                Source=2   (user_type_named_function_release.ash:5:1)
+
+function lambda_1  [SourceFunction from mark]
+  locals=25 temps=37
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0   (user_type_named_function_release.ash:7:1)
+    StoreLocal            Slot=4 Source=0   (user_type_named_function_release.ash:7:1)
+    StoreLocal            Slot=5 Source=0   (user_type_named_function_release.ash:7:1)
+    StoreLocal            Slot=6 Source=0   (user_type_named_function_release.ash:7:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (user_type_named_function_release.ash:7:1)
+    LoadLocal             Target=1 Slot=1   (user_type_named_function_release.ash:8:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=2 Value=0   (user_type_named_function_release.ash:8:5)
+    CmpIntEq              Target=3 Left=1 Right=2   (user_type_named_function_release.ash:8:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_5   (user_type_named_function_release.ash:8:5)
+    LoadConstInt          Target=4 Value=0   (user_type_named_function_release.ash:9:17)
+    StoreLocal            Slot=10 Source=4   (user_type_named_function_release.ash:8:5)
+    Jump                  Target=match_end_2   (user_type_named_function_release.ash:8:5)
+  match_arm_cleanup_5:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_4   (user_type_named_function_release.ash:8:5)
+  match_next_4:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=5 Value=0   (user_type_named_function_release.ash:8:5)
+    CmpIntNe              Target=6 Left=1 Right=5   (user_type_named_function_release.ash:8:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_6   (user_type_named_function_release.ash:8:5)
+    LoadMemOffset         Target=7 BasePtr=1 OffsetBytes=0   (user_type_named_function_release.ash:8:5)
+    LoadMemOffset         Target=8 BasePtr=1 OffsetBytes=8   (user_type_named_function_release.ash:8:5)
+    LoadConstInt          Target=9 Value=0   (user_type_named_function_release.ash:8:5)
+    CmpIntNe              Target=10 Left=7 Right=9   (user_type_named_function_release.ash:8:5)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_6   (user_type_named_function_release.ash:8:5)
+    GetAdtField           Target=11 Ptr=7 FieldIndex=0 Tagless=true   (user_type_named_function_release.ash:8:5)
+    StoreLocal            Slot=17 Source=11   (user_type_named_function_release.ash:8:5)
+    StoreLocal            Slot=18 Source=8   (user_type_named_function_release.ash:8:5)
+    LoadLocal             Target=35 Slot=17   (user_type_named_function_release.ash:7:1)
+    RcDup                 Target=36 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=36   (user_type_named_function_release.ash:7:1)
+    LoadLocal             Target=12 Slot=17   (user_type_named_function_release.ash:10:63)
+    Borrow                Target=13 SourceTemp=12
+    RcDup                 Target=14 SourceTemp=13 RuntimeManaged=true
+    RcDrop                SourceTemp=11 TypeName=String OwnerSlot=17 RuntimeManaged=true
+    LoadConstStr          Target=15 StrLabel=str_0   (user_type_named_function_release.ash:10:87)
+    AllocAdt              Target=16 Tag=1 FieldCount=1   (user_type_named_function_release.ash:10:82)
+    SetAdtField           Ptr=16 FieldIndex=0 Source=15   (user_type_named_function_release.ash:10:82)
+    AllocAdt              Target=17 Tag=0 FieldCount=2 Tagless=true   (user_type_named_function_release.ash:10:47)
+    SetAdtField           Ptr=17 FieldIndex=0 Source=14 Tagless=true   (user_type_named_function_release.ash:10:47)
+    SetAdtField           Ptr=17 FieldIndex=1 Source=16 Tagless=true   (user_type_named_function_release.ash:10:47)
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    LoadLocal             Target=19 Slot=0   (user_type_named_function_release.ash:10:103)
+    MakeClosure           Target=18 FuncLabel=lambda_1 EnvPtrTemp=19 EnvSizeBytes=0   (user_type_named_function_release.ash:10:103)
+    LoadLocal             Target=20 Slot=18   (user_type_named_function_release.ash:10:108)
+    Borrow                Target=21 SourceTemp=20
+    LoadMemOffset         Target=22 BasePtr=18 OffsetBytes=16   (user_type_named_function_release.ash:10:103)
+    LoadConstInt          Target=23 Value=62   (user_type_named_function_release.ash:10:103)
+    ShrInt                Target=24 Left=22 Right=23   (user_type_named_function_release.ash:10:103)
+    LoadConstInt          Target=25 Value=1   (user_type_named_function_release.ash:10:103)
+    LoadConstInt          Target=26 Value=0   (user_type_named_function_release.ash:10:103)
+    StoreLocal            Slot=21 Source=21   (user_type_named_function_release.ash:10:103)
+    JumpIfFalse           CondTemp=26 Target=rc_call_argument_not_retained_7   (user_type_named_function_release.ash:10:103)
+    RcDup                 Target=27 SourceTemp=21 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=21 Source=27   (user_type_named_function_release.ash:10:103)
+  rc_call_argument_not_retained_7:
+    LoadLocal             Target=28 Slot=21   (user_type_named_function_release.ash:10:103)
+    CallClosure           Target=29 ClosureTemp=18 ArgTemp=28 RuntimeManagedArgumentFlagTemp=26   (user_type_named_function_release.ash:10:103)
+    Alloc                 Target=30 SizeBytes=16   (user_type_named_function_release.ash:10:47)
+    StoreMemOffset        BasePtr=30 OffsetBytes=0 Source=17   (user_type_named_function_release.ash:10:47)
+    StoreMemOffset        BasePtr=30 OffsetBytes=8 Source=29   (user_type_named_function_release.ash:10:47)
+    StoreLocal            Slot=10 Source=30   (user_type_named_function_release.ash:8:5)
+    RcDrop                SourceTemp=8 TypeName=List OwnerSlot=18
+    Jump                  Target=match_end_2   (user_type_named_function_release.ash:8:5)
+  match_arm_cleanup_6:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=24
+    Jump                  Target=match_none_3   (user_type_named_function_release.ash:8:5)
+  match_none_3:
+    LoadConstInt          Target=33 Value=0   (user_type_named_function_release.ash:8:5)
+    StoreLocal            Slot=10 Source=33   (user_type_named_function_release.ash:8:5)
+  match_end_2:
+    LoadLocal             Target=34 Slot=10   (user_type_named_function_release.ash:8:5)
+    Return                Source=34   (user_type_named_function_release.ash:7:1)
+
+function lambda_3  [ClosureHelper from count]
+  locals=22 temps=21
+    LoadEnv               Target=0 Index=0   (user_type_named_function_release.ash:12:1)
+    StoreLocal            Slot=2 Source=0   (user_type_named_function_release.ash:12:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (user_type_named_function_release.ash:12:1)
+    StoreLocal            Slot=5 Source=1   (user_type_named_function_release.ash:12:1)
+    StoreLocal            Slot=6 Source=1   (user_type_named_function_release.ash:12:1)
+    StoreLocal            Slot=7 Source=1   (user_type_named_function_release.ash:12:1)
+  lambda_3_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (user_type_named_function_release.ash:12:1)
+    LoadLocal             Target=2 Slot=2   (user_type_named_function_release.ash:13:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (user_type_named_function_release.ash:13:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (user_type_named_function_release.ash:13:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_11   (user_type_named_function_release.ash:13:5)
+    LoadLocal             Target=5 Slot=1   (user_type_named_function_release.ash:14:17)
+    StoreLocal            Slot=11 Source=5   (user_type_named_function_release.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_8   (user_type_named_function_release.ash:13:5)
+  match_arm_cleanup_11:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_10   (user_type_named_function_release.ash:13:5)
+  match_next_10:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (user_type_named_function_release.ash:13:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (user_type_named_function_release.ash:13:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_12   (user_type_named_function_release.ash:13:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (user_type_named_function_release.ash:13:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (user_type_named_function_release.ash:13:5)
+    StoreLocal            Slot=18 Source=9   (user_type_named_function_release.ash:13:5)
+    LoadLocal             Target=10 Slot=18   (user_type_named_function_release.ash:15:30)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (user_type_named_function_release.ash:15:36)
+    LoadConstInt          Target=13 Value=1   (user_type_named_function_release.ash:15:42)
+    AddInt                Target=14 Left=12 Right=13   (user_type_named_function_release.ash:15:36)
+    LoadLocal             Target=15 Slot=2   (user_type_named_function_release.ash:15:24)
+    LoadLocal             Target=16 Slot=1   (user_type_named_function_release.ash:15:24)
+    StoreLocal            Slot=2 Source=11   (user_type_named_function_release.ash:15:24)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
+    StoreLocal            Slot=1 Source=14   (user_type_named_function_release.ash:15:24)
+    RestoreStackPointer   Slot=10   (user_type_named_function_release.ash:15:24)
+    Jump                  Target=lambda_3_body   (user_type_named_function_release.ash:15:24)
+    LoadConstInt          Target=17 Value=0   (user_type_named_function_release.ash:15:24)
+    StoreLocal            Slot=11 Source=17   (user_type_named_function_release.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    Jump                  Target=match_end_8   (user_type_named_function_release.ash:13:5)
+  match_arm_cleanup_12:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_none_9   (user_type_named_function_release.ash:13:5)
+  match_none_9:
+    LoadConstInt          Target=19 Value=0   (user_type_named_function_release.ash:13:5)
+    StoreLocal            Slot=11 Source=19   (user_type_named_function_release.ash:13:5)
+  match_end_8:
+    LoadLocal             Target=20 Slot=11   (user_type_named_function_release.ash:13:5)
+    Return                Source=20   (user_type_named_function_release.ash:12:1)
+
+function lambda_2  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (user_type_named_function_release.ash:12:1)
+    LoadLocal             Target=1 Slot=1   (user_type_named_function_release.ash:12:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (user_type_named_function_release.ash:12:1)
+    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=8   (user_type_named_function_release.ash:12:1)
+    Return                Source=4   (user_type_named_function_release.ash:12:1)
+
+function _start_main  [ProgramEntry]
+  locals=19 temps=27
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (user_type_named_function_release.ash:5:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 AcceptsRuntimeManagedArgument=true   (user_type_named_function_release.ash:5:1)
+    StoreLocal            Slot=2 Source=1   (user_type_named_function_release.ash:5:1)
+    LoadConstInt          Target=2 Value=0   (user_type_named_function_release.ash:7:1)
+    MakeClosure           Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0   (user_type_named_function_release.ash:7:1)
+    StoreLocal            Slot=3 Source=3   (user_type_named_function_release.ash:7:1)
+    LoadConstInt          Target=4 Value=0   (user_type_named_function_release.ash:12:1)
+    MakeClosure           Target=5 FuncLabel=lambda_2 EnvPtrTemp=4 EnvSizeBytes=0   (user_type_named_function_release.ash:12:1)
+    StoreLocal            Slot=4 Source=5   (user_type_named_function_release.ash:12:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=6 Slot=4   (user_type_named_function_release.ash:17:35)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadLocal             Target=7 Slot=3   (user_type_named_function_release.ash:17:41)
+    LoadConstInt          Target=8 Value=0   (user_type_named_function_release.ash:17:46)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadLocal             Target=9 Slot=2   (user_type_named_function_release.ash:17:70)
+    Borrow                Target=10 SourceTemp=9
+    LoadConstStr          Target=11 StrLabel=str_1   (user_type_named_function_release.ash:17:83)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (user_type_named_function_release.ash:17:70)
+    Alloc                 Target=13 SizeBytes=16   (user_type_named_function_release.ash:17:46)
+    StoreMemOffset        BasePtr=13 OffsetBytes=0 Source=12   (user_type_named_function_release.ash:17:46)
+    StoreMemOffset        BasePtr=13 OffsetBytes=8 Source=8   (user_type_named_function_release.ash:17:46)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=14 Slot=2   (user_type_named_function_release.ash:17:47)
+    Borrow                Target=15 SourceTemp=14
+    LoadConstStr          Target=16 StrLabel=str_2   (user_type_named_function_release.ash:17:60)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16   (user_type_named_function_release.ash:17:47)
+    Alloc                 Target=18 SizeBytes=16   (user_type_named_function_release.ash:17:46)
+    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=17   (user_type_named_function_release.ash:17:46)
+    StoreMemOffset        BasePtr=18 OffsetBytes=8 Source=13   (user_type_named_function_release.ash:17:46)
+    CallClosure           Target=19 ClosureTemp=7 ArgTemp=18   (user_type_named_function_release.ash:17:41)
+    CallClosure           Target=20 ClosureTemp=6 ArgTemp=19   (user_type_named_function_release.ash:17:35)
+    LoadConstInt          Target=21 Value=0   (user_type_named_function_release.ash:17:94)
+    CallClosure           Target=22 ClosureTemp=20 ArgTemp=21   (user_type_named_function_release.ash:17:35)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=16
+    TextFromInt           Target=23 ValueTemp=22   (user_type_named_function_release.ash:17:16)
+    PrintStr              Source=23   (user_type_named_function_release.ash:17:1)
+    AllocAdt              Target=24 Tag=0 FieldCount=0   (user_type_named_function_release.ash:17:1)
+    StoreLocal            Slot=17 Source=24   (user_type_named_function_release.ash:5:1)
+    LoadLocal             Target=25 Slot=2   (user_type_named_function_release.ash:5:1)
+    CleanupResource       SourceTemp=25 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=18
+    CopyOutArena          DestTemp=26 SrcTemp=24 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=18
+    Return                Source=26
+

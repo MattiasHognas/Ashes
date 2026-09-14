@@ -1922,6 +1922,14 @@ let recursive zeroCostPayloadType (name: Str) (layouts: List(CoreConstructorLayo
             else zeroCostPayloadType(name)(rest)
         | _ :: rest -> zeroCostPayloadType(name)(rest)
 
+// Stage 0's `RuntimeManagedAdtTypeName`: the type name a release or cleanup instruction carries
+// for a user aggregate. The backend releases a `Function` through the closure protocol (its
+// dropper at the closure's fourth word), so a user type of that name is tagged apart from it.
+let runtimeManagedAdtTypeName (name: Str) =
+    if name == "Function"
+    then "Function_"
+    else name
+
 // The type name an owned binding carries, stage 0's `GetOwnedTypeName`: a heap-represented value
 // (string, bytes, big integer, list, tuple, closure, or a declared type, seen through a zero-cost
 // wrapper to its payload) is owned; copy types and unresolved type variables are not. A zero-cost
@@ -1937,7 +1945,10 @@ let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreCo
         | SemNamed(_symbolId, name, _arguments) ->
             match zeroCostPayloadType(name)(layouts) with
                 | Some(payload) -> ownedTypeNameOf(payload)(layouts)
-                | None -> Some(name)
+                | None ->
+                    name
+                    |> runtimeManagedAdtTypeName
+                    |> Some
         | _ -> None
 
 // The type name a pattern owner releases under: its owned type name, or stage 0's
@@ -3292,6 +3303,16 @@ let tcoOwnedChildAdtSupported (facts: HeapLayoutFacts) =
     match facts with
         | HeapLayoutFacts { runtimeTcoOwnedChildAdtSupported = supported } -> supported
 
+let positionalAdtSupported (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { runtimePositionalAdtSupported = supported } -> supported
+
+// Stage 0's `CanRuntimeManageTcoListElement`: whether a runtime-managed list may own an element
+// of this type.
+let tcoListElementFactsSupported (element: SemanticType) (state: CoreLoweringState) =
+    match heapFactsOf(element)(state) with
+        | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
+
 let factsContainResource (facts: HeapLayoutFacts) =
     match facts with
         | HeapLayoutFacts { containsResource = contains } -> contains
@@ -3346,7 +3367,7 @@ and freshTupleElementSupported (element: Expr) (elementType: SemanticType) (stat
     else
         match (elementType, unspanArgument(element)) with
             | (SemString, _expression) -> isFreshStringChild(element)(state)
-            | (SemList(inner), _expression) -> resultSurvivesReset(inner)(state) && isFreshListConstruction(element)
+            | (SemList(inner), _expression) -> tcoListElementFactsSupported(inner)(state) && isFreshListConstruction(element)
             | (SemTuple(innerTypes), ExprTuple(innerElements)) -> canRuntimeManageFreshTuple(innerElements)(innerTypes)(state)
             | _ -> false
 
@@ -3360,40 +3381,6 @@ let isPatternOwnerRead (child: Expr) (state: CoreLoweringState) =
             |> patternOwnerBinding(name)
             |> patternOwnerFlag
         | _ -> false
-
-// Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
-// recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer
-// or pattern-owner read, a list over scalars built fresh or read from a binding or call, a fresh
-// tuple, a fresh record tree, or a fresh application of an accumulator-shaped type.
-let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
-    if resultSurvivesReset(fieldType)(state)
-    then true
-    else
-        match (resolveType(state)(fieldType), unspanArgument(expression)) with
-            | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state) || isPatternOwnerRead(expression)(state)
-            | (SemList(element), _expression) -> resultSurvivesReset(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression))
-            | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
-            | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state)
-            | _ -> false
-and allFreshOwnedChildren (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
-    match (arguments, fieldTypes) with
-        | ([], []) -> true
-        | (argument :: restArguments, fieldType :: restTypes) -> canRuntimeManageFreshOwnedChild(argument)(fieldType)(state) && allFreshOwnedChildren(restArguments)(restTypes)(state)
-        | _ -> false
-and isFreshRuntimeManageableRecordTree (expression: Expr) (state: CoreLoweringState) =
-    match constructorApplicationOf(expression)([])(state) with
-        | Some((layout, arguments)) ->
-            match layoutFieldTypes(layout)(state) with
-                | (fieldTypes, resultType) ->
-                    isRecordLiteral(expression) && recordAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
-        | None -> false
-and isFreshTcoOwnedChildApplication (expression: Expr) (typeName: Str) (state: CoreLoweringState) =
-    match constructorApplicationOf(expression)([])(state) with
-        | Some((layout, arguments)) ->
-            match layoutFieldTypes(layout)(state) with
-                | (fieldTypes, resultType) ->
-                    namedTypeNameOf(resultType) == Some(typeName) && tcoOwnedChildAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
-        | None -> false
 
 let isBuiltinTypeName (name: Str) = name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Task" || isResourceTypeName(name)
 
@@ -3468,7 +3455,7 @@ let canRuntimeManageGenericCopyAdtApplication (layout: CoreConstructorLayout) (a
 let freshHeapChildFieldSupported (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     match (resolveType(state)(fieldType), unspanArgument(argument)) with
         | (SemString, _expression) -> isFreshStringChild(argument)(state) || isNormalizedAlwaysReturnedStringParameterRead(argument)(state) || isPatternOwnerRead(argument)(state)
-        | (SemList(element), _expression) -> resultSurvivesReset(element)(state) && isFreshListConstruction(argument)
+        | (SemList(element), _expression) -> tcoListElementFactsSupported(element)(state) && isFreshListConstruction(argument)
         | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
         | (SemVariable(_id), _expression) -> isFreshGenericPayload(argument)(state)
         | _ -> false
@@ -3492,22 +3479,56 @@ let canRuntimeManageFreshHeapChildAdtApplication (layout: CoreConstructorLayout)
                 | Some(name) ->
                     length(constructorLayoutsOfType(name)(state.constructorLayouts)) == 1 && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(resultType)(state)) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
 
-// Stage 0's `CanRuntimeManageOwnedChildAdtConstructorApplication`, without the tracked child
-// bindings of an immediate match.
-let canRuntimeManageOwnedChildAdtApplication (layout: CoreConstructorLayout) (arguments: List(Expr)) (state: CoreLoweringState) =
-    match layoutFieldTypes(layout)(state) with
-        | (fieldTypes, resultType) ->
-            ownedChildAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
-
 // A fresh constructor tree of a recursive-copy type.
 let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (state: CoreLoweringState) =
     match namedTypeNameOf(resultType) with
         | Some(name) -> canRuntimeManageRecursiveCopyAdt(resultType)(state) && isFreshConstructorTree(expression)(name)(state)
         | None -> false
 
+// Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
+// recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer
+// or pattern-owner read, a list the runtime may own built fresh or read from a binding or call,
+// a fresh tuple or a pattern-owner tuple read, a fresh record tree, a fresh application of an
+// accumulator-shaped or any other runtime-manageable type, or a pattern-owner aggregate read.
+let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(fieldType)(state)
+    then true
+    else
+        match (resolveType(state)(fieldType), unspanArgument(expression)) with
+            | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state) || isPatternOwnerRead(expression)(state)
+            | (SemList(element), _expression) -> tcoListElementFactsSupported(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression))
+            | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
+            | (SemTuple(_elementTypes), _expression) -> isPatternOwnerRead(expression)(state)
+            | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state) || isFreshRuntimeManageableAdtExpression(expression)(state) || isPatternOwnerRead(expression)(state)
+            | _ -> false
+and allFreshOwnedChildren (arguments: List(Expr)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, fieldTypes) with
+        | ([], []) -> true
+        | (argument :: restArguments, fieldType :: restTypes) -> canRuntimeManageFreshOwnedChild(argument)(fieldType)(state) && allFreshOwnedChildren(restArguments)(restTypes)(state)
+        | _ -> false
+and isFreshRuntimeManageableRecordTree (expression: Expr) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, resultType) ->
+                    isRecordLiteral(expression) && recordAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
+        | None -> false
+and isFreshTcoOwnedChildApplication (expression: Expr) (typeName: Str) (state: CoreLoweringState) =
+    match constructorApplicationOf(expression)([])(state) with
+        | Some((layout, arguments)) ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, resultType) ->
+                    namedTypeNameOf(resultType) == Some(typeName) && tcoOwnedChildAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
+        | None -> false
+// Stage 0's `CanRuntimeManageOwnedChildAdtConstructorApplication`, without the tracked child
+// bindings of an immediate match.
+and canRuntimeManageOwnedChildAdtApplication (layout: CoreConstructorLayout) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match layoutFieldTypes(layout)(state) with
+        | (fieldTypes, resultType) ->
+            ownedChildAdtSupported(heapFactsOf(resultType)(state)) && allFreshOwnedChildren(arguments)(fieldTypes)(state)
 // Stage 0's `IsFreshRuntimeManageableAdtExpression`: a constructor application the runtime can
 // own by one of its ADT shapes.
-let isFreshRuntimeManageableAdtExpression (expression: Expr) (state: CoreLoweringState) =
+and isFreshRuntimeManageableAdtExpression (expression: Expr) (state: CoreLoweringState) =
     match constructorApplicationOf(expression)([])(state) with
         | None -> false
         | Some((layout, arguments)) ->
@@ -4267,7 +4288,7 @@ let recursive ownedConstructorChildren (constructorName: Str) (children: List(He
 // that are lists of scalars copy with the spine; any other element type has no spine copy.
 let runtimeManagedAdtLayout (facts: HeapLayoutFacts) =
     match facts with
-        | HeapLayoutFacts { runtimeRecordAdtSupported = record, runtimeOwnedChildAdtSupported = ownedChild, runtimeTcoOwnedChildAdtSupported = tcoOwnedChild } -> record || ownedChild || tcoOwnedChild
+        | HeapLayoutFacts { runtimeRecordAdtSupported = record, runtimeOwnedChildAdtSupported = ownedChild, runtimeTcoOwnedChildAdtSupported = tcoOwnedChild, runtimePositionalAdtSupported = positional } -> record || ownedChild || tcoOwnedChild || positional
 
 let recursive argumentCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
@@ -4785,7 +4806,7 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
                 | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
                     match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | None ->
-                            emitter(RcDrop(valueTemp)(name)(-1)(true)(false)(None))(state)
+                            emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))(state)
                         | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
         | SemTuple(_elements) ->
             // Stage 0's `EmitRuntimeManagedTupleDrop` allocates its shared label before it knows
@@ -6088,7 +6109,7 @@ let arenaResultDropTypeName (semanticType: SemanticType) =
     match semanticType with
         | SemBigInt -> "BigInt"
         | SemTuple(_elements) -> "Tuple"
-        | SemNamed(_symbolId, name, _arguments) -> name
+        | SemNamed(_symbolId, name, _arguments) -> runtimeManagedAdtTypeName(name)
         | SemFunction(_argument, _result, _row) -> "Function"
         | _ -> "String"
 
@@ -9277,16 +9298,24 @@ let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringStat
     |> classifyHeapLayout(semanticType) with
         | HeapLayoutFacts { ownedChildrenDroppable = droppable } -> droppable
 
+// Stage 0's `IsRuntimeOwnedCopyTupleLayout`: a tuple every element of which a runtime-managed
+// parent can own and the runtime-managed deep copy reproduces without reaching a recursive type.
+let recursive allRuntimeOwnedCopyElements (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest ->
+            heapRuntimeOwnedTupleElementLayout(element)(coverageEnvironment(state))([]) && allRuntimeOwnedCopyElements(rest)(state)
+
 // Stage 0's `IsConcretelyRuntimeManageableResultType`: a result type runtime RC holds — a
-// scalar, a string, `Bytes`, a `BigInt`, a list over scalars, or a tuple or named type whose
-// owned children the type-directed dropper can release.
+// scalar, a string, `Bytes`, a `BigInt`, a list the runtime may own, a tuple the runtime-managed
+// copy reproduces, or a named type whose owned children the type-directed dropper can release.
 let isRuntimeManageableResultType (semanticType: SemanticType) (state: CoreLoweringState) =
     resultSurvivesReset(semanticType)(state) || (match resolveType(state)(semanticType) with
         | SemString -> true
         | SemBytes -> true
         | SemBigInt -> true
         | SemList(element) -> tcoListElementSupported(element)(state)
-        | SemTuple(_elements) as tuple -> ownedChildrenDroppable(tuple)(state)
+        | SemTuple(elements) -> allRuntimeOwnedCopyElements(elements)(state)
         | SemNamed(_symbolId, _name, _arguments) as named -> ownedChildrenDroppable(named)(state)
         | _ -> false)
 
@@ -9593,7 +9622,8 @@ let recursive emitRuntimeChildDrop (valueTemp: Int) (semanticType: SemanticType)
     match resolveType(state)(semanticType) with
         | SemTuple(_elements) as tuple -> emitRuntimeTupleDrop(valueTemp)(tuple)(state)
         | SemList(element) -> emitRuntimeListDrop(valueTemp)(element)(state)
-        | SemNamed(_symbolId, name, _arguments) as named -> emitRuntimeAdtDrop(valueTemp)(name)(named)(state)
+        | SemNamed(_symbolId, name, _arguments) as named ->
+            emitRuntimeAdtDrop(valueTemp)(runtimeManagedAdtTypeName(name))(named)(state)
         | SemString ->
             emit(RcDrop(valueTemp)("String")(-1)(true)(false)(None))(state)
         | SemBytes ->
@@ -9693,7 +9723,8 @@ let emitChildPreservingDrop (valueTemp: Int) (semanticType: SemanticType) (state
     match resolveType(state)(semanticType) with
         | SemList(_element) -> emitRuntimeListSpineDrop(valueTemp)(state)
         | SemTuple(_elements) -> emitRuntimeShallowAggregateDrop(valueTemp)("Tuple")(state)
-        | SemNamed(_symbolId, name, _arguments) -> emitRuntimeShallowAggregateDrop(valueTemp)(name)(state)
+        | SemNamed(_symbolId, name, _arguments) ->
+            emitRuntimeShallowAggregateDrop(valueTemp)(runtimeManagedAdtTypeName(name))(state)
         | other -> emitRuntimeChildDrop(valueTemp)(other)(state)
 
 // Stage 0's `LowerCallDropConsumedRuntimeArguments` for one argument: a scalar needs nothing, a
@@ -13933,18 +13964,39 @@ let emitListNormalizingCopy (temp: Int) (semanticType: SemanticType) (state: Cor
             |> markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)
             |> success(normalizedTemp)(semanticType)
 
-// A runtime cell's list field over scalars that arrived as an arena list is copied onto the
-// reference-counted heap, stage 0's `CopyOutList` normalization in
-// `LowerRuntimeManagedConstructorArgument`.
-let normalizeConstructorListArgument (runtimeManaged: Bool) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
+// Stage 0's `RequiresRuntimeManagedChildCopy`: the field types whose non-reference-counted child
+// a runtime-managed parent clones into an owned graph before storing it — a list, tuple, or
+// aggregate the runtime-managed deep copy reproduces completely. A string child is retained
+// instead, and a scalar is stored inline.
+let requiresRuntimeManagedChildCopy (fieldType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(fieldType) with
+        | SemList(element) -> tcoListElementSupported(element)(state)
+        | SemTuple(elements) -> allRuntimeOwnedCopyElements(elements)(state)
+        | SemNamed(_symbolId, _name, _arguments) as named ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { structuralCopy = ShallowCopy } -> true
+                | facts -> runtimeManagedAdtLayout(facts)
+        | _ -> false
+
+// A runtime cell's child that is not already reference-counted (a list, tuple, or aggregate read
+// out of a pattern owner, or an arena value) is cloned into an owned graph, stage 0's deep copy
+// normalization in `LowerRuntimeManagedConstructorArgument`; the clone carries its own
+// reference, so no pattern-owner duplicate is taken on top of it.
+let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            match resolveType(state)(fieldType) with
-                | SemList(element) ->
-                    if runtimeManaged && resultSurvivesReset(element)(state) && isRuntimeTemp(temp)(state) == false
-                    then emitListNormalizingCopy(temp)(semanticType)(state)
-                    else lowered
-                | _ -> lowered
+            if runtimeManaged && isRuntimeTemp(temp)(state) == false && requiresRuntimeManagedChildCopy(fieldType)(state)
+            then
+                match argumentCopyPlanOf(fieldType)(state) with
+                    | Some(plan) ->
+                        match emitArgumentDeepCopy(temp)(plan)(state) with
+                            | (copied, copiedTemp) ->
+                                copied
+                                |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+                                |> (given (marked: CoreLoweringState) -> marked with patternOwnerCopyTemps = copiedTemp :: marked.patternOwnerCopyTemps)
+                                |> success(copiedTemp)(semanticType)
+                    | None -> lowered
+            else lowered
         | _ -> lowered
 
 // Stage 0's `RetainEscapingConstructorArgument`: an arena cell built under the transfer retains
@@ -14055,7 +14107,7 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
             match state
             |> withConsumerRequest(constructorArgumentRequest(request)(runtimeManaged)(argument)(fieldType)(state))
             |> lower(argument)
-            |> normalizeConstructorListArgument(runtimeManaged)(fieldType)
+            |> normalizeConstructorChildArgument(runtimeManaged)(fieldType)
             |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
                 | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
@@ -18726,7 +18778,7 @@ let lowerDeadRcTopLevelLet name value layout environment state =
                     match (layout, synthesizeStructuralDropperLabel(valueType)((valueState with runtimeAdtRequested = false))) with
                         | (CoreConstructorLayout { name = constructorName }, (dropperLabel, dropperState)) ->
                             dropperState
-                            |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(dropperLabel))
+                            |> emit(RcDrop(valueTemp)(runtimeManagedAdtTypeName(constructorName))(-1)(true)(false)(dropperLabel))
                             |> success(-1)(SemNever)
 
 // The declaring type's own bare name in a field is shorthand for the type applied to its own
