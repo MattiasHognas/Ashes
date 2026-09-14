@@ -3920,13 +3920,6 @@ same public behavior.
   under stage 0 and stage 1 (`--emit-ir final`), and either mirror the missing definition
   order (a temporary defined in a predecessor block the codegen visits later) or the lowering
   divergence that produced the use.
-- [ ] **CG-19** The self-hosted backend suite (`selfhost/tests/backend`) is red on main
-  (2026-09-14, at `68f3562c` already): `testRunSharedTcoRuntimeManagedListAccumulatorPlateau`
-  (`Main.ash:3468`, the shared program `tests/tco_runtime_managed_list_accumulator_plateau.ash`)
-  fails its `assertProgramPrints` with a bare `Assertion failed`, while the semantics,
-  projects, cli, and parity suites are green. Locate it with the `--debug` build under
-  `gdb -batch -ex "catch syscall exit" -ex run -ex bt`, compare the program's output between
-  the stage-0 and the self-hosted backend, and fix the backend or the expectation.
 
 #### Object parsing and executable linking
 
