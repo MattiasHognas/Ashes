@@ -1,0 +1,119 @@
+Memory report
+=============
+
+Function: bump
+  ownership
+    insts: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_8]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  representation [lambda_8]
+    conservative unknown: 6
+    region:               2
+    runtime rc:           1
+
+Function: bumpInto
+  ownership
+    insts: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_4]
+    dup:                  5
+    drop:                 17
+    uniqueness checks:    8
+  perceus [lambda_3]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_4]
+    conservative unknown: 11
+    region:               8
+    runtime rc:           42
+    copy value:           9
+  representation [lambda_3]
+    conservative unknown: 2
+    region:               3
+
+Function: count
+  ownership
+    insts: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_12]
+    dup:                  1
+    drop:                 6
+    uniqueness checks:    3
+  perceus [lambda_11]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_12__scalarenv0]
+    dup:                  1
+    drop:                 6
+    uniqueness checks:    3
+  representation [lambda_12]
+    conservative unknown: 2
+    runtime rc:           10
+    copy value:           6
+  representation [lambda_11]
+    conservative unknown: 1
+    region:               3
+
+Function: go
+  ownership
+    acc: consumed, move-safe yes
+    rest: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_2__scalarenv1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_2]
+    conservative unknown: 9
+    region:               1
+    runtime rc:           1
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               3
+
+Function: passes
+  ownership
+    k: consumed, move-safe yes
+    insts: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_10]
+    dup:                  1
+    drop:                 8
+    uniqueness checks:    4
+  perceus [lambda_9]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_10]
+    conservative unknown: 5
+    region:               2
+    runtime rc:           13
+    copy value:           6
+  representation [lambda_9]
+    conservative unknown: 1
+    region:               3
+    copy value:           1
+
+Function: reverse
+  ownership
+    xs: consumed, move-safe yes
+    result fresh: no
+  representation [lambda_0]
+    conservative unknown: 6
+    region:               1
+

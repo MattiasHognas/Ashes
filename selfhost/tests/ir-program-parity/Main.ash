@@ -298,7 +298,12 @@ let fixtures =
 // parameter to a callee whose error result keeps it: the compiler admits both string
 // parameters at the loop entry, so the forced retain of the argument survives finalization,
 // where this lowering keeps them in the arena and zeroes the flag; it rejoins the comparison
-// once the string parameter admission follows the compiler.
+// once the string parameter admission follows the compiler. The accumulate-and-reverse
+// producer after it hands its annotated list accumulator to a generic reverse before the
+// back edges that would admit it are lowered: the compiler places the parameter from its
+// type at the loop entry and retains the argument outright, where this lowering keeps it
+// pending under the callee's accepts bit; it rejoins the comparison with the provisional
+// placement.
 let elaboratedFixtures =
     [
         "self_call_operand_string_result",
@@ -310,7 +315,8 @@ let elaboratedFixtures =
         "user_type_named_function_release",
         "tco_parameter_kept_by_borrowing_callee_result",
         "record_update_successor_of_loop_parameter",
-        "tco_string_parameter_kept_by_callee_error_result"
+        "tco_string_parameter_kept_by_callee_error_result",
+        "accumulate_and_reverse_producer"
     ]
 
 match Ashes.IO.args with

@@ -4039,6 +4039,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_accumulate_and_reverse_producer_pipeline_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> accumulated = await MeasureMemoryGrowthAsync(
+            BuildAccumulateAndReverseProducerPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("list of variants accumulated by a loop and reversed by the generic reverse every round", accumulated);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9436,6 +9451,43 @@ public sealed class LinuxBackendCoverageTests
                     | [] -> []
                     | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
                     | Loc(loc, k) :: tail -> Loc(loc, k + 1) :: bump(tail)
+
+            let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(bump(insts))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // The accumulate-and-reverse producer: the loop's reference-counted accumulator is handed to
+    // the generic reverse, whose arena result is deep-copied at the call, so the accumulator
+    // reference handed over for the result is released where the copy ran.
+    private static string BuildAccumulateAndReverseProducerPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Name(Str, Int)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name("x", n) :: acc)
+
+            let reverse xs =
+                (let recursive go acc rest =
+                    match rest with
+                        | [] -> acc
+                        | head :: tail -> go(head :: acc)(tail)
+                in go([])(xs))
+
+            let recursive bumpInto (insts: List(Inst)) (acc: List(Inst)) =
+                match insts with
+                    | [] -> reverse(acc)
+                    | Add(a, b) :: tail -> bumpInto(tail)(Add(a + 1, b) :: acc)
+                    | Name(s, k) :: tail -> bumpInto(tail)(Name(s, k + 1) :: acc)
+
+            let bump (insts: List(Inst)) = bumpInto(insts)([])
 
             let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
                 if remaining <= 0

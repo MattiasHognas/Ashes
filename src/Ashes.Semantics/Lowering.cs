@@ -11714,6 +11714,8 @@ public sealed partial class Lowering
             IsCalleeResultListElementQuantifiedInScheme(rootExpr, collectedArgs.Count),
             out bool resultNormalized,
             out bool resultDeepCopied);
+        (resultCopySeversArgumentReferences, resultCopyFlagTemp) = DeepCopiedResultSevers(
+            resultDeepCopied, runtimeManagedResultFlagTemp, resultCopySeversArgumentReferences, resultCopyFlagTemp);
         // The consumed runtime arguments are released only once the result is normalized: an
         // arena-placed result (a generic callee's own cons cells, say) can still reference the
         // arguments' parts until the copy-out or deep copy above has copied them, so releasing the
@@ -11773,6 +11775,16 @@ public sealed partial class Lowering
             !stableReuseResult && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List,
             runtimeManagedResultFlagTemp);
     }
+
+    // The generic list deep copy rebuilds every element and its owned parts on the arena branch
+    // of the result flag, so the copied result shares nothing with a handed-over argument either:
+    // the reference handed to the callee is released where the copy ran.
+    private static (bool Severs, int FlagTemp) DeepCopiedResultSevers(
+        bool resultDeepCopied,
+        int runtimeManagedResultFlagTemp,
+        bool severs,
+        int flagTemp)
+        => resultDeepCopied && !severs ? (true, runtimeManagedResultFlagTemp) : (severs, flagTemp);
 
     private (int Temp, TypeRef Type) LowerCallRoot(Expr rootExpr, IReadOnlyList<Expr> arguments)
     {

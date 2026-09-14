@@ -3494,7 +3494,12 @@ same public behavior.
     (`LowerVar` marks reads of `IsRuntimeManagedTcoParamSlot` slots), so
     `PrepareRuntimeManagedCallArgument` retains it outright for a callee whose result reaches
     it, where the self-hosted `argumentHandOffOf` keeps every loop-parameter argument pending
-    under its slot and retains it under the callee's accepts bit; and a two-parameter loop
+    under its slot and retains it under the callee's accepts bit (the self-hosted grown-cons
+    admission, `tcoListSlotElement`, needs `tcoBackEdgesAllocateRuntimeCells`, a fact the
+    back edges establish after an earlier arm's call was lowered, so the accumulate-and-reverse
+    fixture `accumulate_and_reverse_producer` of OPT-80d shows the same divergence at its
+    `reverse(acc)` call; the compiler's provisional placement from the parameter types at the
+    loop entry is what this lowering lacks); and a two-parameter loop
     whose first parameter is a `Str` it only compares (`containsText (value: Str) (values:
     List(Str))`) has stage 0 copy the captured string into a runtime-managed value at entry
     and release it at exit, where the self-hosted admission (`runtimeManagedOrdinals` from the
@@ -3503,9 +3508,23 @@ same public behavior.
     unannotated string parameters of `validateAll`, whose forced argument retain survives
     finalization in stage 0 and is zeroed by this lowering. Mirror all five and return the
     fixtures to the comparison.
-  - [ ] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
-    generic `reverse`) still leaks a whole list per round (827 MiB at 160 rounds of 50000):
-    the accumulator's cells and the generic callee's deep copy need the same admission.
+  - [x] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
+    generic `reverse`) still leaked a whole list per round (827 MiB at 160 rounds of 50000).
+    Done (2026-09-14): the loop's runtime-managed accumulator handed to `reverse`, whose result
+    reaches it, was retained for that result and handed over under the callee's adoption bit,
+    and `reverse` (a generic list function whose closure never accepts a runtime-managed
+    argument) neither adopted the reference nor let the caller release it: the release guard
+    (`ResolveHandedOverReleaseGuard`) only recognized the shallow and list copy-outs as
+    severing the result from the argument, while this call's `List(Inst)` result has no
+    copy-out kind and is normalized by the generic list deep copy instead
+    (`LowerCallDeepCopyOutListResult`), which rebuilds every element and its owned parts. The
+    deep copy now counts as severing on the arena branch of the result flag
+    (`DeepCopiedResultSevers`; mirrored by `deepCopiedResultSevers` in `CoreLowering.ash`), so
+    the handed-over accumulator is released where the copy ran: flat at 20 MiB for 20, 40,
+    and 160 rounds. Plateau test
+    `Linux_backend_llvm_accumulate_and_reverse_producer_pipeline_memory_should_plateau`,
+    `tests/rc_accumulate_and_reverse_producer_pipeline.ash`, parity fixture
+    `accumulate_and_reverse_producer`.
   - [ ] **OPT-80e** Re-measure the semantics package and the CLI package with the phase
     probe after each slice; the BOOT-2 probe resumes when the semantics package compiles
     under the 24 GiB cap.
