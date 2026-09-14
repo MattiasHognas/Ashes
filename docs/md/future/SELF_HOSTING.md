@@ -3525,9 +3525,35 @@ same public behavior.
     `Linux_backend_llvm_accumulate_and_reverse_producer_pipeline_memory_should_plateau`,
     `tests/rc_accumulate_and_reverse_producer_pipeline.ash`, parity fixture
     `accumulate_and_reverse_producer`.
-  - [ ] **OPT-80e** Re-measure the semantics package and the CLI package with the phase
+  - [x] **OPT-80e** Re-measure the semantics package and the CLI package with the phase
     probe after each slice; the BOOT-2 probe resumes when the semantics package compiles
-    under the 24 GiB cap.
+    under the 24 GiB cap. Measured (2026-09-14, after slices a, b, c, d, and f, stage-1 CLI
+    built by the merged stage 0, resident size at the start of lowering, optimizing, and
+    code generation): `Types` 266, 799, and 3127 MiB (peak 3.2 GiB, 2.5 s); `TypeResolution`
+    864, 2028, and 7712 MiB (peak 7.9 GiB, 10.8 s); the semantics package still dies at the
+    24 GiB cap after 5 s. The optimizer stages retain exactly what they did before the slices
+    (`TypeResolution`: the map of `optimizeIrFunctionWithEvaluable` over the functions
+    +1.5 GiB, `devirtualizeCapturedClosureCalls` +1.1 GiB, `inlineCurryingStages` +0.95 GiB,
+    `scalarizeSingleCaptureStackClosures` +0.5 GiB, the two `computeKnownReturnedClosureLabels`
+    +0.3 and +0.4 GiB), so the slices closed shapes the optimizer does not hit. The shape it
+    does hit is reproduced by `opt80/exp/map_record_fn.ash` (a record `Fn { label: Str, insts:
+    List(Inst) }` rebuilt by a producer, `optFn(fn) :: mapFns(rest)`, 200 records of 2000
+    instructions per round): 69 MiB retained per round on the merged compiler and on the
+    compiler before the slices alike, with or without let-bound intermediate lists. The record
+    head `Fn(label = label, insts = bump(insts))` is allocated in the arena (`AllocAdt` without
+    the runtime-managed bit) and the producer's cons cell too, so the list of records is an
+    arena value whose call windows are never restored; see OPT-80h.
+  - [ ] **OPT-80h** A record head carrying a list of heap-bearing variants (the self-hosted
+    `IrFunction { instructions: List(IrInstruction), ... }`) rebuilt by a producer stays in the
+    arena together with the producer's cons cells: `optFn(fn) :: mapFns(rest)` over `Fn {
+    label: Str, insts: List(Inst) }` retains 69 MiB per round of 200 records of 2000
+    instructions (`opt80/exp/map_record_fn.ash`), the exact shape of the optimizer's
+    per-function map, where the same producer over the variant itself is flat since OPT-80a.
+    Admit the record head under the runtime-list request when its fields are a string and a
+    runtime-manageable list (the record layout classifier must accept a list-over-variants
+    field and a borrowed string field copied at the head), build the cons cell
+    reference-counted, and release the consumed record after the copy, in both compilers;
+    plateau test, end-to-end test, and parity fixture as for the earlier slices.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
