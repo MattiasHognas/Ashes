@@ -63,6 +63,7 @@ internal sealed record OrdinaryHeapLayoutCapability(
     bool RuntimeOwnedChildAdtSupported,
     bool RuntimeTcoOwnedChildAdtSupported,
     bool RuntimeTcoListElementSupported,
+    bool RuntimePositionalAdtSupported,
     IReadOnlyList<OrdinaryHeapLayoutChild> Children,
     OrdinaryHeapLayoutRejection Rejections)
 {

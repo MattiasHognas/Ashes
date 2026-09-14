@@ -1,0 +1,33 @@
+Memory report
+=============
+
+Function: bump
+  ownership
+    insts: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  4
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_0]
+    conservative unknown: 24
+    region:               12
+    runtime rc:           8
+    copy value:           15
+
+Function: count
+  ownership
+    insts: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_2]
+    conservative unknown: 3
+    copy value:           6
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               3
+

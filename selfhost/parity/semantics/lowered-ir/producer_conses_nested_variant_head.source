@@ -1,0 +1,23 @@
+type Inner =
+    | I(Str, Int)
+
+type Inst =
+    | Add(Int, Int)
+    | Name(Inner, Int)
+    | Tags(List(Str), Int)
+    | Loc(Maybe(Str), Int)
+
+let recursive bump (insts: List(Inst)) =
+    match insts with
+        | [] -> []
+        | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+        | Name(inner, k) :: tail -> Name(inner, k + 1) :: bump(tail)
+        | Tags(tags, k) :: tail -> Tags(tags, k + 1) :: bump(tail)
+        | Loc(loc, k) :: tail -> Loc(loc, k + 1) :: bump(tail)
+
+let recursive count (insts: List(Inst)) (acc: Int) =
+    match insts with
+        | [] -> acc
+        | _ :: tail -> count(tail)(acc + 1)
+
+Ashes.IO.print(Ashes.Text.fromInt(count(bump(bump([Name(I("x", 1), 1), Add(0, 0), Tags(["a"], 2), Loc(Some("l"), 3)])))(0)))

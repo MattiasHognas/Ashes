@@ -1,0 +1,7 @@
+Reuse report
+============
+
+Function: _start_main
+  specialization candidate qualification: rejected [bump]
+    reason: fresh result not proven (producer_conses_nested_variant_head.ash:23:41)
+

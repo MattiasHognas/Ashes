@@ -35,6 +35,8 @@ export (
     type HeapLayoutFacts(..),
     value canArenaResetLayout,
     value heapRuntimeRecursiveCopyAdtLayout,
+    value heapRuntimeOwnedFieldLayout,
+    value heapRuntimeOwnedTupleElementLayout,
     value heapNamedTypeConstructors,
     value classifyHeapLayout,
 )
@@ -98,6 +100,7 @@ type HeapLayoutFacts =
     | runtimeOwnedChildAdtSupported: Bool
     | runtimeTcoOwnedChildAdtSupported: Bool
     | runtimeTcoListElementSupported: Bool
+    | runtimePositionalAdtSupported: Bool
     | children: List(HeapLayoutChild)
     | rejections: HeapLayoutRejections
     deriving {Eq, Show}
@@ -435,14 +438,12 @@ let recursive heapDroppableLeafField (semanticType: SemanticType) (environment: 
                 | SemString -> true
                 | SemBytes -> true
                 | SemBigInt -> true
-                | SemList(element) -> heapCanReset(element)(environment)
+                | SemList(element) -> heapDroppableLeafField(element)(environment)(namedRule)
                 | SemTuple(elements) ->
-                    heapAllTypes(given (element) -> heapDroppableTupleElement(element)(environment))(elements)
+                    heapAllTypes(given (element) -> heapDroppableLeafField(element)(environment)(namedRule))(elements)
                 | SemFunction(_argument, _result, _capabilityRow) -> true
                 | SemNamed(_symbolId, _name, _arguments) -> namedRule(resolved)
                 | _ -> false)
-and heapDroppableTupleElement (semanticType: SemanticType) (environment: TypeEnvironment) =
-    heapDroppableLeafField(semanticType)(environment)(given (_named) -> false)
 
 // Whether the type-directed drop walker can release every owned child of a named type's graph; a
 // cycle back into a type already on the path is droppable by construction.
@@ -474,21 +475,6 @@ let heapRuntimeCopyAdtLayout (named: SemanticType) (environment: TypeEnvironment
             else
                 heapAllGroupedFields(given (fieldType) -> heapCanReset(fieldType)(environment))(grouped)
 
-// A record ADT: a single named-field constructor whose fields are leaves or, recursively, other
-// record ADTs not already on the path.
-let recursive heapRuntimeRecordAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
-    match named with
-        | SemNamed(symbolId, name, _arguments) ->
-            match heapNamedTypeConstructors(named)(environment) with
-                | (_constructorName, fieldTypes) :: [] ->
-                    if !heapNamedTypeIsRecord(named)(environment) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
-                    then false
-                    else
-                        heapAllTypes(given (fieldType) ->
-                            heapDroppableLeafField(fieldType)(environment)(given (child) -> heapRuntimeRecordAdtLayout(child)(environment)((symbolId, name) :: path)))(fieldTypes)
-                | _ -> false
-        | _ -> false
-
 // A TCO owned-child field: a scalar word or a list of scalar words.
 let heapTcoOwnedChildField (semanticType: SemanticType) (environment: TypeEnvironment) =
     (let resolved = resolveLayoutType(semanticType)(environment)
@@ -502,20 +488,72 @@ let heapTcoOwnedChildField (semanticType: SemanticType) (environment: TypeEnviro
 
 let heapOwnsHeapField (semanticType: SemanticType) (environment: TypeEnvironment) = !heapCanReset(semanticType)(environment)
 
-// An owned-child ADT: a monomorphic user type with at least two constructors and at least one
-// heap-owning field, every such field being a leaf, a record ADT, or a TCO owned-child ADT not
-// already on the path. A single unnamed-field constructor is instead the TCO owned-child layout:
-// every heap-owning field a list of scalars, with at least one such field.
-let recursive heapRuntimeOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+// A record ADT: a single named-field constructor whose fields a runtime-managed cell owns, not
+// already on the path.
+let recursive heapRuntimeRecordAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+    match named with
+        | SemNamed(symbolId, name, _arguments) ->
+            match heapNamedTypeConstructors(named)(environment) with
+                | (_constructorName, fieldTypes) :: [] ->
+                    if !heapNamedTypeIsRecord(named)(environment) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
+                    then false
+                    else
+                        heapAllTypes(given (fieldType) -> heapRuntimeOwnedFieldLayout(fieldType)(environment)((symbolId, name) :: path))(fieldTypes)
+                | _ -> false
+        | _ -> false
+// A field a runtime-managed record or variant owns, stage 0's `IsRuntimeOwnedFieldLayout`: a
+// scalar, a string, bytes, or a big integer, a list or tuple of such fields, a record, variant,
+// or positional type of them, or a reference-counted closure. A type that reaches itself is
+// rejected, since the inline runtime-managed copy of such a graph would not terminate.
+and heapRuntimeOwnedFieldLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+    (let resolved = resolveLayoutType(semanticType)(environment)
+    in
+        if canArenaResetLayout(resolved)
+        then true
+        else
+            match resolved with
+                | SemString -> true
+                | SemBytes -> true
+                | SemBigInt -> true
+                | SemList(element) -> heapRuntimeOwnedFieldLayout(element)(environment)(path)
+                | SemTuple(elements) ->
+                    heapAllTypes(given (element) -> heapRuntimeOwnedTupleElementLayout(element)(environment)(path))(elements)
+                | SemFunction(_argument, _result, _capabilityRow) -> true
+                | SemNamed(_symbolId, _name, _arguments) -> heapAdtStructuralCopyKind(resolved)(environment) == ShallowCopy || heapRuntimeRecordAdtLayout(resolved)(environment)(path) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimePositionalAdtLayout(resolved)(environment)(path)
+                | _ -> false)
+// A tuple element a runtime-managed tuple owns, stage 0's `IsRuntimeOwnedTupleElementLayout`:
+// an owned field other than a closure, whose placement the static tuple rules never trust.
+and heapRuntimeOwnedTupleElementLayout (element: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+    match resolveLayoutType(element)(environment) with
+        | SemFunction(_argument, _result, _capabilityRow) -> false
+        | _ -> heapRuntimeOwnedFieldLayout(element)(environment)(path)
+// A positional single-constructor type with at least one owned field, every field one a
+// runtime-managed cell owns, stage 0's `IsRuntimePositionalAdtLayout`: a child a record or
+// variant owns and a list element, outside the outer-cell reuse and record paths.
+and heapRuntimePositionalAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+    match named with
+        | SemNamed(symbolId, name, _arguments) ->
+            match heapNamedTypeConstructors(named)(environment) with
+                | (_constructorName, fieldTypes) :: [] ->
+                    if heapBuiltinTypeName(name) || heapNamedTypeIsRecord(named)(environment) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
+                    then false
+                    else
+                        heapAllTypes(given (fieldType) -> heapRuntimeOwnedFieldLayout(fieldType)(environment)((symbolId, name) :: path))(fieldTypes) && heapAnyType(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(fieldTypes)
+                | _ -> false
+        | _ -> false
+// An owned-child ADT: a non-builtin type with at least two constructors and at least one
+// heap-owning field, every field one a runtime-managed cell owns, not already on the path. A
+// single unnamed-field constructor is instead the TCO owned-child layout: every heap-owning
+// field a list of scalars, with at least one such field.
+and heapRuntimeOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
     match named with
         | SemNamed(symbolId, name, _arguments) ->
             let grouped = heapNamedTypeConstructors(named)(environment)
             in
-                if !heapMonomorphicUserAdt(named) || !(length(grouped) >= 2) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
+                if heapBuiltinTypeName(name) || !(length(grouped) >= 2) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
                 then false
                 else
-                    heapAllGroupedFields(given (fieldType) ->
-                        heapDroppableLeafField(fieldType)(environment)(given (child) -> heapRuntimeRecordAdtLayout(child)(environment)([]) || heapRuntimeTcoOwnedChildAdtLayout(child)(environment)((symbolId, name) :: path)))(grouped) && heapAnyGroupedField(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(grouped)
+                    heapAllGroupedFields(given (fieldType) -> heapRuntimeOwnedFieldLayout(fieldType)(environment)((symbolId, name) :: path))(grouped) && heapAnyGroupedField(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(grouped)
         | _ -> false
 and heapRuntimeTcoOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
     match heapNamedTypeConstructors(named)(environment) with
@@ -570,7 +608,7 @@ let recursive heapRuntimeTcoListElementLayout (semanticType: SemanticType) (envi
                 | SemList(element) -> heapRuntimeTcoListElementLayout(element)(environment)(path)
                 | SemTuple(elements) ->
                     heapAllTypes(given (element) -> heapRuntimeTcoListElementLayout(element)(environment)(path))(elements)
-                | SemNamed(_symbolId, _name, _arguments) -> heapAdtStructuralCopyKind(resolved)(environment) == ShallowCopy || heapRuntimeRecordAdtLayout(resolved)(environment)([]) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path)
+                | SemNamed(_symbolId, _name, _arguments) -> heapAdtStructuralCopyKind(resolved)(environment) == ShallowCopy || heapRuntimeRecordAdtLayout(resolved)(environment)([]) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimePositionalAdtLayout(resolved)(environment)(path)
                 | _ -> false)
 
 let heapDropKind (semanticType: SemanticType) (environment: TypeEnvironment) =
@@ -667,6 +705,7 @@ let heapAssembleFacts (resolved: SemanticType) (environment: TypeEnvironment) (c
                 runtimeOwnedChildAdtSupported = ownedChildAdt,
                 runtimeTcoOwnedChildAdtSupported = tcoOwnedChildAdt,
                 runtimeTcoListElementSupported = heapRuntimeTcoListElementLayout(resolved)(environment)([]),
+                runtimePositionalAdtSupported = heapRuntimePositionalAdtLayout(resolved)(environment)([]),
                 children = children,
                 rejections = support
                 |> heapOuterCellReuseSupported

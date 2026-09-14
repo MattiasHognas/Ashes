@@ -1,0 +1,17 @@
+type Function =
+    | name: Str
+    | destructor: Maybe(Str)
+
+let makeFunction (name: Str) = Function(name = name, destructor = None)
+
+let recursive mark (functions: List(Function)) =
+    match functions with
+        | [] -> []
+        | Function { name = name } :: tail -> Function(name = name, destructor = Some("Resource")) :: mark(tail)
+
+let recursive count (functions: List(Function)) (acc: Int) =
+    match functions with
+        | [] -> acc
+        | _ :: tail -> count(tail)(acc + 1)
+
+Ashes.IO.print(Ashes.Text.fromInt(count(mark([makeFunction("close"), makeFunction("open")]))(0)))

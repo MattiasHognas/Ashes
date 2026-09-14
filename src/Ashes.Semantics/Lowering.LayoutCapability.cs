@@ -215,6 +215,8 @@ public sealed partial class Lowering
         bool runtimeTcoListElementSupported = IsRuntimeTcoListElementLayout(
             resolved,
             new HashSet<TypeSymbol>());
+        bool runtimePositionalAdtSupported = resolved is TypeRef.TNamedType positionalAdt
+            && IsRuntimePositionalAdtLayout(positionalAdt, new HashSet<TypeSymbol>());
         List<OrdinaryHeapLayoutChild> children = DescribeOrdinaryHeapChildren(resolved);
         bool containsOwnedChild = children.Any(child =>
             child.DropKind != OrdinaryHeapChildDropKind.None);
@@ -238,6 +240,7 @@ public sealed partial class Lowering
             runtimeOwnedChildAdtSupported,
             runtimeTcoOwnedChildAdtSupported,
             runtimeTcoListElementSupported,
+            runtimePositionalAdtSupported,
             children.AsReadOnly(),
             rejections);
     }
@@ -479,7 +482,7 @@ public sealed partial class Lowering
         return valueType switch
         {
             TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-            TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+            TypeRef.TList list => CanDropOrdinaryValueGraph(list.Element, path),
             TypeRef.TTuple tuple => tuple.Elements.All(element =>
                 CanDropOwnedTupleElement(element, path)),
             TypeRef.TNamedType named => CanDropAdtGraph(named, path),
@@ -493,9 +496,10 @@ public sealed partial class Lowering
         return CanArenaReset(valueType) || valueType switch
         {
             TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-            TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+            TypeRef.TList list => CanDropOrdinaryValueGraph(list.Element, path),
             TypeRef.TTuple tuple => tuple.Elements.All(element =>
                 CanDropOwnedTupleElement(element, path)),
+            TypeRef.TNamedType named => CanDropAdtGraph(named, path),
             _ => false,
         };
     }
@@ -521,7 +525,7 @@ public sealed partial class Lowering
                 bool supported = CanArenaReset(fieldType) || fieldType switch
                 {
                     TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-                    TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+                    TypeRef.TList list => CanDropOrdinaryValueGraph(list.Element, path),
                     TypeRef.TTuple tuple => tuple.Elements.All(element =>
                         CanDropOwnedTupleElement(element, path)),
                     TypeRef.TNamedType child => CanDropAdtGraph(child, path),
@@ -577,17 +581,7 @@ public sealed partial class Lowering
         {
             TypeRef fieldType = Prune(
                 InstantiateConstructorParameterType(constructor, index, named));
-            bool supported = CanArenaReset(fieldType) || fieldType switch
-            {
-                TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-                TypeRef.TList list => CanArenaReset(Prune(list.Element)),
-                TypeRef.TTuple tuple => tuple.Elements.All(element =>
-                    CanDropOwnedTupleElement(element, path)),
-                TypeRef.TNamedType child => IsRuntimeRecordAdtLayout(child, path),
-                TypeRef.TFun => true,
-                _ => false,
-            };
-            if (!supported)
+            if (!IsRuntimeOwnedFieldLayout(fieldType, path))
             {
                 path.Remove(symbol);
                 return false;
@@ -598,13 +592,93 @@ public sealed partial class Lowering
         return true;
     }
 
+    // A positional single-constructor type with at least one owned field, every field one a
+    // runtime-managed cell owns. It is a child a record or variant owns and a list element, and
+    // its cell is released by the constructor's field walk, but it stays outside the outer-cell
+    // reuse and record paths, which the positional accumulator shape keeps separate.
+    private bool IsRuntimePositionalAdtLayout(
+        TypeRef.TNamedType named,
+        HashSet<TypeSymbol> path)
+    {
+        TypeSymbol symbol = named.Symbol;
+        if (symbol.IsBuiltin
+            || symbol.Constructors.Count != 1
+            || symbol.Constructors[0].DeclaringSyntax.FieldNames.Count > 0
+            || BuiltinRegistry.IsResourceTypeName(symbol.Name)
+            || IsResourceBearing(named)
+            || !path.Add(symbol))
+        {
+            return false;
+        }
+
+        bool hasOwnedChild = false;
+        ConstructorSymbol constructor = symbol.Constructors[0];
+        for (int index = 0; index < constructor.Arity; index++)
+        {
+            TypeRef fieldType = Prune(
+                InstantiateConstructorParameterType(constructor, index, named));
+            if (CanArenaReset(fieldType))
+            {
+                continue;
+            }
+
+            if (!IsRuntimeOwnedFieldLayout(fieldType, path))
+            {
+                path.Remove(symbol);
+                return false;
+            }
+
+            hasOwnedChild = true;
+        }
+
+        path.Remove(symbol);
+        return hasOwnedChild;
+    }
+
+    // A field a runtime-managed record or variant owns: a scalar, a string, bytes, or a big
+    // integer, a list or tuple of such fields, a record, variant, or positional type of them, or
+    // a reference-counted closure. The walk rejects a type that reaches itself, since the inline
+    // runtime-managed copy of such a graph would not terminate; a recursive type keeps its own
+    // gates.
+    private bool IsRuntimeOwnedFieldLayout(TypeRef fieldType, HashSet<TypeSymbol> path)
+    {
+        TypeRef pruned = Prune(fieldType);
+        return CanArenaReset(pruned) || pruned switch
+        {
+            TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
+            TypeRef.TList list => IsRuntimeOwnedFieldLayout(list.Element, path),
+            TypeRef.TTuple tuple => tuple.Elements.All(element =>
+                IsRuntimeOwnedTupleElementLayout(element, path)),
+            TypeRef.TNamedType child =>
+                IsShallowCopyAdtLayout(child)
+                || IsRuntimeRecordAdtLayout(child, path)
+                || IsRuntimeOwnedChildAdtLayout(child, path)
+                || IsRuntimeTcoOwnedChildAdtLayout(child, path)
+                || IsRuntimePositionalAdtLayout(child, path),
+            TypeRef.TFun => true,
+            _ => false,
+        };
+    }
+
+    // A tuple element a runtime-managed tuple owns: an owned field other than a closure, whose
+    // placement the static tuple rules never trust (its runtime-managed form is decided by the
+    // closure's own ownership bit).
+    private bool IsRuntimeOwnedTupleElementLayout(TypeRef element, HashSet<TypeSymbol> path) =>
+        Prune(element) is not TypeRef.TFun
+            && IsRuntimeOwnedFieldLayout(element, path);
+
+    // A tuple every element of which a runtime-managed parent can own and the runtime-managed
+    // deep copy reproduces without reaching a recursive type.
+    private bool IsRuntimeOwnedCopyTupleLayout(TypeRef.TTuple tuple) =>
+        tuple.Elements.All(element =>
+            IsRuntimeOwnedTupleElementLayout(element, new HashSet<TypeSymbol>()));
+
     private bool IsRuntimeOwnedChildAdtLayout(
         TypeRef.TNamedType named,
         HashSet<TypeSymbol> path)
     {
         TypeSymbol symbol = named.Symbol;
         if (symbol.IsBuiltin
-            || symbol.TypeParameters.Count > 0
             || symbol.Constructors.Count < 2
             || BuiltinRegistry.IsResourceTypeName(symbol.Name)
             || IsResourceBearing(named)
@@ -625,19 +699,7 @@ public sealed partial class Lowering
                     continue;
                 }
 
-                bool supported = fieldType switch
-                {
-                    TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-                    TypeRef.TList list => CanArenaReset(Prune(list.Element)),
-                    TypeRef.TTuple tuple => tuple.Elements.All(element =>
-                        CanDropOwnedTupleElement(element, path)),
-                    TypeRef.TNamedType child =>
-                        IsRuntimeRecordAdtLayout(child, new HashSet<TypeSymbol>())
-                        || IsRuntimeTcoOwnedChildAdtLayout(child, path),
-                    TypeRef.TFun => true,
-                    _ => false,
-                };
-                if (!supported)
+                if (!IsRuntimeOwnedFieldLayout(fieldType, path))
                 {
                     path.Remove(symbol);
                     return false;
@@ -711,7 +773,8 @@ public sealed partial class Lowering
                 IsRuntimeTcoListElementLayout(element, path)),
             TypeRef.TNamedType named => IsShallowCopyAdtLayout(named)
                 || IsRuntimeRecordAdtLayout(named, new HashSet<TypeSymbol>())
-                || IsRuntimeOwnedChildAdtLayout(named, path),
+                || IsRuntimeOwnedChildAdtLayout(named, path)
+                || IsRuntimePositionalAdtLayout(named, path),
             _ => false,
         };
     }

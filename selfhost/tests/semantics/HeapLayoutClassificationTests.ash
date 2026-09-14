@@ -171,6 +171,7 @@ let testScalarIsNeverOwned unit =
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [],
                 rejections = outerCellOnlyRejection(Unit)
             )
@@ -196,6 +197,7 @@ let testLeafStringHasNoChildren unit =
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [],
                 rejections = outerCellOnlyRejection(Unit)
             )
@@ -221,6 +223,7 @@ let testListOfScalarsIsDeepCopyableAndDroppable unit =
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [
                     HeapLayoutChild(constructorName = None, fieldIndex = 0, childType = SemInt, dropKind = NoChildDrop, copyKind = InlineCopy),
                     HeapLayoutChild(constructorName = None, fieldIndex = 1, childType = SemList(SemInt), dropKind = DropList, copyKind = DeepCopy)
@@ -242,18 +245,19 @@ let testListOfStringOwnsBothChildren unit =
                 containsOwnedChild = true,
                 structuralCopy = DeepCopy,
                 arenaDeepCopySupported = true,
-                ownedChildrenDroppable = false,
+                ownedChildrenDroppable = true,
                 runtimeOuterCellReuseSupported = false,
                 runtimeCopyAdtSupported = false,
                 runtimeRecordAdtSupported = false,
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [
                     HeapLayoutChild(constructorName = None, fieldIndex = 0, childType = SemString, dropKind = DropString, copyKind = ShallowCopy),
                     HeapLayoutChild(constructorName = None, fieldIndex = 1, childType = SemList(SemString), dropKind = DropList, copyKind = DeepCopy)
                 ],
-                rejections = HeapLayoutRejections(resourceOrBorrowedViewContainment = false, unsupportedChildDropLayout = true, unresolvedType = false, unsupportedOuterCellReuse = true)
+                rejections = outerCellOnlyRejection(Unit)
             )
         )(facts))
 
@@ -277,6 +281,7 @@ let testTupleDropsPerElement unit =
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [
                     HeapLayoutChild(constructorName = None, fieldIndex = 0, childType = SemInt, dropKind = NoChildDrop, copyKind = InlineCopy),
                     HeapLayoutChild(constructorName = None, fieldIndex = 1, childType = SemString, dropKind = DropString, copyKind = ShallowCopy)
@@ -302,6 +307,7 @@ let testGenericAdtAtCopyTypeIsRuntimeCopyAdt unit =
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = false,
+                runtimePositionalAdtSupported = false,
                 children = [HeapLayoutChild(constructorName = Some("Some"), fieldIndex = 0, childType = SemInt, dropKind = NoChildDrop, copyKind = InlineCopy)],
                 rejections = noRejections(Unit)
             )
@@ -318,14 +324,15 @@ let testGenericAdtAtOwnedTypeOwnsItsField unit =
                 structuralCopy = DeepCopy,
                 arenaDeepCopySupported = true,
                 ownedChildrenDroppable = true,
-                runtimeOuterCellReuseSupported = false,
+                runtimeOuterCellReuseSupported = true,
                 runtimeCopyAdtSupported = false,
                 runtimeRecordAdtSupported = false,
-                runtimeOwnedChildAdtSupported = false,
-                runtimeTcoOwnedChildAdtSupported = false,
-                runtimeTcoListElementSupported = false,
+                runtimeOwnedChildAdtSupported = true,
+                runtimeTcoOwnedChildAdtSupported = true,
+                runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [HeapLayoutChild(constructorName = Some("Some"), fieldIndex = 0, childType = SemString, dropKind = DropString, copyKind = ShallowCopy)],
-                rejections = outerCellOnlyRejection(Unit)
+                rejections = noRejections(Unit)
             )
         )(facts))
 
@@ -346,6 +353,7 @@ let testCopyableFlatRecordIsShallowCopyAndRecordReusable unit =
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [
                     HeapLayoutChild(constructorName = Some("Point"), fieldIndex = 0, childType = SemInt, dropKind = NoChildDrop, copyKind = InlineCopy),
                     HeapLayoutChild(constructorName = Some("Point"), fieldIndex = 1, childType = SemInt, dropKind = NoChildDrop, copyKind = InlineCopy)
@@ -371,6 +379,7 @@ let testAdtWithStringFieldIsOwnedChildReusable unit =
                 runtimeOwnedChildAdtSupported = true,
                 runtimeTcoOwnedChildAdtSupported = true,
                 runtimeTcoListElementSupported = true,
+                runtimePositionalAdtSupported = false,
                 children = [HeapLayoutChild(constructorName = Some("Named"), fieldIndex = 0, childType = SemString, dropKind = DropString, copyKind = ShallowCopy)],
                 rejections = noRejections(Unit)
             )
@@ -393,6 +402,7 @@ let testResourceBearingAdtIsRejectedWithResourceFlag unit =
                 runtimeOwnedChildAdtSupported = false,
                 runtimeTcoOwnedChildAdtSupported = false,
                 runtimeTcoListElementSupported = false,
+                runtimePositionalAdtSupported = false,
                 children = [HeapLayoutChild(constructorName = Some("Wrap"), fieldIndex = 0, childType = SemOpaque("Handle"), dropKind = UnsupportedChildDrop, copyKind = NoStructuralCopy)],
                 rejections = HeapLayoutRejections(resourceOrBorrowedViewContainment = true, unsupportedChildDropLayout = true, unresolvedType = false, unsupportedOuterCellReuse = true)
             )
@@ -405,7 +415,8 @@ let testResourceBearingAdtIsRejectedWithResourceFlag unit =
 // `testAdtContainingOpaqueTypeHasUnsupportedChild` just above). This single-constructor type still
 // does not qualify as an owned-child ADT (that layout needs at least two constructors) or a TCO
 // owned-child ADT (that layout's single-constructor field rule wants a list of scalars, not a
-// closure), so the outer-cell reuse and TCO flags are unaffected.
+// closure), so the outer-cell reuse and TCO owned-child flags are unaffected; as a positional type
+// owning a closure it is a runtime-managed list element.
 let testAdtContainingFunctionHasDroppableClosureChild unit =
     match classifyNamed("Call")([]) with
         | HeapLayoutFacts { containsResource = containsResource, containsUnresolvedType = containsUnresolvedType, containsOwnedChild = containsOwnedChild, structuralCopy = structuralCopy, arenaDeepCopySupported = arenaDeepCopySupported, ownedChildrenDroppable = ownedChildrenDroppable, runtimeOuterCellReuseSupported = runtimeOuterCellReuseSupported, runtimeTcoOwnedChildAdtSupported = runtimeTcoOwnedChildAdtSupported, runtimeTcoListElementSupported = runtimeTcoListElementSupported, children = children, rejections = rejections } ->
@@ -418,7 +429,7 @@ let testAdtContainingFunctionHasDroppableClosureChild unit =
             |> (given (_) -> test.assertEqual(true)(ownedChildrenDroppable))
             |> (given (_) -> test.assertEqual(false)(runtimeOuterCellReuseSupported))
             |> (given (_) -> test.assertEqual(false)(runtimeTcoOwnedChildAdtSupported))
-            |> (given (_) -> test.assertEqual(false)(runtimeTcoListElementSupported))
+            |> (given (_) -> test.assertEqual(true)(runtimeTcoListElementSupported))
             |> (given (_) ->
                 children
                 |> Ashes.Collection.List.map(childConstructorName)

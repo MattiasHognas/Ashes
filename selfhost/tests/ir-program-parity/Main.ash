@@ -279,14 +279,20 @@ let fixtures =
 // borrowed, an unannotated list parameter's active flag is allocated at the loop entry, and a
 // self call under an operator reads the callee's returns bit rather than asking for an arena
 // result. They stay out of the comparison until the oracle lowers with the trait declarations
-// the compiler stitches.
+// the compiler stitches. The last two are producers over variants carrying a nested variant, a
+// string list, or an optional string: the compiler leaves their consumed list parameter outside
+// runtime management and zeroes the self call's retain flag, where this lowering admits the
+// parameter and keeps the callee's accepts bit; they rejoin the comparison once the loop
+// parameter admission follows the compiler for those element shapes.
 let elaboratedFixtures =
     [
         "self_call_operand_string_result",
         "tco_non_tail_self_call_in_operator_operand",
         "tco_consumed_list_parameter_borrowed_head",
         "pattern_head_read_under_operator",
-        "tco_record_head_consed_into_sibling_accumulator"
+        "tco_record_head_consed_into_sibling_accumulator",
+        "producer_conses_nested_variant_head",
+        "user_type_named_function_release"
     ]
 
 match Ashes.IO.args with

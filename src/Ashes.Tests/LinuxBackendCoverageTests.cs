@@ -3986,6 +3986,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_nested_variant_list_producer_pipeline_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> nested = await MeasureMemoryGrowthAsync(
+            BuildNestedVariantListProducerPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> listField = await MeasureMemoryGrowthAsync(
+            BuildListFieldVariantListProducerPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("list of variants carrying a nested variant rebuilt by a non-tail producer every round", nested);
+        AssertMemoryPlateaus("list of variants carrying a string list rebuilt by a non-tail producer every round", listField);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9260,6 +9279,63 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then acc
                 else build(n - 1)(Name("x", n) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+            let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(bump(insts))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // The element carries another variant, read out of the matched cell and stored into the
+    // rebuilt one: the reference-counted parent takes an owned clone of it, so the rebuilt list is
+    // reference-counted like the string-carrying one.
+    private static string BuildNestedVariantListProducerPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inner =
+                | I(Str, Int)
+
+            type Inst =
+                | Add(Int, Int)
+                | Name(Inner, Int)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name(I("x", n), n) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+            let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(bump(insts))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // The element carries a list of strings instead of a nested variant.
+    private static string BuildListFieldVariantListProducerPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Name(List(Str), Int)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name(["x"], n) :: acc)
 
             let recursive bump (insts: List(Inst)) =
                 match insts with
