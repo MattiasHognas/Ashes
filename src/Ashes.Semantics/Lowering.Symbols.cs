@@ -165,7 +165,8 @@ public sealed partial class Lowering
         int tag = GetConstructorTag(ctor);
 
         // Load all field values, then store update values, allocate new cell
-        var fieldTemps = BuildRecordUpdateFieldTemps(ctor, fieldNames, updateByName, targetTemp, resultType, request);
+        Binding.Local? targetParameter = TryResolveTcoParameterRead(recordUpdate.Target, prunedTarget, out _);
+        var fieldTemps = BuildRecordUpdateFieldTemps(ctor, fieldNames, updateByName, targetTemp, targetParameter, resultType, request);
 
         int ptrTemp = NewTemp();
         bool tagless = IsTaglessConstructor(ctor);
@@ -192,6 +193,7 @@ public sealed partial class Lowering
         IReadOnlyList<string> fieldNames,
         Dictionary<string, Expr> updateByName,
         int targetTemp,
+        Binding.Local? targetParameter,
         TypeRef.TNamedType resultType,
         LoweredValueRequest request)
     {
@@ -225,7 +227,10 @@ public sealed partial class Lowering
             {
                 int loadedTemp = NewTemp();
                 Emit(new IrInst.GetAdtField(loadedTemp, targetTemp, i, IsTaglessConstructor(ctor)));
-                fieldTemps[i] = loadedTemp;
+                fieldTemps[i] = RetainUnchangedRecordUpdateField(
+                    targetParameter,
+                    loadedTemp,
+                    InstantiateConstructorParameterType(ctor, i, resultType));
             }
         }
 

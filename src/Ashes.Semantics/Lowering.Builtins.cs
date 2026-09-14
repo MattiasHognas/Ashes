@@ -2563,8 +2563,15 @@ public sealed partial class Lowering
 
         _tcoCtx = loopTco;
 
+        // A coroutine loop never places a parameter on the reference-counted heap, so every
+        // call-argument flag the body registered under one of its slots resolves to zero here;
+        // the flags of the enclosing function stay its own to resolve.
+        var savedPendingRuntimeArgumentFlags = _pendingRuntimeArgumentFlags;
+        _pendingRuntimeArgumentFlags = [];
         var (valueTemp, valueType) = LowerExpr(info.Body);
         Unify(valueType, successType);
+        ResolvePendingRuntimeArgumentFlags(loopTco);
+        _pendingRuntimeArgumentFlags = savedPendingRuntimeArgumentFlags;
 
         _tcoCtx = savedTco;
         _inCoroutineBody = savedInCoroutine;

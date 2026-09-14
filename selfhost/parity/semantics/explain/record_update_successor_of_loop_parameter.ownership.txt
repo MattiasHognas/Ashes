@@ -1,0 +1,52 @@
+Ownership report
+================
+
+Function: extend
+  Parameters
+    text
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    state
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: yes
+    aliases:
+      - state
+
+Function: joinAll
+  Parameters
+    items
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - acc
+
+Function: scan
+  Parameters
+    tokens
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+    state
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: yes
+    aliases:
+      - tokens
+      - state
+

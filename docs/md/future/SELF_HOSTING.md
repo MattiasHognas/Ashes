@@ -3410,18 +3410,68 @@ same public behavior.
     `tests/rc_nested_variant_list_producer_pipeline.ash`, parity fixtures
     `producer_conses_nested_variant_head` and `user_type_named_function_release`. The builtin
     variants stay out (OPT-80f).
-  - [ ] **OPT-80f** `Maybe` and `Result` do not qualify as owned-child variants
-    (`IsRuntimeOwnedChildAdtLayout` rejects builtin symbols). Admitting them keeps the
-    optional-string element experiment (`pipe_adt_maybe`, 200 MiB at 160 rounds) flat and is
-    what `IrInstruction { location: Maybe(SourceLocation) }` needs, but the stage 0 that
-    admits them miscompiles the self-hosted parity runner (found 2026-09-14: the runner
-    checking `heap_result_list`, a `List(Maybe(Int))` program, dies with `failed to allocate
-    heap memory` inside the IR text formatter, while the same runner compiled by the stage 0
-    that rejects them passes, and every stage-0 suite stays green either way). A `Maybe` or
-    `Result` cell reaches the reference-counted paths from somewhere the static rules do not
-    cover (a builtin producer's own cell, a generic callee's arena cell, or a pattern owner
-    whose root's placement is dynamic); audit those producers, pin the runner's shape as a
-    plateau test, then admit the two.
+  - [x] **OPT-80f** `Maybe` and `Result` did not qualify as owned-child variants
+    (`IsRuntimeOwnedChildAdtLayout` rejected builtin symbols), and the stage 0 that admitted
+    them miscompiled the self-hosted parity runner (the runner checking `heap_result_list`
+    died with `failed to allocate heap memory` inside the IR text formatter). Done
+    (2026-09-14): the crash was a stage-0 loop-parameter bug the admission exposed rather than
+    anything about the two variants. Bisected by admitting one payload family at a time (a
+    temporary environment probe in the classifier) to `Maybe<Str>` together with
+    `Maybe<IrSourceLocation>`, then watched with hardware watchpoints on the corrupted cell:
+    once `OwnerAnchor { anchorTypeName: Str, anchorStructuralDropper: Maybe(Str),
+    anchorLocation: Maybe(IrSourceLocation) }` became runtime-manageable, the lifetime
+    placement loop `collectInsertions` copied its `anchor` parameter into an owned value at
+    entry and released it at loop exit, while `placedDrop(anchor)(slot)(owner)`, whose
+    summary borrows `anchor` and whose result aliases it, returned arena instructions that
+    borrowed the anchor's type-name string into the loop's accumulator: a borrowed parameter
+    whose parts the callee's result keeps was never retained when the argument was a
+    runtime-managed loop parameter, since `CalleeResultMayReachParameter` only recognized
+    fresh result temps and `PrepareRuntimeManagedCallArgument` returns before any retain for a
+    borrowing callee. Now a loop parameter (or a pattern binding of one) handed to a callee
+    whose result may reach it is retained for the result, unconditionally once the loop admits
+    the parameter and under the parameter's pending flag before that
+    (`RetainBorrowedLoopArgumentForCalleeResult`, `IsTcoParameterArgument`; mirrored in
+    `CoreLowering.ash` through `argumentRootSlotOf` and a `borrowedReach` hand-off fact); the
+    retained reference travels with the arena result exactly as a let-bound owner's does. Both
+    builtin variants are admitted in both compilers. The stage-1 binaries built by that
+    compiler then crashed in `QualifiedShippedReferences`, and a standalone copy of its scan
+    narrowed the crash to a second pre-existing loop-parameter bug the admission exposed: a
+    tail self-call whose successor is a record update of the loop's own runtime-managed
+    parameter (`scanTokens(known)(rest)((state with scanAfterDot = true))`) built the arena
+    successor with raw reads of the unchanged fields, and the back edge released those fields
+    once as the dying successor's references and again through the old parameter's structural
+    walk (a program with a plain `Str` field crashed on the compiler before this slice too).
+    An unchanged heap-typed field of a record update whose target reads a loop parameter is
+    now retained like a field read stored into an aggregate, through the same marker the loop's
+    finalize pass promotes (`RetainUnchangedRecordUpdateField` over the shared
+    `DuplicateTcoParameterReadForAggregate`; mirrored by `retainUnchangedRecordField`, which
+    threads the target's `loopParameterReadSlot` through `lowerRecordUpdateFields`). The
+    self-hosted projects suite then reported a dependency namespace equal to the dependency
+    name: a third latent loop-parameter bug, this one visible on the compiler before the slice
+    as well. `validateDependencyModules` hands its `namespace` parameter (a `Str` whose
+    admission is still pending while the body is lowered) to `validateDependencyModulePath`,
+    whose `Error(ProjectDependencyModuleOutsideNamespace(...))` keeps it; the retain guard was
+    the callee's accepts bit rather than the forced flag, since
+    `CalleeResultMayReachOrKeepPatternBinding` only recognized fresh temps and pattern
+    bindings, so the loop's exit released its own copy under the error. A pending loop
+    parameter the callee's result may reach now retains under the forced flag like a pattern
+    binding, and the retained reference is handed over with an adoption flag that reads true
+    when the callee accepted it or when finalization zeroed the forced flag
+    (`EmitPendingRetainAdoptionFlag`), so the caller releases it where the result was copied
+    out; the borrowed-parameter retain admits strings too. A coroutine loop
+    (`LowerHelperCoroutineTaskEmitLoopBody`) never resolved the flags registered under its
+    slots, which left such a forced flag at one for a parameter the coroutine boundary keeps in
+    the arena; it now resolves them itself. Mirrored by `pendingRetainAdoption` and the
+    `mayReach` hand-off fact covering the parameter itself. The optional-string experiment is
+    flat (20 MiB at every round count); plateau test
+    `Linux_backend_llvm_optional_string_variant_list_producer_pipeline_memory_should_plateau`,
+    `tests/rc_optional_string_variant_list_producer_pipeline.ash`,
+    `tests/rc_loop_parameter_parts_kept_by_callee_result.ash`,
+    `tests/rc_loop_parameter_record_update_successor.ash`,
+    `tests/rc_loop_parameter_kept_by_callee_error_result.ash`, parity fixtures
+    `tco_parameter_kept_by_borrowing_callee_result`,
+    `record_update_successor_of_loop_parameter`, and
+    `tco_string_parameter_kept_by_callee_error_result`.
   - [ ] **OPT-80g** Two self-hosted mirror gaps left by OPT-80c, seen as exact-IR divergences
     the parity runner now lists among the fixtures it does not compare: for a producer over
     variants carrying a nested variant, a string list, or an optional string
@@ -3432,8 +3482,27 @@ same public behavior.
     is a list over owned elements (`parameter_reaches_result_record_update`, compared only by
     the stage-0 oracle tests) gets an environment normalizer and a `__rc_cdrop` dropper from
     stage 0 (`CanRuntimeNormalizeClosureCapture` admits the record), where the self-hosted
-    `captureCopyOf` declines a list over heap elements. Mirror both and return the fixtures to
-    the comparison.
+    `captureCopyOf` declines a list over heap elements. A third gap from OPT-80f: for a loop
+    whose accumulator carries tuples of a variant-carrying record
+    (`tco_parameter_kept_by_borrowing_callee_result`), stage 0 admits the accumulator to
+    runtime management and clones each tuple at the back edge through synthesized copiers
+    (`IndependentClone`), and normalizes the environment of the closure the loop applies,
+    where the self-hosted lowering keeps the accumulator in the arena. Two more from the
+    record-update fixture of OPT-80f (`record_update_successor_of_loop_parameter`): a call
+    argument that reads a loop parameter the provisional placement already admits
+    (`extend(token)(state)` with `state: State` annotated) is a runtime-managed temp in stage 0
+    (`LowerVar` marks reads of `IsRuntimeManagedTcoParamSlot` slots), so
+    `PrepareRuntimeManagedCallArgument` retains it outright for a callee whose result reaches
+    it, where the self-hosted `argumentHandOffOf` keeps every loop-parameter argument pending
+    under its slot and retains it under the callee's accepts bit; and a two-parameter loop
+    whose first parameter is a `Str` it only compares (`containsText (value: Str) (values:
+    List(Str))`) has stage 0 copy the captured string into a runtime-managed value at entry
+    and release it at exit, where the self-hosted admission (`runtimeManagedOrdinals` from the
+    affine analysis) keeps it in the arena; the fixture was written without that helper, and
+    `tco_string_parameter_kept_by_callee_error_result` shows the same admission gap for the
+    unannotated string parameters of `validateAll`, whose forced argument retain survives
+    finalization in stage 0 and is zeroed by this lowering. Mirror all five and return the
+    fixtures to the comparison.
   - [ ] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
     generic `reverse`) still leaks a whole list per round (827 MiB at 160 rounds of 50000):
     the accumulator's cells and the generic callee's deep copy need the same admission.

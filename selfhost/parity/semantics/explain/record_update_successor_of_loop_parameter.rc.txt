@@ -1,37 +1,7 @@
 RC report
 =========
 
-Function: __deepcopy_3
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          1
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               1
-
-Function: __deepcopy_4
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          2
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               1
-
-Function: __deepcopy_2
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          6
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               1
-
-Function: __deepcopy_list_1
+Function: extend [lambda_1]
   Operations
     dup:                  0
     drop:                 0
@@ -41,47 +11,27 @@ Function: __deepcopy_list_1
     reuse tokens:         0
     copies:               0
 
-Function: __rcdrop_6
+Function: __rc_cdrop_2
   Operations
     dup:                  0
-    drop:                 2
-    uniqueness checks:    1
+    drop:                 1
+    uniqueness checks:    0
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
     copies:               0
 
-Function: __rcdrop_5
+Function: extend [lambda_1$env_normalize]
   Operations
     dup:                  0
-    drop:                 6
-    uniqueness checks:    3
+    drop:                 0
+    uniqueness checks:    0
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               1
 
-Function: bump
-  Operations
-    dup:                  0
-    drop:                 2
-    uniqueness checks:    1
-    allocations:          9
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               6
-
-Function: count [lambda_8]
-  Operations
-    dup:                  1
-    drop:                 6
-    uniqueness checks:    3
-    allocations:          1
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               10
-
-Function: count
+Function: extend
   Operations
     dup:                  0
     drop:                 0
@@ -91,23 +41,63 @@ Function: count
     reuse tokens:         0
     copies:               0
 
-Function: count [lambda_8__scalarenv0]
+Function: scan [lambda_4]
   Operations
-    dup:                  1
-    drop:                 6
-    uniqueness checks:    3
+    dup:                  10
+    drop:                 58
+    uniqueness checks:    18
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               13
+
+Function: scan
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               10
+    copies:               0
+
+Function: joinAll [lambda_6]
+  Operations
+    dup:                  1
+    drop:                 11
+    uniqueness checks:    3
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               3
+
+Function: joinAll
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: joinAll [lambda_6__scalarenv0]
+  Operations
+    dup:                  1
+    drop:                 11
+    uniqueness checks:    3
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               3
 
 Function: _start_main
   Operations
-    dup:                  2
+    dup:                  1
     drop:                 4
-    uniqueness checks:    2
-    allocations:          12
+    uniqueness checks:    1
+    allocations:          20
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               2
 

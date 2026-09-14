@@ -550,7 +550,7 @@ and heapRuntimeOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvir
         | SemNamed(symbolId, name, _arguments) ->
             let grouped = heapNamedTypeConstructors(named)(environment)
             in
-                if heapBuiltinTypeName(name) || !(length(grouped) >= 2) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
+                if heapBuiltinResourceTypeName(name) || !(length(grouped) >= 2) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
                 then false
                 else
                     heapAllGroupedFields(given (fieldType) -> heapRuntimeOwnedFieldLayout(fieldType)(environment)((symbolId, name) :: path))(grouped) && heapAnyGroupedField(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(grouped)

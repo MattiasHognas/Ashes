@@ -12526,9 +12526,11 @@ public sealed partial class Lowering
             && IsRuntimeManagedResultTemp(originalArgumentTemp)
             && !IsBorrowedOwnershipTemp(originalArgumentTemp);
         bool calleeResultMayReachThisParameter = CalleeResultMayReachOrKeepPatternBinding(
-            rootExpr, argumentIndex, originalArgumentTemp, argument);
+            rootExpr, argumentIndex, originalArgumentTemp, argument, argumentType);
         bool transfersFreshRuntimeArgument = TransfersFreshRuntimeArgument(
             rootExpr, argumentIndex, originalArgumentTemp, borrowsOnly, freshRuntimeArgument);
+        argumentTemp = RetainBorrowedLoopArgumentForCalleeResult(
+            rootExpr, argumentIndex, argument, argumentTemp, argumentType, borrowsOnly, freshRuntimeArgument, consumedRuntimeArguments);
         int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
             argument,
             argumentType,
@@ -12543,6 +12545,7 @@ public sealed partial class Lowering
             // variables, where a second, still-alive reference is the actual concern.
             calleeResultMayReachThisParameter && !freshRuntimeArgument,
             out bool retainedForCalleeResult,
+            out int retainedAdoptionFlagTemp,
             ref argumentTemp);
         if (!borrowsOnly)
         {
@@ -12550,7 +12553,7 @@ public sealed partial class Lowering
             RegisterConsumedRuntimeArgument(
                 rootExpr, argumentIndex, originalArgumentTemp, argumentTemp, argumentType,
                 freshRuntimeArgument, transfersFreshRuntimeArgument, calleeResultMayReachThisParameter,
-                retainedForCalleeResult, runtimeManagedArgumentFlagTemp, consumedRuntimeArguments);
+                retainedForCalleeResult, retainedAdoptionFlagTemp, runtimeManagedArgumentFlagTemp, consumedRuntimeArguments);
         }
 
         (AccessorArgumentRcStatus rcStatus, int pendingSlot) =
@@ -12586,6 +12589,7 @@ public sealed partial class Lowering
         bool transfersFreshRuntimeArgument,
         bool calleeResultMayReachThisParameter,
         bool retainedForCalleeResult,
+        int retainedAdoptionFlagTemp,
         int runtimeManagedArgumentFlagTemp,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments)
     {
@@ -12627,7 +12631,7 @@ public sealed partial class Lowering
                     argumentTemp,
                     Prune(argumentType),
                     PreserveEscapedChildren: true,
-                    AdoptionFlagTemp: runtimeManagedArgumentFlagTemp));
+                    AdoptionFlagTemp: retainedForCalleeResult ? retainedAdoptionFlagTemp : runtimeManagedArgumentFlagTemp));
         }
     }
 
@@ -12735,9 +12739,11 @@ public sealed partial class Lowering
         bool transfersFreshRuntimeArgument,
         bool calleeResultMayReachThisParameter,
         out bool retainedForCalleeResult,
+        out int retainedAdoptionFlagTemp,
         ref int argumentTemp)
     {
         retainedForCalleeResult = false;
+        retainedAdoptionFlagTemp = -1;
         if (borrowsOnly
             || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out int pendingParameterSlot))
         {
@@ -12745,16 +12751,26 @@ public sealed partial class Lowering
         }
 
         int flagTemp = EmitClosureAcceptsRuntimeManagedArgumentFlag(closureTemp);
+        retainedAdoptionFlagTemp = flagTemp;
+        bool pendingRetainedForCalleeResult = false;
         if (pendingParameterSlot >= 0)
         {
             // An argument the callee's result may keep must be retained unconditionally once
             // finalization admits its root parameter to runtime RC — the callee's own normalized
             // bit says nothing for a callee an ignoring arm disqualified from normalization — so
             // the retain guard defaults to 1 and finalization zeroes it only for an unadmitted
-            // root, mirroring the constructor-field retain's polarity.
+            // root, mirroring the constructor-field retain's polarity. The reference is handed
+            // over like a retained owned argument: a callee that does not adopt it leaves it
+            // with its result, and the caller releases it where the result was copied out.
             if (calleeResultMayReachThisParameter)
             {
+                int acceptsFlagTemp = flagTemp;
                 flagTemp = EmitForcedRetainFlag();
+                if (IsBorrowedRetainableParameterType(Prune(argumentType)))
+                {
+                    retainedAdoptionFlagTemp = EmitPendingRetainAdoptionFlag(acceptsFlagTemp, flagTemp);
+                    pendingRetainedForCalleeResult = true;
+                }
             }
 
             _pendingRuntimeArgumentFlags[flagTemp] = pendingParameterSlot;
@@ -12782,6 +12798,7 @@ public sealed partial class Lowering
             argumentTemp = retainedForCalleeResult
                 ? EmitRuntimeManagedArgumentRetain(argumentTemp, argumentType)
                 : EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
+            retainedForCalleeResult = retainedForCalleeResult || pendingRetainedForCalleeResult;
         }
         return flagTemp;
     }
@@ -12791,6 +12808,20 @@ public sealed partial class Lowering
         int forcedFlagTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(forcedFlagTemp, 1));
         return forcedFlagTemp;
+    }
+
+    // The adoption flag of a reference retained under a pending parameter's forced flag: the
+    // callee adopted it when its accepts bit reads true, and there is nothing to release when
+    // finalization zeroed the forced flag because the parameter stayed in the arena.
+    private int EmitPendingRetainAdoptionFlag(int acceptsFlagTemp, int forcedFlagTemp)
+    {
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int notRetainedTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(notRetainedTemp, forcedFlagTemp, zeroTemp));
+        int adoptionFlagTemp = NewTemp();
+        Emit(new IrInst.OrInt(adoptionFlagTemp, acceptsFlagTemp, notRetainedTemp));
+        return adoptionFlagTemp;
     }
 
     // Reads the closure's result-ownership bit (bit 63 of its packed environment word): 1 when the
@@ -12864,12 +12895,87 @@ public sealed partial class Lowering
         Expr rootExpr,
         int argumentIndex,
         int originalArgumentTemp,
-        Expr argument)
+        Expr argument,
+        TypeRef argumentType)
         => CalleeResultMayReachParameter(rootExpr, argumentIndex, originalArgumentTemp)
-            || TryGetRuntimeManagedPatternBindingArgument(argument, out _)
+            || (TryGetRuntimeManagedPatternBindingArgument(argument, out _)
+                    || IsTcoParameterArgument(argument) && IsBorrowedRetainableParameterType(Prune(argumentType)))
                 && GetOwnershipSummaryForCallRoot(rootExpr) is { } patternSummary
                 && argumentIndex < patternSummary.Parameters.Count
                 && patternSummary.ResultReaches(patternSummary.Parameters[argumentIndex]);
+
+    // A loop parameter, or a pattern binding of one, handed to a callee that only borrows it
+    // while its result keeps parts of it: the loop's exit and back edge release the parameter,
+    // and the result may live on in the loop's accumulator, so the reference the result keeps
+    // is retained here and handed over like a consumed argument the callee never adopts: the
+    // caller releases it after the call where the result was copied out and so kept nothing of
+    // it. An admission still pending guards both the retain and the release with the
+    // parameter's flag, zeroed by finalization when the loop keeps the parameter in the arena.
+    private int RetainBorrowedLoopArgumentForCalleeResult(
+        Expr rootExpr,
+        int argumentIndex,
+        Expr argument,
+        int argumentTemp,
+        TypeRef argumentType,
+        bool borrowsOnly,
+        bool freshRuntimeArgument,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments)
+    {
+        if (!borrowsOnly
+            || freshRuntimeArgument
+            || !IsBorrowedRetainableParameterType(Prune(argumentType))
+            || !(IsTcoParameterArgument(argument) || TryGetRuntimeManagedPatternBindingArgument(argument, out _))
+            || GetOwnershipSummaryForCallRoot(rootExpr) is not { } summary
+            || argumentIndex >= summary.Parameters.Count
+            || !summary.ResultReaches(summary.Parameters[argumentIndex])
+            || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out int pendingParameterSlot))
+        {
+            return argumentTemp;
+        }
+
+        int retainedTemp;
+        int adoptionFlagTemp;
+        if (pendingParameterSlot < 0)
+        {
+            retainedTemp = EmitRuntimeManagedArgumentRetain(argumentTemp, argumentType);
+            adoptionFlagTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(adoptionFlagTemp, 0));
+        }
+        else
+        {
+            int flagTemp = EmitForcedRetainFlag();
+            _pendingRuntimeArgumentFlags[flagTemp] = pendingParameterSlot;
+            retainedTemp = EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            adoptionFlagTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(adoptionFlagTemp, flagTemp, zeroTemp));
+        }
+
+        consumedRuntimeArguments.Add(
+            new ConsumedRuntimeArgument(
+                retainedTemp,
+                Prune(argumentType),
+                PreserveEscapedChildren: true,
+                AdoptionFlagTemp: adoptionFlagTemp));
+        return retainedTemp;
+    }
+
+    // A read of the loop's own parameter, the shape TryGetRuntimeManagedCallArgument resolves
+    // last: once the loop admits the parameter to runtime RC, the loop's exit and back edge
+    // release it.
+    // The parameter types whose retained reference the caller can release outright once the
+    // callee's result was copied out: a string, or a type the parameter passthrough normalizes
+    // (a record reaching itself through its own fields would inline an unbounded drop).
+    private bool IsBorrowedRetainableParameterType(TypeRef parameterType)
+        => parameterType is TypeRef.TStr || IsPassthroughNormalizableParameterType(parameterType);
+
+    private bool IsTcoParameterArgument(Expr argument)
+        => argument is Expr.Var localVariable
+            && _tcoCtx is { } tco
+            && Lookup(localVariable.Name) is Binding.Local parameter
+            && tco.ParamFacts.TryGetValue(parameter.Slot, out TcoParamStaticFacts? ownership)
+            && ownership.HasVisibleBinding;
 
     // The pattern-binding shape of TryGetRuntimeManagedCallArgument: a depth-1 pattern binding
     // classified a plain call borrow is not a tracked owned value, but the callee's result may

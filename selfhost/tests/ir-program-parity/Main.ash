@@ -280,11 +280,25 @@ let fixtures =
 // borrowed, an unannotated list parameter's active flag is allocated at the loop entry, and a
 // self call under an operator reads the callee's returns bit rather than asking for an arena
 // result. They stay out of the comparison until the oracle lowers with the trait declarations
-// the compiler stitches. The last two are producers over variants carrying a nested variant, a
+// the compiler stitches. The next two are producers over variants carrying a nested variant, a
 // string list, or an optional string: the compiler leaves their consumed list parameter outside
 // runtime management and zeroes the self call's retain flag, where this lowering admits the
 // parameter and keeps the callee's accepts bit; they rejoin the comparison once the loop
-// parameter admission follows the compiler for those element shapes.
+// parameter admission follows the compiler for those element shapes. The last is a loop whose
+// accumulator carries tuples of a variant-carrying record: the compiler admits the accumulator
+// to runtime management and clones each tuple at the back edge through synthesized copiers,
+// and normalizes the environment of the closure the loop applies, where this lowering keeps
+// the accumulator in the arena; it rejoins the comparison once the tuple element admission
+// follows the compiler. The record-update loop after it hands its record parameter to a callee
+// whose result keeps a field of it: the compiler reads the parameter as a reference-counted
+// value once its provisional placement admits it, and retains it for the callee outright, where
+// this lowering keeps every loop parameter argument pending until the loop is finalized and
+// retains it under the callee's accepts bit; it rejoins the comparison once parameter reads
+// follow the provisional placement. The string loop after it hands an unannotated `Str`
+// parameter to a callee whose error result keeps it: the compiler admits both string
+// parameters at the loop entry, so the forced retain of the argument survives finalization,
+// where this lowering keeps them in the arena and zeroes the flag; it rejoins the comparison
+// once the string parameter admission follows the compiler.
 let elaboratedFixtures =
     [
         "self_call_operand_string_result",
@@ -293,7 +307,10 @@ let elaboratedFixtures =
         "pattern_head_read_under_operator",
         "tco_record_head_consed_into_sibling_accumulator",
         "producer_conses_nested_variant_head",
-        "user_type_named_function_release"
+        "user_type_named_function_release",
+        "tco_parameter_kept_by_borrowing_callee_result",
+        "record_update_successor_of_loop_parameter",
+        "tco_string_parameter_kept_by_callee_error_result"
     ]
 
 match Ashes.IO.args with

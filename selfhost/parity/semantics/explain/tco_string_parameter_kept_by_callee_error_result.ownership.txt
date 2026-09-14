@@ -1,0 +1,70 @@
+Ownership report
+================
+
+Function: describe
+  Parameters
+    result
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: run
+  Parameters
+    dependency
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - dependency
+
+Function: validateAll
+  Parameters
+    dependency
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    namespace
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    paths
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - dependency
+      - namespace
+      - paths
+
+Function: validateName
+  Parameters
+    dependency
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    namespace
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+    moduleName
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - dependency
+      - namespace
+      - moduleName
+

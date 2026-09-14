@@ -1,0 +1,37 @@
+type State =
+    | path: Str
+    | afterDot: Bool
+    | seen: List(Str)
+
+let extend (text: Str) (state: State) =
+    match state with
+        | State { path = path, seen = seen } ->
+            let candidate = path + "." + text
+            in
+                State(
+                    path = candidate,
+                    afterDot = false,
+                    seen = if candidate == "A.Z"
+                    then seen
+                    else candidate :: seen
+                )
+
+let recursive scan (tokens: List(Str)) (state: State) =
+    match tokens with
+        | [] -> state.seen
+        | token :: rest ->
+            if token == "."
+            then scan(rest)((state with afterDot = true))
+            else
+                if state.afterDot
+                then scan(rest)(extend(token)(state))
+                else scan(rest)(State(path = token, afterDot = false, seen = state.seen))
+
+let recursive joinAll (items: List(Str)) (acc: Str) =
+    match items with
+        | [] -> acc
+        | item :: rest -> joinAll(rest)(acc + item + " ")
+
+let tokens = ["A", ".", "B", ".", "C", "q", "X", ".", "Y", "A", ".", "Z", "X", ".", "Y", ".", "Z"]
+
+Ashes.IO.print(joinAll(scan(tokens)(State(path = "", afterDot = false, seen = [])))(""))
