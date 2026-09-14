@@ -90,8 +90,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(ctx.Target.Context, function, "entry");
         LlvmApi.PositionBuilderAtEnd(ctx.Target.Builder, entryBlock);
 
-        LlvmValueHandle programArgsSlot = LlvmApi.BuildAlloca(ctx.Target.Builder, ctx.I64, symbolName + "_program_args");
-        LlvmApi.BuildStore(ctx.Target.Builder, LlvmApi.ConstInt(ctx.I64, 0, 0), programArgsSlot);
+        LlvmValueHandle programArgsSlot = GetProgramArgsGlobal(ctx.Target);
 
         LlvmCodegenState runtimeState = CreateNetworkingRuntimeState(ctx, function, programArgsSlot);
         return (function, WithLinuxThreadArena(runtimeState));

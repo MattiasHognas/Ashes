@@ -3781,8 +3781,9 @@ same public behavior.
   `CoreBuiltinLowering.ash`, and `IrCodegen.Support.ash`'s `emitCopyFfiBytes` with stage 0's four
   ranges: over 1 GiB is `Error`, zero length is `Ok` of the empty bytes whatever the pointer, a
   null pointer with a nonzero length is `Error`, otherwise one `memcpy` into fresh reference-counted
-  bytes). Open: the buffered stdout ring (writes are immediate), program arguments,
-  entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
+  bytes). Open: the buffered stdout ring (writes are immediate), program arguments (one module
+  global the entry fills and every function loads; a per-function stack cell, as stage 0 had
+  until 2026-09-14, leaves every read below the entry an empty list), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
   `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the
   [Standard Library reference](../reference/standard-library.md) and the architecture sections on
