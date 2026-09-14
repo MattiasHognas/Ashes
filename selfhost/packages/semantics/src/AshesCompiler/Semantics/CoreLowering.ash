@@ -615,6 +615,11 @@ type CoreLoweringState =
     // whose release covers it. A read of the binding counts as a read of the owner: an aggregate
     // or call that carries it past the owner's release retains it.
     | runtimeOwnerAliases: List((Int, Int))
+    // The runtime-managed owners each arena binding's aggregate borrows a child of, by the
+    // binding's slot (stage 0's `OwnershipInfo.BorrowedRuntimeOwners`), and the owners a `let`
+    // being lowered collected from its value ahead of the store, by the binding's name.
+    | borrowedOwners: List((Int, List((Int, SemanticType))))
+    | pendingBorrowedOwners: List((Str, List((Int, SemanticType))))
     // Stage 0's `_pendingRuntimeArgumentFlags`: the ownership flag temp of each call argument
     // that reads a loop parameter (or a pattern binding extracted from one) whose placement the
     // finalize pass still decides, with that parameter's slot; the flag is zeroed at finalize
@@ -887,6 +892,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         backEdgeDummyTemps = [],
         patternOwnerCopyTemps = [],
         runtimeOwners = [],
+        borrowedOwners = [],
+        pendingBorrowedOwners = [],
         reuseTransferredNames = [],
         reuseEnabled = true,
         linearReuseNames = [],
@@ -2353,17 +2360,6 @@ let emitTransferRetain (temp: Int) (semanticType: SemanticType) (state: CoreLowe
             |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
             |> success(duplicate)(semanticType)
 
-// A child an aggregate stores, or a tail self-call argument, retained when the context asked for
-// the transfer and the child is the read of a binding that still owns its reference; every other
-// child is stored as lowered.
-let retainTransferredChild (child: Expr) (transfers: Bool) (lowered: LoweredCoreValue) =
-    match (transfers, unspanArgument(child), lowered) with
-        | (true, ExprVar(name), LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }) ->
-            match liveRuntimeOwnerSlot(name)(state) with
-                | Some(_slot) -> emitTransferRetain(temp)(semanticType)(state)
-                | None -> lowered
-        | _ -> lowered
-
 // The pattern owner fact a name reads, when its binding is one.
 let patternOwnerBinding (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
@@ -2964,6 +2960,95 @@ let resultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) 
                 | None -> false
         | resolved -> canArenaResetLayout(resolved)
 
+// A live owner retained into a runtime cell shares its graph with the cell from then on, so its
+// scope-exit release may no longer assume the graph is unique.
+let recursive shareOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
+    match plans with
+        | [] -> []
+        | (candidate, semanticType, OwnedReleasePlan { constructorName = constructorName } as plan) :: rest ->
+            if candidate == slot
+            then (candidate, semanticType, OwnedReleasePlan(deepUnique = false, constructorName = constructorName)) :: rest
+            else (candidate, semanticType, plan) :: shareOwnerReleasePlan(slot)(rest)
+
+// The type an owner slot's value was adopted with, from its release plan.
+let recursive ownerValueTypeOf (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
+    match plans with
+        | [] -> None
+        | (candidate, semanticType, _plan) :: rest ->
+            if candidate == slot
+            then Some(semanticType)
+            else ownerValueTypeOf(slot)(rest)
+
+// The runtime-managed owners an arena binding's aggregate borrows a child of, recorded when the
+// binding was stored (stage 0's `OwnershipInfo.BorrowedRuntimeOwners`).
+let recursive borrowedOwnersOfSlot (slot: Int) (entries: List((Int, List((Int, SemanticType))))) =
+    match entries with
+        | [] -> []
+        | (candidate, owners) :: rest ->
+            if candidate == slot
+            then owners
+            else borrowedOwnersOfSlot(slot)(rest)
+
+// Stage 0's `RetainBorrowedRuntimeOwnersOfAlias`: a transferred read of an arena binding that
+// borrows runtime-managed owners retains each owner still live, as the literal's own transfer
+// would have; the owner's graph is shared with the aggregate from then on.
+let recursive retainBorrowedOwners (owners: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match owners with
+        | [] -> state
+        | (slot, ownerType) :: rest ->
+            match runtimeOwnerStateOf(slot)(state) with
+                | Some(true) ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = loaded, temp = ownerTemp } ->
+                            match freshTemp(loaded) with
+                                | FreshTemp { state = allocated, temp = duplicate } ->
+                                    allocated
+                                    |> emit(LoadLocal(ownerTemp)(slot))
+                                    |> emit(ownerType
+                                    |> resolveType(allocated)
+                                    |> mayBeEmptyList
+                                    |> RcDup(duplicate)(ownerTemp)(true))
+                                    |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+                                    |> (given (retained: CoreLoweringState) -> retained with ownerReleasePlans = shareOwnerReleasePlan(slot)(retained.ownerReleasePlans))
+                                    |> retainBorrowedOwners(rest)
+                | _ -> retainBorrowedOwners(rest)(state)
+
+let retainAliasBorrowedOwners (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot) }) ->
+            match runtimeOwnerStateOf(slot)(state) with
+                | Some(_owned) -> state
+                | None ->
+                    retainBorrowedOwners(borrowedOwnersOfSlot(slot)(state.borrowedOwners))(state)
+        | _ -> state
+
+// A child an aggregate stores, or a tail self-call argument, retained when the context asked for
+// the transfer and the child is the read of a binding that still owns its reference, whole or by
+// a heap-typed field (a borrow of a child the owner releases with itself); a read of an arena
+// binding that borrows owners retains those owners instead; every other child is stored as
+// lowered.
+let retainTransferredChild (child: Expr) (transfers: Bool) (lowered: LoweredCoreValue) =
+    match (transfers, unspanArgument(child), lowered) with
+        | (true, ExprVar(name), LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) -> emitTransferRetain(temp)(semanticType)(state)
+                | None -> lowered with state = retainAliasBorrowedOwners(name)(state)
+        | (true, ExprQualifiedVar(owner, _field), LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }) ->
+            if resultSurvivesReset(semanticType)(state)
+            then lowered
+            else
+                match liveRuntimeOwnerSlot(owner)(state) with
+                    | Some(_slot) -> emitTransferRetain(temp)(semanticType)(state)
+                    | None -> lowered
+        | _ -> lowered
+
+// Stage 0's `LowerCallArgumentValue`: a plain read passed to a callee whose result may reach it
+// retains the owners its arena binding borrows.
+let retainAliasArgumentOwners (argument: Expr) (reaches: Bool) (lowered: LoweredCoreValue) =
+    match (reaches, unspanArgument(argument), lowered) with
+        | (true, ExprVar(name), LoweredCoreValue { state = state, error = None }) -> lowered with state = retainAliasBorrowedOwners(name)(state)
+        | _ -> lowered
+
 // The closing reset of a scope: the pre-restore end slot is allocated either way, as stage 0
 // does, and the arena is restored and reclaimed only when the scope's result survives it. A heap
 // result leaves the window open, since the copy-out that would preserve it is not ported yet.
@@ -3122,6 +3207,29 @@ let recordRecursiveProducerSlot expression (fresh: FreshLocal) =
 // and the body's request decided by the caller from the body the binding scopes over.
 // The stored half of `finishLetValueInSlot`: the binding's slot allocated and its value stored in
 // it, with the body left for the caller to lower over the returned state.
+// The owners a `let` collected from its value ahead of the store, taken back out by name: the
+// innermost entry of that name, since a nested `let` of the same name stores first.
+let recursive takePendingBorrowedOwners (name: Str) (entries: List((Str, List((Int, SemanticType))))) (passed: List((Str, List((Int, SemanticType))))) =
+    match entries with
+        | [] -> ([], reverse(passed))
+        | (candidate, owners) :: rest ->
+            if candidate == name
+            then (owners, appendPassed(passed)(rest))
+            else takePendingBorrowedOwners(name)(rest)((candidate, owners) :: passed)
+and appendPassed (passed: List((Str, List((Int, SemanticType))))) (rest: List((Str, List((Int, SemanticType))))) =
+    match passed with
+        | [] -> rest
+        | entry :: more -> appendPassed(more)(entry :: rest)
+
+// Stage 0's `TrackLetOwnership` for an arena binding: the owners its aggregate value borrows are
+// recorded by its slot, so a transfer of the binding retains them.
+let recordBorrowedOwners (name: Str) (valueTemp: Int) (slot: Int) (state: CoreLoweringState) =
+    match takePendingBorrowedOwners(name)(state.pendingBorrowedOwners)([]) with
+        | (owners, remaining) ->
+            match (isRuntimeTemp(valueTemp)(state), owners) with
+                | (false, _owner :: _rest) -> state with pendingBorrowedOwners = remaining, borrowedOwners = (slot, owners) :: state.borrowedOwners
+                | _ -> state with pendingBorrowedOwners = remaining
+
 let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindings lowered =
     match lowered with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> (failure(failedState)(error), -1)
@@ -3132,6 +3240,7 @@ let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindin
                 | FreshLocal { local = local } as fresh ->
                     (fresh
                     |> storeLetValue(name)(tailForwarded)(bodyRequest)(outerBindings)(temp)(semanticType)
+                    |> recordBorrowedOwners(name)(temp)(local)
                     |> success(temp)(semanticType), local)
 
 let finishLetValueInSlot name value body requestBody bodyRequest lower outerBindings lowered =
@@ -3501,6 +3610,23 @@ let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (stat
         | Some(name) -> canRuntimeManageRecursiveCopyAdt(resultType)(state) && isFreshConstructorTree(expression)(name)(state)
         | None -> false
 
+// Stage 0's `IsMaterializableStringChildRead`: a borrowed string a runtime-managed parent copies
+// into an owned child of its own: a field read out of a local record binding, or a read of a
+// name the arm around the literal binds later or of a local binding that owns no
+// reference-counted string of its own; a literal keeps the parent in the arena.
+let isMaterializableStringChildRead (expression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprQualifiedVar(owner, _field) ->
+            match lookupBinding(owner)(state.bindings) with
+                | Some(CoreBinding { location = CoreLocal(_slot) }) -> true
+                | _ -> false
+        | ExprVar(name) ->
+            match lookupBinding(name)(state.bindings) with
+                | None -> true
+                | Some(CoreBinding { location = CoreLocal(_slot), patternOwner = fact }) -> patternOwnerFlag(fact) == false && isNormalizedAlwaysReturnedStringParameterRead(expression)(state) == false && liveRuntimeOwnerSlot(name)(state) == None
+                | _ -> false
+        | _ -> false
+
 // Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
 // recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer
 // or pattern-owner read, a list the runtime may own built fresh or read from a binding or call,
@@ -3511,7 +3637,7 @@ let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: Sem
     then true
     else
         match (resolveType(state)(fieldType), unspanArgument(expression)) with
-            | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state) || isPatternOwnerRead(expression)(state)
+            | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state) || isPatternOwnerRead(expression)(state) || isMaterializableStringChildRead(expression)(state)
             | (SemList(element), _expression) -> tcoListElementFactsSupported(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression))
             | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
             | (SemTuple(_elementTypes), _expression) -> isPatternOwnerRead(expression)(state)
@@ -3619,6 +3745,16 @@ let escapeFunnelArm (expression: Expr) (state: CoreLoweringState) = isSelfFunnel
 let producesFreshRuntimeManageableAdt (body: Expr) (state: CoreLoweringState) =
     anyArmConsistentlyFresh(freshEscapeTerminals(body))(given (terminal: Expr) -> isFreshRuntimeManageableAdtExpression(terminal)(state))(given (terminal: Expr) -> constructorGroupKey(terminal)(state))(given (terminal: Expr) -> escapeFunnelArm(terminal)(state))
 
+let recordLiteralGroupKey (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprRecord(name, _fields, _isMultiline) -> Some(name)
+        | _ -> None
+
+// Stage 0's `ProducesFreshRuntimeManageableRecord`: some terminal arm builds a runtime-manageable
+// record literal and every sibling arm of its type, or without a record, is fresh too.
+let producesFreshRuntimeManageableRecord (body: Expr) (state: CoreLoweringState) =
+    anyArmConsistentlyFresh(freshEscapeTerminals(body))(given (terminal: Expr) -> isFreshRuntimeManageableRecordTree(terminal)(state))(recordLiteralGroupKey)(given (terminal: Expr) -> escapeFunnelArm(terminal)(state))
+
 // Stage 0's `ProducesFreshRuntimeManageableList`: every terminal arm builds its list fresh.
 let producesFreshRuntimeManageableList (body: Expr) =
     body
@@ -3702,7 +3838,7 @@ let escapingResultRequest (body: Expr) (request: ConsumerRequest) (state: CoreLo
         |> (given (fresh: ConsumerRequest) -> fresh with runtimeString = isRuntimeRcStringProducer(body)(state) || isReconcilableFreshStringJoin(body)(state))
         |> (given (fresh: ConsumerRequest) -> fresh with runtimeAdt = producesFreshRuntimeManageableAdt(body)(state))
         |> (given (fresh: ConsumerRequest) -> fresh with runtimeList = producesFreshRuntimeManageableList(body))
-        |> (given (fresh: ConsumerRequest) -> fresh with runtimeRecord = isFreshRuntimeManageableRecordTree(body)(state))
+        |> (given (fresh: ConsumerRequest) -> fresh with runtimeRecord = producesFreshRuntimeManageableRecord(body)(state))
         |> (given (fresh: ConsumerRequest) -> fresh with runtimeTuple = producesFreshTuple(body)(state) || fresh.runtimeAdt || fresh.runtimeList || fresh.runtimeRecord)
     in
         if requestsRuntimeRepresentation(produced)
@@ -4095,7 +4231,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], routedSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], borrowedOwners = [], pendingBorrowedOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], routedSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -4461,7 +4597,7 @@ and emitListDeepCopyCell (currentSlot: Int) (firstSlot: Int) (lastSlot: Int) (ze
                                     |> emit(JumpIfFalse(nonEmptyTemp)(endLabel))
                                     |> emit(LoadMemOffset(headTemp)(currentTemp)(0))
                                     |> emit(LoadMemOffset(tailTemp)(currentTemp)(8))
-                                    |> emitArgumentDeepCopy(headTemp)(elementPlan) with
+                                    |> emitChildDeepCopy(headTemp)(elementPlan) with
                                         | (copied, copiedHead) ->
                                             match freshTemp(copied) with
                                                 | FreshTemp { state = cellState, temp = cellTemp } ->
@@ -4504,7 +4640,7 @@ and emitTupleElementCopies (sourceTemp: Int) (resultTemp: Int) (index: Int) (ele
                 | FreshTemp { state = allocated, temp = childTemp } ->
                     match allocated
                     |> emit(LoadMemOffset(childTemp)(sourceTemp)(8 * index))
-                    |> emitArgumentDeepCopy(childTemp)(element) with
+                    |> emitChildDeepCopy(childTemp)(element) with
                         | (copied, copiedChild) ->
                             copied
                             |> emit(StoreMemOffset(resultTemp)(8 * index)(copiedChild))
@@ -4519,6 +4655,14 @@ and emitConstructorDeepCopy (sourceTemp: Int) (constructorPlan: (Int, Int, Bool,
             |> emitConstructorChildCopies(sourceTemp)(resultTemp)(tagless)(children)
             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
             |> (given (copied) -> (copied, resultTemp))
+// Stage 0's `EmitRuntimeManagedTcoDeepCopy` reserves its result temp before a nested list's
+// walk takes over, so a list child costs one unused temp ahead of its copy.
+and emitChildDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match plan with
+        | ListDeepArgumentCopy(_elementPlan) ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved, temp = _unused } -> emitArgumentDeepCopy(sourceTemp)(plan)(reserved)
+        | _ -> emitArgumentDeepCopy(sourceTemp)(plan)(state)
 and emitConstructorChildCopies (sourceTemp: Int) (resultTemp: Int) (tagless: Bool) (children: List((Int, ArgumentCopyPlan))) (state: CoreLoweringState) =
     match children with
         | [] -> state
@@ -4527,7 +4671,7 @@ and emitConstructorChildCopies (sourceTemp: Int) (resultTemp: Int) (tagless: Boo
                 | FreshTemp { state = allocated, temp = childTemp } ->
                     match allocated
                     |> emit(GetAdtField(childTemp)(sourceTemp)(index)(tagless))
-                    |> emitArgumentDeepCopy(childTemp)(plan) with
+                    |> emitChildDeepCopy(childTemp)(plan) with
                         | (copied, copiedChild) ->
                             copied
                             |> emit(SetAdtField(resultTemp)(index)(copiedChild)(tagless))
@@ -9721,6 +9865,7 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     |> Some)(transfers || calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
                     |> lower(argument)
                     |> retainTransferredChild(argument)(transfers)
+                    |> retainAliasArgumentOwners(argument)(transfers == false && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
                     |> lowerCoreCallArgument(context)(arity)(argument)(consumed)(functionTemp)(expectedType)(callResultType)
 
 let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: Bool) lower (stage: CoreCallStage) =
@@ -12000,9 +12145,75 @@ let immediateSingleArmDestructuringMatch (name: Str) (body: Expr) =
 // dead at the end of the frame is built there rather than in the arena.
 let requestStackAllocatedConstructor (state: CoreLoweringState) = state with stackAllocateConstructor = true
 
+// Stage 0's `CollectBorrowedRuntimeOwners`: the runtime-managed owners an aggregate literal
+// borrows a child of, in the literal's own order: a read of an owner, whole or by field, or a
+// read of a binding that borrows one, through tuple, record, list, and constructor children.
+let recursive borrowedOwnersOfExpression (expression: Expr) (state: CoreLoweringState) (acc: List((Int, SemanticType))) =
+    match unspanArgument(expression) with
+        | ExprTuple(elements) -> borrowedOwnersOfExpressions(elements)(state)(acc)
+        | ExprRecord(_name, fields, _isMultiline) -> borrowedOwnersOfFields(fields)(state)(acc)
+        | ExprList(elements, _isMultiline) -> borrowedOwnersOfExpressions(elements)(state)(acc)
+        | ExprCons(head, tail) ->
+            acc
+            |> borrowedOwnersOfExpression(head)(state)
+            |> borrowedOwnersOfExpression(tail)(state)
+        | ExprVar(name) -> borrowedOwnersOfRead(name)(state)(acc)
+        | ExprQualifiedVar(owner, _field) -> borrowedOwnersOfRead(owner)(state)(acc)
+        | other ->
+            match constructorApplicationOf(other)([])(state) with
+                | Some((_layout, arguments)) -> borrowedOwnersOfExpressions(arguments)(state)(acc)
+                | None -> acc
+and borrowedOwnersOfExpressions (expressions: List(Expr)) (state: CoreLoweringState) (acc: List((Int, SemanticType))) =
+    match expressions with
+        | [] -> acc
+        | expression :: rest ->
+            acc
+            |> borrowedOwnersOfExpression(expression)(state)
+            |> borrowedOwnersOfExpressions(rest)(state)
+and borrowedOwnersOfFields (fields: List((Str, Expr))) (state: CoreLoweringState) (acc: List((Int, SemanticType))) =
+    match fields with
+        | [] -> acc
+        | (_field, expression) :: rest ->
+            acc
+            |> borrowedOwnersOfExpression(expression)(state)
+            |> borrowedOwnersOfFields(rest)(state)
+and borrowedOwnersOfRead (name: Str) (state: CoreLoweringState) (acc: List((Int, SemanticType))) =
+    if state
+    |> patternOwnerBinding(name)
+    |> patternOwnerFlag
+    then acc
+    else
+        match liveRuntimeOwnerSlot(name)(state) with
+            | Some(slot) ->
+                match ownerValueTypeOf(slot)(state.ownerReleasePlans) with
+                    | Some(ownerType) -> (slot, ownerType) :: acc
+                    | None -> acc
+            | None ->
+                match lookupBinding(name)(state.bindings) with
+                    | Some(CoreBinding { location = CoreLocal(slot) }) ->
+                        prependReversed(borrowedOwnersOfSlot(slot)(state.borrowedOwners))(acc)
+                    | _ -> acc
+and prependReversed (owners: List((Int, SemanticType))) (acc: List((Int, SemanticType))) =
+    match owners with
+        | [] -> acc
+        | owner :: rest -> prependReversed(rest)(owner :: acc)
+
+// The owners a `let` value borrows, collected before the value is lowered (the names it reads
+// resolve the same either way) and handed to the store by the binding's name; a bare read is a
+// `let` alias of its owner, not an aggregate borrowing one.
+let collectPendingBorrowedOwners (name: Str) (value: Expr) (state: CoreLoweringState) =
+    match unspanArgument(value) with
+        | ExprVar(_alias) -> state
+        | _ ->
+            match []
+            |> borrowedOwnersOfExpression(value)(state)
+            |> reverse with
+                | [] -> state
+                | owners -> state with pendingBorrowedOwners = (name, owners) :: state.pendingBorrowedOwners
+
 let lowerLet name value body lower state =
-    match state with
-        | CoreLoweringState { bindings = outerBindings } ->
+    match collectPendingBorrowedOwners(name)(value)(state) with
+        | CoreLoweringState { bindings = outerBindings } as state ->
             // Stage 0 also withholds the placement inside a coroutine body, whose frame is not the
             // native one; this lowering has no coroutine bodies to withhold it from yet.
             if constructorExpression(value)(state) && immediateSingleArmDestructuringMatch(name)(body)
@@ -12991,7 +13202,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
-        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], routedSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
+        |> (given (current: CoreLoweringState) -> current with runtimeTemps = Ashes.Collection.Map.empty, recursiveProducerResultSlots = [], backEdgeDummyTemps = [], patternOwnerCopyTemps = [], runtimeOwners = [], borrowedOwners = [], pendingBorrowedOwners = [], runtimeOwnerAliases = [], linearReuseNames = [], linearSpecializationAccumulators = [], routedSpecializationAccumulators = [], directReuseCandidates = [], patternOwnerSites = [], patternOwnerResultTemps = [], tcoParameterRetainSites = [], pendingRuntimeArgumentFlags = [], backEdgeArgumentSlot = None, affineAppendContext = None, affineAppendReservation = None)
         |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [], pendingCallCopyOuts = [], selfCallResultUnifications = [], retiredLocals = [])
         |> (given (current: CoreLoweringState) -> current with unresolvedCallResults = [], genericDeepCopiedListTemps = [])
         |> armSpecializationLinearParameter(parameter)(origin)
@@ -14267,6 +14478,22 @@ let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: Semanti
             else lowered
         | _ -> lowered
 
+// Stage 0's string branch of `LowerRuntimeManagedConstructorArgument`: a borrowed string a
+// runtime cell stores is copied into an owned string the cell releases with itself.
+let materializeStringChildArgument (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if runtimeManaged && resolveType(state)(fieldType) == SemString && isRuntimeTemp(temp)(state) == false && isMaterializableStringChildRead(argument)(state)
+            then
+                match freshTemp(state) with
+                    | FreshTemp { state = copyState, temp = copyTemp } ->
+                        copyState
+                        |> emit(CopyOutArena(copyTemp)(temp)(-1)(true)(RcNormalization)(None))
+                        |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                        |> success(copyTemp)(semanticType)
+            else lowered
+        | _ -> lowered
+
 // Stage 0's `RetainEscapingConstructorArgument`: an arena cell built under the transfer retains
 // each argument read of a live owner as it is lowered; a runtime cell retains its owned children
 // after all of its arguments (`RetainRuntimeManagedOwnedChildArguments`).
@@ -14375,6 +14602,7 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
             match state
             |> withConsumerRequest(constructorArgumentRequest(request)(runtimeManaged)(argument)(fieldType)(state))
             |> lower(argument)
+            |> materializeStringChildArgument(runtimeManaged)(argument)(fieldType)
             |> normalizeConstructorChildArgument(runtimeManaged)(fieldType)
             |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
@@ -14390,16 +14618,6 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
                         semanticType :: reversedTypes
                     )
         | _ -> finishCoreValues(state)(reversedTemps)(reversedTypes)
-
-// A live owner retained into a runtime cell shares its graph with the cell from then on, so its
-// scope-exit release may no longer assume the graph is unique.
-let recursive shareOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
-    match plans with
-        | [] -> []
-        | (candidate, semanticType, OwnedReleasePlan { constructorName = constructorName } as plan) :: rest ->
-            if candidate == slot
-            then (candidate, semanticType, OwnedReleasePlan(deepUnique = false, constructorName = constructorName)) :: rest
-            else (candidate, semanticType, plan) :: shareOwnerReleasePlan(slot)(rest)
 
 let retainOwnedChildArgument (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match unspanArgument(argument) with

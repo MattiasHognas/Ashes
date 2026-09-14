@@ -209,10 +209,24 @@ public sealed partial class Lowering
         int argumentTemp,
         TypeRef argumentType)
     {
-        if (argument is not Expr.Var variable
-            || LookupOwnedValue(variable.Name) is not
+        // The owner is read whole, or a heap-typed field is read out of it: the field is a borrow
+        // of a child the owner releases with itself, so an aggregate storing it takes a reference
+        // of its own just as one storing the owner does.
+        string? ownerName = argument switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.QualifiedVar qualified
+                when !CanArenaReset(Prune(argumentType))
+                    && !TryGetTraitMethod(qualified, out _, out _)
+                    && !_capabilitySymbols.ContainsKey(qualified.Module)
+                => qualified.Module,
+            _ => null,
+        };
+        if (ownerName is null
+            || LookupOwnedValue(ownerName) is not
             { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
         {
+            RetainBorrowedRuntimeOwnersOfAlias(argument);
             return argumentTemp;
         }
 
@@ -225,6 +239,128 @@ public sealed partial class Lowering
         Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp, RuntimeManaged: true));
         MarkRuntimeManagedTemp(duplicatedTemp);
         return duplicatedTemp;
+    }
+
+    // The runtime-managed owners an aggregate literal borrows a child of: a read of such an
+    // owner, whole or by field, or a read of a binding that borrows one, at any depth of the
+    // literal's tuple, record, constructor, and list children.
+    private List<OwnershipInfo>? CollectBorrowedRuntimeOwners(Expr value)
+    {
+        List<OwnershipInfo>? owners = null;
+        CollectBorrowedRuntimeOwnersInto(value, ref owners);
+        return owners;
+    }
+
+    private void CollectBorrowedRuntimeOwnersInto(Expr expression, ref List<OwnershipInfo>? owners)
+    {
+        switch (expression)
+        {
+            case Expr.TupleLit tuple:
+                foreach (Expr element in tuple.Elements)
+                {
+                    CollectBorrowedRuntimeOwnersInto(element, ref owners);
+                }
+
+                break;
+            case Expr.RecordLit record:
+                foreach ((string _, Expr fieldValue) in record.Fields)
+                {
+                    CollectBorrowedRuntimeOwnersInto(fieldValue, ref owners);
+                }
+
+                break;
+            case Expr.ListLit list:
+                foreach (Expr element in list.Elements)
+                {
+                    CollectBorrowedRuntimeOwnersInto(element, ref owners);
+                }
+
+                break;
+            case Expr.Cons cons:
+                CollectBorrowedRuntimeOwnersInto(cons.Head, ref owners);
+                CollectBorrowedRuntimeOwnersInto(cons.Tail, ref owners);
+                break;
+            case Expr.Var or Expr.QualifiedVar:
+                CollectBorrowedRuntimeOwnersOfRead(expression, ref owners);
+                break;
+            default:
+                if (TryDescribeConstructorExpression(expression, out _, out List<Expr>? arguments, out _)
+                    && arguments is not null)
+                {
+                    foreach (Expr argument in arguments)
+                    {
+                        CollectBorrowedRuntimeOwnersInto(argument, ref owners);
+                    }
+                }
+
+                break;
+        }
+    }
+
+    // A read of a live owner, whole or by field: a runtime-managed owner is borrowed itself, and
+    // an arena binding lends the owners it borrows.
+    private void CollectBorrowedRuntimeOwnersOfRead(Expr expression, ref List<OwnershipInfo>? owners)
+    {
+        string? ownerName = expression switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.QualifiedVar qualified
+                when !TryGetTraitMethod(qualified, out _, out _)
+                    && !_capabilitySymbols.ContainsKey(qualified.Module)
+                => qualified.Module,
+            _ => null,
+        };
+        if (ownerName is null
+            || Lookup(ownerName) is not (Binding.Local or Binding.Scheme)
+            || LookupOwnedValue(ownerName) is not { IsDropped: false } owner)
+        {
+            return;
+        }
+
+        if (owner is { RuntimeManaged: true, PerceusPatternOwner: false })
+        {
+            (owners ??= []).Add(owner);
+        }
+        else if (owner.BorrowedRuntimeOwners is { Count: > 0 } borrowed)
+        {
+            (owners ??= []).AddRange(borrowed);
+        }
+    }
+
+    // A transferred read of an arena binding that borrows runtime-managed owners retains each
+    // owner still live in this frame: the aggregate carries their children out of the scopes
+    // that release them, as the literal's own transfer would have retained them.
+    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument)
+    {
+        if (argument is not Expr.Var variable
+            || LookupOwnedValue(variable.Name) is not
+            { RuntimeManaged: false, IsDropped: false, BorrowedRuntimeOwners: { Count: > 0 } borrowed })
+        {
+            return;
+        }
+
+        foreach (OwnershipInfo owner in borrowed)
+        {
+            if (owner.IsDropped || !owner.RuntimeManaged || owner.FrameDepth != _lambdaDepth)
+            {
+                continue;
+            }
+
+            int ownerTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(ownerTemp, owner.Slot));
+            if (owner.Type is not null && MayUseEmptyListRepresentation(Prune(owner.Type)))
+            {
+                EmitRuntimeManagedNullableDup(ownerTemp);
+            }
+            else
+            {
+                int duplicatedTemp = NewTemp();
+                Emit(new IrInst.RcDup(duplicatedTemp, ownerTemp, RuntimeManaged: true));
+                MarkRuntimeManagedTemp(duplicatedTemp);
+            }
+
+            owner.RuntimeDeepUnique = false;
+        }
     }
 
     /// <summary>
@@ -2535,6 +2671,24 @@ public sealed partial class Lowering
         => expression is Expr.Var variable
             && LookupOwnedValue(variable.Name) is { PerceusPatternOwner: true, IsDropped: false };
 
+    // A borrowed string a runtime-managed parent materializes as its own child: a field read out
+    // of a local record binding, or a read of a local binding that owns no reference-counted
+    // string of its own (a name the arm around the literal binds later included).
+    // LowerRuntimeManagedConstructorArgument copies it into an owned string before the parent
+    // stores it; an owned string is retained or moved instead, and a literal keeps the parent in
+    // the arena, where its static shape is copied out only when it escapes.
+    private bool IsMaterializableStringChildRead(Expr expression)
+        => expression switch
+        {
+            Expr.QualifiedVar qualified => Lookup(qualified.Module) is Binding.Local
+                && !TryGetTraitMethod(qualified, out _, out _)
+                && !_capabilitySymbols.ContainsKey(qualified.Module),
+            Expr.Var variable => Lookup(variable.Name) is null or Binding.Local
+                && !IsNormalizedAlwaysReturnedStringParameterRead(expression)
+                && LookupOwnedValue(variable.Name) is null or { RuntimeManaged: false, PerceusPatternOwner: false },
+            _ => false,
+        };
+
     private bool CanRuntimeManageFreshOwnedChildExpression(Expr expression, TypeRef type)
     {
         TypeRef childType = Prune(type);
@@ -2543,7 +2697,8 @@ public sealed partial class Lowering
             TypeRef.TStr => (IsRuntimeRcStringProducer(expression)
                     && IsRuntimeRcClosureCaptureSafeStringProducer(expression))
                 || IsNormalizedAlwaysReturnedStringParameterRead(expression)
-                || IsPerceusPatternOwnerRead(expression),
+                || IsPerceusPatternOwnerRead(expression)
+                || IsMaterializableStringChildRead(expression),
             TypeRef.TBytes => CanMaterializeOwnedBytes(expression),
             TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),

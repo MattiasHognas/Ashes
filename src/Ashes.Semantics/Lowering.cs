@@ -3641,7 +3641,7 @@ public sealed partial class Lowering
             && IsRuntimeRcClosureCaptureSafeBytesProducer(body);
         bool runtimeManagedBigInt = placementAllowsRuntimeRc && IsRuntimeRcBigIntProducer(body);
         bool runtimeManagedTuple = placementAllowsRuntimeRc && ProducesFreshTuple(body);
-        bool runtimeManagedRecord = placementAllowsRuntimeRc && IsFreshRuntimeManageableRecordTree(body);
+        bool runtimeManagedRecord = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableRecord(body);
         bool runtimeManagedClosure = placementAllowsRuntimeRc && IsRuntimeRcCopyClosureProducer(body);
         runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
@@ -3787,6 +3787,22 @@ public sealed partial class Lowering
         bool result = ProducesFreshRuntimeManageableAdtCore(body);
         return result;
     }
+
+    // A body every terminal arm of which builds a runtime-manageable record literal (or funnels
+    // into a self call that does), seen through its lets, ifs, and matches like the ADT case.
+    private bool ProducesFreshRuntimeManageableRecord(Expr body)
+    {
+        var terminals = new List<Expr>();
+        CollectFreshEscapeTerminals(body, terminals);
+        return AnyArmConsistentlyFresh(
+            terminals,
+            IsFreshRuntimeManageableRecordTree,
+            RecordLiteralGroupKey,
+            IsProvenFreshCallFunnelArm);
+    }
+
+    private static string? RecordLiteralGroupKey(Expr arm)
+        => arm is Expr.RecordLit record ? record.TypeName : null;
 
     private bool ProducesFreshRuntimeManageableAdtCore(Expr body)
     {
@@ -5595,6 +5611,10 @@ public sealed partial class Lowering
                 if (runtimeManaged && IsTailForwardedBindingResult(let.Body, let.Name))
                 {
                     LookupOwnedValue(let.Name)!.ReleaseKind = ResourceReleaseKind.Moved;
+                }
+                else if (!runtimeManaged && LookupOwnedValue(let.Name) is { } arenaOwner)
+                {
+                    arenaOwner.BorrowedRuntimeOwners = CollectBorrowedRuntimeOwners(let.Value);
                 }
             }
         }
@@ -12258,6 +12278,10 @@ public sealed partial class Lowering
         (int argTemp, TypeRef argType) =
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
             ?? LowerExpr(collectedArgs[i], argumentRequest).AsPair();
+        if (argumentRequest.TransfersRuntimeManagedChildren)
+        {
+            RetainBorrowedRuntimeOwnersOfAlias(collectedArgs[i]);
+        }
 
         var calleeName = TryGetCalleeDisplayName(rootExpr);
         var callContext = calleeName is not null

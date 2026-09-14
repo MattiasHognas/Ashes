@@ -880,6 +880,14 @@ public sealed partial class Lowering
         public bool RuntimeDeepUnique { get; set; } = runtimeDeepUnique;
 
         /// <summary>
+        /// The live runtime-managed owners an arena aggregate bound here borrows a child of (a
+        /// tuple, record, constructor, or list literal storing a read of such an owner, or of a
+        /// binding that borrows one). A transfer of this binding retains each of them, exactly as
+        /// the literal itself would have been retained had it been written at the transfer site.
+        /// </summary>
+        public List<OwnershipInfo>? BorrowedRuntimeOwners { get; set; }
+
+        /// <summary>
         /// Constructor field indices this value's own recursive drop must never touch, because a
         /// pattern match already extracted those specific fields into their own independently tracked
         /// bindings — <see cref="EmitConstructorFieldBindings"/> extracts a field by loading its stored

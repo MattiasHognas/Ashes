@@ -1825,6 +1825,23 @@ public sealed partial class Lowering
 
         (int Temp, TypeRef Type) lowered = loweredValue.AsPair();
         if (runtimeManagedParent
+            && Prune(fieldType) is TypeRef.TStr
+            && !IsRuntimeManagedResultTemp(lowered.Temp)
+            && IsMaterializableStringChildRead(argument))
+        {
+            // A borrowed string is copied into an owned one the parent releases with itself.
+            int materializedTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(
+                materializedTemp,
+                lowered.Temp,
+                TcoRuntimeManagedCopySize(fieldType),
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            MarkRuntimeManagedTemp(materializedTemp);
+            return (materializedTemp, lowered.Type);
+        }
+
+        if (runtimeManagedParent
             && !IsRuntimeManagedResultTemp(lowered.Temp)
             && RequiresRuntimeManagedChildCopy(fieldType))
         {
