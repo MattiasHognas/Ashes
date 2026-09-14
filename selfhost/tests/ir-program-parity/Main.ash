@@ -270,7 +270,8 @@ let fixtures =
         "reuse_path_rebuild_declines_copy",
         "passthrough_or_fresh_result",
         "record_head_list_producer",
-        "aggregate_borrowing_owner_kept_by_callee"
+        "aggregate_borrowing_owner_kept_by_callee",
+        "producer_conses_nested_variant_head"
     ]
 
 // The fixtures whose stage-0 dump comes from a lowering that registers no trait declarations:
@@ -282,11 +283,11 @@ let fixtures =
 // borrowed, an unannotated list parameter's active flag is allocated at the loop entry, and a
 // self call under an operator reads the callee's returns bit rather than asking for an arena
 // result. They stay out of the comparison until the oracle lowers with the trait declarations
-// the compiler stitches. The next two are producers over variants carrying a nested variant, a
-// string list, or an optional string: the compiler leaves their consumed list parameter outside
-// runtime management and zeroes the self call's retain flag, where this lowering admits the
-// parameter and keeps the callee's accepts bit; they rejoin the comparison once the loop
-// parameter admission follows the compiler for those element shapes. The last is a loop whose
+// the compiler stitches. The next is a producer over a record carrying an optional string: the
+// compiler leaves its consumed list parameter outside runtime management and zeroes the self
+// call's retain flag, where this lowering admits the parameter, keeps the callee's accepts bit,
+// and reaches the call through a back edge; it rejoins the comparison once the loop parameter
+// admission follows the compiler for a producer's non-tail self call. The next is a loop whose
 // accumulator carries tuples of a variant-carrying record: the compiler admits the accumulator
 // to runtime management and clones each tuple at the back edge through synthesized copiers,
 // and normalizes the environment of the closure the loop applies, where this lowering keeps
@@ -313,7 +314,6 @@ let elaboratedFixtures =
         "tco_consumed_list_parameter_borrowed_head",
         "pattern_head_read_under_operator",
         "tco_record_head_consed_into_sibling_accumulator",
-        "producer_conses_nested_variant_head",
         "user_type_named_function_release",
         "tco_parameter_kept_by_borrowing_callee_result",
         "record_update_successor_of_loop_parameter",

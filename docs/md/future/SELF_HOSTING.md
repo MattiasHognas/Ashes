@@ -3472,17 +3472,29 @@ same public behavior.
     `tco_parameter_kept_by_borrowing_callee_result`,
     `record_update_successor_of_loop_parameter`, and
     `tco_string_parameter_kept_by_callee_error_result`.
-  - [ ] **OPT-80g** Two self-hosted mirror gaps left by OPT-80c, seen as exact-IR divergences
-    the parity runner now lists among the fixtures it does not compare: for a producer over
-    variants carrying a nested variant, a string list, or an optional string
-    (`producer_conses_nested_variant_head`, `user_type_named_function_release`), stage 0 keeps
-    the consumed list parameter outside runtime management and zeroes the self call's retain
-    flag (`ResolvePendingRuntimeArgumentFlags`), where the self-hosted finalize admits the
-    parameter and keeps the callee's accepts bit; and a closure capturing a record whose field
-    is a list over owned elements (`parameter_reaches_result_record_update`, compared only by
-    the stage-0 oracle tests) gets an environment normalizer and a `__rc_cdrop` dropper from
-    stage 0 (`CanRuntimeNormalizeClosureCapture` admits the record), where the self-hosted
-    `captureCopyOf` declines a list over heap elements. A third gap from OPT-80f: for a loop
+  - [ ] **OPT-80g** Self-hosted mirror gaps left by OPT-80c, seen as exact-IR divergences
+    the parity runner lists among the fixtures it does not compare. Three closed
+    (2026-09-15), and `producer_conses_nested_variant_head` rejoined the comparison with them:
+    the self-hosted lowering closed a tail-modulo-constructor spine at the return whenever the
+    loop's shape had reserved the spine slots, where stage 0 closes only a spine a cons actually
+    linked a cell onto (`TmcActivated`), so a producer whose record head the cell cannot own as a
+    reference carried a vestigial close; a call whose result type the recursive binding's own
+    arrow had not yet resolved asked the callee for an arena result even when the consumer
+    already named the type (the cons asks for `List(head)` before the tail is lowered), where
+    stage 0 lowers it against a complete inference and adopts the result by the callee's returns
+    bit; and a whole-value `RcDrop` of a user type named `Function` carried that name, where
+    stage 0 tags it `Function_` apart from the closure protocol the backend releases a
+    `Function` through (`RuntimeManagedAdtTypeName`). What is left of that first gap is
+    `user_type_named_function_release`: stage 0's static-fact walk follows the tail spine only,
+    so a producer's non-tail self call contributes no consumed-tail fact and the list parameter
+    stays outside runtime management with the self call's retain flag zeroed
+    (`ResolvePendingRuntimeArgumentFlags`), where the self-hosted lowering reaches that call
+    through a back edge, admits the parameter and keeps the callee's accepts bit. A closure
+    capturing a record whose field is a list over owned elements
+    (`parameter_reaches_result_record_update`, compared only by the stage-0 oracle
+    tests) gets an environment normalizer and a `__rc_cdrop` dropper from stage 0
+    (`CanRuntimeNormalizeClosureCapture` admits the record), where the self-hosted
+    `captureCopyOf` declines a list over heap elements. A further gap from OPT-80f: for a loop
     whose accumulator carries tuples of a variant-carrying record
     (`tco_parameter_kept_by_borrowing_callee_result`), stage 0 admits the accumulator to
     runtime management and clones each tuple at the back edge through synthesized copiers
@@ -3506,7 +3518,7 @@ same public behavior.
     affine analysis) keeps it in the arena; the fixture was written without that helper, and
     `tco_string_parameter_kept_by_callee_error_result` shows the same admission gap for the
     unannotated string parameters of `validateAll`, whose forced argument retain survives
-    finalization in stage 0 and is zeroed by this lowering. Mirror all five and return the
+    finalization in stage 0 and is zeroed by this lowering. Mirror the rest and return the
     fixtures to the comparison.
   - [x] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
     generic `reverse`) still leaked a whole list per round (827 MiB at 160 rounds of 50000).
