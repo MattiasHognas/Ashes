@@ -21,6 +21,26 @@ Function: mark
     reuse tokens:         0
     copies:               0
 
+Function: __rcdrop_4
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: count [lambda_3]
+  Operations
+    dup:                  1
+    drop:                 12
+    uniqueness checks:    6
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               5
+
 Function: count
   Operations
     dup:                  0
@@ -30,6 +50,16 @@ Function: count
     reused allocations:   0
     reuse tokens:         0
     copies:               0
+
+Function: count [lambda_3__scalarenv0]
+  Operations
+    dup:                  1
+    drop:                 12
+    uniqueness checks:    6
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               5
 
 Function: _start_main
   Operations

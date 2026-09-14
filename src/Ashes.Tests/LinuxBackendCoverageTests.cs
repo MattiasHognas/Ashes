@@ -4024,6 +4024,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_optional_string_variant_list_producer_pipeline_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> optional = await MeasureMemoryGrowthAsync(
+            BuildOptionalStringVariantListProducerPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("list of variants carrying an optional string rebuilt by a non-tail producer every round", optional);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9399,6 +9414,33 @@ public sealed class LinuxBackendCoverageTests
                 if remaining <= 0
                 then total
                 else loop(remaining - 1)(bumpIf(remaining - (remaining / 2) * 2)(insts))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // The element carries an optional string: the builtin variant is an owned child like a user
+    // variant, so the rebuilt list is reference-counted and the previous round's list is released.
+    private static string BuildOptionalStringVariantListProducerPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Loc(Maybe(Str), Int)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Loc(Some("x"), n) :: Loc(None, n) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Loc(loc, k) :: tail -> Loc(loc, k + 1) :: bump(tail)
+
+            let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(bump(insts))(total + 1)
 
             Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
             """;

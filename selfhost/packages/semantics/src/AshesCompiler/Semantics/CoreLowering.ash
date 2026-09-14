@@ -9291,20 +9291,31 @@ type CoreArgumentHandOff =
     // The callee normalizes the argument on entry, so a transferred argument is adopted outright
     // rather than handed over under the callee's adoption bit.
     | normalizes: Bool
+    // The argument reads a loop parameter or a pattern binding of one, whose reference the
+    // loop's exit and back edge release, and the callee's result may keep parts of it.
+    | borrowedReach: Bool
     | pendingRootSlot: Maybe(Int)
+
+// Stage 0's `IsBorrowedRetainableParameterType`: a string, or a type the parameter passthrough
+// normalizes, whose retained reference the caller can release outright.
+let isBorrowedRetainableParameterType (argumentType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(argumentType) with
+        | SemString -> true
+        | _ -> isPassthroughNormalizableParameterType(argumentType)(state)
 
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
 // the callee's result may keep is retained outright, its flag registered as pending.
-let argumentHandOffOf facts index argument argumentTemp state =
+let argumentHandOffOf facts index argument argumentType argumentTemp state =
     match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state), argumentRootSlotOf(argument)(state)) with
         | (runtimeArgument, rootSlot) ->
             CoreArgumentHandOff(
                 borrowsOnly = calleeParameterBorrows(facts)(index),
                 fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
                 runtimeArgument = runtimeArgument || rootSlot != None,
-                mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || patternBindingArgumentRootSlot(argument)(state) != None && calleeResultReachesArgument(facts)(index),
+                mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || (patternBindingArgumentRootSlot(argument)(state) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(state)) && calleeResultReachesArgument(facts)(index),
                 transfers = transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
                 normalizes = calleeNormalizesArgument(facts)(index)(state),
+                borrowedReach = rootSlot != None && calleeResultReachesArgument(facts)(index),
                 pendingRootSlot = if runtimeArgument
                 then None
                 else rootSlot
@@ -9399,30 +9410,96 @@ let pendingArgumentFlag (handOff: CoreArgumentHandOff) (rootSlot: Int) (acceptsF
     else (state, acceptsFlagTemp) with
         | (flagged, flagTemp) -> ((flagged with pendingRuntimeArgumentFlags = (flagTemp, rootSlot) :: flagged.pendingRuntimeArgumentFlags), flagTemp)
 
+// Stage 0's `EmitPendingRetainAdoptionFlag`: a reference retained under a pending parameter's
+// forced flag counts as adopted when the callee's accepts bit reads true, and as nothing to
+// release when the finalize pass zeroed the forced flag for a parameter kept in the arena.
+let emitPendingRetainAdoptionFlag (acceptsFlagTemp: Int) (forcedFlagTemp: Int) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = reserved, temp = zeroTemp } ->
+            reserved
+            |> emit(LoadConstInt(zeroTemp)(0))
+            |> emit(CmpIntEq(zeroTemp + 1)(forcedFlagTemp)(zeroTemp))
+            |> emit(OrInt(zeroTemp + 2)(acceptsFlagTemp)(zeroTemp + 1))
+            |> (given (flagged) -> (flagged, zeroTemp + 2))
+
+// The adoption flag of a pending argument the callee's result may keep, emitted right after its
+// forced flag; an argument the result cannot keep is not handed over.
+let pendingRetainAdoption (handOff: CoreArgumentHandOff) (acceptsFlagTemp: Int) (flagTemp: Int) (argumentType: SemanticType) (state: CoreLoweringState) =
+    if handOff.mayReach && isBorrowedRetainableParameterType(argumentType)(state)
+    then
+        match emitPendingRetainAdoptionFlag(acceptsFlagTemp)(flagTemp)(state) with
+            | (adopted, adoptionTemp) -> (adopted, Some(adoptionTemp))
+    else (state, None)
+
+let handedOverWith (passedTemp: Int) (adoption: Maybe(Int)) =
+    match adoption with
+        | Some(adoptionTemp) -> Some((passedTemp, adoptionTemp))
+        | None -> None
+
 // Stage 0's `PrepareRuntimeManagedCallArgument`: a borrowed parameter or an argument without a
 // reference-counted value passes as is without a flag. Otherwise the callee's accepts bit is
 // read, and the argument passes unchanged when it moves into the callee, retained
 // unconditionally when the callee's result may keep a named binding, and retained under the bit
 // otherwise. Yields the state, the temp the call receives, and the flag temp (`-1` for none).
+// Stage 0's `RetainBorrowedLoopArgumentForCalleeResult`: a loop parameter, or a pattern binding
+// of one, handed to a callee that only borrows it while its result keeps parts of it is retained
+// for the result and handed over like a consumed argument the callee never adopts, so the caller
+// releases it where the result was copied out; an admission still pending guards the retain and
+// the release with the parameter's flag. Yields the state, the temp the call receives, and the
+// handed-over reference with its adoption flag.
+let retainBorrowedLoopArgument (rootSlot: Maybe(Int)) argumentType argumentTemp state =
+    match rootSlot with
+        | Some(slot) ->
+            match emitForcedRetainFlag(state) with
+                | (flagged, flagTemp) ->
+                    match emitConditionalArgumentRetain(argumentTemp)(argumentType)(flagTemp)((flagged with pendingRuntimeArgumentFlags = (flagTemp, slot) :: flagged.pendingRuntimeArgumentFlags)) with
+                        | (retained, passedTemp) ->
+                            match freshTemp(retained) with
+                                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                    match freshTemp(zeroState) with
+                                        | FreshTemp { state = adoptionState, temp = adoptionTemp } ->
+                                            (adoptionState
+                                            |> emit(LoadConstInt(zeroTemp)(0))
+                                            |> emit(CmpIntEq(adoptionTemp)(flagTemp)(zeroTemp)), passedTemp, Some((passedTemp, adoptionTemp)))
+        | None ->
+            match emitArgumentRetain(argumentTemp)(argumentType)(state) with
+                | (retained, passedTemp) ->
+                    match freshTemp(retained) with
+                        | FreshTemp { state = adoptionState, temp = adoptionTemp } ->
+                            (emit(LoadConstInt(adoptionTemp)(0))(adoptionState), passedTemp, Some((passedTemp, adoptionTemp)))
+
 let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp argumentTemp state =
     match handOff with
-        | CoreArgumentHandOff { borrowsOnly = true } -> (state, argumentTemp, -1)
-        | CoreArgumentHandOff { runtimeArgument = false } -> (state, argumentTemp, -1)
+        | CoreArgumentHandOff { borrowsOnly = true, fresh = false, borrowedReach = true, pendingRootSlot = pendingRootSlot } ->
+            if isBorrowedRetainableParameterType(argumentType)(state)
+            then
+                match retainBorrowedLoopArgument(pendingRootSlot)(argumentType)(argumentTemp)(state) with
+                    | (retained, passedTemp, handedOver) -> (retained, passedTemp, -1, handedOver)
+            else (state, argumentTemp, -1, None)
+        | CoreArgumentHandOff { borrowsOnly = true } -> (state, argumentTemp, -1, None)
+        | CoreArgumentHandOff { runtimeArgument = false } -> (state, argumentTemp, -1, None)
         | CoreArgumentHandOff { pendingRootSlot = Some(rootSlot) } ->
             match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
                 | (flagged, acceptsFlagTemp) ->
                     match pendingArgumentFlag(handOff)(rootSlot)(acceptsFlagTemp)(flagged) with
                         | (registered, flagTemp) ->
-                            match emitConditionalArgumentRetain(argumentTemp)(argumentType)(flagTemp)(registered) with
-                                | (retained, passedTemp) -> (retained, passedTemp, flagTemp)
+                            match pendingRetainAdoption(handOff)(acceptsFlagTemp)(flagTemp)(argumentType)(registered) with
+                                | (adopted, adoption) ->
+                                    match emitConditionalArgumentRetain(argumentTemp)(argumentType)(flagTemp)(adopted) with
+                                        | (retained, passedTemp) -> (retained, passedTemp, flagTemp, handedOverWith(passedTemp)(adoption))
         | CoreArgumentHandOff { transfers = true } ->
             match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
-                | (flagged, flagTemp) -> (flagged, argumentTemp, flagTemp)
+                | (flagged, flagTemp) -> (flagged, argumentTemp, flagTemp, None)
+        | CoreArgumentHandOff { mayReach = true, fresh = false } ->
+            match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
+                | (flagged, flagTemp) ->
+                    match emitArgumentRetain(argumentTemp)(argumentType)(flagged) with
+                        | (retained, passedTemp) -> (retained, passedTemp, flagTemp, Some((passedTemp, flagTemp)))
         | _ ->
             match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
                 | (flagged, flagTemp) ->
                     match retainCallArgument(handOff)(argumentType)(argumentTemp)(flagTemp)(flagged) with
-                        | (retained, passedTemp) -> (retained, passedTemp, flagTemp)
+                        | (retained, passedTemp) -> (retained, passedTemp, flagTemp, None)
 
 // Stage 0 hands a fresh argument over under the callee's adoption bit when the callee's result reach is
 // unknown, so the result may be keeping it: releasing it here would free what such a callee stored.
@@ -9439,26 +9516,35 @@ let handedOverAdoptionFlag (context: CoreCallContext) (flagTemp: Int) =
 // to a callee whose result keeps it whole, but which does not normalize it on entry, travels
 // under the callee's adoption bit: the caller releases it after the call where the result was
 // copied out and so kept nothing of it (stage 0's second `RegisterConsumedRuntimeArgument` arm).
-let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: CoreArgumentHandOff) (argumentTemp: Int) (argumentType: SemanticType) (consumed: List(CoreConsumedArgument)) =
-    match handOff with
-        | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = false, mayReach = mayReach } ->
+let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: CoreArgumentHandOff) (argumentTemp: Int) (argumentType: SemanticType) (handedOver: Maybe((Int, Int))) (consumed: List(CoreConsumedArgument)) =
+    match (handOff, handedOver) with
+        | (_handOff, Some((retainedTemp, adoptionFlagTemp))) ->
             append(consumed)([CoreConsumedArgument(
-                temp = argumentTemp,
+                temp = retainedTemp,
                 semanticType = argumentType,
-                preserveEscapedChildren = mayReach,
-                adoptionFlagTemp = handedOverAdoptionFlag(context)(flagTemp)
+                preserveEscapedChildren = true,
+                adoptionFlagTemp = adoptionFlagTemp
             )])
-        | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = true, normalizes = false } ->
-            if flagTemp >= 0
-            then
-                append(consumed)([CoreConsumedArgument(
-                    temp = argumentTemp,
-                    semanticType = argumentType,
-                    preserveEscapedChildren = true,
-                    adoptionFlagTemp = flagTemp
-                )])
-            else consumed
-        | _ -> consumed
+        | (_handOff, None) ->
+            match handOff with
+                | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = false, mayReach = mayReach } ->
+                    append(consumed)([CoreConsumedArgument(
+                        temp = argumentTemp,
+                        semanticType = argumentType,
+                        preserveEscapedChildren = mayReach,
+                        adoptionFlagTemp = handedOverAdoptionFlag(context)(flagTemp)
+                    )])
+                | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = true, normalizes = false } ->
+                    if flagTemp >= 0
+                    then
+                        append(consumed)([CoreConsumedArgument(
+                            temp = argumentTemp,
+                            semanticType = argumentType,
+                            preserveEscapedChildren = true,
+                            adoptionFlagTemp = flagTemp
+                        )])
+                    else consumed
+                | _ -> consumed
 
 let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringState) =
     match state
@@ -9535,7 +9621,7 @@ let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int
 
 let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) unifiedState =
     match prepareCallArgument(handOff)(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
-        | (preparedState, passedTemp, argumentFlagTemp) ->
+        | (preparedState, passedTemp, argumentFlagTemp, handedOver) ->
             match emitResultOwnershipFlag(context)(arity)(resultType)(functionTemp)(preparedState) with
                 | (flaggedState, resultFlagTemp) ->
                     match freshTemp(flaggedState) with
@@ -9546,7 +9632,7 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                         lowered = wordState
                                         |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
                                         |> success(target)(resolveType(unifiedState)(resultType)),
-                                        consumedArguments = consumedArgumentsWith(context)(argumentFlagTemp)(handOff)(argumentTemp)(argumentType)(consumed),
+                                        consumedArguments = consumedArgumentsWith(context)(argumentFlagTemp)(handOff)(argumentTemp)(argumentType)(handedOver)(consumed),
                                         resultFlagTemp = resultFlagTemp,
                                         resultNormalized = false,
                                         resultDeepCopied = false
@@ -9563,7 +9649,7 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
             |> callStageOf
         | (unifiedState, None) ->
             unifiedState
-            |> argumentHandOffOf(context.facts)(argumentIndexOf(context.facts)(arity))(argument)(argumentTemp)
+            |> argumentHandOffOf(context.facts)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(argumentTemp)
             |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(argumentTemp)(resultType)(handOff)(unifiedState))
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
@@ -14958,17 +15044,37 @@ let finishUpdatedRecordField expectedType reversedTemps reversedTypes lowered =
                         error = None
                     )
 
-let loadUnchangedRecordField targetTemp index tagless fieldType state reversedTemps reversedTypes =
+// Stage 0's `RetainUnchangedRecordUpdateField`: an unchanged heap-typed field of a record update
+// whose target reads a loop parameter is a field read out of that parameter stored into the
+// rebuilt cell, and takes the same retain marker as one. The back edge copies the successor's
+// children and releases the successor's references to them, then releases the old parameter's
+// own children through its structural walk, so a borrowed field would be freed twice.
+let retainUnchangedRecordField (targetSlot: Maybe(Int)) (fieldType: SemanticType) (temp: Int) (state: CoreLoweringState) =
+    match targetSlot with
+        | None -> (state, temp)
+        | Some(slot) ->
+            if resultSurvivesReset(fieldType)(state)
+            then (state, temp)
+            else
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = duplicate } ->
+                        (allocated |> emit(RcDup(duplicate)(temp)(false)(false)) |> (given (marked: CoreLoweringState) -> marked with tcoParameterRetainSites = (duplicate, slot, fieldType) :: marked.tcoParameterRetainSites), duplicate)
+
+let loadUnchangedRecordField targetTemp targetSlot index tagless fieldType state reversedTemps reversedTypes =
     match freshTemp(state) with
         | FreshTemp { state = loadState, temp = temp } ->
-            LoweredCoreValues(
-                state = emit(GetAdtField(temp)(targetTemp)(index)(tagless))(loadState),
-                temps = temp :: reversedTemps,
-                semanticTypes = fieldType :: reversedTypes,
-                error = None
-            )
+            match loadState
+            |> emit(GetAdtField(temp)(targetTemp)(index)(tagless))
+            |> retainUnchangedRecordField(targetSlot)(fieldType)(temp) with
+                | (retainedState, retainedTemp) ->
+                    LoweredCoreValues(
+                        state = retainedState,
+                        temps = retainedTemp :: reversedTemps,
+                        semanticTypes = fieldType :: reversedTypes,
+                        error = None
+                    )
 
-let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp index tagless lower reversedTemps reversedTypes state =
+let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless lower reversedTemps reversedTypes state =
     match (fieldNames, fieldTypes) with
         | ([], []) -> finishCoreValues(state)(reversedTemps)(reversedTypes)
         | (fieldName :: fieldRest, fieldType :: typeRest) ->
@@ -14977,6 +15083,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp i
                     | None ->
                         loadUnchangedRecordField(
                             targetTemp,
+                            targetSlot,
                             index,
                             tagless,
                             fieldType,
@@ -14997,6 +15104,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp i
                             typeRest,
                             updates,
                             targetTemp,
+                            targetSlot,
                             index + 1,
                             tagless,
                             lower,
@@ -15006,30 +15114,30 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp i
                         )
         | _ -> failedCoreValues(state)(UnsupportedCoreLoweringExpression("record layout arity"))
 
-let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp lower typed =
+let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp targetSlot lower typed =
     match (layout, typed) with
         | (_layout, (failedState, Some(error))) -> failure(failedState)(error)
         | (CoreConstructorLayout { tagless = tagless }, (typedState, None)) ->
             typedState
-            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(0)(tagless)(lower)([])([])
+            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(0)(tagless)(lower)([])([])
             |> finishConstructorAllocation([])(false)(layout)(resultType)(runtimeManaged)
 
-let finishRecordUpdateShape layout fieldNames fields targetTemp targetType lower shape =
+let finishRecordUpdateShape layout fieldNames fields targetTemp targetSlot targetType lower shape =
     match shape with
         | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType, constructorRuntimeManaged = runtimeManaged } ->
             state
             |> bindType(targetType)(resultType)
-            |> lowerTypedRecordUpdate(layout)(resultType)(runtimeManaged)(fieldNames)(fieldTypes)(fields)(targetTemp)(lower)
+            |> lowerTypedRecordUpdate(layout)(resultType)(runtimeManaged)(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(lower)
 
-let finishRecordUpdateLayout fields targetTemp targetType lower state layout =
+let finishRecordUpdateLayout fields targetTemp targetSlot targetType lower state layout =
     match layout with
         | None -> failure(state)(CoreRecordUpdateRequiresRecord(targetType))
         | Some(CoreConstructorLayout { fieldNames = fieldNames } as constructor) ->
             state
             |> instantiateConstructor(constructor)
-            |> finishRecordUpdateShape(constructor)(fieldNames)(fields)(targetTemp)(targetType)(lower)
+            |> finishRecordUpdateShape(constructor)(fieldNames)(fields)(targetTemp)(targetSlot)(targetType)(lower)
 
-let finishRecordUpdate fields lower loweredTarget =
+let finishRecordUpdate fields targetSlot lower loweredTarget =
     match loweredTarget with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = state, temp = targetTemp, semanticType = targetType, error = None } ->
@@ -15037,13 +15145,15 @@ let finishRecordUpdate fields lower loweredTarget =
                 | SemNamed(_symbolId, typeName, _arguments) ->
                     state
                     |> recordLayout(typeName)
-                    |> finishRecordUpdateLayout(fields)(targetTemp)(targetType)(lower)(state)
+                    |> finishRecordUpdateLayout(fields)(targetTemp)(targetSlot)(targetType)(lower)(state)
                 | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
 
+// A record update whose target reads a loop parameter (or a record field of one) inside the
+// loop body retains the unchanged fields it copies out of that parameter.
 let lowerRecordUpdate target fields lower state =
     state
     |> lower(target)
-    |> finishRecordUpdate(fields)(lower)
+    |> finishRecordUpdate(fields)(loopParameterReadSlot(target)(state))(lower)
 
 let failedCoreBinary state error =
     LoweredCoreBinary(

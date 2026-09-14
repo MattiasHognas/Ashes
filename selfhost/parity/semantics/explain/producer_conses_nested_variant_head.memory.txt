@@ -6,13 +6,13 @@ Function: bump
     insts: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  4
-    drop:                 0
-    uniqueness checks:    0
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
   representation [lambda_0]
-    conservative unknown: 24
-    region:               12
-    runtime rc:           8
+    conservative unknown: 23
+    region:               19
+    runtime rc:           21
     copy value:           15
 
 Function: count
@@ -20,14 +20,23 @@ Function: count
     insts: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_1]
+  perceus [lambda_8]
+    dup:                  1
+    drop:                 6
+    uniqueness checks:    3
+  perceus [lambda_7]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_2]
-    conservative unknown: 3
+  perceus [lambda_8__scalarenv0]
+    dup:                  1
+    drop:                 6
+    uniqueness checks:    3
+  representation [lambda_8]
+    conservative unknown: 2
+    runtime rc:           18
     copy value:           6
-  representation [lambda_1]
+  representation [lambda_7]
     conservative unknown: 1
     region:               3
 

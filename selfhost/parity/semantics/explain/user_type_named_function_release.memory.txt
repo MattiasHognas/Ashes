@@ -6,12 +6,21 @@ Function: count
     functions: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
+  perceus [lambda_3]
+    dup:                  1
+    drop:                 12
+    uniqueness checks:    6
   perceus [lambda_2]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
+  perceus [lambda_3__scalarenv0]
+    dup:                  1
+    drop:                 12
+    uniqueness checks:    6
   representation [lambda_3]
-    conservative unknown: 3
+    conservative unknown: 2
+    runtime rc:           12
     copy value:           6
   representation [lambda_2]
     conservative unknown: 1

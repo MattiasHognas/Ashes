@@ -305,6 +305,13 @@ public sealed partial class Lowering
             return elementTemp;
         }
 
+        return DuplicateTcoParameterReadForAggregate(local, elementTemp, elementType);
+    }
+
+    // The retain itself: a real runtime retain once the parameter's placement is known to be
+    // runtime RC, otherwise an RcDup marker FinalizeTcoParameterAggregateRetains resolves.
+    private int DuplicateTcoParameterReadForAggregate(Binding.Local local, int elementTemp, TypeRef elementType)
+    {
         TcoContext tco = _tcoCtx!;
 
         int duplicatedTemp = NewTemp();
@@ -323,6 +330,16 @@ public sealed partial class Lowering
         _tcoParameterAggregateRetains.Add(new TcoParameterAggregateRetain(tco, duplicatedTemp, local.Slot, elementType));
         return duplicatedTemp;
     }
+
+    // An unchanged field of a record update whose target is the loop's own parameter is a field
+    // read out of that parameter stored into the rebuilt cell, and is retained like one: the
+    // back edge copies the successor's children and releases the successor's references to
+    // them, then releases the old parameter's own children, so a borrowed field would be freed
+    // twice.
+    private int RetainUnchangedRecordUpdateField(Binding.Local? targetParameter, int loadedTemp, TypeRef fieldType)
+        => targetParameter is null || CanArenaReset(Prune(fieldType))
+            ? loadedTemp
+            : DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
 
     private void FinalizeTcoParameterAggregateRetains(TcoContext? tco)
     {

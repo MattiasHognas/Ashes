@@ -678,8 +678,7 @@ public sealed partial class Lowering
         HashSet<TypeSymbol> path)
     {
         TypeSymbol symbol = named.Symbol;
-        if (symbol.IsBuiltin
-            || symbol.Constructors.Count < 2
+        if (symbol.Constructors.Count < 2
             || BuiltinRegistry.IsResourceTypeName(symbol.Name)
             || IsResourceBearing(named)
             || !path.Add(symbol))

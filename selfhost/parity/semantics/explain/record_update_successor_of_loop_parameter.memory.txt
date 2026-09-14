@@ -1,0 +1,76 @@
+Memory report
+=============
+
+Function: extend
+  ownership
+    text: consumed, move-safe yes
+    state: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_1$env_normalize]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_1]
+    conservative unknown: 15
+    region:               5
+    copy value:           2
+  representation [lambda_0]
+    conservative unknown: 1
+    region:               2
+    runtime rc:           1
+
+Function: joinAll
+  ownership
+    items: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_6]
+    dup:                  1
+    drop:                 11
+    uniqueness checks:    3
+  perceus [lambda_5]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_6__scalarenv0]
+    dup:                  1
+    drop:                 11
+    uniqueness checks:    3
+  representation [lambda_6]
+    conservative unknown: 3
+    region:               1
+    runtime rc:           13
+  representation [lambda_5]
+    conservative unknown: 1
+    region:               3
+
+Function: scan
+  ownership
+    tokens: consumed, move-safe yes
+    state: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_4]
+    dup:                  10
+    drop:                 58
+    uniqueness checks:    18
+  perceus [lambda_3]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_4]
+    conservative unknown: 7
+    region:               2
+    runtime rc:           37
+    copy value:           4
+  representation [lambda_3]
+    conservative unknown: 2
+    region:               3
+
