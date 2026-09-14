@@ -1644,6 +1644,20 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle I8Ptr,
         LlvmTypeHandle I64Ptr);
 
+    // The program-argument list lives in one module global: the entry function builds it once and
+    // every function reading Ashes.IO.args loads the same cell, whatever its call depth.
+    private const string ProgramArgsGlobalName = "__ashes_program_args";
+
+    private static LlvmValueHandle GetProgramArgsGlobal(LlvmTargetContext target)
+        => target.GetOrAddNamedGlobal(ProgramArgsGlobalName, () =>
+        {
+            LlvmTypeHandle i64 = LlvmApi.Int64TypeInContext(target.Context);
+            LlvmValueHandle global = LlvmApi.AddGlobal(target.Module, i64, ProgramArgsGlobalName);
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(i64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+
     private static EmitFunctionBodySlots EmitFunctionBodyAllocateSlots(
         LlvmTargetContext target,
         LlvmValueHandle llvmFunction,
@@ -1683,8 +1697,7 @@ internal static partial class LlvmCodegen
             LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), localSlots[i]);
         }
 
-        LlvmValueHandle programArgsSlot = LlvmApi.BuildAlloca(target.Builder, i64, "program_args");
-        LlvmApi.BuildStore(target.Builder, LlvmApi.ConstInt(i64, 0, 0), programArgsSlot);
+        LlvmValueHandle programArgsSlot = GetProgramArgsGlobal(target);
 
         if (!isEntry && function.HasEnvAndArgParams)
         {

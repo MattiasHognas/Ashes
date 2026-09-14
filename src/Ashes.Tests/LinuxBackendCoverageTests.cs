@@ -1698,6 +1698,35 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_should_read_program_args_inside_function_bodies()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithLinuxLlvmAsync(
+            LowerProgram(
+            """
+            let recursive count (args: List(Str)) (acc: Int) =
+                match args with
+                    | [] -> acc
+                    | _ :: tail -> count(tail)(acc + 1)
+
+            let countArgs (fallback: Int) = count(Ashes.IO.args)(fallback)
+
+            let firstArg (unit: Int) =
+                match Ashes.IO.args with
+                    | head :: _ -> head
+                    | [] -> "none"
+
+            Ashes.IO.print(firstArg(0) + ":" + Ashes.Text.fromInt(countArgs(100)) + ":" + Ashes.Text.fromInt(count(Ashes.IO.args)(100)))
+            """),
+            ["first", "second"]).ConfigureAwait(false);
+        result.Stdout.ShouldBe("first:102:102\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_read_line_programs()
     {
         if (!OperatingSystem.IsLinux())
