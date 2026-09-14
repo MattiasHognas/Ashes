@@ -3364,10 +3364,29 @@ same public behavior.
   `tests/rc_string_adt_list_producer_pipeline.ash`. The non-tail producer, the let chain, and
   the loop over such lists are now flat; the probe is unchanged (the self-hosted IR types
   need the slices below). Open:
-  - [ ] **OPT-80b** A fresh reference-counted call result handed straight to a callee that
-    borrows it (`bump(bumpTimes(p - 1)(insts))`) is never released: the self call's result
-    placement is unknown while its own body is lowered, so `RegisterConsumedRuntimeArgument`
-    records nothing for it. The map-shaped experiment grew from 336 to 536 MiB with slice a.
+  - [x] **OPT-80b** A fresh reference-counted call result handed straight to a callee that
+    borrows it (`bump(bumpTimes(p - 1)(insts))`) was never released. The root cause was wider
+    than the self call: a plain function returning its parameter on one arm and a fresh list on
+    another (`if flag == 0 then insts else bump(insts)`, the shape of every self-hosted
+    optimizer pass) joined a borrowed value with a reference-counted one, so its result was
+    never reference-counted, no caller released it, and every intermediate of a pass chain
+    stayed allocated (the pass-shaped experiment grew to 962 MiB at 16 rounds, the map-shaped
+    one to 536 MiB). Done (2026-09-14): a plain function whose terminal arms are all either the
+    bare parameter or a freshly built value (a constructor application, literal, cons, a call
+    to a function compiled reference-counted, or a self call) copies the parameter into an
+    owned graph on the arm returning it (`Lowering.ParameterPassthrough.cs`,
+    `NormalizeParameterPassthroughBranch` at the `if` and `match` joins), so the join and the
+    function's result are reference-counted; lists over runtime-manageable elements, owned
+    tuples, and copyable or runtime-managed named types qualify, strings stay with their affine
+    placement. Such a function's result is promised reference-counted before its body is
+    lowered (`PredictRuntimeManagedResult`, kept at the return by a copy when the body's own
+    result is not), and a curry stage records its returned-closure link as soon as the inner
+    lambda is entered, so a recursive call inside the body resolves statically and hands its
+    result to the next callee as an owned value. Mirrored in `ParameterPassthrough.ash` and
+    `CoreLowering.ash`. Both experiments are flat (86 MiB at every round count); plateau test
+    `Linux_backend_llvm_passthrough_or_fresh_result_pipeline_memory_should_plateau`,
+    `tests/rc_passthrough_or_fresh_result_pipeline.ash`, parity fixture
+    `passthrough_or_fresh_result`.
   - [x] **OPT-80c** The layout classifiers (`Lowering.LayoutCapability.cs`
     `IsRuntimeRecordAdtLayout`, `IsRuntimeOwnedChildAdtLayout`, and the `TList` arms that
     admitted only copy-type elements everywhere) rejected a variant child inside a record, a
