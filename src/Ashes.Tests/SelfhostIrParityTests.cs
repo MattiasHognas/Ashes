@@ -46,6 +46,8 @@ public sealed class SelfhostIrParityTests
     [Arguments("record_update_successor_of_loop_parameter")]
     [Arguments("tco_string_parameter_kept_by_callee_error_result")]
     [Arguments("accumulate_and_reverse_producer")]
+    [Arguments("record_head_list_producer")]
+    [Arguments("aggregate_borrowing_owner_kept_by_callee")]
     [Arguments("reuse_path_rebuild_declines_copy")]
     [Arguments("rc_child_of_call_argument_kept_by_callee_result")]
     [Arguments("pattern_head_read_under_operator")]

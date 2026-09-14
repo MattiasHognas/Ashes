@@ -4083,6 +4083,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_record_head_list_producer_pipeline_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> matched = await MeasureMemoryGrowthAsync(
+            BuildRecordHeadListProducerPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> fields = await MeasureMemoryGrowthAsync(
+            BuildRecordHeadFieldReadListProducerPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("list of records carrying a list of string-bearing variants rebuilt by a non-tail producer every round", matched);
+        AssertMemoryPlateaus("list of records rebuilt from field reads and a let-bound list by a non-tail producer every round", fields);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9524,6 +9543,98 @@ public sealed class LinuxBackendCoverageTests
                 else loop(remaining - 1)(bump(insts))(total + 1)
 
             Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // A record whose fields are a string and a list of string-bearing variants, rebuilt by a
+    // non-tail producer every round (the shape of the self-hosted optimizer.s per-function map).
+    // The record head must be reference-counted under the runtime-list request, with the borrowed
+    // label copied into an owned string, or the list of records stays an arena value whose call
+    // windows are never restored: one whole list of records retained per round.
+    private static string BuildRecordHeadListProducerPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Name(Str, Int)
+
+            type Fn =
+                | label: Str
+                | insts: List(Inst)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name("x", n) :: acc)
+
+            let recursive buildFns (n: Int) (acc: List(Fn)) =
+                if n == 0
+                then acc
+                else buildFns(n - 1)(Fn(label = "f", insts = build(8)([])) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+            let optFn (fn: Fn) =
+                match fn with
+                    | Fn { label = label, insts = insts } -> Fn(label = label, insts = bump(insts))
+
+            let recursive mapFns (fns: List(Fn)) =
+                match fns with
+                    | [] -> []
+                    | fn :: rest -> optFn(fn) :: mapFns(rest)
+
+            let recursive loop (remaining: Int) (fns: List(Fn)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(mapFns(fns))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(buildFns(4)([]))(0))
+            """;
+
+    // The same producer reading the record.s fields by name and storing a let-bound list.
+    private static string BuildRecordHeadFieldReadListProducerPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Name(Str, Int)
+
+            type Fn =
+                | label: Str
+                | insts: List(Inst)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name("x", n) :: acc)
+
+            let recursive buildFns (n: Int) (acc: List(Fn)) =
+                if n == 0
+                then acc
+                else buildFns(n - 1)(Fn(label = "f", insts = build(8)([])) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+            let optFn (fn: Fn) =
+                let bumped = bump(fn.insts)
+                in Fn(label = fn.label, insts = bumped)
+
+            let recursive mapFns (fns: List(Fn)) =
+                match fns with
+                    | [] -> []
+                    | fn :: rest -> optFn(fn) :: mapFns(rest)
+
+            let recursive loop (remaining: Int) (fns: List(Fn)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(mapFns(fns))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(buildFns(4)([]))(0))
             """;
 
     // The producer applied to its own non-tail recursive result: the recursive function's result

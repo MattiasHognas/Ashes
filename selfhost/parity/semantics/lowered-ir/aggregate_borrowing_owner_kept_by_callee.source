@@ -1,0 +1,47 @@
+type Token =
+    | kind: Int
+    | text: Str
+
+type Lexed =
+    | tokens: List(Token)
+    | diagnostics: List(Str)
+
+type Program =
+    | items: List(Str)
+    | diagnostics: List(Str)
+
+let recursive build (n: Int) (acc: List(Token)) =
+    if n == 0
+    then acc
+    else build(n - 1)(Token(kind = n, text = "t") :: acc)
+
+let recursive bump (tokens: List(Token)) =
+    match tokens with
+        | [] -> []
+        | Token { kind = k, text = t } :: rest -> Token(kind = k + 1, text = t) :: bump(rest)
+
+let keep (state: (List(Token), Int)) = (state, 1)
+
+let texts (state: (List(Token), Int)) =
+    match state with
+        | (Token { text = text } :: _, _) -> [text]
+        | _ -> []
+
+let lex (n: Int) = Lexed(tokens = bump(build(n)([])), diagnostics = ["w"])
+
+let parseProgram (n: Int) =
+    (let lexed = lex(n)
+    in
+        let initial = (lexed.tokens, 0)
+        in
+            match keep(initial) with
+                | (kept, _) -> Program(items = texts(kept), diagnostics = lexed.diagnostics))
+
+let recursive count (items: List(Str)) (acc: Int) =
+    match items with
+        | [] -> acc
+        | _ :: rest -> count(rest)(acc + 1)
+
+let program = parseProgram(3)
+
+Ashes.IO.print(count(program.items)(0))

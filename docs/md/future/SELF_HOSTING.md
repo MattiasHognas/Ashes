@@ -3543,17 +3543,57 @@ same public behavior.
     head `Fn(label = label, insts = bump(insts))` is allocated in the arena (`AllocAdt` without
     the runtime-managed bit) and the producer's cons cell too, so the list of records is an
     arena value whose call windows are never restored; see OPT-80h.
-  - [ ] **OPT-80h** A record head carrying a list of heap-bearing variants (the self-hosted
-    `IrFunction { instructions: List(IrInstruction), ... }`) rebuilt by a producer stays in the
-    arena together with the producer's cons cells: `optFn(fn) :: mapFns(rest)` over `Fn {
-    label: Str, insts: List(Inst) }` retains 69 MiB per round of 200 records of 2000
-    instructions (`opt80/exp/map_record_fn.ash`), the exact shape of the optimizer's
-    per-function map, where the same producer over the variant itself is flat since OPT-80a.
-    Admit the record head under the runtime-list request when its fields are a string and a
-    runtime-manageable list (the record layout classifier must accept a list-over-variants
-    field and a borrowed string field copied at the head), build the cons cell
-    reference-counted, and release the consumed record after the copy, in both compilers;
-    plateau test, end-to-end test, and parity fixture as for the earlier slices.
+  - [x] **OPT-80h** A record head carrying a list of heap-bearing variants (the self-hosted
+    `IrFunction { instructions: List(IrInstruction), ... }`) rebuilt by a producer stayed in
+    the arena together with the producer's cons cells: `optFn(fn) :: mapFns(rest)` over `Fn {
+    label: Str, insts: List(Inst) }` retained 69 MiB per round of 200 records of 2000
+    instructions, the exact shape of the optimizer's per-function map. Done (2026-09-14): the
+    escaping-result record decision walks the body's terminal arms like the variant case
+    (`ProducesFreshRuntimeManageableRecord`, so the literal inside the match arm is seen), and
+    a borrowed string field read out of a local binding, whole or by field, a name the arm
+    binds later included, is copied into an owned string at the head
+    (`IsMaterializableStringChildRead`; a literal keeps the parent in the arena, as the
+    directly-escaping-variant tests require); the cons and the consumed record's release
+    follow from OPT-80a: flat at 155 MiB for 1 and 16 rounds. Making the lexer's result
+    reference-counted exposed a stage-0 gap present on main: a field read out of a
+    runtime-managed `let` (`lexed.tokens`) stored into an arena tuple, and that tuple passed
+    by name to a callee whose result keeps it, retained nothing, so the owner's scope-exit
+    release freed the token strings the syntax tree still borrowed (the parity runner's stack
+    was overwritten with IR text). Fixed by retaining a heap-typed field read like the whole
+    owner (`DuplicateRuntimeManagedOwnedValueForTransfer`) and by recording the owners an
+    arena `let` aggregate borrows (`OwnershipInfo.BorrowedRuntimeOwners`, collected from the
+    literal's children) so a transfer of the binding retains them
+    (`RetainBorrowedRuntimeOwnersOfAlias`, at a keeping call's plain argument too). Mirrored in
+    `CoreLowering.ash` (`producesFreshRuntimeManageableRecord`,
+    `isMaterializableStringChildRead`, `materializeStringChildArgument`, the field arm of
+    `retainTransferredChild`, `borrowedOwners` and `pendingBorrowedOwners` with
+    `borrowedOwnersOfExpression` and `retainAliasBorrowedOwners`, and `emitChildDeepCopy`
+    reserving the temp stage 0's inline copy reserves ahead of a nested list child). Plateau
+    test `Linux_backend_llvm_record_head_list_producer_pipeline_memory_should_plateau`,
+    `tests/rc_record_head_list_producer_pipeline.ash`,
+    `tests/rc_let_bound_aggregate_borrowing_owner_kept_by_callee.ash`, compared parity
+    fixtures `record_head_list_producer` and `aggregate_borrowing_owner_kept_by_callee`. The
+    stage-1 probe is unchanged: the self-hosted `IrFunction` carries fields the record
+    classifier rejects (OPT-80i).
+  - [ ] **OPT-80i** The record layout classifier (`IsRuntimeRecordAdtLayout` through
+    `IsRuntimeOwnedFieldLayout`) rejects every self-hosted IR record: `IrFunction` carries
+    `localTypes: List((IrLocal, SemanticType))` (a type that reaches itself, which the inline
+    runtime-managed copy `EmitRuntimeManagedTcoDeepCopy` cannot reproduce), `origin:
+    Maybe(IrFunctionOrigin)`, and `localNames: List((IrLocal, Str))`, so the optimizer's
+    per-function map still builds its results in the arena and the stage-1 probe stands where
+    OPT-80e left it (2026-09-14, after OPT-80h: `TypeResolution` 7.9 GiB peak in 2.9 s, the
+    semantics package dies at a 30 GiB cap in 3.5 s). Admit a record whose field reaches a
+    recursive type by copying and releasing such fields through generated per-type copier and
+    dropper functions (the `AdtDeepCopier`/`ListDeepCopier` shape the call-boundary copies
+    already emit) instead of the inline walk, in both compilers, then re-measure the probe.
+  - [ ] **OPT-80j** A reference retained into an arena aggregate a callee's result keeps is
+    never released: `let diags = bump(build(n)([])) in Program(items = ..., diagnostics =
+    diags)` returned from a function and copied out by its caller leaks the whole list per
+    call (188 KiB per round of 2000 strings, on main before OPT-80h and for the let-bound
+    alias OPT-80h retains alike): the copy-out reproduces the list and the retained
+    reference stays with the dead arena cell. Release the retained reference where the
+    copy-out severed it, as OPT-80d does for handed-over arguments
+    (`DeepCopiedResultSevers`), in both compilers, with a plateau test over the round loop.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
@@ -3880,6 +3920,13 @@ same public behavior.
   under stage 0 and stage 1 (`--emit-ir final`), and either mirror the missing definition
   order (a temporary defined in a predecessor block the codegen visits later) or the lowering
   divergence that produced the use.
+- [ ] **CG-19** The self-hosted backend suite (`selfhost/tests/backend`) is red on main
+  (2026-09-14, at `68f3562c` already): `testRunSharedTcoRuntimeManagedListAccumulatorPlateau`
+  (`Main.ash:3468`, the shared program `tests/tco_runtime_managed_list_accumulator_plateau.ash`)
+  fails its `assertProgramPrints` with a bare `Assertion failed`, while the semantics,
+  projects, cli, and parity suites are green. Locate it with the `--debug` build under
+  `gdb -batch -ex "catch syscall exit" -ex run -ex bt`, compare the program's output between
+  the stage-0 and the self-hosted backend, and fix the backend or the expectation.
 
 #### Object parsing and executable linking
 
@@ -4177,7 +4224,8 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   `unknown record AshesPrivateType_..._HandlerOperationArmDefinition` at 41.5 s and 14.1 GiB,
   and MOD-19 (private record names resolved as constructors) past every diagnostic into the
   memory wall: the lowering of the semantics package alone no longer fits in 50 GiB of address
-  space (OPT-80, the next blocker, with its per-module measurements); a single-file program that reads
+  space (OPT-80, the next blocker, with its per-module measurements; its slices a to h left the
+  wall standing, and OPT-80i names the record classifier gap behind it); a single-file program that reads
   `Ashes.IO.args` now lowers but stops in the stage-1 backend, which has no `LoadProgramArgs`
   codegen yet (CG-11's open program-arguments item), and the backend has no `CallExternal`
   codegen either, which the CLI package's LLVM bindings will need before its binary links, and

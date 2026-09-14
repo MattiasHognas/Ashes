@@ -1,0 +1,31 @@
+type Inst =
+    | Add(Int, Int)
+    | Name(Str, Int)
+
+type Fn =
+    | label: Str
+    | insts: List(Inst)
+
+let recursive bump (insts: List(Inst)) =
+    match insts with
+        | [] -> []
+        | Add(a, b) :: tail -> Add(a + 1)(b) :: bump(tail)
+        | Name(s, k) :: tail -> Name(s)(k + 1) :: bump(tail)
+
+let optFn (fn: Fn) =
+    match fn with
+        | Fn { label = label, insts = insts } -> Fn(label = label, insts = bump(insts))
+
+let recursive mapFns (fns: List(Fn)) =
+    match fns with
+        | [] -> []
+        | fn :: rest -> optFn(fn) :: mapFns(rest)
+
+let recursive count (fns: List(Fn)) (acc: Int) =
+    match fns with
+        | [] -> acc
+        | _ :: rest -> count(rest)(acc + 1)
+
+let program = mapFns([Fn(label = "f", insts = [Name("x")(1), Add(0)(0)]), Fn(label = "g", insts = [Name("y")(1)])])
+
+Ashes.IO.print(count(program)(0))
