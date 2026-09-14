@@ -3586,14 +3586,27 @@ same public behavior.
     recursive type by copying and releasing such fields through generated per-type copier and
     dropper functions (the `AdtDeepCopier`/`ListDeepCopier` shape the call-boundary copies
     already emit) instead of the inline walk, in both compilers, then re-measure the probe.
-  - [ ] **OPT-80j** A reference retained into an arena aggregate a callee's result keeps is
-    never released: `let diags = bump(build(n)([])) in Program(items = ..., diagnostics =
-    diags)` returned from a function and copied out by its caller leaks the whole list per
-    call (188 KiB per round of 2000 strings, on main before OPT-80h and for the let-bound
-    alias OPT-80h retains alike): the copy-out reproduces the list and the retained
-    reference stays with the dead arena cell. Release the retained reference where the
-    copy-out severed it, as OPT-80d does for handed-over arguments
-    (`DeepCopiedResultSevers`), in both compilers, with a plateau test over the round loop.
+  - [x] **OPT-80j** A record reassembled out of a callee result's fields leaked the references it
+    retained: `let lexed = tokenize(n) in ... Program(items = items, diagnostics =
+    lexed.diagnostics)` leaked 235 KiB per round of a lexer result rebuilt into a program
+    record. `lexed.diagnostics` and a `match`-bound `diagnostics` reach the child identically
+    and stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` retains both alike, but only
+    the pattern binding counted as a child an aggregate can own, so
+    `CanRuntimeManageFreshOwnedChildExpression` rejected the field read, the record stayed
+    arena-placed, and the references retained into it were never released. Fixed (2026-09-15):
+    a field read of a local binding is admitted as an owned child beside the `Var` case it
+    spells (`IsLocalRecordFieldRead` in stage 0, `isLocalRecordFieldRead` in the self-hosted
+    `canRuntimeManageFreshOwnedChild`), so the record is reference-counted and dups its
+    children on store. The self-hosted mirror needed two more pieces stage 0 already had:
+    `retainAggregateChildTemp` retains a heap-typed field taken out of a live owner the way
+    `RetainRuntimeManagedAggregateChild` does, and a `let` value now starts from the consumer
+    request it inherits (`inheritedLetValueRequest`, stage 0's `PushSequentialLet`) instead of
+    an empty one. Measured with `/usr/bin/time -f %M`: 235 KiB per round before, flat at 8.2 MB
+    across both 80 and 160 rounds after. Regression
+    `tests/rc_callee_result_field_reads_reassembled_into_record.ash`, plateau test
+    `Linux_backend_llvm_callee_result_field_reads_reassembled_into_record_memory_should_plateau`,
+    and the regenerated `aggregate_borrowing_owner_kept_by_callee` parity fixture, which both
+    compilers reproduce instruction for instruction along with the other 53.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk

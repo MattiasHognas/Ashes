@@ -2689,6 +2689,26 @@ public sealed partial class Lowering
             _ => false,
         };
 
+    /// <summary>
+    /// A field read out of a local binding — `lexed.diagnostics`, the record-field spelling of the
+    /// same value a `match` arm would bind by name. The two spellings reach the child identically
+    /// and <see cref="DuplicateRuntimeManagedOwnedValueForTransfer"/> retains both alike, but only
+    /// the pattern binding counted as a child an aggregate can own, so the record built from field
+    /// reads stayed in the arena holding retained references nothing ever released: 235 KB leaked
+    /// per round of a lexer result reassembled into a program record.
+    ///
+    /// Syntactic on purpose, exactly as the `Var` case beside it is: the parent's own lowering
+    /// normalizes or retains whichever form the child turns out to have, so this question is about
+    /// the shape of the read and not about a placement that is not settled yet when an escaping
+    /// result is classified.
+    /// </summary>
+    private bool IsLocalRecordFieldRead(Expr expression)
+        => expression is Expr.QualifiedVar qualified
+            && !_moduleAliases.ContainsKey(qualified.Module)
+            && !_capabilitySymbols.ContainsKey(qualified.Module)
+            && !TryGetTraitMethod(qualified, out _, out _)
+            && Lookup(qualified.Module) is null or Binding.Local or Binding.Scheme or Binding.Env or Binding.EnvScheme;
+
     private bool CanRuntimeManageFreshOwnedChildExpression(Expr expression, TypeRef type)
     {
         TypeRef childType = Prune(type);
@@ -2704,7 +2724,8 @@ public sealed partial class Lowering
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),
             TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element)
                 && (IsFreshListConstructionExpression(expression)
-                    || expression is Expr.Var or Expr.Call),
+                    || expression is Expr.Var or Expr.Call
+                    || IsLocalRecordFieldRead(expression)),
             TypeRef.TTuple tuple => (expression is Expr.TupleLit tupleExpression
                     && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple))
                 || IsPerceusPatternOwnerRead(expression),
