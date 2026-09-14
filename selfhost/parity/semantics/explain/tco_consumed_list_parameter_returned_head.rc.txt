@@ -49,7 +49,7 @@ Function: run [lambda_5]
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               1
+    copies:               0
 
 Function: run
   Operations
@@ -61,7 +61,17 @@ Function: run
     reuse tokens:         0
     copies:               0
 
-Function: findLong [lambda_3__scalarenv0]
+Function: build [lambda_1__scalarenv0]
+  Operations
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: findLong [lambda_3__scalarenv1]
   Operations
     dup:                  3
     drop:                 12

@@ -23,9 +23,9 @@ Function: first
     drop:                 10
     uniqueness checks:    3
   representation [lambda_3]
-    conservative unknown: 6
+    conservative unknown: 5
     region:               1
-    runtime rc:           11
+    runtime rc:           10
 
 Function: pair
   ownership

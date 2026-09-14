@@ -29,7 +29,7 @@ Function: build [lambda_1]
     allocations:          4
     reused allocations:   0
     reuse tokens:         0
-    copies:               4
+    copies:               2
 
 Function: build
   Operations
@@ -99,7 +99,7 @@ Function: build [lambda_1__scalarenv0]
     allocations:          4
     reused allocations:   0
     reuse tokens:         0
-    copies:               4
+    copies:               2
 
 Function: findHeavy [lambda_5__scalarenv1]
   Operations

@@ -222,19 +222,19 @@ let testEscapingConsRetainsHeadAndTail unit =
         Unit
         |> (given (_) ->
             lines
-            |> countContaining("RcDup                 Target=15 SourceTemp=14 RuntimeManaged=true")
+            |> countContaining("RcDup                 Target=10 SourceTemp=9 RuntimeManaged=true")
             |> test.assertEqual(1))
         |> (given (_) ->
             lines
-            |> countContaining("RcDup                 Target=18 SourceTemp=17 RuntimeManaged=true MayBeEmpty=true")
+            |> countContaining("RcDup                 Target=13 SourceTemp=12 RuntimeManaged=true MayBeEmpty=true")
             |> test.assertEqual(1))
         |> (given (_) ->
             lines
-            |> countContaining("Alloc                 Target=19 SizeBytes=16")
+            |> countContaining("Alloc                 Target=14 SizeBytes=16")
             |> test.assertEqual(1))
         |> (given (_) ->
             lines
-            |> countContainingBoth("Alloc                 Target=19")("RuntimeManaged")
+            |> countContainingBoth("Alloc                 Target=14")("RuntimeManaged")
             |> test.assertEqual(0))
         |> (given (_) ->
             lines

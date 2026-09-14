@@ -22,6 +22,10 @@ Function: pair
     dup:                  0
     drop:                 3
     uniqueness checks:    1
+  perceus [lambda_1__scalarenv0]
+    dup:                  0
+    drop:                 3
+    uniqueness checks:    1
   representation [lambda_1]
     conservative unknown: 4
     region:               1

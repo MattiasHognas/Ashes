@@ -54,7 +54,7 @@ Function: addTraitImplementation
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_3__scalarenv2]
+  perceus [lambda_3__scalarenv3]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
@@ -99,6 +99,10 @@ Function: churn
     dup:                  0
     drop:                 0
     uniqueness checks:    0
+  perceus [lambda_11__scalarenv1]
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
   representation [lambda_11]
     conservative unknown: 2
     region:               3
@@ -121,7 +125,7 @@ Function: count
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_13__scalarenv1]
+  perceus [lambda_13__scalarenv2]
     dup:                  1
     drop:                 9
     uniqueness checks:    3

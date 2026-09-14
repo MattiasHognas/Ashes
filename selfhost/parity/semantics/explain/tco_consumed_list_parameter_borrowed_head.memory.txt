@@ -14,6 +14,10 @@ Function: buildTexts
     dup:                  0
     drop:                 0
     uniqueness checks:    0
+  perceus [lambda_1__scalarenv0]
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
   representation [lambda_1]
     conservative unknown: 2
     region:               1
@@ -52,7 +56,7 @@ Function: sumTextLengths
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_3__scalarenv1]
+  perceus [lambda_3__scalarenv2]
     dup:                  1
     drop:                 9
     uniqueness checks:    3

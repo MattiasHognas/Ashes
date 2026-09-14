@@ -49,7 +49,7 @@ Function: first
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               4
+    copies:               3
 
 Function: _start_main
   Operations
