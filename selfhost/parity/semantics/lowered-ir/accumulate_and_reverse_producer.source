@@ -1,0 +1,30 @@
+type Inst =
+    | Add(Int, Int)
+    | Name(Str, Int)
+
+let reverse xs =
+    (let recursive go acc rest =
+        match rest with
+            | [] -> acc
+            | head :: tail -> go(head :: acc)(tail)
+    in go([])(xs))
+
+let recursive bumpInto (insts: List(Inst)) (acc: List(Inst)) =
+    match insts with
+        | [] -> reverse(acc)
+        | Add(a, b) :: tail -> bumpInto(tail)(Add(a + 1)(b) :: acc)
+        | Name(s, k) :: tail -> bumpInto(tail)(Name(s)(k + 1) :: acc)
+
+let bump (insts: List(Inst)) = bumpInto(insts)([])
+
+let recursive passes (k: Int) (insts: List(Inst)) =
+    if k == 0
+    then insts
+    else passes(k - 1)(bump(insts))
+
+let recursive count (insts: List(Inst)) (acc: Int) =
+    match insts with
+        | [] -> acc
+        | _ :: tail -> count(tail)(acc + 1)
+
+Ashes.IO.print(count(passes(3)([Name("x")(1), Name("y")(2), Add(0)(0)]))(0))

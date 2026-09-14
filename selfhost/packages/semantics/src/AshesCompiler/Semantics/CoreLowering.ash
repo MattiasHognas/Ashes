@@ -10132,12 +10132,25 @@ let handedOverReleaseGuard (context: CoreCallContext) (resultType: SemanticType)
             then (!stableReuse && calleeCompiledResultRuntimeManaged(context.facts)(state), -1)
             else (!stableReuse && hasCallCopyOut(resultType)(state), resultFlagTemp))
 
+// The generic list deep copy rebuilds every element and its owned parts on the arena branch of
+// the result flag, so the copied result shares nothing with a handed-over argument either: the
+// reference handed to the callee is released where the copy ran.
+let deepCopiedResultSevers (stage: CoreCallStage) (guard: (Bool, Int)) =
+    match guard with
+        | (false, _flagTemp) ->
+            if stage.resultDeepCopied
+            then (true, stage.resultFlagTemp)
+            else guard
+        | _ -> guard
+
 // A partial application keeps its fresh arguments alive in the returned closure.
 let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (elementCopyingFlagTemp: Int) (stage: CoreCallStage) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            match handedOverReleaseGuard(context)(resultType)(stage.resultFlagTemp)(state) with
+            match state
+            |> handedOverReleaseGuard(context)(resultType)(stage.resultFlagTemp)
+            |> deepCopiedResultSevers(stage) with
                 | (resultCopySevers, resultCopyFlagTemp) ->
                     emitConsumedArgumentDrops(CoreConsumedReleasePolicy(
                         verifiedRuntimeResult = calleeCompiledResultRuntimeManaged(context.facts)(state),
