@@ -2088,7 +2088,7 @@ public sealed partial class Lowering
         return pruned switch
         {
             TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
-            TypeRef.TList list => CanArenaReset(Prune(list.Element)),
+            TypeRef.TList list => CanRuntimeManageTcoListElement(list.Element),
             TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),
             TypeRef.TNamedType named =>
                 GetOrdinaryHeapLayoutCapability(named).OwnedChildrenDroppable,
@@ -2376,7 +2376,8 @@ public sealed partial class Lowering
                 // entry preamble already established for this exact parameter slot.
                 TypeRef.TStr => (IsRuntimeRcStringProducer(arguments[i])
                         && IsRuntimeRcClosureCaptureSafeStringProducer(arguments[i]))
-                    || IsNormalizedAlwaysReturnedStringParameterRead(arguments[i]),
+                    || IsNormalizedAlwaysReturnedStringParameterRead(arguments[i])
+                    || IsPerceusPatternOwnerRead(arguments[i]),
                 TypeRef.TBytes => CanMaterializeOwnedBytes(arguments[i]),
                 TypeRef.TBigInt => IsRuntimeRcBigIntProducer(arguments[i])
                     && IsRuntimeRcClosureCaptureSafeBigIntProducer(arguments[i]),
@@ -2499,6 +2500,13 @@ public sealed partial class Lowering
         return true;
     }
 
+    // A string read out of a pattern owner: the aggregate storing it takes its own protective
+    // duplicate (DuplicatePerceusPatternOwnerForAggregate), which is a real retain for a string
+    // whatever the pattern root's placement, so the aggregate owns the child and can release it.
+    private bool IsPerceusPatternOwnerRead(Expr expression)
+        => expression is Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { PerceusPatternOwner: true, IsDropped: false };
+
     private bool CanRuntimeManageFreshOwnedChildExpression(Expr expression, TypeRef type)
     {
         TypeRef childType = Prune(type);
@@ -2506,7 +2514,8 @@ public sealed partial class Lowering
         {
             TypeRef.TStr => (IsRuntimeRcStringProducer(expression)
                     && IsRuntimeRcClosureCaptureSafeStringProducer(expression))
-                || IsNormalizedAlwaysReturnedStringParameterRead(expression),
+                || IsNormalizedAlwaysReturnedStringParameterRead(expression)
+                || IsPerceusPatternOwnerRead(expression),
             TypeRef.TBytes => CanMaterializeOwnedBytes(expression),
             TypeRef.TBigInt => IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression),

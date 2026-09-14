@@ -3967,6 +3967,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_string_adt_list_producer_pipeline_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildStringAdtListProducerPipelineMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+        List<MemoryExecutionResult> chained = await MeasureMemoryGrowthAsync(
+            BuildStringAdtListProducerLetChainMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("list of string-bearing variants rebuilt by a non-tail producer every round", samples);
+        AssertMemoryPlateaus("list of string-bearing variants threaded through a let chain of producers", chained);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9225,6 +9244,65 @@ public sealed class LinuxBackendCoverageTests
                                     | Continue(next, r) -> loop(remaining - 1)(next)(total + 1)
 
             Ashes.IO.print(loop({{iterations}})(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))(0))
+            """;
+
+    // A non-tail producer rebuilds a list of variants carrying a string every round. The list's
+    // element has no arena copy-out strategy, so the producer must hand back a reference-counted
+    // spine: an arena result would leave the call's window open and the consumed input unreleased,
+    // one whole list per round.
+    private static string BuildStringAdtListProducerPipelineMemoryProgram(int iterations)
+        => $$"""
+            type Inst =
+                | Add(Int, Int)
+                | Name(Str, Int)
+
+            let recursive build (n: Int) (acc: List(Inst)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Name("x", n) :: acc)
+
+            let recursive bump (insts: List(Inst)) =
+                match insts with
+                    | [] -> []
+                    | Add(a, b) :: tail -> Add(a + 1, b) :: bump(tail)
+                    | Name(s, k) :: tail -> Name(s, k + 1) :: bump(tail)
+
+            let recursive loop (remaining: Int) (insts: List(Inst)) (total: Int) =
+                if remaining <= 0
+                then total
+                else loop(remaining - 1)(bump(insts))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
+            """;
+
+    // The same producer applied through a chain of let-bound intermediates inside each round:
+    // every intermediate is released when the next stage has consumed it.
+    private static string BuildStringAdtListProducerLetChainMemoryProgram(int iterations)
+        => $$"""
+            type Item =
+                | label: Str
+                | count: Int
+
+            let recursive build (n: Int) (acc: List(Item)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Item(label = "x", count = n) :: acc)
+
+            let recursive bump (items: List(Item)) =
+                match items with
+                    | [] -> []
+                    | Item { label = label, count = count } :: tail -> Item(label = label, count = count + 1) :: bump(tail)
+
+            let recursive loop (remaining: Int) (items: List(Item)) (total: Int) =
+                if remaining <= 0
+                then total
+                else
+                    let once = bump(items)
+                    in
+                        let twice = bump(once)
+                        in loop(remaining - 1)(bump(twice))(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(build(8)([]))(0))
             """;
 
     private static string BuildRuntimeRcRecordHeadListTcoMemoryProgram(int iterations)

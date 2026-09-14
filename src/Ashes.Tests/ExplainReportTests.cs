@@ -239,9 +239,10 @@ public sealed class ExplainReportTests
     [Test]
     public void Rc_counts_describe_the_ir_it_was_handed_not_the_one_lowering_emitted()
     {
-        // The optimizer removes both of this program's drops. Reporting the freshly lowered IR would
-        // therefore describe operations that never reach the backend, which is the whole reason the
-        // report observes after optimization.
+        // The optimizer removes some of this program's drops (the producer's reference-counted
+        // result keeps the ones that release its consumed input). Reporting the freshly lowered IR
+        // would therefore describe operations that never reach the backend, which is the whole
+        // reason the report observes after optimization.
         const string source = """
             type Item =
                 | value: Int
@@ -264,7 +265,6 @@ public sealed class ExplainReportTests
             .Rc.Sum(function => function.Drops);
 
         rawDrops.ShouldBeGreaterThan(optimizedDrops);
-        optimizedDrops.ShouldBe(0);
     }
 
     [Test]

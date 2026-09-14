@@ -14306,7 +14306,15 @@ public sealed partial class Lowering
                 LoweredValueRuntimeRepresentation.BigInt)
             .AddRuntime(
                 runtimeManagedList && element is Expr.TupleLit,
-                LoweredValueRuntimeRepresentation.Tuple);
+                LoweredValueRuntimeRepresentation.Tuple)
+            .AddRuntime(
+                runtimeManagedList && IsFreshRuntimeManageableAdtExpression(element),
+                LoweredValueRuntimeRepresentation.Adt)
+            .AddRuntime(
+                runtimeManagedList
+                    && element is Expr.RecordLit
+                    && IsFreshRuntimeManageableRecordTree(element),
+                LoweredValueRuntimeRepresentation.Record);
         if (expectedElementType is not null)
         {
             elementRequest = elementRequest.WithCallerReportedExpectedType(expectedElementType);

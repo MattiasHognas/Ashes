@@ -51,7 +51,17 @@ Function: countTexts
     reuse tokens:         0
     copies:               0
 
-Function: sumTextLengths [lambda_3__scalarenv1]
+Function: buildTexts [lambda_1__scalarenv0]
+  Operations
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: sumTextLengths [lambda_3__scalarenv2]
   Operations
     dup:                  1
     drop:                 9
@@ -69,5 +79,5 @@ Function: _start_main
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               3
+    copies:               1
 

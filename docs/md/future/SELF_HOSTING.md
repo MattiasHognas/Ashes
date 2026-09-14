@@ -3330,24 +3330,58 @@ same public behavior.
   binding is retained into the aggregate. Regression
   `tests/rc_child_of_call_argument_kept_by_callee_result.ash`, oracle fixture of the same
   name (the retain and release sequence of `addImpl` matches exactly in both compilers).
-- [ ] **OPT-80** The stage-1 lowering of the semantics package alone outgrows the probe's
+- [~] **OPT-80** The stage-1 compile of the semantics package alone outgrows the probe's
   address space: once MOD-19 closed (2026-09-14) the compile of
   `selfhost/packages/semantics/ashes.json` under the stage-1 CLI died with `failed to allocate
   heap memory from OS` after 15 s at 22.7 GiB resident under a 50 GiB cap (the arena reserves
   roughly twice what it touches, so the cap is the address space, not one request: a gdb
   catchpoint on any `mmap` over 4 GiB never fired, and the cap-bound runs pass once the cap is
-  raised). The growth follows the amount of code lowered, not one item: a scratch entry
-  importing only `Types` costs 0.7 s and 2.9 GiB, `TypeResolution` 1.9 s and 7 GiB, a private
-  copy of `TypeInference` with its four dependencies truncated to 1353 lines 12 s and
-  16.7 GiB, to 1994 lines 18 s and 23.9 GiB, to 2265 lines 20 s and 25.7 GiB, and the whole
-  module does not fit in 50 GiB, against the 9 GiB stage 0 needs for the entire CLI package.
-  Two suspects, to be confirmed by the phase driver and a gdb `mmap` sampling of the
-  `--debug` build: the deriving expansion registers an `Ord` implementation whose body is
-  quadratic in the constructor count for every stitched type at program registration,
-  whether or not the type is compared, and the per-item lowering state (trait method
-  closures cached by label, the provenance and reach tables) is carried forward across items
-  in the arena instead of being released behind each top-level binding. The blocker for
-  BOOT-2 now; measure first, then fix the dominator.
+  raised). Per-phase resident sizes read at breakpoints on the `--debug` build name the
+  self-hosted IR optimizer, not the lowering: a scratch entry importing `Types` costs
+  114 MiB before lowering, 594 MiB before optimizing, and 2913 MiB before code generation;
+  `TypeResolution` 135, 1143, and 6809 MiB; a private copy of `TypeInference` with its four
+  dependencies truncated to 2265 lines 194, 3799, and 22887 MiB. Every program-level optimizer
+  stage retains what it allocates (the per-function pipeline 1.4 GiB, the captured-closure
+  devirtualization 1.1 GiB, currying-stage inlining 0.9 GiB, and so on for `TypeResolution`),
+  and nothing is corrupt. The cause is a stage-0 memory-model gap, reproduced by thirty-line
+  programs: a function returning a list whose element carries a heap field (`Add(Int, Int) |
+  Name(Str, Int)`, a record with a string field, and every self-hosted IR type) built its
+  result in the arena, because a list is a runtime-manageable result only over copy-type
+  elements, a constructor head under the runtime-list request never asked for the runtime
+  ADT representation, and a string child read out of a pattern owner did not count as owned.
+  Such a result has no arena copy-out strategy either, so the call window was never restored
+  (a map over 200 lists of 2000 elements grew 16 MiB per extra pass with the same live result)
+  and the handed-over argument was never released (one whole list leaked per round of a
+  producer loop, 100 bytes per element per pass), where the same program over `(Str, Int)`
+  tuples stays flat. The architecture's contract (an escaping ordinary graph is normalized to
+  reference counting) was not met for these types. Slice a, done (2026-09-14): the result
+  predicate admits lists over runtime-manageable elements, a fresh constructor or record head
+  under the runtime-list request is built reference-counted, and a pattern-owner string is an
+  owned child of the aggregate storing it (its aggregate duplicate is a real retain whatever
+  the root's placement); mirrored in `CoreLowering.ash`, twelve lowered-IR parity fixtures
+  regenerated and matched by the self-hosted lowering, plateau tests
+  `Linux_backend_llvm_string_adt_list_producer_pipeline_memory_should_plateau` and
+  `tests/rc_string_adt_list_producer_pipeline.ash`. The non-tail producer, the let chain, and
+  the loop over such lists are now flat; the probe is unchanged (the self-hosted IR types
+  need the slices below). Open:
+  - [ ] **OPT-80b** A fresh reference-counted call result handed straight to a callee that
+    borrows it (`bump(bumpTimes(p - 1)(insts))`) is never released: the self call's result
+    placement is unknown while its own body is lowered, so `RegisterConsumedRuntimeArgument`
+    records nothing for it. The map-shaped experiment grew from 336 to 536 MiB with slice a.
+  - [ ] **OPT-80c** The layout classifiers (`Lowering.LayoutCapability.cs`
+    `IsRuntimeRecordAdtLayout`, `IsRuntimeOwnedChildAdtLayout`, and the `TList` arms that
+    admit only copy-type elements everywhere) reject a variant child inside a record, a
+    generic payload (`Maybe(Str)`, any type with parameters), and a list over variants, so
+    `IrInstruction { instruction: IrInst, location: Maybe(SourceLocation) }` and
+    `List(IrFunction)` never qualify; the runtime dropper and copier already walk those
+    shapes. Experiments `pipe_adt_nested`, `pipe_adt_maybe`, `pipe_adt_liststr` grow
+    23 bytes per element per pass.
+  - [ ] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
+    generic `reverse`) still leaks a whole list per round (827 MiB at 160 rounds of 50000):
+    the accumulator's cells and the generic callee's deep copy need the same admission.
+  - [ ] **OPT-80e** Re-measure the semantics package and the CLI package with the phase
+    probe after each slice; the BOOT-2 probe resumes when the semantics package compiles
+    under the 24 GiB cap.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk

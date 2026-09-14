@@ -29,5 +29,5 @@ Function: _start_main
     allocations:          4
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               1
 

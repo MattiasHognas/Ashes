@@ -55,8 +55,8 @@ Function: prefixed
     drop:                 4
     uniqueness checks:    1
   representation [lambda_3]
-    conservative unknown: 3
+    conservative unknown: 2
     region:               3
-    runtime rc:           9
+    runtime rc:           8
     copy value:           2
 

@@ -14,6 +14,10 @@ Function: build
     dup:                  0
     drop:                 0
     uniqueness checks:    0
+  perceus [lambda_1__scalarenv0]
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
   representation [lambda_1]
     region:               1
     runtime rc:           8
@@ -35,7 +39,7 @@ Function: findLong
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_3__scalarenv0]
+  perceus [lambda_3__scalarenv1]
     dup:                  3
     drop:                 12
     uniqueness checks:    3
@@ -61,8 +65,8 @@ Function: run
     drop:                 0
     uniqueness checks:    0
   representation [lambda_5]
-    conservative unknown: 6
-    runtime rc:           11
+    conservative unknown: 5
+    runtime rc:           10
     copy value:           16
   representation [lambda_4]
     region:               3

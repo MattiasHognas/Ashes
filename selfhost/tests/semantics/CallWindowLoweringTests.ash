@@ -185,16 +185,16 @@ let constructorRecursiveProducerProgram = "let bang (n: Str) = n + \"!\"\n\nlet 
 // inside the function. The chain closes at the single return, and the closed spine keeps the
 // body's reference-counted representation: the closure carries `ReturnsRuntimeManaged=true`
 // and the function ends in the result-ownership epilogue that copies the spine out for a caller
-// that wants an arena result and releases the original. The call site reads that bit and
-// normalizes the result only when it is clear, exactly as stage 0 lowers the same program; the
-// only remaining difference is a dead zero store stage 0 emits before its epilogue.
+// that wants an arena result and releases the original. A list of strings is a result runtime
+// RC holds, so the call site trusts the verified reference-counted result and restores its
+// window without a copy-out, exactly as stage 0 lowers the same program; the only remaining
+// difference is a dead zero store stage 0 emits before its epilogue.
 let expectConstructorRecursiveProducerKeepsRuntimeManagedSpine unit =
     constructorRecursiveProducerProgram
     |> dumpSource
     |> expectInstruction("MakeClosure           Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true")
     |> expectInstruction("LoadConstInt          Target=11 Value=63")
-    |> expectInstruction("JumpIfFalse           CondTemp=12 Target=call_copy_arena_result_17")
-    |> expectInstruction("CopyOutList           DestTemp=14 SrcTemp=13 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization")
+    |> expectNoInstructionText("call_copy_arena_result")
     |> liftedFunctionLines
     |> expectInstruction("Alloc                 Target=21 SizeBytes=16 RuntimeManaged=true")
     |> expectInstruction("JumpIfFalse           CondTemp=24 Target=tmc_first_8")

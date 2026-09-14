@@ -3350,16 +3350,27 @@ and freshTupleElementSupported (element: Expr) (elementType: SemanticType) (stat
             | (SemTuple(innerTypes), ExprTuple(innerElements)) -> canRuntimeManageFreshTuple(innerElements)(innerTypes)(state)
             | _ -> false
 
+// Stage 0's `IsPerceusPatternOwnerRead`: a read of a pattern owner binding. As a string child of
+// an aggregate it counts as owned, since the aggregate's own pattern-owner duplicate is a real
+// retain for a string whatever the pattern root's placement.
+let isPatternOwnerRead (child: Expr) (state: CoreLoweringState) =
+    match unspanArgument(child) with
+        | ExprVar(name) ->
+            state
+            |> patternOwnerBinding(name)
+            |> patternOwnerFlag
+        | _ -> false
+
 // Stage 0's `CanRuntimeManageFreshOwnedChildExpression` and the record and accumulator trees it
-// recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer,
-// a list over scalars built fresh or read from a binding or call, a fresh tuple, a fresh record
-// tree, or a fresh application of an accumulator-shaped type.
+// recurses into: a field holds a fresh owned value when it is a scalar, a fresh string producer
+// or pattern-owner read, a list over scalars built fresh or read from a binding or call, a fresh
+// tuple, a fresh record tree, or a fresh application of an accumulator-shaped type.
 let recursive canRuntimeManageFreshOwnedChild (expression: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     if resultSurvivesReset(fieldType)(state)
     then true
     else
         match (resolveType(state)(fieldType), unspanArgument(expression)) with
-            | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state)
+            | (SemString, _expression) -> isFreshStringChild(expression)(state) || isNormalizedAlwaysReturnedStringParameterRead(expression)(state) || isPatternOwnerRead(expression)(state)
             | (SemList(element), _expression) -> resultSurvivesReset(element)(state) && (isFreshListConstruction(expression) || isVariableOrCall(expression))
             | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
             | (SemNamed(_symbolId, name, _arguments), _expression) -> isRecordLiteral(expression) && isFreshRuntimeManageableRecordTree(expression)(state) || isFreshTcoOwnedChildApplication(expression)(name)(state)
@@ -3456,7 +3467,7 @@ let canRuntimeManageGenericCopyAdtApplication (layout: CoreConstructorLayout) (a
 
 let freshHeapChildFieldSupported (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     match (resolveType(state)(fieldType), unspanArgument(argument)) with
-        | (SemString, _expression) -> isFreshStringChild(argument)(state)
+        | (SemString, _expression) -> isFreshStringChild(argument)(state) || isNormalizedAlwaysReturnedStringParameterRead(argument)(state) || isPatternOwnerRead(argument)(state)
         | (SemList(element), _expression) -> resultSurvivesReset(element)(state) && isFreshListConstruction(argument)
         | (SemTuple(elementTypes), ExprTuple(elements)) -> canRuntimeManageFreshTuple(elements)(elementTypes)(state)
         | (SemVariable(_id), _expression) -> isFreshGenericPayload(argument)(state)
@@ -9274,7 +9285,7 @@ let isRuntimeManageableResultType (semanticType: SemanticType) (state: CoreLower
         | SemString -> true
         | SemBytes -> true
         | SemBigInt -> true
-        | SemList(element) -> canArenaResetLayout(element)
+        | SemList(element) -> tcoListElementSupported(element)(state)
         | SemTuple(_elements) as tuple -> ownedChildrenDroppable(tuple)(state)
         | SemNamed(_symbolId, _name, _arguments) as named -> ownedChildrenDroppable(named)(state)
         | _ -> false)
@@ -13253,7 +13264,7 @@ let allocateListCell headTemp tailTemp elementType (runtimeManaged: Bool) state 
 // runtime tuple.
 let listElementRequest (request: ConsumerRequest) (elementType: Maybe(SemanticType)) (transfers: Bool) (element: Expr) (state: CoreLoweringState) =
     match request with
-        | ConsumerRequest { runtimeString = parentString, runtimeList = runtimeList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, runtimeRecord = parentRecord } -> emptyConsumerRequest with expectedType = elementType, runtimeString = parentString || runtimeList && isFreshStringChild(element)(state), runtimeList = runtimeList, runtimeTuple = parentTuple || runtimeList && isTupleLiteral(element), runtimeAdt = parentAdt, runtimeRecord = parentRecord, transfersRuntimeManagedChildren = transfers
+        | ConsumerRequest { runtimeString = parentString, runtimeList = runtimeList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, runtimeRecord = parentRecord } -> emptyConsumerRequest with expectedType = elementType, runtimeString = parentString || runtimeList && isFreshStringChild(element)(state), runtimeList = runtimeList, runtimeTuple = parentTuple || runtimeList && isTupleLiteral(element), runtimeAdt = parentAdt || runtimeList && isFreshRuntimeManageableAdtExpression(element)(state), runtimeRecord = parentRecord || runtimeList && isRecordLiteral(element) && isFreshRuntimeManageableRecordTree(element)(state), transfersRuntimeManagedChildren = transfers
 
 let requestsRuntimeList (request: ConsumerRequest) =
     match request with
@@ -13280,14 +13291,6 @@ let retainListElement (request: ConsumerRequest) (transfers: Bool) (element: Exp
 // where a non-tail producer copies its whole partial result out of every level's window. Under a
 // runtime list request the head takes an owned reference-counted copy instead, recorded so the
 // pattern-owner duplicate is not emitted on top of it.
-let isPatternOwnerRead (child: Expr) (state: CoreLoweringState) =
-    match unspanArgument(child) with
-        | ExprVar(name) ->
-            state
-            |> patternOwnerBinding(name)
-            |> patternOwnerFlag
-        | _ -> false
-
 let patternOwnerHeadCopy (copyTemp: Int) (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString ->

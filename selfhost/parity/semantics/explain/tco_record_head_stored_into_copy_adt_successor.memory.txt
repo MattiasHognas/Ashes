@@ -20,7 +20,7 @@ Function: build
     uniqueness checks:    4
   representation [lambda_1]
     conservative unknown: 3
-    region:               9
+    region:               7
     runtime rc:           12
     copy value:           9
   representation [lambda_0]

@@ -439,9 +439,9 @@ let aggregateChildrenRetainPairReprLine (line: Str) =
 
 let aggregateChildrenRetainPrefixedReprLine (line: Str) =
     match line with
-        | "    conservative unknown: 3" -> ["    conservative unknown: 5"]
+        | "    conservative unknown: 2" -> ["    conservative unknown: 6"]
         | "    region:               3" -> ["    region:               1"]
-        | "    runtime rc:           9" -> ["    runtime rc:           4"]
+        | "    runtime rc:           8" -> ["    runtime rc:           2"]
         | _ -> [line]
 
 let aggregateChildrenRetainReprReason = "representation is classified by a post-hoc walk that is last-write-wins in program order rather than per-branch, so these functions' own arena-reset/RC-retain joins are classified from whichever branch wrote a slot last in program order instead of the branch that actually produced the value"
