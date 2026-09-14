@@ -3485,11 +3485,21 @@ same public behavior.
     bit; and a whole-value `RcDrop` of a user type named `Function` carried that name, where
     stage 0 tags it `Function_` apart from the closure protocol the backend releases a
     `Function` through (`RuntimeManagedAdtTypeName`). What is left of that first gap is
-    `user_type_named_function_release`: stage 0's static-fact walk follows the tail spine only,
-    so a producer's non-tail self call contributes no consumed-tail fact and the list parameter
-    stays outside runtime management with the self call's retain flag zeroed
-    (`ResolvePendingRuntimeArgumentFlags`), where the self-hosted lowering reaches that call
-    through a back edge, admits the parameter and keeps the callee's accepts bit. A closure
+    `user_type_named_function_release`, and its root is narrower than the flags it shows: both
+    lowerings reach the same `mayReach` question for the self call's argument (the pattern-bound
+    tail of the loop parameter, handed to a callee whose result may keep parts of it), and answer
+    it differently because `ResultReaches` is not mirrored. Stage 0 looks the parameter up in the
+    reach map by its exact name, so a result that reaches only a destructured component
+    (`functions/0`, the record field the arm binds and conses into the head) does not count, the
+    argument takes the accepts bit as its pending flag, and finalize zeroes it. The self-hosted
+    `reachCountOf` counts the parameter's own entry and every `param/i` component entry with it
+    (added with the selfhost's component reach in #879, which the consumed-argument rules depend
+    on), so the argument takes a forced retain flag and a pending adoption flag, both dead after
+    finalize zeroes the forced one. Making `reachCountOf` exact is not the fix: measured
+    (2026-09-15), it breaks `consumed_string_list_copied_release`,
+    `match_fresh_scrutinee_owner_release`, `match_fresh_scrutinee_head_returned` and
+    `record_head_list_producer`, which need the component reach. Mirroring means splitting the
+    component reach from the whole-parameter question at this call site alone. A closure
     capturing a record whose field is a list over owned elements
     (`parameter_reaches_result_record_update`, compared only by the stage-0 oracle
     tests) gets an environment normalizer and a `__rc_cdrop` dropper from stage 0
