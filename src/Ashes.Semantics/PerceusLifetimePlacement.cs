@@ -494,6 +494,7 @@ internal static class PerceusLifetimePlacement
         // recycled small string, a segfault for an OS-backed >4 KiB string). All only lengthen
         // liveness, so the drop lands after the last real use, never earlier.
         var aliasStores = new Dictionary<int, List<AliasStore>>();
+        var viewAliases = new HashSet<int>();
         int[] orderedRegion = [.. region.OrderBy(index => blocks[index].Start)];
         bool changed = true;
         while (changed)
@@ -504,7 +505,7 @@ internal static class PerceusLifetimePlacement
                 Block block = blocks[blockIndex];
                 for (int i = block.Start; i < block.End; i++)
                 {
-                    changed |= PropagateAlias(instructions[i], i, block, aliases, aliasStores, arenaAdtCells);
+                    changed |= PropagateAlias(instructions[i], i, block, aliases, viewAliases, aliasStores, arenaAdtCells);
                 }
             }
         }
@@ -538,6 +539,7 @@ internal static class PerceusLifetimePlacement
         int index,
         Block block,
         HashSet<int> aliases,
+        HashSet<int> viewAliases,
         Dictionary<int, List<AliasStore>> aliasStores,
         HashSet<int> arenaAdtCells)
     {
@@ -561,6 +563,27 @@ internal static class PerceusLifetimePlacement
                 return aliases.Add(call.Target);
             case IrInst.CallKnown known when aliases.Contains(known.ArgTemp) || aliases.Contains(known.EnvTemp):
                 return aliases.Add(known.Target);
+            // A view names its backing value's bytes instead of copying them, so the result holds
+            // the owner as surely as a Borrow does — one level deeper, since the pieces are read
+            // back out of the tuple the instruction allocates. Only what a view reaches follows
+            // that extra level (the two reads below are tracked against `viewAliases`, not every
+            // alias): a field read of an ordinary aggregate holding the owner is a value of its
+            // own, and lengthening its liveness would keep whole graphs alive for a scope longer.
+            case IrInst.TextUncons uncons when !uncons.RuntimeManaged && aliases.Contains(uncons.TextTemp):
+                viewAliases.Add(uncons.Target);
+                return aliases.Add(uncons.Target);
+            case IrInst.TextUnconsText unconsText when !unconsText.RuntimeManaged && aliases.Contains(unconsText.TextTemp):
+                viewAliases.Add(unconsText.Target);
+                return aliases.Add(unconsText.Target);
+            case IrInst.BytesSubView subView when aliases.Contains(subView.BytesTemp):
+                viewAliases.Add(subView.Target);
+                return aliases.Add(subView.Target);
+            case IrInst.GetAdtField field when viewAliases.Contains(field.Ptr):
+                viewAliases.Add(field.Target);
+                return aliases.Add(field.Target);
+            case IrInst.LoadMemOffset read when viewAliases.Contains(read.BasePtr):
+                viewAliases.Add(read.Target);
+                return aliases.Add(read.Target);
             default:
                 return false;
         }
