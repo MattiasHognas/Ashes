@@ -3718,6 +3718,14 @@ same public behavior.
   dropped value arrives in `rsi`; the reference count is the word at payload minus 16 and the
   allocation size the word at payload minus 8. Print both, then arm a watchpoint on the count word of
   the value the first structural drop reports.
+
+  Confirmed at the release site (2026-09-15). A single-entry table is enough, so the loop need not
+  carry the result past another entry. Reading only the label of each element, never the ADT beside
+  it, still faults, so the whole returned list is gone rather than just its ADT children. And the
+  last release before the fault is the ADT dropper called from the function header line, which is
+  where the loop exit's drops are attributed: the exit releases the accumulator, the accumulator is
+  what the `| [] -> found` arm returns, and the dropper walks into the list and frees its elements.
+  That is the mechanism named above, now observed rather than inferred.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
