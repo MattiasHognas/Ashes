@@ -2556,6 +2556,33 @@ Completed slices of **OPT-80**, whose open tail is in the [plan](SELF_HOSTING.md
     and the regenerated `aggregate_borrowing_owner_kept_by_callee` parity fixture, which both
     compilers reproduce instruction for instruction along with the other 53.
 
+Completed work of **OPT-80i**, a measured negative result. The approach is refuted; the live memory
+task is OPT-85 in the [plan](SELF_HOSTING.md).
+
+  The record layout classifier rejects every self-hosted IR record, because `IrFunction` carries a
+  type that reaches itself, so the optimizer's per-function map builds its results in the arena. The
+  attempt was to admit such records to the reference-counted heap by copying and releasing their
+  fields through generated per-type copier and dropper functions, so the map could leave the arena.
+  Measured on `feature/opt80i-recursive-record-fields` at `2390ec1d`, unmerged and never proposed: a
+  stage-1 CLI built by the admitting compiler against one built by the same compiler with the
+  admission restricted to nothing, same source, same probe.
+
+  | module probe | admission off | admission on |
+  |---|---|---|
+  | `Types` | 0.70 s / 3.17 GB | 1.60 s / 4.64 GB |
+  | `TypeSchemes` | 0.95 s / 3.86 GB | 2.17 s / 5.86 GB |
+  | `Unification` | 2.13 s / 7.65 GB | 6.84 s / 22.3 GB |
+  | `TypeResolution` | 2.82 s / 7.91 GB | died at a 30 GB cap in 10 s |
+
+  The off column reproduces the pre-admission numbers exactly, so the delta is the admission and
+  nothing else, and it grows with module size. Why it fails: making a self-reaching type
+  reference-counted does not stop the arena accumulating. It replaces a shared arena pointer with a
+  deep copy of the whole type graph at every boundary that used to share one.
+
+  The attempt exposed seven soundness bugs, and none of them is independently landable: each is
+  reachable only through the admission, and every regression it produced passes on a plain build both
+  with and without its fix. They are the price of the design rather than latent defects.
+
 ## Language and standard-library prerequisites
 
 The capability audit that preceded the port: what the language, compiler and standard library had to
