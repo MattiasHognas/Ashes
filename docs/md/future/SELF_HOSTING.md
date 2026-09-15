@@ -391,6 +391,12 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   already quantifies over the free variables of its constraints, and `inferTopLevelBinding` already
   passes the selected constraints, so look at what `checkInferenceBindingSignature` selects for an
   unannotated binding before suspecting either of those.
+  One dead end, so it is not walked twice: reading the generalized scheme back out of
+  `inferProgram`'s environment from a probe under `selfhost/tests/semantics` proved nothing,
+  because an unconstrained binding printed the same shape — two more leading arrows than its source
+  has parameters — as the constrained one, which means the probe was not reading what it looked
+  like it was reading. Validate any such probe against a binding whose scheme is already known
+  before drawing a conclusion from it.
 
 ### IR model and lowering
 
