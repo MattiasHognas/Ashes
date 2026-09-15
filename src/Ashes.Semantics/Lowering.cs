@@ -5628,11 +5628,13 @@ public sealed partial class Lowering
     {
         if (runtimeManaged
             && TypeCarriesTextBytes(valueType, [])
-            && ResultMayViewCallArgument(let.Body, let.Name))
+            && ResultMayViewCallArgument(let.Body, let.Name)
+            && LookupOwnedValue(let.Name) is { } owner)
         {
-            LookupOwnedValue(let.Name)!.ResultMayViewValue = true;
+            owner.ResultMayViewValue = true;
         }
     }
+
     // Whether a value of this type can hold bytes another value owns: only a string or a bytes value
     // is ever a view, so only a type that reaches one can carry a released backing out. A recursive
     // type reaches itself, so each type name is answered once.
