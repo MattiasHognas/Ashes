@@ -15766,18 +15766,6 @@ let emitResolvedCoreShift name intKind binary =
             else operatorMismatch(name)(binary)
         | _ -> operatorMismatch(name)(binary)
 
-let emitResolvedCoreOrdered name intKind uintKind floatKind binary =
-    match binary with
-        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemBool)(binary)
-        | LoweredCoreBinary { leftType = SemRune, rightType = SemRune } -> emitCoreBoolBinary(intKind)(binary)
-        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
-            if leftBits == rightBits
-            then emitCoreBoolBinary(uintKind)(binary)
-            else operatorMismatch(name)(binary)
-        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreBoolBinary(floatKind)(binary)
-        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
-        | _ -> operatorMismatch(name)(binary)
-
 let recursive lastQualifiedPiece (pieces: List(Str)) =
     match pieces with
         | [] -> ""
@@ -16290,6 +16278,35 @@ let emitCoreTraitEquality name lower binary =
             else "notEqual")(lower)
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 
+// The `Ord` method each comparison operator maps to, the same pairing stage 0's mapped binary
+// traits use.
+let orderedTraitMethod name =
+    match name with
+        | "<" -> "less"
+        | "<=" -> "lessOrEqual"
+        | ">" -> "greater"
+        | _ -> "greaterOrEqual"
+
+// Past the primitive comparisons, exactly as `emitCoreTraitEquality` is past equality's: one
+// operand type, concrete or the type argument of an active requirement, dispatching through `Ord`.
+let emitCoreTraitOrdered name lower binary =
+    match binary with
+        | LoweredCoreBinary { error = None } ->
+            binary |> emitCoreTraitBinaryDispatch("Ord")(orderedTraitMethod(name))(lower)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let emitResolvedCoreOrdered name intKind uintKind floatKind lower binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemBool)(binary)
+        | LoweredCoreBinary { leftType = SemRune, rightType = SemRune } -> emitCoreBoolBinary(intKind)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreBoolBinary(uintKind)(binary)
+            else operatorMismatch(name)(binary)
+        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreBoolBinary(floatKind)(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
+        | _ -> emitCoreTraitOrdered(name)(lower)(binary)
+
 let emitResolvedCoreEquality name intKind floatKind stringKind lower binary =
     match binary with
         | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemBool)(binary)
@@ -16316,10 +16333,10 @@ let emitResolvedCoreBinary operator lower binary =
         | CoreBitwiseXorOperator -> emitResolvedCoreBitwise("^")(XorInt)(binary)
         | CoreShiftLeftOperator -> emitResolvedCoreShift("<<")(ShlInt)(binary)
         | CoreShiftRightOperator -> emitResolvedCoreShift(">>")(ShrInt)(binary)
-        | CoreGreaterOperator -> emitResolvedCoreOrdered(">")(CmpIntGt)(CmpUIntGt)(CmpFloatGt)(binary)
-        | CoreGreaterOrEqualOperator -> emitResolvedCoreOrdered(">=")(CmpIntGe)(CmpUIntGe)(CmpFloatGe)(binary)
-        | CoreLessOperator -> emitResolvedCoreOrdered("<")(CmpIntLt)(CmpUIntLt)(CmpFloatLt)(binary)
-        | CoreLessOrEqualOperator -> emitResolvedCoreOrdered("<=")(CmpIntLe)(CmpUIntLe)(CmpFloatLe)(binary)
+        | CoreGreaterOperator -> emitResolvedCoreOrdered(">")(CmpIntGt)(CmpUIntGt)(CmpFloatGt)(lower)(binary)
+        | CoreGreaterOrEqualOperator -> emitResolvedCoreOrdered(">=")(CmpIntGe)(CmpUIntGe)(CmpFloatGe)(lower)(binary)
+        | CoreLessOperator -> emitResolvedCoreOrdered("<")(CmpIntLt)(CmpUIntLt)(CmpFloatLt)(lower)(binary)
+        | CoreLessOrEqualOperator -> emitResolvedCoreOrdered("<=")(CmpIntLe)(CmpUIntLe)(CmpFloatLe)(lower)(binary)
         | CoreEqualOperator -> emitResolvedCoreEquality("==")(CmpIntEq)(CmpFloatEq)(CmpStrEq)(lower)(binary)
         | CoreNotEqualOperator -> emitResolvedCoreEquality("!=")(CmpIntNe)(CmpFloatNe)(CmpStrNe)(lower)(binary)
 
