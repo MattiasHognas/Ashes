@@ -9,6 +9,7 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 | Feature | Status | Description |
 |---------|--------|-------------|
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
+| [Self-Hosting Log](SELF_HOSTING_LOG.md) | Record | The completed work of that rewrite |
 | [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |
 | [Package Registry Website: Follow-up Work](REGISTRY_WEBSITE.md) | Deferred product work | Follow-up work for the shipped public package-discovery website |
 | [Compiler Parity Fuzzing](COMPILER_PARITY_FUZZING.md) | Proposed | Differentially fuzz the stage-0 and self-hosted compilers against each other |
