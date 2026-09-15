@@ -6709,7 +6709,7 @@ public sealed partial class Lowering
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
         BackfillSelfClosureResultOwnership(label, bodyRuntimeManaged);
         RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
-        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
+        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(lam, savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(LowerLambdaCoreNormalizeRequestedArenaResult(bodyTemp, bodyType, bodyRuntimeManaged)));
 
         IrFunction loweredFunction = LowerLambdaCoreFinishFunction(label, placementFrame.Origin);
@@ -9563,7 +9563,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(TcoContext? tco, int bodyTemp)
+    private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(Expr.Lambda lam, TcoContext? tco, int bodyTemp)
     {
         if (tco is null)
         {
@@ -9572,7 +9572,8 @@ public sealed partial class Lowering
 
         int transferSelectedSlot = -1;
         int zeroTemp = -1;
-        if (IsRuntimeManagedResultTemp(bodyTemp))
+        if (IsRuntimeManagedResultTemp(bodyTemp)
+            || ResultReachesRuntimeManagedLoopParameter(lam, tco))
         {
             transferSelectedSlot = NewLocal();
             zeroTemp = NewTemp();
@@ -9617,6 +9618,36 @@ public sealed partial class Lowering
             EmitRuntimeManagedTcoExitParamDrop(tco, slot, sourceTemp, activeSlot);
             Emit(new IrInst.Label(doneLabel));
         }
+    }
+
+    // Whether the loop can return one of the parameters it owns, read out bare. The exit has to hand
+    // such a result over rather than release it, and the temp facts do not always say so: a join of
+    // the parameter with a bare nullary constructor reads as an arena value while the parameter is
+    // still reference-counted. Placement is settled by the time the exit is emitted, so the slot's
+    // representation is reliable here in a way it is not at the syntactic predicates further up.
+    private bool ResultReachesRuntimeManagedLoopParameter(Expr.Lambda lam, TcoContext tco)
+    {
+        var terminals = new List<Expr>();
+        CollectFreshEscapeTerminals(GetInnermostBody(lam), terminals);
+        foreach (Expr terminal in terminals)
+        {
+            if (terminal is not Expr.Var variable)
+            {
+                continue;
+            }
+
+            for (int ordinal = 0; ordinal < tco.ParamNames.Count && ordinal < tco.ParamSlots.Count; ordinal++)
+            {
+                if (string.Equals(tco.ParamNames[ordinal], variable.Name, StringComparison.Ordinal)
+                    && tco.IsVisibleParameterOrdinal(ordinal)
+                    && tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal]))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void EmitRuntimeManagedTcoExitParamDrop(
