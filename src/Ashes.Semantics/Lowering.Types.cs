@@ -923,6 +923,14 @@ public sealed partial class Lowering
         public ResourceReleaseKind ReleaseKind { get; set; }
 
         /// <summary>
+        /// True when the scope's result can carry a view of this value's bytes: something a callee
+        /// read out of it and handed back without copying. The scope exit then copies its result
+        /// before releasing this value, and the release stays where lowering put it — after that
+        /// copy — instead of being moved to the last place the value itself was read.
+        /// </summary>
+        public bool ResultMayViewValue { get; set; }
+
+        /// <summary>
         /// True once this value has been released by any means (closed, moved, or scope-exit dropped).
         /// Derived from <see cref="ReleaseKind"/> — there is no independent dropped flag to keep in
         /// sync. A live value is <see cref="ResourceReleaseKind.None"/>.
