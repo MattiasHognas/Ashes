@@ -236,7 +236,9 @@ public sealed partial class Lowering
     // self-call (which never reaches the join) is runtime-managed but not fresh, and a returned
     // pattern owner of a runtime-managed loop parameter is fresh: the branch retains its reference
     // (TransferDirectRuntimeManagedBranchResult), so the literal arms beside it must be normalized
-    // for the join to be uniformly runtime-managed and the retained reference to be released.
+    // for the join to be uniformly runtime-managed and the retained reference to be released. A
+    // returned loop parameter is fresh for the same reason, one step earlier: the reference it
+    // hands over is the parameter's own.
     private bool IsRuntimeManagedStringMatchArm(Expr expression, out bool fresh)
     {
         if (expression is Expr.StrLit || IsStaticConstructorArm(expression, out _))
@@ -245,7 +247,9 @@ public sealed partial class Lowering
             return true;
         }
 
-        if (IsRuntimeRcStringProducer(expression) || IsRetainedPatternOwnerTerminal(expression))
+        if (IsRuntimeRcStringProducer(expression)
+            || IsRetainedPatternOwnerTerminal(expression)
+            || IsRuntimeManagedLoopParameterTerminal(expression))
         {
             fresh = true;
             return true;
@@ -352,6 +356,35 @@ public sealed partial class Lowering
         }
 
         return found;
+    }
+
+    /// <summary>
+    /// A bare read of a runtime-managed loop parameter. Returned from a branch, that read is the
+    /// parameter's own reference, which the loop exit hands over instead of releasing — but the
+    /// exit only emits that hand-over guard when the whole join is runtime-managed. A literal arm
+    /// beside such a branch must therefore be normalized too, or the join is an arena value, the
+    /// guard is skipped, and the exit releases the very string the loop returns. A parameter whose
+    /// name a later parameter in the same chain reuses is not visible here and proves nothing.
+    /// </summary>
+    private bool IsRuntimeManagedLoopParameterTerminal(Expr expression)
+    {
+        if (expression is not Expr.Var variable || _tcoCtx is not { } tco)
+        {
+            return false;
+        }
+
+        for (int ordinal = 0; ordinal < tco.ParamNames.Count && ordinal < tco.ParamSlots.Count; ordinal++)
+        {
+            if (!string.Equals(tco.ParamNames[ordinal], variable.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return tco.IsVisibleParameterOrdinal(ordinal)
+                && tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal]);
+        }
+
+        return false;
     }
 
     private (string? Name, TypeRef.TNamedType? RuntimeType) GetMatchReuseScrutinee(

@@ -935,6 +935,26 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void TCO_loop_returning_its_string_parameter_hands_the_reference_over()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive pick : Int -> Str -> Str = given n -> given text ->
+                match n with
+                    | 0 -> "done"
+                    | _ -> if n < 0 then text else pick (n - 1) text
+            in pick 3 ("a" + "b")
+            """);
+        List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+
+        instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
+                "A loop whose arm returns the parameter itself must hand that reference over at the exit "
+                + "instead of releasing the string it returns, which needs the literal arm beside it "
+                + "normalized so the whole join is runtime-managed.");
+    }
+
+    [Test]
     public void TCO_loop_with_tuple_head_list_accumulator_uses_runtime_ownership()
     {
         IrProgram ir = LowerProgram(
