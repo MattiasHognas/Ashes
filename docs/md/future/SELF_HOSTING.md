@@ -1619,18 +1619,61 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
-- [ ] **CG-20** A list built by one loop and read by two gives every element length 1
-  (2026-09-15). `tests/tco_runtime_managed_list_accumulator_plateau.ash` compiled by stage 1
-  prints `200000|200000|200000` where stage 0 prints `200000|1088895|200000`: the middle field
-  sums `Ashes.Text.byteLength` over the list and comes out equal to the element count, as if every
-  string were one byte long. It is a wrong answer, not a crash, and it is what the self-hosted
-  backend suite (`selfhost/tests/backend`, run from the repository root with `lib/Ashes`) stops
-  on, so that suite is red until this closes. Predates CG-18's fix. Reduction (26 lines, the same
-  fixture with `200000` replaced by `12`, giving `12|12|12` against stage 0's `12|15|12`): a
-  top-level `let texts = buildTexts(12)([])` consumed by a counting loop and then by the summing
-  loop. One consumer alone is correct — the counting loop ahead of it is what turns the lengths
-  into ones — so suspect the borrowed global's second traversal rather than `byteLength`, which
-  is correct on its own.
+- [ ] **CG-20** Two different functions compile to the same scalarized variant, so calling one runs
+  the other's body (2026-09-16). It surfaced as
+  `tests/tco_runtime_managed_list_accumulator_plateau.ash` compiled by stage 1 printing
+  `200000|200000|200000` against stage 0's `200000|1088895|200000`, which is what the self-hosted
+  backend suite (`selfhost/tests/backend`, run from the repository root with `lib/Ashes`) stops on,
+  so that suite is red until this closes. It has nothing to do with `byteLength`, which is correct
+  on its own. Twelve lines reproduce it:
+
+  ```ash
+  let recursive first xs acc =
+      match xs with
+          | [] -> acc
+          | _ :: rest -> first(rest)(acc + 1)
+
+  let recursive second xs acc =
+      match xs with
+          | [] -> acc
+          | _ :: rest -> second(rest)(acc + 10)
+
+  let items = ["a", "b", "c"]
+
+  Ashes.IO.print(Ashes.Text.fromInt(first(items)(0)) + "|" + Ashes.Text.fromInt(second(items)(0)))
+  ```
+
+  Stage 1 prints `3|3` where stage 0 prints `3|30`, and `second(items)(5)` returns `8`, which is
+  `first`'s body with `acc = 5`. Stage 1's final IR has both call sites targeting
+  `lambda_1__scalarenv0`, `first`'s variant.
+
+  **Root cause, traced.** `getOrCreateScalarEnvVariant` in `IrOptimizer.ash` memoizes the variant
+  under `label + "#" + captureCount`, and that key string is released at the function's scope exit
+  while the memo it was stored into is part of the returned state. Printing the memo on both calls
+  shows it exactly: the first call stores `[("lambda_1#1", Some("lambda_1__scalarenv0"))]`, and at
+  the second call the same list reads `[("lambda_3#1", ...)]` — the freed key's cell was reused by
+  the second call's own key, so the lookup hits the first entry and returns `first`'s variant for
+  `second`. The released reference is visible in stage 0's emitted IR for that function as a
+  trailing `RcDrop SourceTemp=... TypeName=String RuntimeManaged=true` on the key's slot, with no
+  retain where `setAssociation` stores it. This is the OPT-79 / OPT-80j family: a let-bound
+  reference-counted value stored into a structure the result keeps, dropped at scope exit.
+
+  **Narrowed.** It disappears if either `inlineCurryingStages` or
+  `scalarizeSingleCaptureStackClosures` is made the identity, so it needs both; it reproduces with
+  stage 1 built at `-O0`, so it is not stage 0's IR optimizer; and widening scalarization's
+  `readsArgumentOwnership` guard from two captures to all capture counts does not fix it.
+
+  **Reproduction in the suite.** `selfhost/tests/semantics/ScalarEnvVariantTests.ash` fails on this
+  today and is deliberately not wired into that suite's `Main.ash`; wiring it in belongs to the fix.
+  It is a 46-second loop, against several minutes for a stage-1 rebuild.
+
+  **What did not reproduce it**, so start past these: five progressively closer stage-0 reductions
+  of the memo shape all give the right answer — a generic `setAssociation` storing a built key into
+  a returned list; the same into a record field; the same threaded through a recursive walk; the
+  same with the key built before a heavily allocating call; and the same with the generic setter
+  also instantiated at a second key type. The emitted IR of the closest reduction is structurally
+  identical to the real one, trailing `RcDrop` included, and still correct — so the trigger needs
+  more of the real context than the memo shape alone.
 
 ### Object parsing and executable linking
 
