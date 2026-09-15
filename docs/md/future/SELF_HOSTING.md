@@ -3629,6 +3629,30 @@ same public behavior.
     `Linux_backend_llvm_callee_result_field_reads_reassembled_into_record_memory_should_plateau`,
     and the regenerated `aggregate_borrowing_owner_kept_by_callee` parity fixture, which both
     compilers reproduce instruction for instruction along with the other 53.
+- [ ] **OPT-81** The self-hosted lowering segfaults on a medium compiler input before any of the
+  later blockers is reached (found 2026-09-15, and it is not a regression: it reproduces at
+  `3274dc10`, before the OPT-80j slice). A scratch project whose entry is one `import
+  AshesCompiler.Semantics.<Module>` plus a `print` crashes in `lowerCoreProgramWithSource` for
+  `TypeInference`, `DerivingExpansion` and `ModuleSemanticStitching`, and compiles cleanly for
+  `Types` and `TypeSchemes`, so the trigger is size or shape rather than a particular module.
+  The fault is in `OwnershipInference.borrowReadHandOff` at the `match ownership with` of a
+  recursive step: the cons cell's tail word reads as the scalar `5` and the dereference of it
+  faults (`mov (%rax),%rax` with `rax = 5`). Every frame below it is the ordinary
+  `borrowReadWalk`/`borrowReadCall` descent, and the list it walks is the sub-list
+  `handOffOwnership` returned inside `Some(...)`, borrowed out of the whole-program ownership
+  table. Making that return a copy (`Some(Ashes.Internal.deepCopy(ownership))`) avoids the crash
+  and carries the probe through the lowering, which then reveals the next two blockers: the
+  self-hosted `optimizeIrProgram` crashes on `TypeInference`, and codegen reaches CG-18's
+  `codegen: unknown index 27` on `DerivingExpansion`. Copying the fixpoint accumulator across the
+  back edge instead (`runInspectOnlyFixpoint(funcs)(Ashes.Internal.deepCopy(next))`) does **not**
+  avoid it, so the reused memory is not the table the loop carries. The copy is a diagnostic, not
+  the fix: find what writes over those cells while the walk holds them (the `Some` cell and its
+  borrowed payload crossing the call window's reset is the first suspect) and fix it in stage 0's
+  placement, with a `tests/rc_*.ash` regression.
+  The probe is a stage-0-compiled driver (so it carries symbols and DWARF) that runs `loadProject`,
+  `stitchProject`, `lowerCoreProgramWithSource`, `optimizeIrProgram` and `codegenProgram` in turn,
+  printing a marker after each; build it with `--debug` and run it under `gdb -batch -ex run -ex
+  bt`. The stage-1 CLI crashes on the same input in the same place, without symbols.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
@@ -3961,7 +3985,9 @@ same public behavior.
   importing `AshesCompiler.Semantics.DerivingExpansion` (found 2026-09-14 while bisecting
   OPT-80: a scratch entry `import AshesCompiler.Semantics.DerivingExpansion` followed by one
   `print` lowers and optimizes, then the codegen reads an IR temporary its block environment
-  never bound). `lookupIndexed` in `IrCodegen.Support.ash` serves temporaries, labels, and
+  never bound). Reaching it again needs OPT-81's diagnostic copy in place (2026-09-15): the
+  lowering of that same entry now faults earlier, and only with the copy does the probe carry
+  through to this panic. `lookupIndexed` in `IrCodegen.Support.ash` serves temporaries, labels, and
   string literal globals alike, so the message names neither the function nor the kind of
   index; make the panic name the function and the instruction, dump that function's final IR
   under stage 0 and stage 1 (`--emit-ir final`), and either mirror the missing definition
@@ -4270,7 +4296,9 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   calling a C symbol through `external` (CG-11's program-arguments and `CallExternal` items,
   2026-09-15; the CLI package's LLVM bindings additionally need the out-parameter and
   native-string marshalling, and a linker that imports the symbol its declaration names), and
-  a program importing `DerivingExpansion` stops in the backend at CG-18. The suspects for
+  a program importing `DerivingExpansion` stops earlier still, in the lowering itself
+  (OPT-81, 2026-09-15: a borrowed ownership sub-list is read back as garbage), and only past
+  that diagnostic does it reach the backend at CG-18. The suspects for
   OPT-80 (whatever the next gdb `mmap` sampling names: the deriving expansion's `Ord` bodies
   at registration, the `constructorInferenceDefinitionsFromLayouts` record builder, the
   curried `Ashes.Trait` operator closures behind linear name scans) are listed there. The
