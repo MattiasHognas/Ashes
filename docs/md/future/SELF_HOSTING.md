@@ -19,8 +19,9 @@ matching its output instruction for instruction.
 module (2026-09-15, 86 modules, the probe below): 28 compile and link to a working executable, 54
 run out of memory before they reach a diagnostic, and 4 stop with one. Memory is what gates the
 package, not a queue of defects, so it is what step 2 of the work order waits on. Of the four
-diagnostics MOD-20 and MOD-21 are closed; MOD-17c and SEM-21 remain, and so does the miscompile
-CG-20. Each is worth closing on its own, but none of them unblocks more than its own module.
+diagnostics MOD-20 and MOD-21 are closed, and the fourth turned out to be MOD-17c; MOD-17c remains,
+and so does the miscompile CG-20. Each is worth closing on its own, but none of them unblocks more
+than its own module. SEM-22, an `==` generalization gap the same session found, is filed beside them.
 
 OPT-85 now carries its measurement: what the arena holds, where it accumulates, and **three
 approaches already refuted by measurement**. Read it before writing any code against it.
@@ -61,8 +62,8 @@ instruction is a debugging aid, not a requirement.
 1. **Clear the blockers the probe reports.** Run the bootstrap probe over every module of a package
    before fixing the next failure it names, so what remains is a list ordered by how often a shape
    recurs rather than a queue discovered one failure at a time. The semantics package is swept
-   (2026-09-15): what remains there is MOD-17c, SEM-21 and CG-20, each confined to its own module,
-   with memory gating the other 54. Gates: BOOT-2.
+   (2026-09-15): what remains there is MOD-17c and CG-20, each confined to its own module, with
+   memory gating the other 54. Gates: BOOT-2.
 2. **Compile the whole self-hosted tree with stage 1.** This is the first real attempt at stage 2
    and the step most likely to turn into memory work rather than a single run: one module currently
    costs roughly 9 GB, and the tree is about 92,000 lines. The memory task is OPT-85, and it carries a
@@ -345,11 +346,39 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     MOD-17a; default methods whose bodies call sibling methods (`less` via `compare`) need the
     concrete operand type pinned on the default lambda's parameters before it is lowered.
     Reached by the probe on `ReuseDecision`, which stops at
-    `UnknownLoweringBinding("Ashes_Trait_Show.show")` in 0.1 s.
-- [ ] **SEM-21** `Ashes.Collection.List.sort`'s first argument is inferred at the wrong type
-  (2026-09-15). The probe stops on `HoverTypeInfo` with `ASH002 Type mismatch: Int vs Str.
-  Context: in argument #1 of call to 'Ashes_Collection_List_sort'.` in 0.5 s, against a call stage
-  0 accepts.
+    `UnknownLoweringBinding("Ashes_Trait_Show.show")` in 0.1 s, and on `HoverTypeInfo`, which
+    stops at `ASH002 Type mismatch: Int vs Str` in argument 1 of `Ashes_Collection_List_sort`.
+    The `sort` stop is this item and not a separate inference defect: `sort`'s body is
+    `left <= right`, and three lines show `<=` defaulting its operands to `Int` with no second use
+    to blame —
+
+    ```ash
+    let isOrdered left right = left <= right
+
+    Ashes.IO.print(if isOrdered("a")("b") then "yes" else "no")
+    ```
+
+    — which stage 1 rejects with `Type mismatch: Int vs Str` while stage 0 runs it. `==` already
+    infers correctly at a single use, so the comparison operators are what remain.
+- [ ] **SEM-22** A binding whose body uses `==` is not generalized: its first use fixes the operand
+  type (2026-09-16). Five lines reproduce it, and the failure is symmetric, so it is the first use
+  that pins rather than one type being unsupported:
+
+  ```ash
+  let isSame left right = left == right
+
+  Ashes.IO.print(if isSame("a")("a")
+      then (if isSame(1)(1) then "both" else "str only")
+      else "no")
+  ```
+
+  Stage 1 reports `ASH002 Type mismatch: Str vs Int. Context: in argument #1 of call to 'isSame'.`,
+  and swapping the two uses reports `Int vs Str`. Either use alone compiles and runs, so `==`'s
+  dispatch is fine — MOD-17a and MOD-17b landed that — and what is missing is the `Eq(a)`
+  constraint surviving into the binding's generalized scheme. `generalize` in `TypeSchemes.ash`
+  already quantifies over the free variables of its constraints, and `inferTopLevelBinding` already
+  passes the selected constraints, so look at what `checkInferenceBindingSignature` selects for an
+  unannotated binding before suspecting either of those.
 
 ### IR model and lowering
 
