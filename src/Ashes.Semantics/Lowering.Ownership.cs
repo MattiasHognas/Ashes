@@ -888,7 +888,14 @@ public sealed partial class Lowering
         }
         else
         {
-            Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
+            // A value the scope result may be viewing keeps its release exactly here, right after
+            // the copy that materialized those views: -1 tells precise placement the marker is
+            // already placed, so it is not moved back to the last read of the value itself.
+            Emit(new IrInst.RcDrop(
+                loadTemp,
+                info.TypeName,
+                info.ResultMayViewValue ? -1 : info.Slot,
+                info.RuntimeManaged));
         }
     }
 
@@ -2070,6 +2077,7 @@ public sealed partial class Lowering
 
         SkipDropsForResourcesEscapingViaResult(resultTemp);
         bool hadAliveOwned = HasAliveOwnedValuesInCurrentScope();
+        resultTemp = MaterializeScopeResultViews(resultType, resultTemp);
         EmitDropsForCurrentScope();
 
         var (cursorSlot, endSlot) = _arenaWatermarks.Pop();
@@ -4251,6 +4259,45 @@ public sealed partial class Lowering
         // Lets n-body's List(Body) accumulator reset instead of growing O(N).
         staticSizeBytes = 0;
         return IsDeepCopyOutSafeType(elemPruned) ? CopyOutKind.DeepAdt : CopyOutKind.None;
+    }
+
+    // A value about to be released here whose bytes the scope's result may still be naming: a view a
+    // callee handed back instead of a copy. The result has to be copied before the release, or it
+    // leaves the scope pointing into freed memory.
+    private bool ScopeReleasesViewedValue()
+    {
+        if (_ownershipScopes.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var (_, info) in _ownershipScopes.Peek())
+        {
+            if (info is { IsDropped: false, ResultMayViewValue: true })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Materializes the scope result's views against a backing that is still alive. Only the results
+    // the arena deep copy reproduces completely qualify; anything else keeps its original pointer,
+    // and a view inside it still dangles once the backing goes.
+    private int MaterializeScopeResultViews(TypeRef? resultType, int resultTemp)
+    {
+        if (resultType is null
+            || resultTemp < 0
+            || _inCoroutineBody
+            || !ScopeReleasesViewedValue()
+            || !TypeCarriesTextBytes(resultType, [])
+            || !CanNormalizeRuntimeManagedResultIntoArena(resultType))
+        {
+            return resultTemp;
+        }
+
+        return EmitDeepCopy(resultTemp, Prune(resultType), IrInst.CopyOutPurpose.ArenaResultBoundary);
     }
 
     /// <summary>

@@ -5608,6 +5608,7 @@ public sealed partial class Lowering
                     runtimeManaged,
                     runtimeConstructor,
                     runtimeDeepUnique);
+                MarkOwnerViewedByResult(let, prunedValueType, runtimeManaged);
                 if (runtimeManaged && IsTailForwardedBindingResult(let.Body, let.Name))
                 {
                     LookupOwnedValue(let.Name)!.ReleaseKind = ResourceReleaseKind.Moved;
@@ -5617,6 +5618,63 @@ public sealed partial class Lowering
                     arenaOwner.BorrowedRuntimeOwners = CollectBorrowedRuntimeOwners(let.Value);
                 }
             }
+        }
+    }
+
+
+    // Records on the binding whether the scope's result can end up naming its bytes, so the scope
+    // exit copies the result before releasing it.
+    private void MarkOwnerViewedByResult(Expr.Let let, TypeRef valueType, bool runtimeManaged)
+    {
+        if (runtimeManaged
+            && TypeCarriesTextBytes(valueType, [])
+            && ResultMayViewCallArgument(let.Body, let.Name))
+        {
+            LookupOwnedValue(let.Name)!.ResultMayViewValue = true;
+        }
+    }
+    // Whether a value of this type can hold bytes another value owns: only a string or a bytes value
+    // is ever a view, so only a type that reaches one can carry a released backing out. A recursive
+    // type reaches itself, so each type name is answered once.
+    private bool TypeCarriesTextBytes(TypeRef type, HashSet<string> visited)
+        => Prune(type) switch
+        {
+            TypeRef.TStr or TypeRef.TBytes => true,
+            TypeRef.TTuple tuple => tuple.Elements.Any(element => TypeCarriesTextBytes(element, visited)),
+            TypeRef.TList list => TypeCarriesTextBytes(list.Element, visited),
+            TypeRef.TNamedType named => visited.Add(named.Symbol.Name)
+                && (named.TypeArgs.Any(argument => TypeCarriesTextBytes(argument, visited))
+                    || named.Symbol.Constructors.Any(constructor =>
+                        constructor.ParameterTypes.Any(parameter => TypeCarriesTextBytes(parameter, visited)))),
+            _ => false,
+        };
+
+    // Whether this body can return something a callee read out of the binding's own bytes. A callee
+    // is free to hand an argument's bytes back inside its result rather than copy them — a string
+    // split, a byte range — so a result destructured from a call the binding was handed may name the
+    // binding's allocation. A result that reaches the binding itself, or a value built beside it,
+    // needs nothing here: it is already retained or cloned where it escapes.
+    private bool ResultMayViewCallArgument(Expr body, string ownerName, int depth = 0)
+    {
+        if (depth > 16)
+        {
+            return false;
+        }
+
+        switch (body)
+        {
+            case Expr.Let let:
+                return ResultMayViewCallArgument(let.Body, ownerName, depth + 1);
+            case Expr.If conditional:
+                return ResultMayViewCallArgument(conditional.Then, ownerName, depth + 1)
+                    || ResultMayViewCallArgument(conditional.Else, ownerName, depth + 1);
+            case Expr.Match match:
+                return (match.Value is Expr.Call
+                        && FreeVars(match.Value, new HashSet<string>(StringComparer.Ordinal)).Contains(ownerName))
+                    || match.Cases.Any(matchCase =>
+                        ResultMayViewCallArgument(matchCase.Body, ownerName, depth + 1));
+            default:
+                return false;
         }
     }
 

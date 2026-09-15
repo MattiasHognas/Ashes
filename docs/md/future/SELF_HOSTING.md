@@ -3670,8 +3670,8 @@ same public behavior.
   fixed (2026-09-15): a loop whose arm returns the loop parameter itself released the very string it
   returned, because the exit hands that reference over only when the whole join is runtime-managed,
   and a string literal in the arm beside it left the join an arena value. `Ashes.Text.Json.parse`
-  now reads every scalar and object correctly under the knob and still misparses an array, so one
-  more early release lives on that path.
+  now reads every scalar and object correctly under the knob, and an array only when its elements
+  are scalars — the third early release on that path is filed as OPT-83.
   Where to look next: `borrowReadHandOff` is a five-parameter member of a mutually recursive group,
   and its recursive call at `OwnershipInference.ash:582` is lowered as a chain of curried
   applications whose environments are spliced by hand — each stage takes the previous closure's
@@ -3700,6 +3700,28 @@ same public behavior.
   carry the answer on `CoreTcoLoop` as the shapes already are. No parity fixture moved when stage 0
   changed, so nothing currently fails; the divergence shows up as a released result in a
   self-hosted build of a loop shaped like `Ashes.Text.Json`'s whitespace skip.
+- [ ] **OPT-83** A result that views a released value is only copied when the arena deep copy can
+  reproduce its type (2026-09-15). A callee may hand an argument's own bytes back inside its result
+  rather than copy them — `Ashes.Text.unconsText`, `Ashes.Byte.subView` — so a function that releases
+  a string it passed to such a callee leaves its own result naming freed memory. Stage 0 now marks a
+  runtime-managed string or bytes binding whose scope result may carry such a view
+  (`ResultMayViewCallArgument`), copies the scope result before the release, and pins that release
+  where lowering put it. The copy is `EmitDeepCopy` at the arena result boundary, so it is taken only
+  for the result types `CanNormalizeRuntimeManagedResultIntoArena` admits. `Ashes.Text.Json.parse`
+  is the case it does not cover: `parseValue` returns `Result(Str, (Json(...), Str))`, and `Json` is
+  a self-recursive parameterized ADT the arena deep copy declines, so the string beside it keeps
+  pointing into the released `trimmed`. Under the release-poison knob every array whose elements are
+  not scalars still misparses — `["a"]`, `[[]]`, `[{}]` — while `[1]`, `[true]` and `[null]` are
+  clean, because those elements never take the view path. Closing this needs the generated copiers
+  for recursive types that OPT-80i measured, which is why it is filed separately. The minimal
+  reproduction is `tests/rc_escaping_view_backing_released.ash` with its first tuple element changed
+  to a self-recursive ADT.
+- [ ] **OPT-84** The self-hosted lowering has no mirror for stage 0's escaping-view copy
+  (2026-09-15): `ResultMayViewCallArgument`, the `ResultMayViewValue` flag on an owned value, the
+  scope-exit copy that precedes the release, and the already-placed release marker that keeps the
+  release after that copy. No parity fixture moved when stage 0 changed, so nothing currently fails;
+  the divergence shows up as a released backing in a self-hosted build of any function that hands a
+  local string to a callee and returns what the callee read out of it.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
