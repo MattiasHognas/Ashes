@@ -3662,6 +3662,12 @@ same public behavior.
   same read faults at the same line. Disabling every native tail call
   (`LlvmTailCallKind.NoTail` everywhere) does not avoid it either, and neither does copying the
   fixpoint accumulator across the back edge. So the bad word is stored, not recycled.
+  One real miscompile was found on the way and fixed (2026-09-15, the view-alias release: a string
+  split without copying had its backing released while the pieces were still read), and it is not
+  this one — the probe crashes unchanged with that fix in. The knob that found it is worth keeping
+  in mind: poisoning the second word of every released reference-counted payload turns a read after
+  release into visible garbage, and under it `Ashes.Text.Json.parse` still misparses every
+  document, so at least one more early release lives on that path.
   Where to look next: `borrowReadHandOff` is a five-parameter member of a mutually recursive group,
   and its recursive call at `OwnershipInference.ash:582` is lowered as a chain of curried
   applications whose environments are spliced by hand — each stage takes the previous closure's
