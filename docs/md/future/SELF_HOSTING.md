@@ -360,6 +360,18 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
 
     — which stage 1 rejects with `Type mismatch: Int vs Str` while stage 0 runs it. `==` already
     infers correctly at a single use, so the comparison operators are what remain.
+    Done (2026-09-16): the comparison operators reach `Ord` dispatch. `emitResolvedCoreOrdered`
+    falls back to `emitCoreTraitBinaryDispatch("Ord")` past its primitive cases exactly as
+    `emitResolvedCoreEquality` falls back to `Eq`, with `<`, `<=`, `>` and `>=` mapped to `less`,
+    `lessOrEqual`, `greater` and `greaterOrEqual`. It had to move below that dispatch in the file,
+    which is sequentially scoped.
+    Open: the seeded standard implementations supply only `compare`
+    (`standardTraitImplementationMethodName("Ord")`), so `traitMethodTypeAt("Ord")("lessOrEqual")`
+    finds no method and `"a" <= "b"` now stops at `UnsupportedCoreTraitDispatch("Ord", ...)` where
+    it used to stop at `CoreOperatorTypeMismatch("<=", SemString, SemString)`. The four operator
+    methods are trait *defaults* whose bodies call `compare`, so closing this is the
+    default-method selection named above — or, if that proves the longer road, lowering the four
+    operators through `compare` and a match on the resulting `Ordering` the way those defaults do.
 - [ ] **SEM-22** A binding whose body uses `==` is not generalized: its first use fixes the operand
   type (2026-09-16). Five lines reproduce it, and the failure is symmetric, so it is the first use
   that pins rather than one type being unsupported:
