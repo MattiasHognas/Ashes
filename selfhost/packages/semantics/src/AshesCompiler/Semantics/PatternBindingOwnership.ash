@@ -15,6 +15,7 @@
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
 export (
     type PatternBindingUse(..),

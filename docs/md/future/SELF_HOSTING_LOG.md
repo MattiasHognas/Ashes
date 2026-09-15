@@ -412,6 +412,18 @@ preceded the port.
   `UnknownLoweringBinding("entry.modulePath")`; `TcoPromotionCostSignal` now compiles and links in
   0.9 s and 3.0 GiB, and `ModuleSemanticStitching` runs past that diagnostic into OPT-85's memory
   wall. Regression: `selfhost/tests/semantics/QualifiedReceiverCaptureTests.ash`.
+- [x] **MOD-21** FIXED 2026-09-16, and the self-hosted compiler was the one in the right. The probe
+  stopped on `PatternBindingOwnership` with `UnsupportedCoreLoweringPattern("unknown record
+  TextSpan")` because that module matches `PatternAt(TextSpan { start = start }, inner)` while
+  importing only `AshesCompiler.Frontend.Syntax`; `TextSpan` is declared in
+  `AshesCompiler.Frontend.Token`, which `Syntax` imports but does not re-export. The language
+  reference is explicit that there is no implicit re-export and that each importer must import what
+  it needs directly, so the fix is the missing `import AshesCompiler.Frontend.Token.TextSpan`
+  rather than a stitcher change. `ResultReachSummaries` relies on the same leniency at
+  `ExprAt(TextSpan { start = start }, _inner)` and got the same import; a sweep of the semantics
+  and formatter packages found no others. `PatternBindingOwnership` now compiles and links in
+  5.2 s and 18.7 GiB. Stage 0 still accepts the un-imported use, which is a leniency worth
+  narrowing on its own some day, not here.
 
 
 ### IR model and lowering
