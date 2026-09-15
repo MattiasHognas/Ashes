@@ -75,6 +75,10 @@ type AliasStore =
 
 type AliasState =
     | aliasTemps: List(Int)
+    // The aliases that are views naming the owner's own bytes, and the pieces read back out of the
+    // tuple a view-producing instruction allocates. Only these follow a field read, so an ordinary
+    // aggregate holding the owner does not lengthen the owner's liveness through every read of it.
+    | viewAliasTemps: List(Int)
     | aliasStores: List(AliasStore)
 
 let recursive removeAt items index =
@@ -253,6 +257,19 @@ let recursive loadSeesAliasStore (stores: List(AliasStore)) (slot: Int) (loadInd
 // environment, and the result of a call that receives an alias as its argument, closure, or
 // environment: a curried stage's returned closure captured it, and a list-building loop conses a
 // matched head into the list it returns, which the copy-out past the call window reads.
+// A view names the owner's own bytes instead of copying them, so it holds the owner as surely as
+// a borrow does: stage 0's view cases in `PropagateAlias`.
+let viewAliasOf (target: Int) (source: Int) (state: AliasState) =
+    if sortedSetContains(source)(state.aliasTemps)
+    then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps), viewAliasTemps = sortedSetInsert(target)(state.viewAliasTemps)
+    else state
+
+// One level deeper than a view: the head and tail read back out of the tuple the split allocated.
+let viewPieceOf (target: Int) (source: Int) (state: AliasState) =
+    if sortedSetContains(source)(state.viewAliasTemps)
+    then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps), viewAliasTemps = sortedSetInsert(target)(state.viewAliasTemps)
+    else state
+
 let propagateAlias (blocks: List(IrCfgBlock)) (state: AliasState) (index: Int) (arenaAdtCells: List(Int)) (instruction: IrInstruction) =
     match instruction with
         | IrInstruction { instruction = Borrow(target, source) } ->
@@ -299,6 +316,11 @@ let propagateAlias (blocks: List(IrCfgBlock)) (state: AliasState) (index: Int) (
             if sortedSetContains(argument)(state.aliasTemps) || sortedSetContains(environmentTemp)(state.aliasTemps)
             then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
             else state
+        | IrInstruction { instruction = TextUncons(target, textTemp, false) } -> viewAliasOf(target)(textTemp)(state)
+        | IrInstruction { instruction = TextUnconsText(target, textTemp, false) } -> viewAliasOf(target)(textTemp)(state)
+        | IrInstruction { instruction = BytesSubView(target, bytesTemp, _start, _length) } -> viewAliasOf(target)(bytesTemp)(state)
+        | IrInstruction { instruction = GetAdtField(target, ptr, _fieldIndex, _tagless) } -> viewPieceOf(target)(ptr)(state)
+        | IrInstruction { instruction = LoadMemOffset(target, basePtr, _offset) } -> viewPieceOf(target)(basePtr)(state)
         | _ -> state
 
 let recursive propagateAliases (blocks: List(IrCfgBlock)) (indexed: List((Int, IrInstruction))) (arenaAdtCells: List(Int)) (state: AliasState) =
@@ -319,7 +341,7 @@ let recursive aliasFixpoint (blocks: List(IrCfgBlock)) (indexed: List((Int, IrIn
 
 // Every temp aliasing the owner within the region, to a fixpoint.
 let collectOwnerAliases (blocks: List(IrCfgBlock)) (indexed: List((Int, IrInstruction))) (slot: Int) (arenaAdtCells: List(Int)) =
-    AliasState(aliasTemps = ownerLoadTargets(indexed)(slot)([]), aliasStores = [])
+    AliasState(aliasTemps = ownerLoadTargets(indexed)(slot)([]), viewAliasTemps = [], aliasStores = [])
     |> aliasFixpoint(blocks)(indexed)(arenaAdtCells)
     |> (given (state) -> state.aliasTemps)
 
