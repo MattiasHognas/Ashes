@@ -4454,8 +4454,20 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   and `optimizeIrProgram` in turn under `ulimit -v` with `/usr/bin/time`, since a gdb trace of
   the growing process trips the machine's memory watchdog. Re-run the probe after each blocker
   closes; it is the cheapest honest signal of what still blocks self-compilation.
-- [ ] **BOOT-3** Compare stage-1/stage-2 deterministic artifacts where possible and otherwise compare normalized
-  tokens, diagnostics, schemes, IR, object structure, executable behavior, and reports.
+  The probe compiles one module at a time. Sweep every module of a package before fixing the next
+  blocker it reports, so what remains is a list to order by how often a shape recurs rather than a
+  queue discovered one failure at a time; that habit is what made the stretch to OPT-81 slow. Stage 2
+  then has to run: a stage-2 binary that faults on its own sources is a different class of defect
+  from a stage-1 miscompile, because stage 1 is what compiled it, and the reduction technique that
+  works for one does not transfer to the other.
+- [ ] **BOOT-3** Establish the fixpoint: stage 2, the compiler stage 1 built, compiles the same
+  sources to a stage 3 that is byte-identical to stage 2. That equality is what idempotence means
+  here, and it is deliberately not a comparison of stage 1 against stage 2 — those two are built by
+  different compilers and need not agree, and demanding that they do would reintroduce exactly the
+  instruction-for-instruction parity with stage 0 that the bootstrap does not need. Compare stage 1
+  and stage 2 on normalized observable output instead — tokens, diagnostics, schemes, IR, object
+  structure, executable behavior, and reports — as the weaker cross-check that stage 2 is a working
+  compiler at all.
 - [ ] **BOOT-4** Compile and run the compiler, standard library, examples, and complete test corpus with the
   self-hosted host-target compiler.
 - [ ] **BOOT-5** Build self-contained compiler, CLI, LSP, DAP, TestRunner, and fuzzing bundles for every host RID,
@@ -4485,6 +4497,11 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   separate mechanical change. Prefer `toolchains/ashes/` for the primary implementation and
   `toolchains/dotnet/` for the preserved .NET implementation; keep shared documentation, libraries,
   tests, examples, and runtime payloads at the repository root.
+- [ ] **BOOT-12** Remove what would make the stage-2 against stage-3 comparison fail for reasons
+  unrelated to correctness, and do it before running that comparison: iteration ordered by a hash,
+  any value derived from an address, a counter seeded by traversal order, a timestamp or an absolute
+  path baked into an artifact. Auditing the emitters is far cheaper than diagnosing a binary diff,
+  and every one of these produces a difference that looks like a miscompile and is not.
 
 ### Continuation discipline
 
