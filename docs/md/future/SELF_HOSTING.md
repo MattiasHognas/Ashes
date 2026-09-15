@@ -3652,22 +3652,26 @@ same public behavior.
   table. Making that return a copy (`Some(Ashes.Internal.deepCopy(ownership))`) avoids the crash
   and carries the probe through the lowering, which then reveals the next two blockers: the
   self-hosted `optimizeIrProgram` crashes on `TypeInference`, and codegen reaches CG-18's
-  `codegen: unknown index 27` on `DerivingExpansion`. Copying the fixpoint accumulator across the
-  back edge instead (`runInspectOnlyFixpoint(funcs)(Ashes.Internal.deepCopy(next))`) does **not**
-  avoid it, so the reused memory is not the table the loop carries. The copy is a diagnostic, not
-  the fix.
-  What the memory does is settled (2026-09-15, hardware watchpoint on the clobbered tail word of
-  the cell the walk is about to read): the same arena address is written first by
-  `ResultReachSummaries.setCount`'s cons cells, again by a later `setCount`, and last by
-  `OwnershipInference`'s own allocation at `lookupUniqueOwnership` — three unrelated values in one
-  address while the walk still holds the second of them. So a window the ownership table was built
-  in is reset and the addresses are handed out again, which makes this the copy-out gap of the
-  OPT-80 family rather than a release bug: the table is a `List((Str, List((Str, ParameterOwnership))))`,
-  a list of tuples whose second element is a list, and what escapes its window has no copy-out for
-  that shape. Two causes are ruled out by experiment: neither disabling every native tail call
-  (`LlvmTailCallKind.NoTail` everywhere) nor neutering `RestoreArenaState`/`ReclaimArenaChunks`
-  avoids it. Fix the copy-out of the escaping nested list in stage 0's placement, with a
-  `tests/rc_*.ash` regression.
+  `codegen: unknown index 27` on `DerivingExpansion`. The copy is a diagnostic, not the fix.
+  It is not memory reuse, which took two readings to settle (2026-09-15). A hardware watchpoint on
+  the clobbered tail word does show three unrelated values in one arena address — two
+  `ResultReachSummaries.setCount` cons cells and then an allocation inside
+  `OwnershipInference.lookupUniqueOwnership` — but that is only the ordinary recycling a window
+  reset licenses, and the crash survives taking it away: with `RestoreArenaState` and
+  `ReclaimArenaChunks` both emitted as no-ops, so that no address is ever handed out twice, the
+  same read faults at the same line. Disabling every native tail call
+  (`LlvmTailCallKind.NoTail` everywhere) does not avoid it either, and neither does copying the
+  fixpoint accumulator across the back edge. So the bad word is stored, not recycled.
+  Where to look next: `borrowReadHandOff` is a five-parameter member of a mutually recursive group,
+  and its recursive call at `OwnershipInference.ash:582` is lowered as a chain of curried
+  applications whose environments are spliced by hand — each stage takes the previous closure's
+  environment (`LoadMemOffset [result + 8]`), allocates a fresh stack environment one word wider,
+  copies the old words across and stores the new argument at one computed offset (the fourth stage
+  writes the new argument at offset 24 of a 48-byte environment, the fifth at offset 8 of a
+  64-byte one). An offset that disagrees with what the callee reads hands a parameter the wrong
+  word, which is exactly the shape of the fault: `ownership` arrives as a small integer rather
+  than a cons cell. Read that splice against the callee's own environment layout before changing
+  anything, and add a `tests/rc_*.ash` regression once it is understood.
   The probe is a stage-0-compiled driver (so it carries symbols and DWARF) that runs `loadProject`,
   `stitchProject`, `lowerCoreProgramWithSource`, `optimizeIrProgram` and `codegenProgram` in turn,
   printing a marker after each; build it with `--debug` and run it under `gdb -batch -ex run -ex
