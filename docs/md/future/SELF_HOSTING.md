@@ -3666,8 +3666,12 @@ same public behavior.
   split without copying had its backing released while the pieces were still read), and it is not
   this one — the probe crashes unchanged with that fix in. The knob that found it is worth keeping
   in mind: poisoning the second word of every released reference-counted payload turns a read after
-  release into visible garbage, and under it `Ashes.Text.Json.parse` still misparses every
-  document, so at least one more early release lives on that path.
+  release into visible garbage. Under it a second early release turned up on the same path and was
+  fixed (2026-09-15): a loop whose arm returns the loop parameter itself released the very string it
+  returned, because the exit hands that reference over only when the whole join is runtime-managed,
+  and a string literal in the arm beside it left the join an arena value. `Ashes.Text.Json.parse`
+  now reads every scalar and object correctly under the knob and still misparses an array, so one
+  more early release lives on that path.
   Where to look next: `borrowReadHandOff` is a five-parameter member of a mutually recursive group,
   and its recursive call at `OwnershipInference.ash:582` is lowered as a chain of curried
   applications whose environments are spliced by hand — each stage takes the previous closure's
@@ -3682,6 +3686,20 @@ same public behavior.
   `stitchProject`, `lowerCoreProgramWithSource`, `optimizeIrProgram` and `codegenProgram` in turn,
   printing a marker after each; build it with `--debug` and run it under `gdb -batch -ex run -ex
   bt`. The stage-1 CLI crashes on the same input in the same place, without symbols.
+- [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
+  `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
+  is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
+  literal beside it is normalized and the join stays reference-counted — which is what makes the
+  loop exit emit its hand-over guard instead of releasing the string it returns. The self-hosted
+  `retainedPatternOwnerTerminal` covers only the pattern-owner half of that rule. The mirror cannot
+  be written where that function sits: `CoreLowering.ash` is sequentially scoped, and the placement
+  predicate it needs (`loopSlotIsRuntimeManaged`, with `parameterSlotAtOrdinal` off
+  `state.tcoLoopFrame`) is defined some 5,600 lines further down, while `CoreTcoLoop`'s own
+  `runtimeManagedOrdinals` is the narrower affine-self-append set and does not answer the question.
+  Either hoist the placement predicate above `shouldNormalizeStaticStringArms`'s first caller or
+  carry the answer on `CoreTcoLoop` as the shapes already are. No parity fixture moved when stage 0
+  changed, so nothing currently fails; the divergence shows up as a released result in a
+  self-hosted build of a loop shaped like `Ashes.Text.Json`'s whitespace skip.
 - [ ] **OPT-75** Stage 0 does not compile a self tail call inside a lambda a pipe applies at once
   (`head |> anchorSlot |> (given (slot) -> if ... then walk(rest)(slot :: acc) else walk(rest)(acc))`)
   as a loop: the lambda is a real call and the self call inside it a non-tail call, so the walk
