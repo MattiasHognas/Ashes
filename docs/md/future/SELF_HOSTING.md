@@ -274,35 +274,6 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   variable). The real sites are lists of `deriving {Eq}` types (`TypeResolution.ash:360`,
   `ExternalTyping.ash:568`); a reduced repro is a `Shape deriving {Eq}` with `list == []` and
   `left == right` over `List(Shape)`. Sliced, each its own PR:
-  - [x] **MOD-17a** Concrete dispatch on a program implementation. The core lowering expands
-    `deriving` into implementation items and registers every `implement` of the program (its
-    head types with parameters, its requirements, its method bodies) in a trait environment
-    seeded from `standardTraitEnvironment`; `==`/`!=` first unify the operands, then take the
-    primitive comparison, else resolve `Eq(T)` evidence and, for an implementation with no
-    requirement or supertrait dictionaries, lower the selected method once as a capture-free
-    closure helper (cached by label like stage 0's TRT-16 instance cache) and call it on the two
-    operand temps; an unsupplied `notEqual` negates `equal`. `Eq.equal(a)(b)` calls, which the
-    derived bodies use per field, lower as `a == b`. Done (2026-09-13).
-  - [x] **MOD-17b** Structural standard implementations with requirement dictionaries. Done
-    (2026-09-14): the stitchers load `Ashes.Trait` into every program as a dependency of the
-    entry (stage 0's implicit prelude), and a stitched implementation replaces the seeded
-    placeholder of the same trait and head shape (`Ashes_Trait_Eq` normalizes to `Eq`). A
-    method of an implementation with requirements is lowered once per implementation head as a
-    generic closure taking one hidden parameter per method of each required trait (in
-    requirement order, methods by name), the body pinned to the head with fresh variables for
-    its type parameters; a site applies that closure to the requirement plans' method closures
-    (recursively for nested evidence) and calls the result. Inside the body, `==` on the
-    parameter type dispatches through the active evidence (stage 0's
-    `TryLowerActiveTraitMethod`): a comparison of two still-variable operands covered by active
-    evidence skips the speculative integer compare, a recursive let's declared type is read
-    against the head's parameters (`equalLists : List(a) -> List(a) -> Bool`), a lambda hands
-    its expected result type on to its body so a curried chain's inner parameters pin before
-    the body is lowered, and nested lambdas capture the evidence parameters (dead captures are
-    pruned). Derived implementations of parameterized types take the same path. Runtime-checked
-    against stage 0 on lists, nested lists, `Maybe`, tuples, and `Box(a)` over unit, record,
-    and integer elements; `tests/reuse_specialization_declines_unreachable_helper.ash` compiles
-    and prints `2` under the stage-1 CLI. Found and fixed OPT-79 on the way (the seeded method
-    names were dangling).
   - [ ] **MOD-17c** The other mapped operators (`<`..`>=` through `Ord` with its `Eq`
     supertrait, `+` through `Add` on a user type) and trait method calls at a concrete type
     (`Ashes.Trait.Show.show(x)`, which the selfhost source uses), sharing the dispatch of
@@ -376,7 +347,8 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   like a cycle back into its parent: nested records were never admitted to the record layout, and
   resource or unresolved-type containment through a nested type was missed. The guards now key
   on the id and name together (`heapPathContains`), as the constructor lookup already did.
-- [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
+- [~] **OPT-25** Insert Perceus duplication and drop operations, and deterministic resource cleanup,
+  across ordinary, exceptional, handler, and coroutine control flow.
   Its completed work is in the [self-hosting log](SELF_HOSTING_LOG.md).
   Open: the single-cell list copies under the advancing watermark (a
   `head :: <accumulator>` list the runtime-managed placement declines keeps the arena; no shared
@@ -1154,117 +1126,10 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   each at the pipe stage that reads the capture (`54:8`, `55:8`, `56:8`); and stage 0
   synthesizes a `__tospacecopy_adt_N` deep copier for an `Env(impls = [])` record passed to a
   generic parameter, where the self-hosted lowering emits none.
-- [~] **OPT-80** The stage-1 compile of the semantics package alone outgrows the probe's
+- [~] **OPT-80** The stage-1 compile of the semantics package alone outgrows the address space the
+  probe can give it.
   Its completed work is in the [self-hosting log](SELF_HOSTING_LOG.md).
-  need the slices below). Open:
-  - [x] **OPT-80b** A fresh reference-counted call result handed straight to a callee that
-    borrows it (`bump(bumpTimes(p - 1)(insts))`) was never released. The root cause was wider
-    than the self call: a plain function returning its parameter on one arm and a fresh list on
-    another (`if flag == 0 then insts else bump(insts)`, the shape of every self-hosted
-    optimizer pass) joined a borrowed value with a reference-counted one, so its result was
-    never reference-counted, no caller released it, and every intermediate of a pass chain
-    stayed allocated (the pass-shaped experiment grew to 962 MiB at 16 rounds, the map-shaped
-    one to 536 MiB). Done (2026-09-14): a plain function whose terminal arms are all either the
-    bare parameter or a freshly built value (a constructor application, literal, cons, a call
-    to a function compiled reference-counted, or a self call) copies the parameter into an
-    owned graph on the arm returning it (`Lowering.ParameterPassthrough.cs`,
-    `NormalizeParameterPassthroughBranch` at the `if` and `match` joins), so the join and the
-    function's result are reference-counted; lists over runtime-manageable elements, owned
-    tuples, and copyable or runtime-managed named types qualify, strings stay with their affine
-    placement. Such a function's result is promised reference-counted before its body is
-    lowered (`PredictRuntimeManagedResult`, kept at the return by a copy when the body's own
-    result is not), and a curry stage records its returned-closure link as soon as the inner
-    lambda is entered, so a recursive call inside the body resolves statically and hands its
-    result to the next callee as an owned value. Mirrored in `ParameterPassthrough.ash` and
-    `CoreLowering.ash`. Both experiments are flat (86 MiB at every round count); plateau test
-    `Linux_backend_llvm_passthrough_or_fresh_result_pipeline_memory_should_plateau`,
-    `tests/rc_passthrough_or_fresh_result_pipeline.ash`, parity fixture
-    `passthrough_or_fresh_result`.
-  - [x] **OPT-80c** The layout classifiers (`Lowering.LayoutCapability.cs`
-    `IsRuntimeRecordAdtLayout`, `IsRuntimeOwnedChildAdtLayout`, and the `TList` arms that
-    admitted only copy-type elements everywhere) rejected a variant child inside a record, a
-    generic payload (`Maybe(Str)`, any type with parameters, any builtin variant), and a list
-    over variants, so `IrInstruction { instruction: IrInst, location: Maybe(SourceLocation) }`
-    and `List(IrFunction)` never qualified, while the runtime dropper and copier already
-    walked those shapes. Done (2026-09-14): one owned-field rule (`IsRuntimeOwnedFieldLayout`)
-    admits a scalar, string, bytes, or big integer, a list or tuple of owned fields, a record,
-    variant, positional single-constructor type (`IsRuntimePositionalAdtLayout`, a new
-    capability kept out of the record and outer-cell reuse paths), or closure, rejecting a
-    type that reaches itself (the inline runtime-managed copy of a recursive graph does not
-    terminate); the drop-graph walks recurse through list elements; a fresh constructor
-    application, a pattern-owner aggregate read, and a list over owned elements are accepted
-    as owned children, and a child that is not yet reference-counted is cloned into an owned
-    graph before the reference-counted parent stores it (`RequiresRuntimeManagedChildCopy`).
-    A user type named `Function` is now released through the reference-counted path, where the
-    backend took the `Function` tag for a closure and jumped through its fourth word: release
-    and cleanup instructions tag such a type `Function_` (`RuntimeManagedAdtTypeName`,
-    mirrored). Nested and string-list element experiments are flat; plateau test
-    `Linux_backend_llvm_nested_variant_list_producer_pipeline_memory_should_plateau`,
-    `tests/rc_nested_variant_list_producer_pipeline.ash`, parity fixtures
-    `producer_conses_nested_variant_head` and `user_type_named_function_release`. The builtin
-    variants stay out (OPT-80f).
-  - [x] **OPT-80f** `Maybe` and `Result` did not qualify as owned-child variants
-    (`IsRuntimeOwnedChildAdtLayout` rejected builtin symbols), and the stage 0 that admitted
-    them miscompiled the self-hosted parity runner (the runner checking `heap_result_list`
-    died with `failed to allocate heap memory` inside the IR text formatter). Done
-    (2026-09-14): the crash was a stage-0 loop-parameter bug the admission exposed rather than
-    anything about the two variants. Bisected by admitting one payload family at a time (a
-    temporary environment probe in the classifier) to `Maybe<Str>` together with
-    `Maybe<IrSourceLocation>`, then watched with hardware watchpoints on the corrupted cell:
-    once `OwnerAnchor { anchorTypeName: Str, anchorStructuralDropper: Maybe(Str),
-    anchorLocation: Maybe(IrSourceLocation) }` became runtime-manageable, the lifetime
-    placement loop `collectInsertions` copied its `anchor` parameter into an owned value at
-    entry and released it at loop exit, while `placedDrop(anchor)(slot)(owner)`, whose
-    summary borrows `anchor` and whose result aliases it, returned arena instructions that
-    borrowed the anchor's type-name string into the loop's accumulator: a borrowed parameter
-    whose parts the callee's result keeps was never retained when the argument was a
-    runtime-managed loop parameter, since `CalleeResultMayReachParameter` only recognized
-    fresh result temps and `PrepareRuntimeManagedCallArgument` returns before any retain for a
-    borrowing callee. Now a loop parameter (or a pattern binding of one) handed to a callee
-    whose result may reach it is retained for the result, unconditionally once the loop admits
-    the parameter and under the parameter's pending flag before that
-    (`RetainBorrowedLoopArgumentForCalleeResult`, `IsTcoParameterArgument`; mirrored in
-    `CoreLowering.ash` through `argumentRootSlotOf` and a `borrowedReach` hand-off fact); the
-    retained reference travels with the arena result exactly as a let-bound owner's does. Both
-    builtin variants are admitted in both compilers. The stage-1 binaries built by that
-    compiler then crashed in `QualifiedShippedReferences`, and a standalone copy of its scan
-    narrowed the crash to a second pre-existing loop-parameter bug the admission exposed: a
-    tail self-call whose successor is a record update of the loop's own runtime-managed
-    parameter (`scanTokens(known)(rest)((state with scanAfterDot = true))`) built the arena
-    successor with raw reads of the unchanged fields, and the back edge released those fields
-    once as the dying successor's references and again through the old parameter's structural
-    walk (a program with a plain `Str` field crashed on the compiler before this slice too).
-    An unchanged heap-typed field of a record update whose target reads a loop parameter is
-    now retained like a field read stored into an aggregate, through the same marker the loop's
-    finalize pass promotes (`RetainUnchangedRecordUpdateField` over the shared
-    `DuplicateTcoParameterReadForAggregate`; mirrored by `retainUnchangedRecordField`, which
-    threads the target's `loopParameterReadSlot` through `lowerRecordUpdateFields`). The
-    self-hosted projects suite then reported a dependency namespace equal to the dependency
-    name: a third latent loop-parameter bug, this one visible on the compiler before the slice
-    as well. `validateDependencyModules` hands its `namespace` parameter (a `Str` whose
-    admission is still pending while the body is lowered) to `validateDependencyModulePath`,
-    whose `Error(ProjectDependencyModuleOutsideNamespace(...))` keeps it; the retain guard was
-    the callee's accepts bit rather than the forced flag, since
-    `CalleeResultMayReachOrKeepPatternBinding` only recognized fresh temps and pattern
-    bindings, so the loop's exit released its own copy under the error. A pending loop
-    parameter the callee's result may reach now retains under the forced flag like a pattern
-    binding, and the retained reference is handed over with an adoption flag that reads true
-    when the callee accepted it or when finalization zeroed the forced flag
-    (`EmitPendingRetainAdoptionFlag`), so the caller releases it where the result was copied
-    out; the borrowed-parameter retain admits strings too. A coroutine loop
-    (`LowerHelperCoroutineTaskEmitLoopBody`) never resolved the flags registered under its
-    slots, which left such a forced flag at one for a parameter the coroutine boundary keeps in
-    the arena; it now resolves them itself. Mirrored by `pendingRetainAdoption` and the
-    `mayReach` hand-off fact covering the parameter itself. The optional-string experiment is
-    flat (20 MiB at every round count); plateau test
-    `Linux_backend_llvm_optional_string_variant_list_producer_pipeline_memory_should_plateau`,
-    `tests/rc_optional_string_variant_list_producer_pipeline.ash`,
-    `tests/rc_loop_parameter_parts_kept_by_callee_result.ash`,
-    `tests/rc_loop_parameter_record_update_successor.ash`,
-    `tests/rc_loop_parameter_kept_by_callee_error_result.ash`, parity fixtures
-    `tco_parameter_kept_by_borrowing_callee_result`,
-    `record_update_successor_of_loop_parameter`, and
-    `tco_string_parameter_kept_by_callee_error_result`.
+  Open:
   - [ ] **OPT-80g** Self-hosted mirror gaps left by OPT-80c, seen as exact-IR divergences
     the parity runner lists among the fixtures it does not compare. Three closed
     (2026-09-15), and `producer_conses_nested_variant_head` rejoined the comparison with them:
@@ -1332,73 +1197,6 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     unannotated string parameters of `validateAll`, whose forced argument retain survives
     finalization in stage 0 and is zeroed by this lowering. Mirror the rest and return the
     fixtures to the comparison.
-  - [x] **OPT-80d** The accumulate-and-reverse producer (`bumpInto(tail)(x :: acc)` then the
-    generic `reverse`) still leaked a whole list per round (827 MiB at 160 rounds of 50000).
-    Done (2026-09-14): the loop's runtime-managed accumulator handed to `reverse`, whose result
-    reaches it, was retained for that result and handed over under the callee's adoption bit,
-    and `reverse` (a generic list function whose closure never accepts a runtime-managed
-    argument) neither adopted the reference nor let the caller release it: the release guard
-    (`ResolveHandedOverReleaseGuard`) only recognized the shallow and list copy-outs as
-    severing the result from the argument, while this call's `List(Inst)` result has no
-    copy-out kind and is normalized by the generic list deep copy instead
-    (`LowerCallDeepCopyOutListResult`), which rebuilds every element and its owned parts. The
-    deep copy now counts as severing on the arena branch of the result flag
-    (`DeepCopiedResultSevers`; mirrored by `deepCopiedResultSevers` in `CoreLowering.ash`), so
-    the handed-over accumulator is released where the copy ran: flat at 20 MiB for 20, 40,
-    and 160 rounds. Plateau test
-    `Linux_backend_llvm_accumulate_and_reverse_producer_pipeline_memory_should_plateau`,
-    `tests/rc_accumulate_and_reverse_producer_pipeline.ash`, parity fixture
-    `accumulate_and_reverse_producer`.
-  - [x] **OPT-80e** Re-measure the semantics package and the CLI package with the phase
-    probe after each slice; the BOOT-2 probe resumes when the semantics package compiles
-    under the 24 GiB cap. Measured (2026-09-14, after slices a, b, c, d, and f, stage-1 CLI
-    built by the merged stage 0, resident size at the start of lowering, optimizing, and
-    code generation): `Types` 266, 799, and 3127 MiB (peak 3.2 GiB, 2.5 s); `TypeResolution`
-    864, 2028, and 7712 MiB (peak 7.9 GiB, 10.8 s); the semantics package still dies at the
-    24 GiB cap after 5 s. The optimizer stages retain exactly what they did before the slices
-    (`TypeResolution`: the map of `optimizeIrFunctionWithEvaluable` over the functions
-    +1.5 GiB, `devirtualizeCapturedClosureCalls` +1.1 GiB, `inlineCurryingStages` +0.95 GiB,
-    `scalarizeSingleCaptureStackClosures` +0.5 GiB, the two `computeKnownReturnedClosureLabels`
-    +0.3 and +0.4 GiB), so the slices closed shapes the optimizer does not hit. The shape it
-    does hit is reproduced by `opt80/exp/map_record_fn.ash` (a record `Fn { label: Str, insts:
-    List(Inst) }` rebuilt by a producer, `optFn(fn) :: mapFns(rest)`, 200 records of 2000
-    instructions per round): 69 MiB retained per round on the merged compiler and on the
-    compiler before the slices alike, with or without let-bound intermediate lists. The record
-    head `Fn(label = label, insts = bump(insts))` is allocated in the arena (`AllocAdt` without
-    the runtime-managed bit) and the producer's cons cell too, so the list of records is an
-    arena value whose call windows are never restored; see OPT-80h.
-  - [x] **OPT-80h** A record head carrying a list of heap-bearing variants (the self-hosted
-    `IrFunction { instructions: List(IrInstruction), ... }`) rebuilt by a producer stayed in
-    the arena together with the producer's cons cells: `optFn(fn) :: mapFns(rest)` over `Fn {
-    label: Str, insts: List(Inst) }` retained 69 MiB per round of 200 records of 2000
-    instructions, the exact shape of the optimizer's per-function map. Done (2026-09-14): the
-    escaping-result record decision walks the body's terminal arms like the variant case
-    (`ProducesFreshRuntimeManageableRecord`, so the literal inside the match arm is seen), and
-    a borrowed string field read out of a local binding, whole or by field, a name the arm
-    binds later included, is copied into an owned string at the head
-    (`IsMaterializableStringChildRead`; a literal keeps the parent in the arena, as the
-    directly-escaping-variant tests require); the cons and the consumed record's release
-    follow from OPT-80a: flat at 155 MiB for 1 and 16 rounds. Making the lexer's result
-    reference-counted exposed a stage-0 gap present on main: a field read out of a
-    runtime-managed `let` (`lexed.tokens`) stored into an arena tuple, and that tuple passed
-    by name to a callee whose result keeps it, retained nothing, so the owner's scope-exit
-    release freed the token strings the syntax tree still borrowed (the parity runner's stack
-    was overwritten with IR text). Fixed by retaining a heap-typed field read like the whole
-    owner (`DuplicateRuntimeManagedOwnedValueForTransfer`) and by recording the owners an
-    arena `let` aggregate borrows (`OwnershipInfo.BorrowedRuntimeOwners`, collected from the
-    literal's children) so a transfer of the binding retains them
-    (`RetainBorrowedRuntimeOwnersOfAlias`, at a keeping call's plain argument too). Mirrored in
-    `CoreLowering.ash` (`producesFreshRuntimeManageableRecord`,
-    `isMaterializableStringChildRead`, `materializeStringChildArgument`, the field arm of
-    `retainTransferredChild`, `borrowedOwners` and `pendingBorrowedOwners` with
-    `borrowedOwnersOfExpression` and `retainAliasBorrowedOwners`, and `emitChildDeepCopy`
-    reserving the temp stage 0's inline copy reserves ahead of a nested list child). Plateau
-    test `Linux_backend_llvm_record_head_list_producer_pipeline_memory_should_plateau`,
-    `tests/rc_record_head_list_producer_pipeline.ash`,
-    `tests/rc_let_bound_aggregate_borrowing_owner_kept_by_callee.ash`, compared parity
-    fixtures `record_head_list_producer` and `aggregate_borrowing_owner_kept_by_callee`. The
-    stage-1 probe is unchanged: the self-hosted `IrFunction` carries fields the record
-    classifier rejects (OPT-80i).
   - [ ] **OPT-80i** The record layout classifier (`IsRuntimeRecordAdtLayout` through
     `IsRuntimeOwnedFieldLayout`) rejects every self-hosted IR record: `IrFunction` carries
     `localTypes: List((IrLocal, SemanticType))` (a type that reaches itself, which the inline
@@ -1410,27 +1208,6 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     recursive type by copying and releasing such fields through generated per-type copier and
     dropper functions (the `AdtDeepCopier`/`ListDeepCopier` shape the call-boundary copies
     already emit) instead of the inline walk, in both compilers, then re-measure the probe.
-  - [x] **OPT-80j** A record reassembled out of a callee result's fields leaked the references it
-    retained: `let lexed = tokenize(n) in ... Program(items = items, diagnostics =
-    lexed.diagnostics)` leaked 235 KiB per round of a lexer result rebuilt into a program
-    record. `lexed.diagnostics` and a `match`-bound `diagnostics` reach the child identically
-    and stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` retains both alike, but only
-    the pattern binding counted as a child an aggregate can own, so
-    `CanRuntimeManageFreshOwnedChildExpression` rejected the field read, the record stayed
-    arena-placed, and the references retained into it were never released. Fixed (2026-09-15):
-    a field read of a local binding is admitted as an owned child beside the `Var` case it
-    spells (`IsLocalRecordFieldRead` in stage 0, `isLocalRecordFieldRead` in the self-hosted
-    `canRuntimeManageFreshOwnedChild`), so the record is reference-counted and dups its
-    children on store. The self-hosted mirror needed two more pieces stage 0 already had:
-    `retainAggregateChildTemp` retains a heap-typed field taken out of a live owner the way
-    `RetainRuntimeManagedAggregateChild` does, and a `let` value now starts from the consumer
-    request it inherits (`inheritedLetValueRequest`, stage 0's `PushSequentialLet`) instead of
-    an empty one. Measured with `/usr/bin/time -f %M`: 235 KiB per round before, flat at 8.2 MB
-    across both 80 and 160 rounds after. Regression
-    `tests/rc_callee_result_field_reads_reassembled_into_record.ash`, plateau test
-    `Linux_backend_llvm_callee_result_field_reads_reassembled_into_record_memory_should_plateau`,
-    and the regenerated `aggregate_borrowing_owner_kept_by_callee` parity fixture, which both
-    compilers reproduce instruction for instruction along with the other 53.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
