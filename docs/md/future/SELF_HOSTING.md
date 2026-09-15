@@ -34,7 +34,8 @@ whole package before fixing anything, so what remains is a list you can order ra
 discover one failure at a time.
 
 **Expect it to be slow and hungry.** One compiler module currently costs roughly 9 GB and two and a
-half minutes through the whole pipeline. That is itself the open problem behind step 2.
+half minutes through the whole pipeline, which is why a whole package does not fit yet. That is
+OPT-85, the memory task behind step 2.
 
 **When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
 than marking it done here. Read "How to work on this" below before your first change.
@@ -56,7 +57,8 @@ instruction is a debugging aid, not a requirement.
    BOOT-2.
 2. **Compile the whole self-hosted tree with stage 1.** This is the first real attempt at stage 2
    and the step most likely to turn into memory work rather than a single run: one module currently
-   costs roughly 9 GB, and the tree is about 92,000 lines. Gates: BOOT-2, OPT-80.
+   costs roughly 9 GB, and the tree is about 92,000 lines. The memory task is OPT-85, and it carries a
+   refuted approach not to repeat. Gates: BOOT-2, OPT-85.
 3. **Make stage 2 run.** A stage-2 binary that faults on its own sources is a different class of
    defect from a stage-1 miscompile, because stage 1 is what compiled it, and the reduction
    technique that works for one does not transfer to the other. Gates: BOOT-2.
@@ -1252,17 +1254,21 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     unannotated string parameters of `validateAll`, whose forced argument retain survives
     finalization in stage 0 and is zeroed by this lowering. Mirror the rest and return the
     fixtures to the comparison.
-  - [ ] **OPT-80i** The record layout classifier (`IsRuntimeRecordAdtLayout` through
-    `IsRuntimeOwnedFieldLayout`) rejects every self-hosted IR record: `IrFunction` carries
-    `localTypes: List((IrLocal, SemanticType))` (a type that reaches itself, which the inline
-    runtime-managed copy `EmitRuntimeManagedTcoDeepCopy` cannot reproduce), `origin:
-    Maybe(IrFunctionOrigin)`, and `localNames: List((IrLocal, Str))`, so the optimizer's
-    per-function map still builds its results in the arena and the stage-1 probe stands where
-    OPT-80e left it (2026-09-14, after OPT-80h: `TypeResolution` 7.9 GiB peak in 2.9 s, the
-    semantics package dies at a 30 GiB cap in 3.5 s). Admit a record whose field reaches a
-    recursive type by copying and releasing such fields through generated per-type copier and
-    dropper functions (the `AdtDeepCopier`/`ListDeepCopier` shape the call-boundary copies
-    already emit) instead of the inline walk, in both compilers, then re-measure the probe.
+  - [ ] **OPT-85** Cut what the arena accumulates while the optimizer runs, so a whole package fits.
+    This is the live memory task and what step 2 of the work order waits on. Last measured
+    (2026-09-14, after OPT-80h): `TypeResolution` peaks at 7.9 GiB in 2.9 s, and the semantics
+    package dies at a 30 GiB cap in 3.5 s; one module through the full pipeline costs roughly 9 GB
+    and two and a half minutes (2026-09-15).
+    Go at what the arena actually holds — the optimizer's per-function map — with sharing or reuse.
+    Do **not** go at the layout of what it holds: OPT-80i tried exactly that, admitting self-reaching
+    record types to the reference-counted heap so the map could leave the arena, and it is refuted by
+    measurement. Making such a type reference-counted does not stop the arena accumulating; it
+    replaces a shared arena pointer with a deep copy of the whole type graph at every boundary that
+    used to share one, and the cost grows with module size. The numbers, the branch it was measured
+    on, and why none of the seven bugs it exposed is independently landable are in the
+    [self-hosting log](SELF_HOSTING_LOG.md).
+    Start by measuring rather than guessing: sample the growing process for what the arena holds at
+    peak, as the earlier OPT-80 slices did, and name the accumulation before changing anything.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
@@ -1289,8 +1295,8 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   a self-recursive parameterized ADT the arena deep copy declines, so the string beside it keeps
   pointing into the released `trimmed`. Under the release-poison knob every array whose elements are
   not scalars still misparses — `["a"]`, `[[]]`, `[{}]` — while `[1]`, `[true]` and `[null]` are
-  clean, because those elements never take the view path. Closing this needs the generated copiers
-  for recursive types that OPT-80i measured, which is why it is filed separately. The minimal
+  clean, because those elements never take the view path. Closing this needs a deep copy that reproduces
+  a self-recursive type, which is why it is filed separately. The minimal
   reproduction is `tests/rc_escaping_view_backing_released.ash` with its first tuple element changed
   to a self-recursive ADT.
 - [ ] **OPT-84** The self-hosted lowering has no mirror for stage 0's escaping-view copy
@@ -1877,7 +1883,7 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   and MOD-19 (private record names resolved as constructors) past every diagnostic into the
   memory wall: the lowering of the semantics package alone no longer fits in 50 GiB of address
   space (OPT-80, the next blocker, with its per-module measurements; its slices a to h left the
-  wall standing, and OPT-80i names the record classifier gap behind it); a single-file program that reads
+  wall standing, and OPT-85 carries what is left of it); a single-file program that reads
   `Ashes.IO.args` lowers and now links and runs through the stage-1 backend too, and so does one
   calling a C symbol through `external` (CG-11's program-arguments and `CallExternal` items,
   2026-09-15; the CLI package's LLVM bindings additionally need the out-parameter and
