@@ -9,46 +9,39 @@ See [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broad
 [self-hosted toolchain README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md)
 for package boundaries and commands.
 
-## Migration state
+## Start here
 
-The new implementation lives entirely under `selfhost/`. It is pure Ashes: Python, shell, C#, and
-Node.js helpers are not part of its implementation or test path. The existing .NET toolchain remains
-in the repository permanently as a buildable, tested stage-0 and behavioral reference after the
-self-hosted compiler becomes the default. The Node.js VS Code extension also remains in the repository,
-and so does the .NET registry server (`src/Ashes.Registry`): it is a deployed service, not part of the
-toolchain a user runs, so only its client commands are ported. Neither implementation may be removed or
-changed merely to make the self-hosted port easier.
+The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
+sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
+matching its output instruction for instruction.
 
-| Area | Ported surface | State |
-|---|---|---|
-| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, inline-module lifting and validation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests; token streams and frontend diagnostics also have shared stage-0/self-hosted parity fixtures |
-| Formatter | Canonical formatting for complete programs, declarations, expressions, patterns, and types, including precedence and idempotence coverage | Implemented and covered by pure-Ashes tests |
-| Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
-| Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, sequential top-level inference, and package-aware inference of dependency-ordered stitched modules | Implemented for the listed surface |
-| Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection; dynamic-handler lowering and backend dispatch | Inference and the dynamic-handler subset are implemented; static `provide` lowering and remaining handler ownership/region work are open (IR-8, OPT-43, OPT-52) |
-| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
-| IR, optimizer, ownership, backend, linker | Complete IR model/text form, core and builtin lowering, scoped arenas, RC/Perceus insertion, reuse and placement paths, supported tail-modulo-constructor and reverse-list/bytes transforms; a linux-x64 LLVM backend and pure-Ashes ELF linker producing real executables | In progress; zero-cost classification, trait-evidence/static-provider/async lowering, remaining ownership and region-lifetime gaps, fusion correctness, optimization levels, and the other three targets remain; individual checklist items distinguish supported paths from open tails |
-| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | `fmt`, `init`, `compile`, `run`, `add`, `remove`, `restore`, `tree`, and `why` have implemented surfaces; compile/report options are partial (see CLI-1..CLI-11) | In progress; remaining commands, TestRunner, fuzzing runner, LSP, and DAP remain separate checklist work |
-| Bootstrap | Stage 0 builds an executable stage-1 CLI, and stage 1 compiles, links and runs ordinary programs. Stage 1 also carries several compiler modules through its own lowering, optimizer and code generation | Stage-1 artifact available and working on ordinary programs; self-compilation of the whole tree, and the stage-2 against stage-3 fixpoint, not established |
+**The next task** is whatever the bootstrap probe reports first. Today that is CG-18, in the code
+generation section below; find any item by its identifier.
 
-The current packages intentionally form the same strict dependency graph as the existing toolchain:
-`frontend` has no compiler dependency, `formatter` depends only on `frontend`, and `semantics` depends
-only on `frontend`. Do not move backend behavior into those packages. Future packages must follow the
-dependency table in the
-[self-hosted README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md#package-dependency-graph)
-and
-must reference only the packages they actually consume.
+**The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
+that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
+so the last marker names the phase that failed:
+
+```
+loadProject -> stitchProject -> lowerCoreProgramWithSource -> optimizeIrProgram -> codegenProgram
+```
+
+Build it with stage 0 and `--debug`, so it carries symbols, and run it under `gdb -batch -ex run -ex
+bt` when it faults rather than reading the exit code. Its `ashes.json` must list
+`AshesCompiler.Frontend` and `AshesCompiler.Semantics` as devDependencies beside the path overrides,
+or project loading fails with a null reference (SEM-20). Point it at one module at a time and sweep a
+whole package before fixing anything, so what remains is a list you can order rather than a queue you
+discover one failure at a time.
+
+**Expect it to be slow and hungry.** One compiler module currently costs roughly 9 GB and two and a
+half minutes through the whole pipeline. That is itself the open problem behind step 2.
+
+**When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
+than marking it done here. Read "How to work on this" below before your first change.
 
 ## Work order
 
-This is the one ordered plan. It replaced two overlapping roadmaps that said similar things at
-different granularity, which was the main reason this document was hard to read. The checklist
-further down is the inventory of every item with a stable ID; this section says what to do next and
-why, and each step names the IDs that gate it.
-
-Completed work is not kept here. It lives in the [self-hosting log](SELF_HOSTING_LOG.md), which
-carries the full narrative of every closed item, including the reproductions and debugging recipes
-worth keeping.
+Every step names the checklist identifiers that gate it. Work them in this order.
 
 ### Now: make the compiler compile itself
 
@@ -100,6 +93,71 @@ path), and exact-IR parity work. File them, leave them.
     and tested as the permanent stage-0 and behavioral reference. Only then consider any source-tree
     reorganization, as its own mechanical change. Gates: BOOT-10, BOOT-11.
 
+## How to work on this
+
+- Start behavior changes with a pure-Ashes failing test under `selfhost/tests/<package>/`; keep unit tests
+  within the owning package and add cross-package tests only at real public boundaries.
+- Keep test suites flat: compose small named checks through pipelines instead of sequencing them with
+  deeply nested `let ... in` pyramids.
+- Treat .NET stage-0 comments as audit input while porting. Preserve non-obvious observable behavior,
+  ordering, ownership, diagnostics, and phase boundaries in a module header or a local standalone
+  comment; do not copy XML documentation, C# API narration, or host-specific implementation details.
+- Keep each milestone on a fresh `feature/...` branch and worktree. Copy `runtimes/` from the main
+  checkout into a new worktree before backend-dependent validation; runtime payloads are intentionally
+  not regenerated by the self-hosted work.
+- Do not delete the existing .NET or Node.js implementations as part of or after the port. Keep the
+  .NET implementation buildable and tested as the permanent stage-0 and behavioral reference; changing
+  which implementation is shipped or launched by default is a separate decision.
+- For the current frontend, formatter, and semantics tests, compile the corresponding
+  `selfhost/tests/*/ashes.json` project and execute the emitted host binary. Run semantics tests both
+  normally and with `--debug-disable-reuse` so ownership/reuse differences cannot hide a defect.
+- Before publishing a milestone, format every changed `.ash` file, build `Ashes.slnx`, run the compiler
+  and LSP unit suites, and verify C# formatting. Record exact commands and counts in the PR. Add focused
+  bootstrap parity fixtures as soon as a self-hosted phase can serialize the same public result as C#.
+- Update this migration table and the implementation status in `selfhost/README.md` in the same PR when
+  a milestone changes either one. Do not mark an area complete merely because its data model exists.
+- When an item is finished, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
+  than ticking it here. Nothing appears in both: an entry is either work or a record. A partly
+  finished item is split, its completed half in the log and its open tail here. Identifiers are
+  never reused, so check the log before numbering the next item in a series.
+- Keep every checklist item short and precise: its ID, its scope, a one-clause "Done:" boundary and
+  a one-clause "Open:" tail where partially complete, and at most one load-bearing gotcha or
+  regression-test pointer. Per-PR narratives, verification transcripts, and investigation histories
+  belong in the PR description and git history, never appended to this document.
+
+## Migration state (reference)
+
+A per-area snapshot of what is ported and what is not. Read it when you need context for an area;
+the work order above is what to act on.
+
+The new implementation lives entirely under `selfhost/`. It is pure Ashes: Python, shell, C#, and
+Node.js helpers are not part of its implementation or test path. The existing .NET toolchain remains
+in the repository permanently as a buildable, tested stage-0 and behavioral reference after the
+self-hosted compiler becomes the default. The Node.js VS Code extension also remains in the repository,
+and so does the .NET registry server (`src/Ashes.Registry`): it is a deployed service, not part of the
+toolchain a user runs, so only its client commands are ported. Neither implementation may be removed or
+changed merely to make the self-hosted port easier.
+
+| Area | Ported surface | State |
+|---|---|---|
+| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, inline-module lifting and validation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests; token streams and frontend diagnostics also have shared stage-0/self-hosted parity fixtures |
+| Formatter | Canonical formatting for complete programs, declarations, expressions, patterns, and types, including precedence and idempotence coverage | Implemented and covered by pure-Ashes tests |
+| Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
+| Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, sequential top-level inference, and package-aware inference of dependency-ordered stitched modules | Implemented for the listed surface |
+| Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection; dynamic-handler lowering and backend dispatch | Inference and the dynamic-handler subset are implemented; static `provide` lowering and remaining handler ownership/region work are open (IR-8, OPT-43, OPT-52) |
+| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
+| IR, optimizer, ownership, backend, linker | Complete IR model/text form, core and builtin lowering, scoped arenas, RC/Perceus insertion, reuse and placement paths, supported tail-modulo-constructor and reverse-list/bytes transforms; a linux-x64 LLVM backend and pure-Ashes ELF linker producing real executables | In progress; zero-cost classification, trait-evidence/static-provider/async lowering, remaining ownership and region-lifetime gaps, fusion correctness, optimization levels, and the other three targets remain; individual checklist items distinguish supported paths from open tails |
+| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | `fmt`, `init`, `compile`, `run`, `add`, `remove`, `restore`, `tree`, and `why` have implemented surfaces; compile/report options are partial (see CLI-1..CLI-12) | In progress; remaining commands, TestRunner, fuzzing runner, LSP, and DAP remain separate checklist work |
+| Bootstrap | Stage 0 builds an executable stage-1 CLI, and stage 1 compiles, links and runs ordinary programs. Stage 1 also carries several compiler modules through its own lowering, optimizer and code generation | Stage-1 artifact available and working on ordinary programs; self-compilation of the whole tree, and the stage-2 against stage-3 fixpoint, not established |
+
+The current packages intentionally form the same strict dependency graph as the existing toolchain:
+`frontend` has no compiler dependency, `formatter` depends only on `frontend`, and `semantics` depends
+only on `frontend`. Do not move backend behavior into those packages. Future packages must follow the
+dependency table in the
+[self-hosted README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md#package-dependency-graph)
+and
+must reference only the packages they actually consume.
+
 ## Toolchain implementation checklist
 
 What remains to be built in the self-hosted toolchain, grouped by subsystem. It tracks observable
@@ -109,10 +167,7 @@ compiler and tool behavior, not the presence of similarly named data types. The 
   not yet covered, and the entry's `Open:` tail says what is left;
 - `[ ]` — not implemented in the self-hosted toolchain.
 
-A finished item is removed from here and kept, in full, in the
-[self-hosting log](SELF_HOSTING_LOG.md). Nothing appears in both: an entry is either work or a
-record. A partially finished one is split, its completed half in the log and its open tail here.
-Identifiers are never reused, so check the log before choosing the next number in a series.
+Finished items are not listed here; see "How to work on this" for where they go.
 
 The checklist covers the currently shipped toolchain. Features explicitly listed as unsupported or
 future work in the language reference are not self-hosting requirements until they become part of the
@@ -1886,32 +1941,4 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   any value derived from an address, a counter seeded by traversal order, a timestamp or an absolute
   path baked into an artifact. Auditing the emitters is far cheaper than diagnosing a binary diff,
   and every one of these produces a difference that looks like a miscompile and is not.
-
-## Continuation discipline
-
-- Start behavior changes with a pure-Ashes failing test under `selfhost/tests/<package>/`; keep unit tests
-  within the owning package and add cross-package tests only at real public boundaries.
-- Keep test suites flat: compose small named checks through pipelines instead of sequencing them with
-  deeply nested `let ... in` pyramids.
-- Treat .NET stage-0 comments as audit input while porting. Preserve non-obvious observable behavior,
-  ordering, ownership, diagnostics, and phase boundaries in a module header or a local standalone
-  comment; do not copy XML documentation, C# API narration, or host-specific implementation details.
-- Keep each milestone on a fresh `feature/...` branch and worktree. Copy `runtimes/` from the main
-  checkout into a new worktree before backend-dependent validation; runtime payloads are intentionally
-  not regenerated by the self-hosted work.
-- Do not delete the existing .NET or Node.js implementations as part of or after the port. Keep the
-  .NET implementation buildable and tested as the permanent stage-0 and behavioral reference; changing
-  which implementation is shipped or launched by default is a separate decision.
-- For the current frontend, formatter, and semantics tests, compile the corresponding
-  `selfhost/tests/*/ashes.json` project and execute the emitted host binary. Run semantics tests both
-  normally and with `--debug-disable-reuse` so ownership/reuse differences cannot hide a defect.
-- Before publishing a milestone, format every changed `.ash` file, build `Ashes.slnx`, run the compiler
-  and LSP unit suites, and verify C# formatting. Record exact commands and counts in the PR. Add focused
-  bootstrap parity fixtures as soon as a self-hosted phase can serialize the same public result as C#.
-- Update this migration table and the implementation status in `selfhost/README.md` in the same PR when
-  a milestone changes either one. Do not mark an area complete merely because its data model exists.
-- Keep every checklist item short and precise: its ID, its scope, a one-clause "Done:" boundary and
-  a one-clause "Open:" tail where partially complete, and at most one load-bearing gotcha or
-  regression-test pointer. Per-PR narratives, verification transcripts, and investigation histories
-  belong in the PR description and git history, never appended to this document.
 
