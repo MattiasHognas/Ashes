@@ -4255,6 +4255,23 @@ same public behavior.
 Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral oracle; the
 [CLI reference](../reference/cli.md) is the authoritative surface for every command and flag.
 
+- [ ] **SEM-20** Stage 0's project loader throws a null reference instead of a diagnostic when a
+  manifest's `overrides` name a package its `devDependencies` do not (found 2026-09-15 while
+  rebuilding the bootstrap probe). The compile reports only `error: Object reference not set to an
+  instance of an object`, with no file, no span and no clue which package is missing, and adding the
+  package to `devDependencies` fixes it. A manifest is user input, so this needs an ordinary
+  diagnostic naming the override that resolves to nothing.
+- [ ] **CLI-12** The self-hosted CLI reports `Ashes.IO.File.writeText() failed` when the default
+  output path is a directory (found 2026-09-15: compiling `hello.ash` beside an existing `hello/`
+  directory). The message names the failing call rather than the reason, and passing `-o` elsewhere
+  succeeds. Report that the path exists and is a directory, the way stage 0's own write errors do.
+- [ ] **TR-9** `Linux_backend_llvm_matched_head_stored_into_arena_state_for_normalizing_callee_memory_should_plateau`
+  fails intermittently under memory pressure (observed 2026-09-15 on an otherwise unmodified tree,
+  failing two runs in three while the machine was busy and passing alone). Every plateau test
+  measures resident set against a fixed bound, so a loaded machine makes them report a leak that is
+  not there. Give the plateau bound headroom, or make the measurement insensitive to what else is
+  running, so a red suite always means a real regression.
+
 - [~] **CLI-1** Shared argument scanning, help, validation, exit codes, and dispatch. Done: the top-level
   dispatcher (`Dispatch.ash`, the package's runnable entry point) with usage/help exit codes and
   case-insensitive routing for the ported commands. Open: `--version`, target/CPU/worker/stack,
