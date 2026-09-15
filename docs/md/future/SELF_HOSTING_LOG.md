@@ -399,6 +399,19 @@ preceded the port.
   constructor name. Done (2026-09-14): `rewriteRecordName` resolves them as the constructor;
   `tests/private_record_pattern_project` (a private record built and matched in its own
   module) and a reference-rewriting test cover it.
+- [x] **MOD-20** FIXED 2026-09-16: a lambda never captured a record receiver it read only as
+  `receiver.field`. `receiver.field` parses as a qualified name, so a body that reads a record
+  that way mentions the receiver nowhere the self-hosted free-variable walk looked — `collectFree`
+  in `CoreLowering.ash` had no `ExprQualifiedVar` case at all, so the closure captured nothing and
+  lowering the field access then found no binding. Stage 0 was never affected: its
+  `FreeVarsVisitQualifiedVar` carries the rule explicitly, for exactly this reason. The fix adds
+  the receiver as a free name; over-reporting is safe because `capturedBindings` already drops
+  every name that is not a binding, which is what keeps a genuine module path like `Ashes.Text`
+  out. The probe stopped on `TcoPromotionCostSignal` with
+  `UnknownLoweringBinding("facts.consumedListTail")` and on `ModuleSemanticStitching` with
+  `UnknownLoweringBinding("entry.modulePath")`; `TcoPromotionCostSignal` now compiles and links in
+  0.9 s and 3.0 GiB, and `ModuleSemanticStitching` runs past that diagnostic into OPT-85's memory
+  wall. Regression: `selfhost/tests/semantics/QualifiedReceiverCaptureTests.ash`.
 
 
 ### IR model and lowering

@@ -3968,6 +3968,7 @@ let recursive collectFree expression bound free =
             free
             |> collectFree(value)(bound)
             |> collectMatchCasesFree(cases)(bound)
+        | ExprQualifiedVar(owner, _member) -> addFreeName(owner)(bound)(free)
         | _ -> free
 and collectFreeBinary left right bound free =
     free
