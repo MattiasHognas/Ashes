@@ -1903,6 +1903,24 @@ preceded the port.
   it; both walks now gather through an accumulator, and `CoreProgramLoweringTests` lowers a
   forty-stage chain under such a `let`. `runtime_rc_whole_string_pattern_recursion` now stops at
   SEM-18's comparison default instead.
+- [x] **CG-18** FIXED 2026-09-15: the deferred call-result copy-out found its reload by position,
+  and a loop frame's entry splice moved it. A call whose result type is still unresolved when the
+  call closes its arena window stores the result into a local and reads it back, and
+  `resolvePendingTcoResets` walks the finished body to put the copy-out block between that store
+  and that reload. The walk matched the reload by an instruction index recorded when the copy-out
+  was registered, but `spliceTcoEntryNormalization` and the direct-reuse entry copies insert their
+  instructions at the loop entry once the body is lowered, so every index recorded inside that
+  body is short by what they inserted. In `DerivingExpansion.variablePatterns` the index then
+  named the conditional argument retain's reload, three instructions earlier: the walk removed
+  that reload and renamed the real one's temp, leaving the self call reading a temp nothing
+  defines, which the backend reported as `codegen: unknown index 27 bound=26`. The fix drops the
+  index and finds the reload by the instruction itself, the one `LoadLocal(reloadTemp,
+  resultSlot)` — which is how stage 0's `SpliceDeferredPlaceholders` finds it, through a
+  `CallResultCopyOutPending` placeholder instruction, so stage 0 was never affected. Fifteen lines
+  reproduce it: a non-tail cons producer over a self-referential ADT whose element layout is
+  unresolved at the self call. Regression:
+  `selfhost/tests/semantics/DeferredCallCopyOutTests.ash`, which lowers that producer and asserts
+  the self call's argument temp is defined before the call reads it.
 
 
 ### Object parsing and executable linking
