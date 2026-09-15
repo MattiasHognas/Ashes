@@ -3646,9 +3646,19 @@ same public behavior.
   `codegen: unknown index 27` on `DerivingExpansion`. Copying the fixpoint accumulator across the
   back edge instead (`runInspectOnlyFixpoint(funcs)(Ashes.Internal.deepCopy(next))`) does **not**
   avoid it, so the reused memory is not the table the loop carries. The copy is a diagnostic, not
-  the fix: find what writes over those cells while the walk holds them (the `Some` cell and its
-  borrowed payload crossing the call window's reset is the first suspect) and fix it in stage 0's
-  placement, with a `tests/rc_*.ash` regression.
+  the fix.
+  What the memory does is settled (2026-09-15, hardware watchpoint on the clobbered tail word of
+  the cell the walk is about to read): the same arena address is written first by
+  `ResultReachSummaries.setCount`'s cons cells, again by a later `setCount`, and last by
+  `OwnershipInference`'s own allocation at `lookupUniqueOwnership` — three unrelated values in one
+  address while the walk still holds the second of them. So a window the ownership table was built
+  in is reset and the addresses are handed out again, which makes this the copy-out gap of the
+  OPT-80 family rather than a release bug: the table is a `List((Str, List((Str, ParameterOwnership))))`,
+  a list of tuples whose second element is a list, and what escapes its window has no copy-out for
+  that shape. Two causes are ruled out by experiment: neither disabling every native tail call
+  (`LlvmTailCallKind.NoTail` everywhere) nor neutering `RestoreArenaState`/`ReclaimArenaChunks`
+  avoids it. Fix the copy-out of the escaping nested list in stage 0's placement, with a
+  `tests/rc_*.ash` regression.
   The probe is a stage-0-compiled driver (so it carries symbols and DWARF) that runs `loadProject`,
   `stitchProject`, `lowerCoreProgramWithSource`, `optimizeIrProgram` and `codegenProgram` in turn,
   printing a marker after each; build it with `--debug` and run it under `gdb -batch -ex run -ex
