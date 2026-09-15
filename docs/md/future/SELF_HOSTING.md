@@ -3645,47 +3645,64 @@ same public behavior.
   `TypeInference`, `DerivingExpansion` and `ModuleSemanticStitching`, and compiles cleanly for
   `Types` and `TypeSchemes`, so the trigger is size or shape rather than a particular module.
   The fault is in `OwnershipInference.borrowReadHandOff` at the `match ownership with` of a
-  recursive step: the cons cell's tail word reads as the scalar `5` and the dereference of it
-  faults (`mov (%rax),%rax` with `rax = 5`). Every frame below it is the ordinary
-  `borrowReadWalk`/`borrowReadCall` descent, and the list it walks is the sub-list
-  `handOffOwnership` returned inside `Some(...)`, borrowed out of the whole-program ownership
-  table. Making that return a copy (`Some(Ashes.Internal.deepCopy(ownership))`) avoids the crash
-  and carries the probe through the lowering, which then reveals the next two blockers: the
-  self-hosted `optimizeIrProgram` crashes on `TypeInference`, and codegen reaches CG-18's
-  `codegen: unknown index 27` on `DerivingExpansion`. The copy is a diagnostic, not the fix.
-  It is not memory reuse, which took two readings to settle (2026-09-15). A hardware watchpoint on
-  the clobbered tail word does show three unrelated values in one arena address — two
-  `ResultReachSummaries.setCount` cons cells and then an allocation inside
-  `OwnershipInference.lookupUniqueOwnership` — but that is only the ordinary recycling a window
-  reset licenses, and the crash survives taking it away: with `RestoreArenaState` and
-  `ReclaimArenaChunks` both emitted as no-ops, so that no address is ever handed out twice, the
-  same read faults at the same line. Disabling every native tail call
-  (`LlvmTailCallKind.NoTail` everywhere) does not avoid it either, and neither does copying the
-  fixpoint accumulator across the back edge. So the bad word is stored, not recycled.
-  One real miscompile was found on the way and fixed (2026-09-15, the view-alias release: a string
-  split without copying had its backing released while the pieces were still read), and it is not
-  this one — the probe crashes unchanged with that fix in. The knob that found it is worth keeping
-  in mind: poisoning the second word of every released reference-counted payload turns a read after
-  release into visible garbage. Under it a second early release turned up on the same path and was
-  fixed (2026-09-15): a loop whose arm returns the loop parameter itself released the very string it
-  returned, because the exit hands that reference over only when the whole join is runtime-managed,
-  and a string literal in the arm beside it left the join an arena value. `Ashes.Text.Json.parse`
-  now reads every scalar and object correctly under the knob, and an array only when its elements
-  are scalars — the third early release on that path is filed as OPT-83.
-  Where to look next: `borrowReadHandOff` is a five-parameter member of a mutually recursive group,
-  and its recursive call at `OwnershipInference.ash:582` is lowered as a chain of curried
-  applications whose environments are spliced by hand — each stage takes the previous closure's
-  environment (`LoadMemOffset [result + 8]`), allocates a fresh stack environment one word wider,
-  copies the old words across and stores the new argument at one computed offset (the fourth stage
-  writes the new argument at offset 24 of a 48-byte environment, the fifth at offset 8 of a
-  64-byte one). An offset that disagrees with what the callee reads hands a parameter the wrong
-  word, which is exactly the shape of the fault: `ownership` arrives as a small integer rather
-  than a cons cell. Read that splice against the callee's own environment layout before changing
-  anything, and add a `tests/rc_*.ash` regression once it is understood.
+  recursive step. It is an early release, and it reduces to thirty lines with no flags:
+
+  ```ash
+  type Own =
+      | Borrowed
+      | Consumed
+
+  let recursive pick (name: Str) (table: List((Str, List((Str, Own))))) (found: Maybe(List((Str, Own)))) =
+      match table with
+          | [] -> found
+          | (candidate, values) :: rest ->
+              if candidate != name
+              then pick(name)(rest)(found)
+              else
+                  match found with
+                      | Some(_) -> None
+                      | None -> pick(name)(rest)(Some(values))
+  ```
+
+  Built over nine entries whose sub-lists are `[("runes", Borrowed), ("text" <> n, Consumed)]` and
+  asked for `fn3`, this prints `runes=b text3=b`: the second element's tag reads `Borrowed`. Binding
+  the table to a `let` and reading it again after the call segfaults instead. Three ingredients are
+  each necessary. The sub-list's element must be a tuple carrying an ADT — the same loop over
+  `List(Str)`, `List(Int)` or `List((Str, Int))` is correct. The body must inspect the accumulator
+  before rebuilding it — replacing the inner `match found with` by a direct `Some(values)` is
+  correct, and so is replacing the `None` arm by `found`. And the loop must carry the result across
+  further iterations — an immediate `Some(ownership)` return is correct.
+
+  Two earlier readings of this entry were wrong and are corrected here. It is not the hand-spliced
+  curried environment chain. And the bad word is not stored: at the fault, the cell the walk
+  dereferences is a live arena allocation whose first word is the length `5` and whose bytes are
+  `runes`, a parameter name from `lib/Ashes/Text.ash`, so the block was recycled into a string.
+  Under the release-poison knob the reduction stops printing a wrong tag and segfaults instead,
+  which is the second independent confirmation that the value is read after release.
+
+  Where it goes wrong: the loop exit releases the runtime-managed `found` accumulator, and on the
+  `| [] -> found` arm the loop's result IS that accumulator. The hand-over guard that exists for
+  exactly this (`rc_tco_exit_transfer_not_selected`) is emitted only when the result join is
+  runtime-managed, and this join is mixed — `found` is reference-counted while the bare `None`
+  beside it is an arena `AllocAdt`. That is the same mechanism as the returned-loop-parameter fix,
+  one level up in the type system, where the join is an ADT rather than a string.
+
+  Two attempted fixes were measured and do not work, so do not repeat them. Teaching
+  `IsRuntimeManagedStringMatchArm` to recurse into a nested `match` the way it recurses into an
+  `if`, and adding `IsRuntimeManagedLoopParameterTerminal` to `IsProvenFreshCallFunnelArm`, leave
+  the reduction unchanged: at the point both predicates run, the accumulator's placement is not yet
+  decided, so the loop-parameter terminal reports false. A trace of the ADT terminals also shows the
+  correct `List(Str)` loop and the broken `List((Str, Own))` loop classifying identically (`found`
+  not a funnel, `None` not fresh) and both dropping the accumulator through `__rcdrop_4` at the
+  exit, so the freshness machinery is not the differentiator either. What separates them is further
+  down, in what the structural release of the table reaches.
+
   The probe is a stage-0-compiled driver (so it carries symbols and DWARF) that runs `loadProject`,
   `stitchProject`, `lowerCoreProgramWithSource`, `optimizeIrProgram` and `codegenProgram` in turn,
   printing a marker after each; build it with `--debug` and run it under `gdb -batch -ex run -ex
-  bt`. The stage-1 CLI crashes on the same input in the same place, without symbols.
+  bt`. Its manifest needs `AshesCompiler.Frontend` and `AshesCompiler.Semantics` listed as
+  devDependencies beside the path override, or project loading fails with a null reference. The
+  stage-1 CLI crashes on the same input in the same place, without symbols.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
