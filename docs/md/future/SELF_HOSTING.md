@@ -3504,7 +3504,16 @@ same public behavior.
     (`parameter_reaches_result_record_update`, compared only by the stage-0 oracle
     tests) gets an environment normalizer and a `__rc_cdrop` dropper from stage 0
     (`CanRuntimeNormalizeClosureCapture` admits the record), where the self-hosted
-    `captureCopyOf` declines a list over heap elements. A further gap from OPT-80f: for a loop
+    `captureCopyOf` declines a list over heap elements. Read once more (2026-09-15), that one is
+    narrower than it looks: the two lowerings agree on the capture itself (both admit a list only
+    over a scalar element), and diverge one level down — the compiler admits the record by its
+    layout capability and copies the field with the deep-copy emitter, which walks a list of owned
+    elements cell by cell (`rc_normalize_list`, visible in the fixture's normalizer), while the
+    self-hosted `childCaptureCopies` asks `captureCopyOf` again for the child and so applies the
+    capture's own stricter list rule. The self-hosted deep-copy emitter already produces that walk
+    (`emitListDeepCopy`, from `argumentCopyPlanOf`'s `ListDeepArgumentCopy`); what it does not have
+    is a form that returns instructions rather than threading the lowering state, which is what the
+    synthesized normalizer body needs. A further gap from OPT-80f: for a loop
     whose accumulator carries tuples of a variant-carrying record
     (`tco_parameter_kept_by_borrowing_callee_result`), stage 0 admits the accumulator to
     runtime management and clones each tuple at the back edge through synthesized copiers
