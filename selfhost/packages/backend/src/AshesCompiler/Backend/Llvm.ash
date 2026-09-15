@@ -114,6 +114,9 @@ export (
     value buildSIToFP,
     value buildFPToSI,
     value doubleType,
+    value floatType,
+    value buildFPExt,
+    value buildFPTrunc,
     value constReal,
     value realPredicateOeq,
     value realPredicateOgt,
@@ -242,6 +245,9 @@ external LLVMBuildBitCast(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLV
 external LLVMBuildSIToFP(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildSIToFP@libLLVM.so"
 external LLVMBuildFPToSI(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildFPToSI@libLLVM.so"
 external LLVMDoubleTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMDoubleTypeInContext@libLLVM.so"
+external LLVMFloatTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMFloatTypeInContext@libLLVM.so"
+external LLVMBuildFPExt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildFPExt@libLLVM.so"
+external LLVMBuildFPTrunc(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildFPTrunc@libLLVM.so"
 external LLVMConstReal(LLVMTypeRef, Float) -> LLVMValueRef = "LLVMConstReal@libLLVM.so"
 external LLVMBuildSDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSDiv@libLLVM.so"
 external LLVMBuildSRem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSRem@libLLVM.so"
@@ -513,6 +519,12 @@ let buildSIToFP builder value targetType name = LLVMBuildSIToFP(builder)(value)(
 let buildFPToSI builder value targetType name = LLVMBuildFPToSI(builder)(value)(targetType)(name)
 
 let doubleType context = LLVMDoubleTypeInContext(context)
+
+let floatType context = LLVMFloatTypeInContext(context)
+
+let buildFPExt builder value targetType name = LLVMBuildFPExt(builder)(value)(targetType)(name)
+
+let buildFPTrunc builder value targetType name = LLVMBuildFPTrunc(builder)(value)(targetType)(name)
 
 let constReal floatType value = LLVMConstReal(floatType)(value)
 

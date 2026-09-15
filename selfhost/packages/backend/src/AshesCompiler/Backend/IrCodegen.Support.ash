@@ -19,6 +19,7 @@ export (
     type CoreLlvmTypes(..),
     value coreLlvmTypes,
     value lookupIndexed,
+    value lookupIndexedAll,
     value emitStringParts,
     value emitWriteStrBytesToFd,
     value emitWriteNewlineToFd,
@@ -98,6 +99,13 @@ let recursive lookupIndexed key env =
             if boundKey == key
             then value
             else lookupIndexed(key)(rest)
+
+// Every key's value, in the keys' own order: an instruction carrying a list of operand temps
+// resolves them all at once.
+let recursive lookupIndexedAll keys env =
+    match keys with
+        | [] -> []
+        | key :: rest -> lookupIndexed(key)(env) :: lookupIndexedAll(rest)(env)
 
 // A `Str`/`Bytes` value is either owned (`[len:i64][bytes...]`, bytes inline at `ref + 8`) or a
 // view (`[len|VIEW:i64][backingBytesAddr:i64]`, bit 63 of the length word set and the byte address

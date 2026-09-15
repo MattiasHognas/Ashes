@@ -120,6 +120,7 @@ import AshesCompiler.Backend.IrCodegen.FloatText
 import AshesCompiler.Backend.IrCodegen.AsciiCase
 import AshesCompiler.Backend.IrCodegen.BigInt
 import AshesCompiler.Backend.IrCodegen.ProgramArgs
+import AshesCompiler.Backend.IrCodegen.External
 import Ashes.Number.UInt
 export (
     value codegenEntryFunction,
@@ -180,6 +181,7 @@ type CodegenContext =
     | closureFunctionType: LLVMTypeRef
     | envpGlobal: LLVMValueRef
     | programArgsGlobal: LLVMValueRef
+    | externalSymbols: List(ExternalSymbolDeclaration)
     | capabilityHandlerGlobals: List((Int, LLVMValueRef))
     | consoleGlobals: ConsoleGlobals
     | arenaRuntime: ArenaRuntime
@@ -202,6 +204,8 @@ type ModuleCodegen =
     // Whether any function in the module reads the program arguments, so only such a module's
     // entry walks argv.
     | moduleUsesProgramArgs: Bool
+    // Every `external` C symbol the program calls, declared once for the module.
+    | moduleExternalSymbols: List(ExternalSymbolDeclaration)
     | moduleCapabilityHandlerGlobals: List((Int, LLVMValueRef))
     | moduleConsoleGlobals: ConsoleGlobals
     | moduleArenaRuntime: ArenaRuntime
@@ -368,7 +372,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, programArgsGlobal = programArgsGlobal, externalSymbols = externalSymbols, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, bigIntRuntime = bigIntRuntime, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -1054,6 +1058,13 @@ let codegenInstructionKind cx builder kind state =
                                                     buildPtrToInt(builder)(emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(sizeBytes)("rc_alloc"))(i64)("t" + Ashes.Text.fromInt(target))
                                                 else emitArenaAlloc(context)(function_)(builder)(i64)(arena)(sizeBytes)("t" + Ashes.Text.fromInt(target))
                                             in ((target, blockRef) :: tempEnv, terminated)
+                                        | ToCString(target, value) ->
+                                            ((target, buildPtrToInt(builder)(emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(value)(tempEnv))("ffi_cstring"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CallExternal(target, symbolName, _libraryName, argTemps, parameterTypes, returnType) ->
+                                            let arguments = lookupIndexedAll(argTemps)(tempEnv)
+                                            in
+                                                let declaration = lookupExternalSymbol(symbolName)(externalSymbols)
+                                                in ((target, emitCallExternal(context)(builder)(types)(declaration)(arguments)(parameterTypes)(returnType)) :: tempEnv, terminated)
                                         | LoadProgramArgs(target) -> ((target, emitLoadProgramArgs(builder)(i64)(programArgsGlobal)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | AllocStack(target, sizeBytes) ->
                                             ((target, buildPtrToInt(builder)(emitStackAlloc(builder)(i64)(sizeBytes)("stack_alloc"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
@@ -1677,6 +1688,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                             closureFunctionType = closureFnType,
                                                             envpGlobal = mc.moduleEnvpGlobal,
                                                             programArgsGlobal = mc.moduleProgramArgsGlobal,
+                                                            externalSymbols = mc.moduleExternalSymbols,
                                                             capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
                                                             consoleGlobals = mc.moduleConsoleGlobals,
                                                             arenaRuntime = arena,
@@ -1772,6 +1784,33 @@ let recursive functionsUseBigInt functions =
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsUseBigInt(instructions) || functionsUseBigInt(rest)
 
+// The C symbols the runtime itself declares for its own emitters. A program's `external` naming one
+// of them reuses that declaration instead of adding a second one under the same name.
+let runtimeDeclaredSymbols (externals: ExternalFunctions) =
+    match externals.directoryExternals with
+        | directory ->
+            [
+                ("malloc", externals.mallocFn),
+                ("free", externals.freeFn),
+                ("memcmp", externals.memcmpFn),
+                ("memcpy", externals.memcpyFn),
+                ("strlen", directory.strlenFn),
+                ("realloc", directory.reallocFn),
+                ("memmove", directory.memmoveFn),
+                ("qsort", directory.qsortFn),
+                ("strcmp", directory.strcmpFn),
+                ("fdopendir", directory.fdopendirFn),
+                ("readdir", directory.readdirFn),
+                ("closedir", directory.closedirFn),
+                ("__errno_location", directory.errnoLocationFn),
+                ("lstat", directory.lstatFn),
+                ("nftw", directory.nftwFn),
+                ("remove", directory.removeFn),
+                ("getenv", directory.getenvFn),
+                ("getcwd", directory.getcwdFn),
+                ("readlink", directory.readlinkFn)
+            ]
+
 // Whether any function reads the program arguments: only then does the entry walk argv.
 let recursive instructionsUseProgramArgs instructions =
     match instructions with
@@ -1840,6 +1879,9 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                             moduleEnvpGlobal = envpGlobal,
                                                             moduleProgramArgsGlobal = programArgsGlobal,
                                                             moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
+                                                            moduleExternalSymbols = []
+                                                            |> collectExternalSymbols(entryFunction :: functions)
+                                                            |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
                                                             moduleCapabilityHandlerGlobals = defineCapabilityHandlerGlobals(module_)(types.i64)(0)(capabilityHandlerGlobalCount),
                                                             moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
                                                             moduleArenaRuntime = arena,
