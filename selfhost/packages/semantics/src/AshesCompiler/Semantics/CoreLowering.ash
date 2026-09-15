@@ -385,12 +385,14 @@ type CoreTcoReset =
     | argumentExpressions: List(Expr)
 
 // A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
-// `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the
-// instruction at `position` in the function's final order, and the copy-out block resolved once
-// the body is lowered belongs right before that reload (or, when the resolved type needs no
+// `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the one
+// `LoadLocal(reloadTemp, resultSlot)` in the function, and the copy-out block resolved once the
+// body is lowered belongs right before that reload (or, when the resolved type needs no
 // copy-out, the store and the reload are removed and the reload's temp reads the result itself).
+// The reload is found by that instruction and never by its position: entry normalizations and
+// direct-reuse entry copies are spliced into the body after a copy-out is recorded, so any
+// position recorded here is stale by the time the blocks resolve.
 type CorePendingCallCopyOut =
-    | deferredReloadIndex: Int
     | deferredCursorSlot: Int
     | deferredEndSlot: Int
     | deferredPreRestoreSlot: Int
@@ -6099,13 +6101,20 @@ let callCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
                         | None -> None
                 | _ -> None
 
-let recursive pendingCopyOutAt (index: Int) (copyOuts: List(CorePendingCallCopyOut)) =
+let recursive pendingCopyOutReloading (target: Int) (slot: Int) (copyOuts: List(CorePendingCallCopyOut)) =
     match copyOuts with
         | [] -> None
-        | (CorePendingCallCopyOut { deferredReloadIndex = reloadIndex } as pending) :: rest ->
-            if reloadIndex == index
+        | (CorePendingCallCopyOut { deferredReloadTemp = reloadTemp, deferredResultSlot = resultSlot } as pending) :: rest ->
+            if target == reloadTemp && slot == resultSlot
             then Some(pending)
-            else pendingCopyOutAt(index)(rest)
+            else pendingCopyOutReloading(target)(slot)(rest)
+
+// The pending copy-out whose reload this instruction is: the reload temp is fresh and defined
+// once, so the `LoadLocal` that reads the result slot into it names exactly one copy-out.
+let pendingCopyOutOf (instruction: IrInstruction) (copyOuts: List(CorePendingCallCopyOut)) =
+    match instruction.instruction with
+        | LoadLocal(target, slot) -> pendingCopyOutReloading(target)(slot)(copyOuts)
+        | _ -> None
 
 let recursive renamedTemp (renames: List((Int, Int))) (temp: Int) =
     match renames with
@@ -6164,24 +6173,24 @@ let keepSplicedInstruction (renames: List((Int, Int))) (instruction: IrInstructi
 
 // Every placeholder of a lowered body becomes its block in one walk, in instruction order, as
 // stage 0's `ResolvePendingBlocks` does: a `TcoResetPending` its arena block, a deferred
-// call-result copy-out (found by the position of its reload) the copy-out block ahead of the
+// call-result copy-out (found by its own reload instruction) the copy-out block ahead of the
 // reload, or, resolved to nothing, the removal of the store before it and of the reload itself,
 // every later read of the reload's temp renamed to the result.
-let recursive splicePendingBlocks (instructions: List(IrInstruction)) (index: Int) (resets: List(CoreTcoReset)) (copyOuts: List(CorePendingCallCopyOut)) (renames: List((Int, Int))) (state: CoreLoweringState) =
+let recursive splicePendingBlocks (instructions: List(IrInstruction)) (resets: List(CoreTcoReset)) (copyOuts: List(CorePendingCallCopyOut)) (renames: List((Int, Int))) (state: CoreLoweringState) =
     match instructions with
         | [] -> state
         | instruction :: rest ->
-            match pendingCopyOutAt(index)(copyOuts) with
+            match pendingCopyOutOf(instruction)(copyOuts) with
                 | Some(pending) ->
                     match resolveDeferredCallCopyOut(pending)(state) with
                         | (resolved, true) ->
                             resolved
                             |> keepSplicedInstruction(renames)(instruction)
-                            |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
+                            |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
                         | (unchanged, false) ->
                             unchanged
                             |> dropDeferredStore(pending)
-                            |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)((pending.deferredReloadTemp, renamedTemp(renames)(pending.deferredResultTemp)) :: renames)
+                            |> splicePendingBlocks(rest)(resets)(copyOuts)((pending.deferredReloadTemp, renamedTemp(renames)(pending.deferredResultTemp)) :: renames)
                 | None ->
                     match instruction with
                         | IrInstruction { instruction = TcoResetPending(resetId, _usedTemps, _readLocals) } ->
@@ -6189,15 +6198,15 @@ let recursive splicePendingBlocks (instructions: List(IrInstruction)) (index: In
                                 | Some(reset) ->
                                     state
                                     |> emitResolvedTcoReset(reset)
-                                    |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
+                                    |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
                                 | None ->
                                     state
                                     |> keepSplicedInstruction(renames)(instruction)
-                                    |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
+                                    |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
                         | _ ->
                             state
                             |> keepSplicedInstruction(renames)(instruction)
-                            |> splicePendingBlocks(rest)(index + 1)(resets)(copyOuts)(renames)
+                            |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
 
 // Stage 0's `ResolveDeferredTcoResets` for one function, once its whole body is lowered: every
 // `TcoResetPending` placeholder becomes its arena block and every deferred call-result copy-out
@@ -6212,7 +6221,7 @@ let resolvePendingTcoResets (state: CoreLoweringState) =
         | (resets, copyOuts) ->
             state.reversedInstructions
             |> reverse
-            |> (given (instructions: List(IrInstruction)) -> splicePendingBlocks(instructions)(0)(resets)(copyOuts)([])((state with reversedInstructions = [], pendingTcoResets = [], pendingCallCopyOuts = [], nextLabelId = state.deferredLabelNext)))
+            |> (given (instructions: List(IrInstruction)) -> splicePendingBlocks(instructions)(resets)(copyOuts)([])((state with reversedInstructions = [], pendingTcoResets = [], pendingCallCopyOuts = [], nextLabelId = state.deferredLabelNext)))
             |> (given (resolved: CoreLoweringState) -> resolved with nextLabelId = state.nextLabelId, deferredLabelNext = resolved.nextLabelId, deferredLabelGroups = (state.deferredLabelNext, resolved.nextLabelId - state.deferredLabelNext) :: resolved.deferredLabelGroups)
 
 // The program entry's own pending blocks, resolved as a lifted function's are.
@@ -10473,7 +10482,6 @@ let deferCallCopyOut cursorSlot endSlot preRestoreSlot (resultTemp: Int) (semant
                     | FreshTemp { state = stored, temp = reloadTemp } ->
                         let pending =
                             CorePendingCallCopyOut(
-                                deferredReloadIndex = length(stored.reversedInstructions),
                                 deferredCursorSlot = cursorSlot,
                                 deferredEndSlot = endSlot,
                                 deferredPreRestoreSlot = preRestoreSlot,

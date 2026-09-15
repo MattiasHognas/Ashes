@@ -15,8 +15,12 @@ The goal right now is a **fixpoint**: the compiler built by the self-hosted comp
 sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
 matching its output instruction for instruction.
 
-**The next task** is whatever the bootstrap probe reports first. Today that is CG-18, in the code
-generation section below; find any item by its identifier.
+**The next task** is OPT-85, the memory task. The semantics package has now been swept module by
+module (2026-09-15, 86 modules, the probe below): 28 compile and link to a working executable, 54
+run out of memory before they reach a diagnostic, and 4 stop with one. Memory is what gates the
+package, not a queue of defects, so it is what step 2 of the work order waits on. The four
+diagnostics — MOD-20, MOD-21, MOD-17c and SEM-21 — and the miscompile CG-20 are worth closing on
+their own, but none of them unblocks more than its own module.
 
 **The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
 that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
@@ -53,8 +57,9 @@ instruction is a debugging aid, not a requirement.
 
 1. **Clear the blockers the probe reports.** Run the bootstrap probe over every module of a package
    before fixing the next failure it names, so what remains is a list ordered by how often a shape
-   recurs rather than a queue discovered one failure at a time. Current known blocker: CG-18. Gates:
-   BOOT-2.
+   recurs rather than a queue discovered one failure at a time. The semantics package is swept
+   (2026-09-15): what remains there is MOD-20, MOD-21, MOD-17c, SEM-21 and CG-20, each confined to
+   its own module, with memory gating the other 54. Gates: BOOT-2.
 2. **Compile the whole self-hosted tree with stage 1.** This is the first real attempt at stage 2
    and the step most likely to turn into memory work rather than a single run: one module currently
    costs roughly 9 GB, and the tree is about 92,000 lines. The memory task is OPT-85, and it carries a
@@ -150,7 +155,7 @@ changed merely to make the self-hosted port easier.
 | Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
 | IR, optimizer, ownership, backend, linker | Complete IR model/text form, core and builtin lowering, scoped arenas, RC/Perceus insertion, reuse and placement paths, supported tail-modulo-constructor and reverse-list/bytes transforms; a linux-x64 LLVM backend and pure-Ashes ELF linker producing real executables | In progress; zero-cost classification, trait-evidence/static-provider/async lowering, remaining ownership and region-lifetime gaps, fusion correctness, optimization levels, and the other three targets remain; individual checklist items distinguish supported paths from open tails |
 | CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | `fmt`, `init`, `compile`, `run`, `add`, `remove`, `restore`, `tree`, and `why` have implemented surfaces; compile/report options are partial (see CLI-1..CLI-12) | In progress; remaining commands, TestRunner, fuzzing runner, LSP, and DAP remain separate checklist work |
-| Bootstrap | Stage 0 builds an executable stage-1 CLI, and stage 1 compiles, links and runs ordinary programs. Stage 1 also carries several compiler modules through its own lowering, optimizer and code generation | Stage-1 artifact available and working on ordinary programs; self-compilation of the whole tree, and the stage-2 against stage-3 fixpoint, not established |
+| Bootstrap | Stage 0 builds an executable stage-1 CLI, and stage 1 compiles, links and runs ordinary programs. Stage 1 also carries compiler modules of its own through lowering, the optimizer and code generation to a working executable: 28 of the semantics package's 86 modules as of 2026-09-15, with memory, not defects, gating most of the rest | Stage-1 artifact available and working on ordinary programs; self-compilation of the whole tree, and the stage-2 against stage-3 fixpoint, not established |
 
 The current packages intentionally form the same strict dependency graph as the existing toolchain:
 `frontend` has no compiler dependency, `formatter` depends only on `frontend`, and `semantics` depends
@@ -336,6 +341,23 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     (`Ashes.Trait.Show.show(x)`, which the selfhost source uses), sharing the dispatch of
     MOD-17a; default methods whose bodies call sibling methods (`less` via `compare`) need the
     concrete operand type pinned on the default lambda's parameters before it is lowered.
+    Reached by the probe on `ReuseDecision`, which stops at
+    `UnknownLoweringBinding("Ashes_Trait_Show.show")` in 0.1 s.
+- [ ] **MOD-20** A qualified field read of a record-typed binding lowers as an unknown binding
+  (2026-09-15). The probe stops on `TcoPromotionCostSignal` with
+  `UnknownLoweringBinding("facts.consumedListTail")` in 0.4 s, and on `ModuleSemanticStitching`
+  with `UnknownLoweringBinding("entry.modulePath")`; the lowering is reading `x.field` as a
+  binding name rather than as a field access on `x`. Both sites read a field of a record the
+  enclosing function received as a parameter.
+- [ ] **MOD-21** A record literal or pattern of a stitched frontend record type is unknown to the
+  core lowering (2026-09-15). The probe stops on `PatternBindingOwnership` with
+  `UnsupportedCoreLoweringPattern("unknown record TextSpan")` in 0.6 s. `TextSpan` is exported, so
+  this is not MOD-19's private-name shape; the constructor layout is missing for a record the
+  stitcher brought in from another package.
+- [ ] **SEM-21** `Ashes.Collection.List.sort`'s first argument is inferred at the wrong type
+  (2026-09-15). The probe stops on `HoverTypeInfo` with `ASH002 Type mismatch: Int vs Str.
+  Context: in argument #1 of call to 'Ashes_Collection_List_sort'.` in 0.5 s, against a call stage
+  0 accepts.
 
 ### IR model and lowering
 
@@ -1540,38 +1562,18 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
-- [ ] **CG-18** The self-hosted lowering emits a call whose argument temp nothing defines
-  (2026-09-15). With the loop-accumulator hand-over fixed, the self-hosted pipeline runs to
-  completion for `Scope`, `Symbols` and `ExprMentions` — the first compiler modules to pass through
-  lowering, the optimizer and codegen — and `DerivingExpansion` stops in the backend with
-  `codegen: unknown index 27 bound=26`. The backend is right to complain: the temp is read before
-  anything defines it, and only 26 are bound at that point.
-  The offending instruction is a self-call in `variablePatterns`, a plain non-tail cons producer:
-
-  ```
-  CallKnown Target=28 FuncLabel=lambda_194 EnvTemp=14 ArgTemp=27 RuntimeManagedArgumentFlagTemp=22
-  ```
-
-  Stage 0 compiles the same module with no forward reference anywhere, so this is the self-hosted
-  lowering's own emission, not a backend gap. It is also not the optimizer and not the placement
-  pass: the forward reference is already in the pre-optimizer dump, and it survives making
-  `placeLifetimes` the identity.
-  What is missing is the slot routing of the conditional argument retain. Stage 0 emits the borrowed
-  value into a local, branches on the flag, overwrites the local with the duplicate on the retain
-  path, and reloads the local as the call's argument. The self-hosted output has the branch and the
-  duplicate but neither store and no reload, so the temp the reload would have defined is dangling.
-  `emitConditionalArgumentRetain` in `CoreLowering.ash` reads correctly on its own, and the argument
-  classification also diverges — stage 0 takes a path with a constant flag here while the
-  self-hosted lowering computes the callee's adoption bit — so start by finding why
-  `prepareCallArgument` picks the pending-root-slot arm for this argument.
-  Tools: the backend's `lookupIndexed` panic now reports how many keys were bound, which is what
-  identified this as a forward reference rather than a missing binding. A forward-reference scan over
-  an IR dump is a short awk pass — track `Target=`/`DestTemp=` as definitions and every other
-  `*Temp=`, `Ptr`, `Left`, `Right`, `Source` as uses, resetting at each `function` line. The probe
-  can dump the self-hosted IR by calling `formatIr(lowered)(LoweredIr)(None)` from
-  `AshesCompiler.Semantics.IrText` between phases. A single-file reproduction of the
-  `variablePatterns` shape alone does not diverge, so the pending root slot comes from the module
-  context.
+- [ ] **CG-20** A list built by one loop and read by two gives every element length 1
+  (2026-09-15). `tests/tco_runtime_managed_list_accumulator_plateau.ash` compiled by stage 1
+  prints `200000|200000|200000` where stage 0 prints `200000|1088895|200000`: the middle field
+  sums `Ashes.Text.byteLength` over the list and comes out equal to the element count, as if every
+  string were one byte long. It is a wrong answer, not a crash, and it is what the self-hosted
+  backend suite (`selfhost/tests/backend`, run from the repository root with `lib/Ashes`) stops
+  on, so that suite is red until this closes. Predates CG-18's fix. Reduction (26 lines, the same
+  fixture with `200000` replaced by `12`, giving `12|12|12` against stage 0's `12|15|12`): a
+  top-level `let texts = buildTexts(12)([])` consumed by a counting loop and then by the summing
+  loop. One consumer alone is correct — the counting loop ahead of it is what turns the lengths
+  into ones — so suspect the borrowed global's second traversal rather than `byteLength`, which
+  is correct on its own.
 
 ### Object parsing and executable linking
 
@@ -1888,9 +1890,11 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   calling a C symbol through `external` (CG-11's program-arguments and `CallExternal` items,
   2026-09-15; the CLI package's LLVM bindings additionally need the out-parameter and
   native-string marshalling, and a linker that imports the symbol its declaration names), and
-  a program importing `DerivingExpansion` stops earlier still, in the lowering itself
-  (OPT-81, 2026-09-15: a borrowed ownership sub-list is read back as garbage), and only past
-  that diagnostic does it reach the backend at CG-18. The suspects for
+  a program importing `DerivingExpansion` stopped earlier still, in the lowering itself
+  (OPT-81, 2026-09-15: a borrowed ownership sub-list is read back as garbage), and past that
+  diagnostic in the backend (CG-18, 2026-09-15: a deferred call-result copy-out found its reload
+  by a position a loop frame's entry splice had moved). With both closed it compiles and links to
+  a working executable in 35 s and 9.5 GiB, the first compiler module to reach one. The suspects for
   OPT-80 (whatever the next gdb `mmap` sampling names: the deriving expansion's `Ord` bodies
   at registration, the `constructorInferenceDefinitionsFromLayouts` record builder, the
   curried `Ashes.Trait` operator closures behind linear name scans) are listed there. The
