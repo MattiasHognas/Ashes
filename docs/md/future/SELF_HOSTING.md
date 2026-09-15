@@ -3703,6 +3703,21 @@ same public behavior.
   bt`. Its manifest needs `AshesCompiler.Frontend` and `AshesCompiler.Semantics` listed as
   devDependencies beside the path override, or project loading fails with a null reference. The
   stage-1 CLI crashes on the same input in the same place, without symbols.
+
+  Measured further (2026-09-15). The fault needs at least two elements in the sub-list: the same
+  program with `[("x", Borrowed)]` is correct, and with two or three elements it segfaults outright,
+  so a literal two-entry table is enough and no `buildTable` loop is needed. A watchpoint on the
+  returned sub-list's reference count shows it go `3 -> 2 -> 1 -> freed`, every transition inside the
+  single arm that builds `Some(values)`, where the correct count after that arm is 2: one reference
+  from the table the loop owns and one from the `Some` cell. One decrement too many. The `Consumed`
+  cell of the second element is released twice, once from the `candidate != name` arm of the next
+  iteration and once from the loop exit. The control that removes only the accumulator inspection
+  emits the same reference-counting shape in that arm — dup the pattern owner, release it
+  structurally, dup the tail — so the divergence is not in what that arm emits.
+  The gdb recipe: break on the generated `__rcdrop_structural_*` and `__rcdrop_*` droppers, where the
+  dropped value arrives in `rsi`; the reference count is the word at payload minus 16 and the
+  allocation size the word at payload minus 8. Print both, then arm a watchpoint on the count word of
+  the value the first structural drop reports.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
