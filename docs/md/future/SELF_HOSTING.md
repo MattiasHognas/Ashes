@@ -19,8 +19,8 @@ matching its output instruction for instruction.
 module (2026-09-15, 86 modules, the probe below): 28 compile and link to a working executable, 54
 run out of memory before they reach a diagnostic, and 4 stop with one. Memory is what gates the
 package, not a queue of defects, so it is what step 2 of the work order waits on. Of the four
-diagnostics MOD-20 is closed; MOD-21, MOD-17c and SEM-21 remain, and so does the miscompile CG-20.
-Each is worth closing on its own, but none of them unblocks more than its own module.
+diagnostics MOD-20 and MOD-21 are closed; MOD-17c and SEM-21 remain, and so does the miscompile
+CG-20. Each is worth closing on its own, but none of them unblocks more than its own module.
 
 OPT-85 now carries its measurement: what the arena holds, where it accumulates, and **three
 approaches already refuted by measurement**. Read it before writing any code against it.
@@ -61,8 +61,8 @@ instruction is a debugging aid, not a requirement.
 1. **Clear the blockers the probe reports.** Run the bootstrap probe over every module of a package
    before fixing the next failure it names, so what remains is a list ordered by how often a shape
    recurs rather than a queue discovered one failure at a time. The semantics package is swept
-   (2026-09-15): what remains there is MOD-21, MOD-17c, SEM-21 and CG-20, each confined to
-   its own module, with memory gating the other 54. Gates: BOOT-2.
+   (2026-09-15): what remains there is MOD-17c, SEM-21 and CG-20, each confined to its own module,
+   with memory gating the other 54. Gates: BOOT-2.
 2. **Compile the whole self-hosted tree with stage 1.** This is the first real attempt at stage 2
    and the step most likely to turn into memory work rather than a single run: one module currently
    costs roughly 9 GB, and the tree is about 92,000 lines. The memory task is OPT-85, and it carries a
@@ -346,11 +346,6 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     concrete operand type pinned on the default lambda's parameters before it is lowered.
     Reached by the probe on `ReuseDecision`, which stops at
     `UnknownLoweringBinding("Ashes_Trait_Show.show")` in 0.1 s.
-- [ ] **MOD-21** A record literal or pattern of a stitched frontend record type is unknown to the
-  core lowering (2026-09-15). The probe stops on `PatternBindingOwnership` with
-  `UnsupportedCoreLoweringPattern("unknown record TextSpan")` in 0.6 s. `TextSpan` is exported, so
-  this is not MOD-19's private-name shape; the constructor layout is missing for a record the
-  stitcher brought in from another package.
 - [ ] **SEM-21** `Ashes.Collection.List.sort`'s first argument is inferred at the wrong type
   (2026-09-15). The probe stops on `HoverTypeInfo` with `ASH002 Type mismatch: Int vs Str.
   Context: in argument #1 of call to 'Ashes_Collection_List_sort'.` in 0.5 s, against a call stage

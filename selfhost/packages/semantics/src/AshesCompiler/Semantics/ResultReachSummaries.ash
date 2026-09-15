@@ -13,6 +13,7 @@
 // - A function is keyed by its name and the source offset of its lambda value, the identity the
 //   lowering recomputes from the binding it lowers.
 
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreBuiltinLowering.freshRcBuiltinCall
 import AshesCompiler.Semantics.OwnershipSummary
