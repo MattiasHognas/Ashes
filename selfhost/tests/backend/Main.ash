@@ -3415,6 +3415,17 @@ let buildOptimizedIrProgramArgsModule name context = codegenOptimizedRealSource(
 
 let testRunStaticExecutableForProgramArgsModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgs")("selfhost_backend_program_args_e2e")(["alpha", "beta", "gamma"])("alpha 3")
 
+// Three `external` declarations called through the C ABI, each `Str` argument NUL-terminated by
+// `ToCString` first: one, two and three parameters, all returning `Int`. `strlen` and `strcmp` are
+// symbols the runtime itself already declares, so the call reuses those declarations rather than
+// adding a second one under the same name; `bcmp` is declared by the program alone. All three are
+// in the linker's import table.
+let externalCallSource = "external strlen(Str) -> Int = \"strlen\"\nexternal strcmp(Str, Str) -> Int = \"strcmp\"\nexternal bcmp(Str, Str, Int) -> Int = \"bcmp\"\nAshes.IO.print(Ashes.Text.fromInt(strlen(\"hello\")) + \" \" + Ashes.Text.fromInt(strcmp(\"abc\")(\"abc\")) + \" \" + Ashes.Text.fromInt(bcmp(\"abc\")(\"abd\")(2)))"
+
+let buildOptimizedIrExternalCallModule name context = codegenOptimizedRealSource(externalCallSource)(name)(context)
+
+let testRunStaticExecutableForExternalCallModule unit = assertProgramPrints(buildOptimizedIrExternalCallModule)("selfhostBackendRunExternalCall")("selfhost_backend_external_call_e2e")("5 0 0")
+
 // The same program with no arguments at all: the walk publishes the empty list.
 let testRunStaticExecutableForProgramArgsEmptyModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgsEmpty")("selfhost_backend_program_args_empty_e2e")([])("none 0")
 
@@ -5408,6 +5419,7 @@ let run shipped =
     |> testRunStaticExecutableForAggregateChildrenRetainModule
     |> testRunStaticExecutableForProgramArgsModule
     |> testRunStaticExecutableForProgramArgsEmptyModule
+    |> testRunStaticExecutableForExternalCallModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

@@ -3861,7 +3861,15 @@ same public behavior.
   `argv[1]`, measures each NUL-terminated string, copies it into an arena string and conses it on,
   so the descending walk leaves the list in argument order, published in one module global every
   function's `LoadProgramArgs` loads; a per-function stack cell, as stage 0 had until 2026-09-14,
-  leaves every read below the entry an empty list). Open: the buffered stdout ring (writes are
+  leaves every read below the entry an empty list) and the `external` call itself
+  (`IrCodegen.External.ash`, stage 0's `EmitCallExternalValues`: every symbol the program calls
+  declared once from a scan of the whole program, reusing the runtime's own declaration where the
+  name matches so LLVM does not rename the second one to `strlen.1`; each argument word converted
+  to what its ABI position declares and the result normalized back to a word, with `ToCString` for
+  a `Str` argument. A `Buffer`, `Out` or `NativeString` position panics rather than emitting
+  something silently wrong: those need `AllocFfiOut`/`LoadFfiOut`/`CopyFfiString`, still open, and
+  the self-hosted linker still resolves an imported symbol against its own fixed table rather than
+  the `symbol@library` the declaration carries). Open: the buffered stdout ring (writes are
   immediate), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
   `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the
@@ -4258,9 +4266,10 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   memory wall: the lowering of the semantics package alone no longer fits in 50 GiB of address
   space (OPT-80, the next blocker, with its per-module measurements; its slices a to h left the
   wall standing, and OPT-80i names the record classifier gap behind it); a single-file program that reads
-  `Ashes.IO.args` lowers and now links and runs through the stage-1 backend too (CG-11's
-  program-arguments item, 2026-09-15), while the backend still has no `CallExternal`
-  codegen, which the CLI package's LLVM bindings will need before its binary links, and
+  `Ashes.IO.args` lowers and now links and runs through the stage-1 backend too, and so does one
+  calling a C symbol through `external` (CG-11's program-arguments and `CallExternal` items,
+  2026-09-15; the CLI package's LLVM bindings additionally need the out-parameter and
+  native-string marshalling, and a linker that imports the symbol its declaration names), and
   a program importing `DerivingExpansion` stops in the backend at CG-18. The suspects for
   OPT-80 (whatever the next gdb `mmap` sampling names: the deriving expansion's `Ord` bodies
   at registration, the `constructorInferenceDefinitionsFromLayouts` record builder, the
