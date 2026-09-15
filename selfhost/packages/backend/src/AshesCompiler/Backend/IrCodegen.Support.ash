@@ -92,13 +92,21 @@ let coreLlvmTypes context =
         ptrType = pointerType(context)(0u32)
     )
 
-let recursive lookupIndexed key env =
+let recursive countBound env total =
     match env with
-        | [] -> Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key))
+        | [] -> total
+        | _entry :: rest -> countBound(rest)(total + 1)
+
+let recursive lookupIndexedIn key env full =
+    match env with
+        | [] ->
+            Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key) + " bound=" + Ashes.Text.fromInt(countBound(full)(0)))
         | (boundKey, value) :: rest ->
             if boundKey == key
             then value
-            else lookupIndexed(key)(rest)
+            else lookupIndexedIn(key)(rest)(full)
+
+let lookupIndexed key env = lookupIndexedIn(key)(env)(env)
 
 // Every key's value, in the keys' own order: an instruction carrying a list of operand temps
 // resolves them all at once.
