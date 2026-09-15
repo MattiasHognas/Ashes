@@ -3638,7 +3638,8 @@ same public behavior.
     `Linux_backend_llvm_callee_result_field_reads_reassembled_into_record_memory_should_plateau`,
     and the regenerated `aggregate_borrowing_owner_kept_by_callee` parity fixture, which both
     compilers reproduce instruction for instruction along with the other 53.
-- [ ] **OPT-81** The self-hosted lowering segfaults on a medium compiler input before any of the
+- [x] **OPT-81** FIXED 2026-09-15 by arming the loop exit's hand-over guard for a result that can be a bare read of a parameter the loop owns. The self-hosted pipeline now runs to completion for `Scope`, `Symbols` and `ExprMentions`, and `DerivingExpansion` reaches CG-18 in the backend. The investigation below is kept because its reduction and its two corrections are what found the fix.
+  The self-hosted lowering segfaulted on a medium compiler input before any of the
   later blockers is reached (found 2026-09-15, and it is not a regression: it reproduces at
   `3274dc10`, before the OPT-80j slice). A scratch project whose entry is one `import
   AshesCompiler.Semantics.<Module>` plus a `print` crashes in `lowerCoreProgramWithSource` for
@@ -4090,18 +4091,38 @@ same public behavior.
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
-- [ ] **CG-18** The stage-1 backend panics with `codegen: unknown index 27` on a program
-  importing `AshesCompiler.Semantics.DerivingExpansion` (found 2026-09-14 while bisecting
-  OPT-80: a scratch entry `import AshesCompiler.Semantics.DerivingExpansion` followed by one
-  `print` lowers and optimizes, then the codegen reads an IR temporary its block environment
-  never bound). Reaching it again needs OPT-81's diagnostic copy in place (2026-09-15): the
-  lowering of that same entry now faults earlier, and only with the copy does the probe carry
-  through to this panic. `lookupIndexed` in `IrCodegen.Support.ash` serves temporaries, labels, and
-  string literal globals alike, so the message names neither the function nor the kind of
-  index; make the panic name the function and the instruction, dump that function's final IR
-  under stage 0 and stage 1 (`--emit-ir final`), and either mirror the missing definition
-  order (a temporary defined in a predecessor block the codegen visits later) or the lowering
-  divergence that produced the use.
+- [ ] **CG-18** The self-hosted lowering emits a call whose argument temp nothing defines
+  (2026-09-15). With the loop-accumulator hand-over fixed, the self-hosted pipeline runs to
+  completion for `Scope`, `Symbols` and `ExprMentions` — the first compiler modules to pass through
+  lowering, the optimizer and codegen — and `DerivingExpansion` stops in the backend with
+  `codegen: unknown index 27 bound=26`. The backend is right to complain: the temp is read before
+  anything defines it, and only 26 are bound at that point.
+  The offending instruction is a self-call in `variablePatterns`, a plain non-tail cons producer:
+
+  ```
+  CallKnown Target=28 FuncLabel=lambda_194 EnvTemp=14 ArgTemp=27 RuntimeManagedArgumentFlagTemp=22
+  ```
+
+  Stage 0 compiles the same module with no forward reference anywhere, so this is the self-hosted
+  lowering's own emission, not a backend gap. It is also not the optimizer and not the placement
+  pass: the forward reference is already in the pre-optimizer dump, and it survives making
+  `placeLifetimes` the identity.
+  What is missing is the slot routing of the conditional argument retain. Stage 0 emits the borrowed
+  value into a local, branches on the flag, overwrites the local with the duplicate on the retain
+  path, and reloads the local as the call's argument. The self-hosted output has the branch and the
+  duplicate but neither store and no reload, so the temp the reload would have defined is dangling.
+  `emitConditionalArgumentRetain` in `CoreLowering.ash` reads correctly on its own, and the argument
+  classification also diverges — stage 0 takes a path with a constant flag here while the
+  self-hosted lowering computes the callee's adoption bit — so start by finding why
+  `prepareCallArgument` picks the pending-root-slot arm for this argument.
+  Tools: the backend's `lookupIndexed` panic now reports how many keys were bound, which is what
+  identified this as a forward reference rather than a missing binding. A forward-reference scan over
+  an IR dump is a short awk pass — track `Target=`/`DestTemp=` as definitions and every other
+  `*Temp=`, `Ptr`, `Left`, `Right`, `Source` as uses, resetting at each `function` line. The probe
+  can dump the self-hosted IR by calling `formatIr(lowered)(LoweredIr)(None)` from
+  `AshesCompiler.Semantics.IrText` between phases. A single-file reproduction of the
+  `variablePatterns` shape alone does not diverge, so the pending root slot comes from the module
+  context.
 
 #### Object parsing and executable linking
 
