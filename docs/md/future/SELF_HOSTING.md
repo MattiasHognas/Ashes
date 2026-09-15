@@ -22,6 +22,9 @@ package, not a queue of defects, so it is what step 2 of the work order waits on
 diagnostics — MOD-20, MOD-21, MOD-17c and SEM-21 — and the miscompile CG-20 are worth closing on
 their own, but none of them unblocks more than its own module.
 
+OPT-85 now carries its measurement: what the arena holds, where it accumulates, and **three
+approaches already refuted by measurement**. Read it before writing any code against it.
+
 **The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
 that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
 so the last marker names the phase that failed:
@@ -1281,7 +1284,6 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     (2026-09-14, after OPT-80h): `TypeResolution` peaks at 7.9 GiB in 2.9 s, and the semantics
     package dies at a 30 GiB cap in 3.5 s; one module through the full pipeline costs roughly 9 GB
     and two and a half minutes (2026-09-15).
-    Go at what the arena actually holds — the optimizer's per-function map — with sharing or reuse.
     Do **not** go at the layout of what it holds: OPT-80i tried exactly that, admitting self-reaching
     record types to the reference-counted heap so the map could leave the arena, and it is refuted by
     measurement. Making such a type reference-counted does not stop the arena accumulating; it
@@ -1289,8 +1291,63 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     used to share one, and the cost grows with module size. The numbers, the branch it was measured
     on, and why none of the seven bugs it exposed is independently landable are in the
     [self-hosting log](SELF_HOSTING_LOG.md).
-    Start by measuring rather than guessing: sample the growing process for what the arena holds at
-    peak, as the earlier OPT-80 slices did, and name the accumulation before changing anything.
+
+    **What the accumulation is** (measured 2026-09-16; the measurement, not a fix). Phase RSS for
+    the `TypeResolution` probe: 0.87 GiB after stitching, 1.97 GiB after lowering, 7.08 GiB after
+    the optimizer, peaking at 7.31 GiB. The optimizer is 5.1 GiB of the 7.3, and it is spread
+    evenly across its whole-program stages rather than concentrated in one — per-function pipeline
+    +1.40, captured-closure devirtualization +1.18, currying inlining +0.89, scalarization +0.80,
+    the final bracket and concat passes +0.54.
+
+    It is **not** the rebuilt functions. Every one of those passes already returns its input
+    unchanged when it has nothing to rewrite (`foldConcatStrChains`,
+    `devirtualizeCapturedClosureCallsInFunction`, `inlineCurryingStages`). What the arena holds is
+    the per-function *analysis scratch* — `countDefinitions`, `countUses`,
+    `functionSingleDefinitions`, `collectCaptureSites` — which is dead the moment the pass returns
+    and is never reclaimed. A sixty-line reduction (4000 records of 200 instructions, scanned into
+    a throwaway table and returned unchanged) costs 205 MB where the same program with the scan
+    removed costs 29 MB: **86% of the memory is dead scratch**.
+
+    The reason it is never reclaimed is that the scope abandons its arena window. Across the
+    semantics package stage 0 emits 43,912 `SaveArenaState` against 33,219 `RestoreArenaState`:
+    **14,666 windows are opened and never restored**, in 3,363 functions. Instrumenting the decision
+    in `PopOwnershipScope` classifies 12,776 abandoned scope exits: 6,886 are a heap result with no
+    copy-out kind, 5,890 owned nothing by name so the copy-out arm was never attempted, and by shape
+    7,967 are named records or ADTs (the compiler's own `LoweredCoreValue`, `CoreLoweringState`,
+    `Maybe`, `Result`, `Expr`, `MapTree`), 2,134 lists, 1,623 tuples and only 352 unresolved type
+    variables. Cross-tabulated, **11,930 of 12,776 (93%) are abandoned because the result type has
+    no copy-out kind**.
+
+    **Three approaches are already refuted by measurement. Do not repeat them.**
+    - *Copy out when the scope allocated but owns nothing by name* (846 sites): extending the
+      `hadAliveOwned` guard with an "did anything allocate since the watermark" scan made the probe
+      **worse**, 7.41 GiB against 7.31 GiB. The copies cost more than they reclaim.
+    - *Reset with no copy when the result predates the window* (905 sites, found by walking the
+      result temp back through `LoadLocal`/`Borrow`/`RcDup` to its origin): **unsound**. Stage 1
+      built this way dies in `stitchProject` with a corrupted allocation length, and the three C#
+      fixtures it breaks name the hazard exactly — `accumulate_and_reverse_producer`,
+      `tco_list_parameter_resolved_by_back_edge`, `tco_consumed_list_parameter_borrowed_head`. A
+      loop parameter's value predates the watermark, but the back edge and the reuse tokens write
+      window-allocated cells *into* it, so the immutability argument ("a value made before T cannot
+      point at anything made after T") does not hold where in-place writes exist. Any future
+      attempt needs an explicit guard that the scope performed no in-place write into a predating
+      value.
+    - *Admitting self-reaching records to the reference-counted heap*: OPT-80i, above.
+
+    What is left, in rough order of promise: sharing one computed analysis table between the passes
+    that read it instead of recomputing it per pass (`countDefinitions`, `countUses` and
+    `collectSingleDefiningInstructions` each have several call sites, and this is pure allocation
+    reduction with no soundness surface); and giving named records and ADTs a copy-out kind, which
+    is the 93% but whose cost is exactly what the first refuted approach above measured as a loss at
+    small scale, so it needs its own measurement before any implementation.
+
+    **Reproducing the measurement.** Phase RSS: the compiler cannot read `/proc/self/status` (a
+    zero-length procfs file defeats `readText`), so print a marker to stderr from
+    `lowerStitchedProgram` and from between the optimizer's stages, and sample `/proc/<pid>/statm`
+    from a wrapper that reads those markers off a fifo. Window balance: `--emit-ir lowered` and an
+    awk pass counting `SaveArenaState` against `RestoreArenaState` per `function` line. The
+    abandonment classification: a temporary counter in `PopOwnershipScope`'s final `else`, dumped at
+    process exit.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
