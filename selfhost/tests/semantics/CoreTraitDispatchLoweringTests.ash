@@ -196,6 +196,54 @@ let expectNotEqualInAGenericBodyUsesTheActiveEvidence unit =
     |> occurrences("CallClosure")
     |> (given (count) -> test.assertEqual(true)(count >= 4))
 
+// `Ord` requires `Eq`, so its evidence plan always carries a supertrait plan. Those are ignored
+// rather than rejected: a comparison at a concrete head resolves whatever it needs from the
+// environment, and rejecting them made every comparison operator fail before reaching a method.
+let expectComparisonAtAConcreteHeadDispatchesThroughOrd unit =
+    "let ordered (a: Str) (b: Str) = a <= b\n\nordered(\"a\")(\"b\")"
+    |> withStandardTraits
+    |> loweredDump
+    |> occurrences("CallClosure")
+    |> (given (count) -> test.assertEqual(true)(count >= 2))
+
+// The four comparison methods are trait defaults whose bodies call the sibling `Ord.compare`, a
+// name lowering cannot resolve. They are emitted instead as a dispatch of `compare` followed by a
+// tag test of the `Ordering` it returns, so the lowered body reads a tag it never allocates.
+let expectComparisonReadsTheOrderingTag unit =
+    match "let ordered (a: Str) (b: Str) = a < b\n\nordered(\"a\")(\"b\")"
+    |> withStandardTraits
+    |> loweredDump with
+        | dump ->
+            Unit
+            |> (given (_) ->
+                dump
+                |> occurrences("GetAdtTag")
+                |> (given (count) -> test.assertEqual(true)(count >= 1)))
+            |> (given (_) ->
+                dump
+                |> occurrences("Ord.compare")
+                |> test.assertEqual(0))
+
+// `lessOrEqual` accepts `Less` or `Equal` and `greaterOrEqual` accepts `Greater` or `Equal`, so
+// each ors two tag tests together while `<` and `>` need only one. `Unordered` is why the second
+// pair cannot be a single range test.
+let expectInclusiveComparisonsTestTwoTags unit =
+    match ("let ordered (a: Str) (b: Str) = a >= b\n\nordered(\"a\")(\"b\")"
+    |> withStandardTraits
+    |> loweredDump, "let ordered (a: Str) (b: Str) = a > b\n\nordered(\"a\")(\"b\")"
+    |> withStandardTraits
+    |> loweredDump) with
+        | (inclusive, strict) ->
+            Unit
+            |> (given (_) ->
+                inclusive
+                |> occurrences("OrInt")
+                |> test.assertEqual(2))
+            |> (given (_) ->
+                strict
+                |> occurrences("OrInt")
+                |> test.assertEqual(1))
+
 let runCoreTraitDispatchLoweringTests unit =
     Unit
     |> expectDerivedEqualityDispatchesThroughOneHelper
@@ -210,4 +258,7 @@ let runCoreTraitDispatchLoweringTests unit =
     |> expectDerivedEqualityOfAParameterizedTypeThreadsTheElementEvidence
     |> expectNestedListEqualityNestsTheEvidence
     |> expectNotEqualInAGenericBodyUsesTheActiveEvidence
+    |> expectComparisonAtAConcreteHeadDispatchesThroughOrd
+    |> expectComparisonReadsTheOrderingTag
+    |> expectInclusiveComparisonsTestTwoTags
     |> (given (_) -> Ashes.IO.print("all self-hosted core trait dispatch lowering tests passed"))

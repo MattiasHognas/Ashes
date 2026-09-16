@@ -1004,6 +1004,24 @@ let resultValueType = SemVariable(3)
 
 let resultType = SemNamed(0)("Result")([resultErrorType, resultValueType])
 
+// `Ordering` is part of the seeded standard-trait ABI, not something a program opts into: `Ord`'s
+// `compare` returns it, and the comparison operators read its tag whether or not the source ever
+// names it. Its tags follow the declaration order in `lib/Ashes/Trait.ash`, which is also the order
+// the shipped type declaration produces when a program does stitch it.
+let orderingLayoutType = SemNamed(0)("Ordering")([])
+
+let orderingLayoutScheme = TypeScheme(quantified = [], body = orderingLayoutType, constraints = [])
+
+let orderingConstructorLayout name tag =
+    CoreConstructorLayout(
+        name = name,
+        tag = tag,
+        scheme = orderingLayoutScheme,
+        fieldNames = [],
+        isZeroCost = false,
+        tagless = false
+    )
+
 let standardConstructorLayouts =
     [
         CoreConstructorLayout(
@@ -1045,7 +1063,11 @@ let standardConstructorLayouts =
             fieldNames = [],
             isZeroCost = false,
             tagless = false
-        )
+        ),
+        orderingConstructorLayout("Less")(0),
+        orderingConstructorLayout("Equal")(1),
+        orderingConstructorLayout("Greater")(2),
+        orderingConstructorLayout("Unordered")(3)
     ]
 
 // The real language never requires an `import` for a qualified `Ashes.*` builtin call ("qualified
@@ -16168,7 +16190,16 @@ let traitMethodLabelKeyOf (traitName: Str) (methodName: Str) (implementation: Tr
 // to the one method a site selects: an instance's method is its implementation body lowered once
 // per implementation head (or the trait's default), applied to the closures of every method of
 // every requirement in turn; a parameter's method is the active evidence of the generic body
-// being lowered. Supertrait dictionaries are not built yet.
+// being lowered.
+//
+// A plan's supertrait plans are carried but not turned into dictionary parameters. Only a method
+// body that dispatches a supertrait method at the head's own type needs one, and at a concrete
+// head that dispatch resolves its evidence straight from the environment instead. Where a generic
+// head really would need it the body's dispatch reports `MissingCoreTraitEvidence` rather than
+// lowering something wrong, so ignoring them here is a narrowing and not a hole. `Ord` is why it
+// matters: it requires `Eq`, so before this every comparison operator failed here, with the
+// `Ord.compare` its four default bodies actually call being a sibling method rather than a
+// supertrait one.
 let recursive buildTraitMethodClosure (plan: TraitEvidencePlan) (methodName: Str) lower (state: CoreLoweringState) =
     match plan with
         | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = typeArgument :: [] }) ->
@@ -16186,7 +16217,7 @@ let recursive buildTraitMethodClosure (plan: TraitEvidencePlan) (methodName: Str
                     typeArgument
                     |> MissingCoreTraitEvidence(traitName)
                     |> failure(state)
-        | TraitEvidenceInstance(TraitConstraint { traitName = traitName, typeArguments = goal :: [] }, implementation, requirementPlans, []) ->
+        | TraitEvidenceInstance(TraitConstraint { traitName = traitName, typeArguments = goal :: [] }, implementation, requirementPlans, _supertraitPlans) ->
             match traitMethodBody(traitName)(methodName)(implementation)(state) with
                 | None ->
                     goal
@@ -16242,6 +16273,67 @@ and applyRequirementMethodList (plan: TraitEvidencePlan) (methodNames: List(Str)
 // implementations, the selected method's closure is built for the plan and called on the two
 // operand temps. An unsupplied `notEqual` on a concrete instance is the default method's
 // `!Eq.equal(left)(right)` without the lambda around it.
+//
+// `Ord`'s four comparison methods are the same case one step larger. Their defaults call
+// `Ord.compare` and match the `Ordering` it returns, and a sibling-method call inside a default
+// body has no lowering binding to resolve — `Ord.compare` names no value, and the head type it
+// would dispatch at is not pinned on the default lambda's parameters. So they are emitted the way
+// `notEqual` is: dispatch `compare`, read the result's tag, and test it against the constructors
+// that default accepts. `Unordered` is why the accepting sets are listed rather than derived from
+// tag order: `greaterOrEqual` is `Greater` or `Equal`, not "at least `Equal`".
+let orderingPredicateConstructors (traitName: Str) (methodName: Str) =
+    if traitName != "Ord"
+    then []
+    else
+        match methodName with
+            | "less" -> ["Less"]
+            | "lessOrEqual" -> ["Less", "Equal"]
+            | "greater" -> ["Greater"]
+            | "greaterOrEqual" -> ["Greater", "Equal"]
+            | _ -> []
+
+// The tags the accepting constructors carry, or `None` if any of them is unknown to this program.
+// A missing tag must not degrade to an arm that never matches: that would answer every comparison
+// `false` instead of reporting that `Ordering` never reached lowering.
+let recursive orderingPredicateTags (names: List(Str)) (state: CoreLoweringState) =
+    match names with
+        | [] -> Some([])
+        | name :: rest ->
+            match constructorLayout(name)(state) with
+                | None -> None
+                | Some(CoreConstructorLayout { tag = tag }) ->
+                    match orderingPredicateTags(rest)(state) with
+                        | None -> None
+                        | Some(restTags) -> Some(tag :: restTags)
+
+// Ors one tag equality test into the running result and carries the new accumulator temp. The
+// predicate stays branchless deliberately: it is emitted inside whatever expression the comparison
+// appears in, and a label there would split a block the surrounding lowering built as straight-line
+// code — a partially applied call whose argument this is faults when it is cut in two.
+let recursive emitOrderingTagTests (tagTemp: Int) (accumulatorTemp: Int) (tags: List(Int)) (state: CoreLoweringState) =
+    match tags with
+        | [] -> (state, accumulatorTemp)
+        | tag :: rest ->
+            match reserveCoreTemps(3)(state) with
+                | ReservedCoreTemps { state = tempState, first = tagConstTemp } ->
+                    tempState
+                    |> emit(LoadConstInt(tagConstTemp)(tag))
+                    |> emit(CmpIntEq(tagConstTemp + 1)(tagTemp)(tagConstTemp))
+                    |> emit(OrInt(tagConstTemp + 2)(accumulatorTemp)(tagConstTemp + 1))
+                    |> emitOrderingTagTests(tagTemp)(tagConstTemp + 2)(rest)
+
+let emitOrderingPredicate (orderingTemp: Int) (names: List(Str)) (state: CoreLoweringState) =
+    match orderingPredicateTags(names)(state) with
+        | None -> failure(state)(UnknownLoweringBinding("Ordering"))
+        | Some(tags) ->
+            match reserveCoreTemps(2)(state) with
+                | ReservedCoreTemps { state = tempState, first = falseTemp } ->
+                    match tempState
+                    |> emit(LoadConstBool(falseTemp)(false))
+                    |> emit(GetAdtTag(falseTemp + 1)(orderingTemp))
+                    |> emitOrderingTagTests(falseTemp + 1)(falseTemp)(tags) with
+                        | (resultState, resultTemp) -> success(resultTemp)(SemBool)(resultState)
+
 let recursive emitCoreTraitBinaryDispatch (traitName: Str) (methodName: Str) lower (binary: LoweredCoreBinary) =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = leftTemp, leftType = operandType, rightTemp = rightTemp, error = None } ->
@@ -16252,6 +16344,13 @@ let recursive emitCoreTraitBinaryDispatch (traitName: Str) (methodName: Str) low
                             match emitCoreTraitBinaryDispatch(traitName)("equal")(lower)(binary) with
                                 | LoweredCoreValue { state = equalState, temp = equalTemp, error = None } -> emitBoolNegation(equalTemp)(equalState)
                                 | failed -> failed
+                        | (_unsupplied, None) ->
+                            match orderingPredicateConstructors(traitName)(methodName) with
+                                | [] -> emitCoreTraitPlanCalls(plan)(methodName)(lower)(binary)
+                                | names ->
+                                    match emitCoreTraitBinaryDispatch(traitName)("compare")(lower)(binary) with
+                                        | LoweredCoreValue { state = compareState, temp = compareTemp, error = None } -> emitOrderingPredicate(compareTemp)(names)(compareState)
+                                        | failed -> failed
                         | _ -> emitCoreTraitPlanCalls(plan)(methodName)(lower)(binary)
                 | TraitEvidenceResolution { plan = Some(plan) } -> emitCoreTraitPlanCalls(plan)(methodName)(lower)(binary)
                 | TraitEvidenceResolution { plan = None } ->
