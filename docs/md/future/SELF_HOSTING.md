@@ -1745,6 +1745,28 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   red by forcing a retain on `mark`'s list parameter, which the result reaches only through
   destructured heads and never keeps whole. The retain this needs is the `ResultReachesWhole`
   question, not `ResultReaches`, and it has to be paired with a fix for (2) or it cannot fire at all.
+
+  **The fix has to live on the trait-evidence call path, and that is why every hook keyed on the
+  argument expression misses it.** `setAssoc`'s body compares keys with `==`, so it takes a hidden
+  `Eq` dictionary parameter, and its call sites are elaborated. Tracing every call
+  `LowerAppliedClosureCall` sees for the failing program shows the `setAssoc(key)` site reaching it
+  **only in the trait-elaboration pre-pass** (`_collectInferredTraitElaboration`), whose ownership
+  scopes `PopOwnershipScope` discards on entry and where `LookupOwnedValue("key")` is null anyway.
+  In the real lowering pass that call site never appears with its source argument nodes at all — only
+  `setAssoc`'s own self-call does. Marking the binding at the call site therefore cannot work as
+  written; the hook belongs wherever the elaborated application is lowered.
+
+  **A second defect, found on the way and worth fixing on its own.** On the elaborated path the
+  argument indices and the summary's parameter indices are off by one, because the dictionary
+  occupies argument 0 while the summary does not count it. For the self-call inside `setAssoc`
+  (`setAssoc k v es`, summary parameters `[k, v, es]`) the real pass reports argument 0 as
+  `__trait_evidence_0`, argument 1 as `k`, argument 2 as `v`, argument 3 as `es` — so `k` is
+  tested against `Parameters[1]`, which is `v`. Here both answer `ResultReachesWhole = true` and the
+  mistake is invisible; wherever two parameters disagree, every `CalleeResultMayReachParameter` and
+  `CalleeResultMayKeepParameterWhole` decision on a dictionary-parameterized callee is answering
+  about the wrong parameter. Reproduce it with a temporary `Console.Error.WriteLine` in
+  `LowerAppliedClosureCall` printing `argumentIndex`, the argument node, and
+  `summary.Parameters[argumentIndex]`.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
