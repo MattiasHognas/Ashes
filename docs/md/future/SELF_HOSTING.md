@@ -1656,6 +1656,95 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     temporary `Console.Error.WriteLine` in `EmitTcoBackEdgeArenaBlock` printing each argument's
     `Pretty` type beside `TcoBackEdgeArgCopyOutKind`; the argument type is what gives the genericity
     away.
+- [ ] **OPT-86** A `let`-bound reference-counted value handed to a callee whose result keeps it is
+  released at the `let` scope's exit, freeing a cell the escaping result still points at
+  (2026-09-16). This is the stage-0 defect behind CG-20; closing CG-20 removed its trigger, not
+  this. **It has a reproducer now**, which is what six earlier reductions failed to find:
+
+  ```ash
+  type Node =
+      | label: Str
+      | children: List(Node)
+
+  type Box =
+      | entries: List((Str, Maybe(Str)))
+      | nodes: List(Node)
+
+  let recursive lookupAssoc k es =
+      match es with
+          | [] -> None
+          | (a, b) :: tail ->
+              if a == k
+              then Some(b)
+              else lookupAssoc(k)(tail)
+
+  let recursive setAssoc k v es =
+      match es with
+          | [] -> [(k, v)]
+          | (a, b) :: tail ->
+              if a == k
+              then (k, v) :: tail
+              else (a, b) :: setAssoc(k)(v)(tail)
+
+  let variantKey (label: Str) (n: Int) = label + "#" + Ashes.Text.fromInt(n)
+
+  let getOrCreate (label: Str) (n: Int) (box: Box) =
+      (let key = variantKey(label)(n)
+      in
+          match lookupAssoc(key)(box.entries) with
+              | Some(memo) -> (memo, box)
+              | None ->
+                  (Some(label + "__v"), (box with entries = setAssoc(key)(Some(label + "__v"))(box.entries), nodes = Node(label = label, children = []) :: box.nodes)))
+
+  let describe (m: Maybe(Str)) =
+      match m with
+          | Some(value) -> value
+          | None -> "<none>"
+
+  Ashes.IO.print(match getOrCreate("alpha")(1)(Box(entries = [], nodes = [])) with
+      | (_r1, b1) ->
+          match getOrCreate("beta")(1)(b1) with
+              | (_r2, b2) ->
+                  match lookupAssoc("alpha#1")(b2.entries) with
+                      | Some(v) -> describe(v)
+                      | None -> "<alpha entry lost>")
+  ```
+
+  Stage 0 prints `<alpha entry lost>` where it should print `alpha__v`: the first call's `key` is
+  freed at its `let` exit, and the second call's key reuses the cell.
+
+  **The missing ingredient was a self-recursive type in the scope result.** `Node` is only there to
+  make `Box` self-reaching. Remove it and the program is correct — not because the lifetime is
+  right, but because the scope then copies its result out (`__deepcopy_*` at the `let`'s exit) and
+  the copy carries a fresh key. A self-recursive result type has no copy-out kind, the scope
+  abandons its window, and nothing rescues the released key. That is the same "no copy-out kind"
+  fact OPT-85 measures at 93% of abandoned scope exits, so the two are the same surface.
+
+  **The lowering is wrong in two places, and both must be fixed.** For the failing `setAssoc(key)`
+  call, stage 0 emits `Borrow` with no retain, then `RcDrop ... TypeName=String RuntimeManaged=true`
+  at the `let` exit:
+
+  1. `GetOwnershipSummaryForCallRoot` (`Lowering.MoveAnalysis.cs`) returns `null` for any call whose
+     root is a `Var` with a binding in scope — which, in a flat top-level program, is every call.
+     The bail exists so a shadowing local cannot borrow an outer function's summary, but "no
+     summary" is read downstream as "the callee's result does not keep this argument", and that is
+     the unsafe default: the caller then releases what the callee's result still holds. Tracing it
+     shows `TryResolveKnownFunctionLabel` *succeeding* (`knownLabel=lambda_2`) while
+     `GetOwnershipSummaryForLabel` misses, and the by-name table having the summary the label table
+     lacks — the label maps are rebuilt per move-analysis pass and the by-name one is not.
+  2. Even with the summary, `CalleeResultMayReachParameter` is gated on
+     `IsRuntimeManagedResultTemp(argumentTemp)`, which is `false` for this argument when the call is
+     lowered. The binding's RC placement settles later — the scope-exit drop does carry
+     `RuntimeManaged=true` — so the retain is declined on a fact that is not yet known. The
+     deferral machinery that exists for exactly this (`FinalizeAccessorResultRetains`,
+     `TcoParameterAggregateRetain`) is keyed on `TcoContext` and loop slots, so an ordinary `let`
+     binding has no hook.
+
+  **Do not fix (1) by widening the fallback.** Letting the by-name summary through for the general
+  may-reach question is measurably wrong: it turns `Stage_zero_lowering_matches_shared_lowered_ir_fixture(user_type_named_function_release)`
+  red by forcing a retain on `mark`'s list parameter, which the result reaches only through
+  destructured heads and never keeps whole. The retain this needs is the `ResultReachesWhole`
+  question, not `ResultReaches`, and it has to be paired with a fix for (2) or it cannot fire at all.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string

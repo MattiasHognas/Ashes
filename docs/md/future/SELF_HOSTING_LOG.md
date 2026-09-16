@@ -1964,18 +1964,17 @@ preceded the port.
   `selfhost/tests/semantics/ScalarEnvVariantTests.ash` is the regression and now runs in that
   suite's `Main.ash`, where it had deliberately been left unwired.
 
-  **The stage-0 lifetime defect behind it is still open and is not filed against a reproducer**,
-  because none exists: six progressively closer stage-0 reductions of the memo shape all give the
-  right answer — a generic `setAssociation` storing a built key into a returned list; the same into
-  a record field; the same threaded through a recursive walk; the same with the key built before a
-  heavily allocating call; the same with the generic setter also instantiated at a second key type;
-  and the same returning the structure as the second element of a tuple, which is the real shape.
-  The emitted IR of the closest reduction is structurally identical to the real one, trailing
-  `RcDrop` included, and still correct, so the trigger needs more of the real context than the memo
-  shape alone. This fix removes the trigger rather than that defect: a let-bound reference-counted
-  value stored into a structure the result keeps can still be released at scope exit somewhere else,
-  and whoever meets it next should start from the OPT-79 / OPT-80j family and from this note rather
-  than from a fresh reduction.
+  **The stage-0 lifetime defect behind it is a separate open item**, OPT-86 in the plan, which now
+  carries a reproducer. This fix removes the trigger rather than that defect: a let-bound
+  reference-counted value stored into a structure the result keeps can still be released at scope
+  exit somewhere else.
+
+  The six reductions that failed before it was found are worth keeping, because they say where the
+  defect is *not*: a generic `setAssociation` storing a built key into a returned list; the same
+  into a record field; the same threaded through a recursive walk; the same with the key built
+  before a heavily allocating call; the same with the generic setter also instantiated at a second
+  key type; and the same returning the structure as the second element of a tuple. All six answer
+  correctly. The ingredient they were missing is in OPT-86.
 
 
 ### Object parsing and executable linking
