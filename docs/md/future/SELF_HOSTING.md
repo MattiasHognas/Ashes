@@ -429,10 +429,40 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   Stage 1 reports `ASH002 Type mismatch: Str vs Int. Context: in argument #1 of call to 'isSame'.`,
   and swapping the two uses reports `Int vs Str`. Either use alone compiles and runs, so `==`'s
   dispatch is fine — MOD-17a and MOD-17b landed that — and what is missing is the `Eq(a)`
-  constraint surviving into the binding's generalized scheme. `generalize` in `TypeSchemes.ash`
-  already quantifies over the free variables of its constraints, and `inferTopLevelBinding` already
-  passes the selected constraints, so look at what `checkInferenceBindingSignature` selects for an
-  unannotated binding before suspecting either of those.
+  constraint surviving into the binding's generalized scheme.
+
+  **The generalization that matters is in `CoreLowering.ash`, not in inference, and the earlier
+  guidance here sent the next reader to the wrong subsystem** (traced 2026-09-16). Tracing every
+  call to `generalize` while compiling the reproducer shows exactly one, and neither
+  `inferTopLevelBinding` nor `generalizeRecursiveBindings` is its caller — both were instrumented
+  and neither fires for a flat top-level `let`. The caller is `generalizeResolvedType`, which
+  passes `constraints = []` unconditionally, so no `Eq(a)` can reach the scheme by that route no
+  matter what inference selected. What it generalizes against is
+  `pendingOperatorScheme(state) :: resolvedBindingSchemes(outerBindings)(state)`, and the trace
+  reads:
+
+  ```
+  [gen] type=SemFunction(SemVariable(6), SemFunction(SemVariable(6), SemBool, None), None)
+        constraints=[] candidates=[6] quantified=[] envSchemes=1 envFree=[6]
+  ```
+
+  One scheme in that environment — the pending operator default the `==` left behind — and its free
+  variable is the very variable the binding needs to quantify. So variable 6 is held back,
+  `isSame` generalizes to nothing, and the first use pins it.
+
+  **Removing the pending scheme from that environment is not the fix**, though it looks like one:
+  the reproducer then compiles and prints `both`, matching stage 0. It regresses representation
+  classification, because pinning the deferred operand type is what the pending scheme is for. The
+  self-hosted semantics suite fails on `closure_capture.memory`, where `makeAdder`'s report goes
+  from `copy value: 3` and `region: 2` to `conservative unknown: 3` and `conservative unknown: 1 /
+  region: 1` — three precisely classified values become conservative.
+
+  So the fix has to keep the pin for values that need it while letting a generalizable binding
+  quantify its own variables and carry the constraint: discharge a pending operator default whose
+  variables are confined to the binding being generalized into a trait constraint on its scheme,
+  rather than holding the binding monomorphic. The dispatch machinery on the other side already
+  copes — that is what the passing `both` shows.
+
   One dead end, so it is not walked twice: reading the generalized scheme back out of
   `inferProgram`'s environment from a probe under `selfhost/tests/semantics` proved nothing,
   because an unconstrained binding printed the same shape — two more leading arrows than its source
