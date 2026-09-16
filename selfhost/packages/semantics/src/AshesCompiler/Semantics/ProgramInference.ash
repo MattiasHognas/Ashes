@@ -2278,8 +2278,14 @@ let inferProgramUnitBody body entryPackageId state =
                 error = Some(error)
             )
 
+// The supply starts above every id a statically embedded scheme already quantifies over — the
+// builtin signatures and the standard traits' parameters — because reissuing one makes `instantiate`
+// mint a self-mapping substitution that `applySubstitution` recurses on forever. See
+// `reservedInferenceTypeVariableCount`.
 let initialProgramInferenceState error environment =
-    ProgramInferenceState(environment = environment, substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = environment
+    ProgramInferenceState(environment = environment, substitution = [], supply = typeVariableSupplyFrom(
+        reservedInferenceTypeVariableCount
+    ), nextTypeSymbolId = environment
     |> inferenceTypeResolutionContext
     |> nextTypeDefinitionSymbolId, error = error)
 

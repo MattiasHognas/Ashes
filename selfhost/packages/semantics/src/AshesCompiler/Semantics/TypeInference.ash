@@ -4357,10 +4357,13 @@ let inferTopLevelBinding name value annotation requirements environment substitu
                 error
             ))
 
+// Starts above the reserved ids for the same reason `initialProgramInferenceState` does: an
+// environment carrying statically embedded schemes (the builtin signatures, the standard traits'
+// parameters) must never meet a fresh variable with one of their quantified ids.
 let inferExpression expression environment =
     inferExpressionFrom(
         expression,
         environment,
         [],
-        initialTypeVariableSupply(Unit)
+        typeVariableSupplyFrom(reservedInferenceTypeVariableCount)
     )
