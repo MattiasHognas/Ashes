@@ -2162,6 +2162,42 @@ internal static partial class LlvmCodegen
         return value;
     }
 
+    /// <summary>
+    /// Uniqueness test for a runtime-managed value, guarding the header read exactly as
+    /// <see cref="EmitRuntimeManagedDupValue"/> guards the increment. An empty value is the null
+    /// pointer and has no reference count to read; it also owns no cell anyone could reuse, so the
+    /// merged count stays zero and the comparison answers "not unique" for it.
+    /// </summary>
+    private static LlvmValueHandle EmitRuntimeManagedUniqueValue(LlvmCodegenState state, IrInst.RcIsUnique instruction)
+    {
+        LlvmValueHandle value = LoadTemp(state, instruction.SourceTemp);
+        if (!instruction.MayBeEmpty)
+        {
+            return EmitRuntimeRcIsUnique(state, value);
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Zero is not one, so an empty value falls out of the comparison below as "not unique"
+        // without the present block's header load ever running for it.
+        LlvmValueHandle countSlot = EmitEntryScratchSlot(state, state.I64, "rc_unique_count_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
+
+        LlvmBasicBlockHandle presentBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_unique_present");
+        LlvmBasicBlockHandle afterBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_unique_after_empty");
+        LlvmApi.BuildCondBr(builder, IsNonEmptyValue(state, value, "rc_unique"), presentBlock, afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, presentBlock);
+        LlvmApi.BuildStore(builder, EmitRuntimeRcCount(state, value, "rc_unique"), countSlot);
+        LlvmApi.BuildBr(builder, afterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, afterBlock);
+        LlvmValueHandle mergedCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "rc_unique_count_merged");
+        return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, mergedCount,
+            LlvmApi.ConstInt(state.I64, 1, 0), "rc_is_unique");
+    }
+
     private static LlvmValueHandle IsNonEmptyValue(LlvmCodegenState state, LlvmValueHandle value, string prefix)
         => LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Ne, value,
             LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_present");
@@ -2183,7 +2219,7 @@ internal static partial class LlvmCodegen
             // Erased Perceus marker: identity-preserving for arena-managed values.
             IrInst.RcDup dup => StoreTemp(state, dup.Target, LoadTemp(state, dup.SourceTemp)),
             IrInst.RcIsUnique unique => StoreTemp(state, unique.Target,
-                EmitRuntimeRcIsUnique(state, LoadTemp(state, unique.SourceTemp))),
+                EmitRuntimeManagedUniqueValue(state, unique)),
             // CreateTask: allocate task struct with coroutine function + captures.
             IrInst.CreateTask createTask => StoreTemp(state, createTask.Target,
                 EmitCreateTask(state, LoadTemp(state, createTask.ClosureTemp),
