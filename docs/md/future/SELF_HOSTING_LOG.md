@@ -1964,10 +1964,10 @@ preceded the port.
   `selfhost/tests/semantics/ScalarEnvVariantTests.ash` is the regression and now runs in that
   suite's `Main.ash`, where it had deliberately been left unwired.
 
-  **The stage-0 lifetime defect behind it is a separate open item**, OPT-86 in the plan, which now
-  carries a reproducer. This fix removes the trigger rather than that defect: a let-bound
-  reference-counted value stored into a structure the result keeps can still be released at scope
-  exit somewhere else.
+  **The stage-0 lifetime defect behind it is OPT-86, fixed below.** This fix removed the trigger
+  rather than that defect, and is belt and braces now that OPT-86 has closed: stage 1 rebuilt from
+  the commit before this one — with the string-keyed memo that miscompiled — prints `3|30` when
+  compiled by a stage 0 carrying OPT-86's fix.
 
   The six reductions that failed before it was found are worth keeping, because they say where the
   defect is *not*: a generic `setAssociation` storing a built key into a returned list; the same
@@ -1975,6 +1975,39 @@ preceded the port.
   before a heavily allocating call; the same with the generic setter also instantiated at a second
   key type; and the same returning the structure as the second element of a tuple. All six answer
   correctly. The ingredient they were missing is in OPT-86.
+- [x] **OPT-86** A `let`-bound reference-counted value handed to a callee whose own result keeps it
+  was released at the `let` scope's exit, freeing a cell the escaping result still pointed at
+  (2026-09-16). This was the defect behind CG-20.
+
+  **The reproducer needed a self-recursive type in the scope result**, which is what six earlier
+  reductions were missing. Without it the scope copies its result out at the `let`'s exit and the
+  copy carries a fresh value, so the program is correct for a reason unrelated to the lifetime. A
+  self-recursive result type has no copy-out kind, the scope abandons its window, and nothing
+  rescues the released value — the same fact OPT-85 measures at 93% of abandoned scope exits.
+  `tests/rc_let_bound_argument_kept_by_constrained_callee_result.ash` is that reproducer.
+
+  **Why every ownership hook missed it.** A constrained callee's arguments are not lowered by
+  `LowerAppliedClosureCall`; they go through `LowerTraitDictionaryRealArguments`, which lowers each
+  with a bare `LowerExpr` and applies none of the call-boundary ownership rules. `setAssoc` compares
+  keys with `==`, so it takes a hidden `Eq` dictionary and every call to it took that path. The
+  retain is restored there, asking the whole-parameter question as every other retain site does.
+
+  **A second defect fixed with it.** Argument indices and ownership-summary parameter indices ran off
+  by one for every dictionary-parameterized callee: the dictionaries are applied first and the
+  summary does not count them, so a question about argument *i* read `Parameters[i]` — the parameter
+  one place to the left. In `setAssoc k v es` the argument `k` was tested against `v`; both answer
+  the same there, which is why it was invisible. `SummaryParameterIndex` maps the position once, and
+  the five summary predicates that had only an upper bound now have a lower one, so a dictionary
+  argument answers "no fact" instead of throwing. `IsCalleeParameterQuantifiedInScheme` keeps the
+  applied index deliberately — it walks the callee's scheme, whose arrows include the dictionaries.
+
+  **Two measured dead ends, recorded so they are not retried.** Widening
+  `GetOwnershipSummaryForCallRoot`'s bail for the general may-reach question turns the
+  `user_type_named_function_release` lowered-IR fixture red, by forcing a retain on a parameter the
+  result reaches only through destructured heads. And marking the owned binding at the call site to
+  abandon its drop at scope exit never fires, because in the real lowering pass that call site
+  reaches `LowerAppliedClosureCall` only in the trait-elaboration pre-pass, whose ownership scopes
+  `PopOwnershipScope` discards on entry.
 - [x] **CG-21** A two-parameter curried helper whose second argument is a trait-dispatched
   comparison result miscompiled (2026-09-16). It was filed as its own defect while validating
   MOD-17c and turned out to be **the same defect as CG-20**, which closed it.
