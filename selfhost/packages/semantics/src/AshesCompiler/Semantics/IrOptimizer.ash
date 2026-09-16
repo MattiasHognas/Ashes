@@ -187,6 +187,15 @@ let recursive setAssociation key value entries =
             then (key, value) :: tail
             else (k, v) :: setAssociation(key)(value)(tail)
 
+// Shadowing insert for the per-function analysis tables, which are only ever read back through
+// lookupAssociation. That returns the FIRST match, so prepending a newer binding means exactly what
+// replacing the old one meant, while allocating one cell instead of rebuilding the spine ahead of
+// the key. setAssociation's rebuild made a table of n entries cost O(n^2) cells, which dominated the
+// optimizer: a 10-function program of 500 lets each peaked at 59.0 GB against 12.5 GB for the same
+// 5,000 lets spread over 200 functions. Tables read any other way must keep setAssociation, whose
+// single-entry-per-key shape they rely on.
+let pushAssociation key value entries = (key, value) :: entries
+
 let recursive removeAssociation key entries =
     match entries with
         | [] -> []
@@ -382,7 +391,7 @@ let recursive countDefinitions instructions acc =
                                     | None -> 1
                             in
                                 entries
-                                |> setAssociation(d)(count)
+                                |> pushAssociation(d)(count)
                                 |> addDefs(dTail)
                 in
                     acc
@@ -401,7 +410,7 @@ let recursive collectSingleDefiningInstructions instructions defCounts acc =
                         if lookupAssociation(d)(defCounts) == Some(1)
                         then
                             entries
-                            |> setAssociation(d)(inst)
+                            |> pushAssociation(d)(inst)
                             |> addDefs(dTail)
                         else addDefs(dTail)(entries)
             in
@@ -423,7 +432,7 @@ let recursive countUses instructions acc =
                                 | None -> 1
                         in
                             entries
-                            |> setAssociation(u)(count)
+                            |> pushAssociation(u)(count)
                             |> addUses(uTail)
             in
                 acc
