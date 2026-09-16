@@ -12564,13 +12564,21 @@ public sealed partial class Lowering
     // `setTree`/`HashMap.set`): the parameter genuinely reaches such a function's result, but the
     // argument temp backing it can still be an arena pointer with no RC header at all, which forcing
     // an RcDup on would corrupt rather than protect.
-    // Whether the callee's result may reach this argument at all, decided from the whole-program
+    // Whether the callee's result keeps this argument ITSELF, decided from the whole-program
     // ownership summary alone, before the argument is lowered: an aggregate literal passed here is
-    // then lowered as one that escapes the caller's scopes.
+    // then lowered as one that escapes the caller's scopes, so the owned bindings it stores are
+    // retained into it.
+    //
+    // The question is deliberately the whole-parameter one. A callee whose result merely reaches the
+    // argument through destructured components — an `advance` that rebuilds its own record from the
+    // fields it matched out, a `reverse` that re-conses head cells — hands back a value that
+    // references the children but not the aggregate, and the aggregate's own release already covers
+    // them. Retaining there adds a reference nothing consumes, which is a leak per call rather than
+    // a dangling child: it cost the arena-state plateau workload about 250 bytes an iteration.
     private bool CalleeResultMayReachArgument(Expr rootExpr, int argumentIndex)
         => GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
             && argumentIndex < summary.Parameters.Count
-            && summary.ResultReaches(summary.Parameters[argumentIndex]);
+            && summary.ResultReachesWhole(summary.Parameters[argumentIndex]);
 
     private bool CalleeResultMayReachParameter(Expr rootExpr, int argumentIndex, int argumentTemp)
         => IsRuntimeManagedResultTemp(argumentTemp)
