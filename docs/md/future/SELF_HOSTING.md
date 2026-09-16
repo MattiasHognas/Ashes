@@ -23,8 +23,9 @@ diagnostics MOD-20 and MOD-21 are closed, and the fourth turned out to be MOD-17
 and so does the miscompile CG-20. Each is worth closing on its own, but none of them unblocks more
 than its own module. SEM-22, an `==` generalization gap the same session found, is filed beside them.
 
-OPT-85 now carries its measurement: what the arena holds, where it accumulates, and **three
-approaches already refuted by measurement**. Read it before writing any code against it.
+OPT-85 now carries its measurement: what the arena holds, where it accumulates, **four approaches
+already refuted by measurement**, and the finding that genericity rather than value shape is what
+stops the arena resetting. Read it before writing any code against it.
 
 **The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
 that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
@@ -1354,7 +1355,7 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     variables. Cross-tabulated, **11,930 of 12,776 (93%) are abandoned because the result type has
     no copy-out kind**.
 
-    **Three approaches are already refuted by measurement. Do not repeat them.**
+    **Four approaches are already refuted by measurement. Do not repeat them.**
     - *Copy out when the scope allocated but owns nothing by name* (846 sites): extending the
       `hadAliveOwned` guard with an "did anything allocate since the watermark" scan made the probe
       **worse**, 7.41 GiB against 7.31 GiB. The copies cost more than they reclaim.
@@ -1369,13 +1370,40 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
       attempt needs an explicit guard that the scope performed no in-place write into a predating
       value.
     - *Admitting self-reaching records to the reference-counted heap*: OPT-80i, above.
+    - *Giving self-recursive named records and ADTs a deep copy-out kind* (the 93%, measured
+      2026-09-16): `IsArenaDeepCopyAdtLayout` rejects a type on re-entering it, so every
+      tree-shaped type is `ArenaDeepCopySupported = false` even though `TrySynthesizeAdtCopier`
+      registers its label before emitting the body and *can* already recurse through the env[0]
+      self-closure. Admitting them (plus resolving the bare self-reference the standard library
+      writes — `Node(Int, MapTree, K, V, MapTree)` inside `type MapTree(K, V)` — which otherwise
+      leaves `K`/`V` unsubstituted in both the classifier and `CopyFieldInsideCopier`'s `Pretty`
+      comparison) does work: a monomorphic 200-node tree accumulator over 4,000 iterations goes
+      from `kind=None` to `kind=DeepAdt` and 12.3 MB to 8.2 MB. It is still not worth landing.
+      It breaks the invariant that every `AllocAdt` of one type agrees on `RuntimeManaged`
+      (`Self_recursive_adt_sibling_arm_with_fresh_recursive_children_still_escapes`,
+      `Recursive_adt_analysis_is_cycle_guarded`, and the `reuse_path_rebuild_declines_copy`
+      lowering and explain fixtures) — an arena cell's no-op drop never walks into RC children, so
+      a mixed representation leaks — and repairing that is the same coupling that made OPT-80i
+      unlandable.
 
-    What is left, in rough order of promise: sharing one computed analysis table between the passes
-    that read it instead of recomputing it per pass (`countDefinitions`, `countUses` and
-    `collectSingleDefiningInstructions` each have several call sites, and this is pure allocation
-    reduction with no soundness surface); and giving named records and ADTs a copy-out kind, which
-    is the 93% but whose cost is exactly what the first refuted approach above measured as a loss at
-    small scale, so it needs its own measurement before any implementation.
+    **Genericity, not recursion, is the binding constraint** (measured 2026-09-16, the same
+    session). The copy-out classifier cannot answer at all where the compiler's memory actually
+    goes, because the standard library's containers are compiled once, generically: at the back
+    edge of `Ashes.Collection.Map`'s own loops the accumulator prints as `MapTree<a, b>`, not
+    `MapTree(Str, Int)`, so no layout-derived kind exists to assign. The same 200-insert,
+    4,000-iteration workload costs 115 MB through the generic `MapTree` and 12.3 MB through a
+    monomorphic tree **before any change**, and the generic figure is untouched by the classifier
+    fix above. Reaching it needs the loop's argument layout to be concrete, which is what
+    `Lowering.ElementSpecialization.cs` already does for one narrow trigger — a tail-modulo-
+    constructor cons declined because the cell's element type was still a type variable. The
+    untried direction is to broaden that trigger to an arena reset declined because an argument's
+    layout is a type variable, reusing the machinery rather than the classifier.
+
+    What is left, in rough order of promise: broadening element specialization as above; and
+    sharing one computed analysis table between the passes that read it instead of recomputing it
+    per pass (`countDefinitions`, `countUses` and `collectSingleDefiningInstructions` each have
+    several call sites, and this is pure allocation reduction with no soundness surface, though it
+    reduces how many scratch tables are built without reclaiming any of them).
 
     **Reproducing the measurement.** Phase RSS: the compiler cannot read `/proc/self/status` (a
     zero-length procfs file defeats `readText`), so print a marker to stderr from
@@ -1383,7 +1411,13 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     from a wrapper that reads those markers off a fifo. Window balance: `--emit-ir lowered` and an
     awk pass counting `SaveArenaState` against `RestoreArenaState` per `function` line. The
     abandonment classification: a temporary counter in `PopOwnershipScope`'s final `else`, dumped at
-    process exit.
+    process exit. The copy-out reduction: 4,000 iterations each building a 200-entry table and
+    returning its input unchanged, compiled by stage 0 and measured with `/usr/bin/time -v` — 213 MB
+    through the generic `Ashes.Collection.Map`, 82 MB with the scan removed, 12.3 MB against a
+    monomorphic tree of the same size. The back-edge decision itself is quickest to read from a
+    temporary `Console.Error.WriteLine` in `EmitTcoBackEdgeArenaBlock` printing each argument's
+    `Pretty` type beside `TcoBackEdgeArgCopyOutKind`; the argument type is what gives the genericity
+    away.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
