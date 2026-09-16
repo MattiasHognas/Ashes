@@ -25,7 +25,10 @@ than its own module. SEM-22, an `==` generalization gap the same session found, 
 
 OPT-85 now carries its measurement: what the arena holds, where it accumulates, **four approaches
 already refuted by measurement**, and the finding that genericity rather than value shape is what
-stops the arena resetting. Read it before writing any code against it.
+stops the arena resetting. Its first half is fixed — the optimizer's per-function analysis tables
+were quadratic in function size, and making them shadowing prepends cut the probe from 7,313 MB to
+3,761 MB and a large-function program's compile from 39.3 s to 3.87 s. Read it before writing any
+code against it.
 
 **The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
 that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
@@ -1320,7 +1323,8 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     This is the live memory task and what step 2 of the work order waits on. Last measured
     (2026-09-14, after OPT-80h): `TypeResolution` peaks at 7.9 GiB in 2.9 s, and the semantics
     package dies at a 30 GiB cap in 3.5 s; one module through the full pipeline costs roughly 9 GB
-    and two and a half minutes (2026-09-15).
+    and two and a half minutes (2026-09-15). Half of that is now gone — the quadratic association
+    tables below took the `TypeResolution` probe to 3,761 MB — but a package still does not fit.
     Do **not** go at the layout of what it holds: OPT-80i tried exactly that, admitting self-reaching
     record types to the reference-counted heap so the map could leave the arena, and it is refuted by
     measurement. Making such a type reference-counted does not stop the arena accumulating; it
@@ -1522,6 +1526,28 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     `Linux_backend_straight_line_rebind_chain_memory_should_plateau` pins: every intermediate lives
     to the end of the enclosing function. Releasing a `let`-bound intermediate at its last use,
     rather than at scope exit, is therefore the one remaining lead with a measured target behind it.
+
+    **The tables were also quadratic, and that half is fixed** (2026-09-16). Dead is not the whole
+    story: `setAssociation` rebuilds the spine ahead of the key on every insert, so a table of *n*
+    entries costs O(n^2) cons cells, and the cost is per *function* rather than per program. A
+    controlled experiment separates the two effects. At an identical total size of 5,000 `let`
+    bindings, 200 functions of 25 lets cost 12,497 MB in 1.78 s while 10 functions of 500 lets cost
+    58,988 MB in 39.3 s — a 22x time ratio against the 20x that sum-of-squares predicts, and the
+    same shape in memory. The three tables are only ever read back through `lookupAssociation`,
+    which returns the first match, so prepending a newer binding means exactly what replacing the
+    old one meant. `pushAssociation` does that, and the three builders (`countDefinitions`,
+    `countUses`, `collectSingleDefiningInstructions`) now use it: the `TypeResolution` probe drops
+    from 7,313 MB to **3,761 MB**, the many-small program from 12,497 to **6,240 MB**, and the
+    few-large one from 58,988 MB in 39.3 s to **27,052 MB in 3.87 s** — 49% of the peak, and a 10x
+    compile-time win on the shape the compiler's own sources have. Stage 1 built this way produces
+    output identical to stage 0 on every program checked, and the self-hosted semantics suite
+    passes. Tables read any other way — `expansions` in `collectStageExpansions`, and anything
+    passed to `removeAssociation` — must keep `setAssociation`, whose single-entry-per-key shape
+    they need.
+
+    **What remains after it** is the other half of the same paragraph: the intermediates are still
+    released at scope exit rather than at last use, so the surviving 3.8 GB is dead scratch held to
+    the end of each enclosing function.
 
     **Where the memory actually is, by phase** (stage 1 on the `TypeResolution` probe, RSS sampled
     at stderr markers): 846 MB after parse and stitch, 1,957 after lowering, 7,053 after the
