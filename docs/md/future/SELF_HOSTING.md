@@ -1505,11 +1505,34 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     untried direction is to broaden that trigger to an arena reset declined because an argument's
     layout is a type variable, reusing the machinery rather than the classifier.
 
-    What is left, in rough order of promise: broadening element specialization as above; and
-    sharing one computed analysis table between the passes that read it instead of recomputing it
-    per pass (`countDefinitions`, `countUses` and `collectSingleDefiningInstructions` each have
-    several call sites, and this is pure allocation reduction with no soundness surface, though it
-    reduces how many scratch tables are built without reclaiming any of them).
+    **The analysis scratch is the memory, measured directly** (2026-09-16). Removing
+    `foldConcatStrChains` outright takes the probe from 7,313 MB to 6,759 MB. Keeping it but
+    computing only its three tables and returning the function unrewritten costs **7,312 MB** — the
+    whole 0.55 GB is the tables, and the rewrite is free. The same three tables
+    (`countDefinitions`, `countUses`, `collectSingleDefiningInstructions`) are rebuilt per function
+    inside four separate whole-program stages — `collectClosureDefinitionFacts` (1.31 GB),
+    `inlineCurryingStagesOnce` (0.80), `scalarizeCallSitesInFunction` (0.70) and
+    `foldConcatStrChains` (0.55) — which is 3.36 of the optimizer's 4.68 GB.
+
+    **Sharing them between passes is not the fix**, and the earlier suggestion here that it might be
+    was wrong: each stage rewrites the function it just analysed, so the next stage needs fresh
+    tables. They are not redundant, they are *dead* — and never released. Each of those stage bodies
+    is a straight-line `let` chain (`let defCounts = ... in let singleDefs = ... in let useCounts =
+    ... in <result>`) whose result is an `IrFunction`, which is exactly the shape
+    `Linux_backend_straight_line_rebind_chain_memory_should_plateau` pins: every intermediate lives
+    to the end of the enclosing function. Releasing a `let`-bound intermediate at its last use,
+    rather than at scope exit, is therefore the one remaining lead with a measured target behind it.
+
+    **Where the memory actually is, by phase** (stage 1 on the `TypeResolution` probe, RSS sampled
+    at stderr markers): 846 MB after parse and stitch, 1,957 after lowering, 7,053 after the
+    optimizer, 7,313 after codegen and linking. The optimizer is 5.1 GB of the 7.3.
+
+    **Allocation volume is a separate and much larger number, and it is not the problem.** The same
+    run maps 32.95 GB and unmaps 31.27 GB. With the optimizer ablated it still maps 29.66 GB while
+    peaking at only 2.66 GB, so the pre-optimizer phases churn ~30 GB and reclaim essentially all of
+    it. Peak, not volume, is what fails. Two cheap hypotheses about volume are refuted: source
+    locations are not the cost (forcing every `IrInstruction`'s `location` to `None` leaves the peak
+    at 7,307 MB), and no single oversized structure accounts for it.
 
     **Reproducing the measurement.** Phase RSS: the compiler cannot read `/proc/self/status` (a
     zero-length procfs file defeats `readText`), so print a marker to stderr from
