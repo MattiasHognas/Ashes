@@ -1415,6 +1415,46 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     optimizer's stages as a loop rather than a nested `let` chain, since the chain has no reset
     point for (a) to enable.
 
+    **The single blocker is `IsArenaDeepCopyAdtLayout`'s recursion guard, and removing it for the
+    reclamation classifiers alone is worth 87%** (measured 2026-09-16; implemented, validated, and
+    **not landed** — see the crash below). That guard answers false on re-entering a type, so no
+    self-recursive ADT ever has a deep-copy kind; since `MapTree`, `Expr` and the IR instruction
+    types are all recursive, no reset — scope-exit or back-edge — can express carrying them across
+    a watermark. A model loop over a list whose element record holds a self-recursive ADT grows
+    8.2 → 12.3 → 24.6 MB at 2/8/16 stages for that reason alone, where the same loop over a
+    non-recursive element is flat.
+
+    The guard cannot simply be removed: doing so also moves *placement* decisions
+    (`CanNormalizeRuntimeManagedResultIntoArena` reads the same capability), which splits one type's
+    constructor arms across arena and reference-counted representations — an arena cell's no-op drop
+    never walks into a reference-counted sibling's children, and four tests catch it. **Splitting the
+    capability fixes that**: keep the rejecting answer for the placement classifiers and give the
+    reclamation ones (`GetTcoCopyOutKind`, `GetTcoListCopyOutKind`, `TcoBackEdgeUseFixedWatermark`)
+    a recursion-admitting `RecursiveArenaDeepCopySupported`. With that split all four
+    representation tests pass and the model loop is flat at 8.2 MB for every stage count.
+
+    What it bought, measured on the real probe: **7.35 GB → 0.90 GB (87%), and 10.7 s → 3.2 s**.
+    Per-module: Symbols 352 → 291 MB, Scope 1,130 → 528, ResultReach 1,660 → 636, TypeResolution
+    7,010 → 943. The marginal cost falls from a flat ~450 KB per lowered IR instruction to ~58, so
+    the fixed floor rather than the program dominates. The emitted IR gains exactly what was
+    missing: a synthesized `__deepcopy_N [AdtDeepCopier]`, a `RestoreArenaState`/`ReclaimArenaChunks`
+    pair, the amortized `tco_compact_*` blocks, and `region:` placements in place of
+    `conservative unknown`. Only one parity fixture moves
+    (`reuse_path_rebuild_declines_copy`; regenerate with `ASHES_UPDATE_PARITY_FIXTURES=1`), the other
+    145 are unchanged, the C# suite is green, and `test tests` is 791/0.
+
+    **Why it is not landed: it segfaults the self-hosted semantics suite.** The binary dies in
+    `collectCoreFunctionUses` (`CoreLowering.ash:20250`), a tail-recursive loop threading a consumed
+    `List(IrFunction)` beside a `MapTree` accumulator — the self-recursive accumulator the change
+    newly admits. A pristine build runs the same suite to completion, so it is the change. Resolving
+    the standard library's bare self-reference (`Node(Int, MapTree, K, V, MapTree)` inside
+    `type MapTree(K, V)`, which leaves `K`/`V` unsubstituted so `CopyFieldInsideCopier`'s pretty-name
+    comparison misses the self type) is a real defect on that path and was fixed alongside, but it is
+    **not** this crash — the segfault is unchanged with it. Whoever takes this needs to find what the
+    synthesized recursive copier or the compaction rebase gets wrong for that shape; the two known
+    hazards to check first are the DeepAdt two-pass overlap and the rule that a TMC spine must stay
+    reference-counted.
+
     **(a) does not work as a trigger tweak, and the obstacle is a phase order.** Recording the
     declined reset next to `_abstractElementTmcDeclines` and widening the gate compiles and the
     counter does increment, but nothing specializes and the measurement is unchanged: a back-edge
