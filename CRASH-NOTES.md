@@ -79,6 +79,34 @@ non-deep-copyable again. A narrow "skip this type" workaround therefore buys not
   but the downgrade leaves the suite crashing.
 - **Restricting recursion-admitted types to the advancing watermark** instead of the fixed one.
   Still crashes.
+- **Insufficient spacing in the two-pass copy.** The disjointness argument assumes each clone has the
+  same size, which need not hold for a recursive clone. Giving Phase A a *third* clone, so Phase B's
+  source starts a further clone-size above the watermark, does not fix it — so the fault is not the
+  spacing.
+- **Extra synthesized copiers on their own.** With a name-based deny list tuned until the
+  `[AdtDeepCopier]` set matched the baseline exactly (126 both sides), it still crashed — superseded
+  by the structural result above, which shows the list was incomplete rather than the copiers
+  innocent.
+
+## The decisive result: the win and the crash are one mechanism
+
+`ASHES_TCO_DENY_RECURSIVE=1` (the hook in `TcoBackEdgeArgCopyOutKind`) refuses the back-edge
+copy-out for every argument whose kind exists *only* because the recursion-tolerant walk admitted
+it — structurally, by comparing the two capability answers, so no type slips through the way a
+hand-written name list does.
+
+- With it set: **the self-hosted semantics suite passes.**
+- With it set: **the probe is back to 7.35 GB — the entire win is gone.**
+
+So the 87% and the segfault come from exactly the same instructions: the back-edge copy-out of a
+recursion-admitted accumulator. **No subset of admitted types separates them**, which rules out the
+whole family of "admit fewer types" workarounds. Closing this means making that copy-out correct for
+a recursive accumulator, not choosing which types get one.
+
+Note that an earlier name-based deny list appeared to show the opposite; it was simply incomplete —
+the semantics package has far more recursion-admitted types than the two dozen it named, and
+`IrFunction` (with `IrFunctionOrigin`, `CompilerFunctionOwner`, `CoroutineInfo` and their `Maybe`
+wrappers) was among those it missed. Prefer the structural hook over any name list.
 
 ## The next instrument
 

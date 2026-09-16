@@ -2400,6 +2400,17 @@ public sealed partial class Lowering
             return CopyOutKind.None;
         }
 
+        // Temporary bisection hook: with ASHES_TCO_DENY_RECURSIVE set, refuse the back-edge copy-out
+        // for every argument whose kind exists only because the recursion-tolerant walk admitted it.
+        // Structural rather than by name, so no type can slip through the way a hand-written list
+        // lets one through.
+        if (argKind != CopyOutKind.None
+            && Environment.GetEnvironmentVariable("ASHES_TCO_DENY_RECURSIVE") is not null
+            && IsRecursionAdmittedOnlyType(info.ArgTypes[i]))
+        {
+            return CopyOutKind.None;
+        }
+
         return argKind;
     }
 

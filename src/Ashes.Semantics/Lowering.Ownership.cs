@@ -3040,6 +3040,21 @@ public sealed partial class Lowering
     // The placement classifiers must keep asking the rejecting form above: admitting a recursive type
     // there splits one type's constructor arms across arena and reference-counted representations,
     // and an arena cell's no-op drop never walks into a reference-counted sibling's children.
+    // A type the recursion-tolerant walk accepts and the ordinary one does not.
+    private bool IsRecursionAdmittedOnlyType(TypeRef type)
+    {
+        OrdinaryHeapLayoutCapability capability = GetOrdinaryHeapLayoutCapability(type);
+        return capability.RecursiveArenaDeepCopySupported && !capability.ArenaDeepCopySupported;
+    }
+
+    private static void LogCopier(string key)
+    {
+        if (Environment.GetEnvironmentVariable("ASHES_LOG_COPIERS") is not null)
+        {
+            Console.Error.WriteLine($"[copier] {key}");
+        }
+    }
+
     private bool CanRecursiveDeepCopyOutAdt(TypeRef.TNamedType named) =>
         GetOrdinaryHeapLayoutCapability(named).RecursiveArenaDeepCopySupported;
 
@@ -3643,6 +3658,7 @@ public sealed partial class Lowering
             }
         }
 
+        LogCopier(key);
         _adtCopierInProgress.Add(key);
         string label = $"__deepcopy_{_nextLambdaId++}";
         _adtCopierLabels[key] = label; // register before the body so self-type fields resolve to it
