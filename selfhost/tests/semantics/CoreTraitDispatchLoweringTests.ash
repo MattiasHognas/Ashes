@@ -199,6 +199,33 @@ let expectNotEqualInAGenericBodyUsesTheActiveEvidence unit =
 // `Ord` requires `Eq`, so its evidence plan always carries a supertrait plan. Those are ignored
 // rather than rejected: a comparison at a concrete head resolves whatever it needs from the
 // environment, and rejecting them made every comparison operator fail before reaching a method.
+// A unary trait method named directly, with no operator standing in front of it. It has no mapped
+// operator to route through, so it resolves the trait's evidence for the operand's own type and
+// calls the method's closure on it — one call, not the curried pair a binary method takes.
+let expectUnaryTraitMethodCallDispatchesAtAConcreteType unit =
+    match "Ashes.IO.print(Ashes.Trait.Show.show(42))"
+    |> withStandardTraits
+    |> loweredDump with
+        | dump ->
+            Unit
+            |> (given (_) ->
+                dump
+                |> occurrences("CallClosure")
+                |> (given (count) -> test.assertEqual(true)(count >= 1)))
+            |> (given (_) ->
+                dump
+                |> occurrences("Ashes_Trait_Show.show")
+                |> test.assertEqual(0))
+
+// The operand's own type selects the implementation, so a second type reaches a second one rather
+// than pinning the first.
+let expectUnaryTraitMethodCallSelectsPerOperandType unit =
+    "Ashes.IO.print(Ashes.Trait.Show.show(42) + Ashes.Trait.Show.show(true))"
+    |> withStandardTraits
+    |> loweredDump
+    |> occurrences("CallClosure")
+    |> (given (count) -> test.assertEqual(true)(count >= 2))
+
 let expectComparisonAtAConcreteHeadDispatchesThroughOrd unit =
     "let ordered (a: Str) (b: Str) = a <= b\n\nordered(\"a\")(\"b\")"
     |> withStandardTraits
@@ -258,6 +285,8 @@ let runCoreTraitDispatchLoweringTests unit =
     |> expectDerivedEqualityOfAParameterizedTypeThreadsTheElementEvidence
     |> expectNestedListEqualityNestsTheEvidence
     |> expectNotEqualInAGenericBodyUsesTheActiveEvidence
+    |> expectUnaryTraitMethodCallDispatchesAtAConcreteType
+    |> expectUnaryTraitMethodCallSelectsPerOperandType
     |> expectComparisonAtAConcreteHeadDispatchesThroughOrd
     |> expectComparisonReadsTheOrderingTag
     |> expectInclusiveComparisonsTestTwoTags
