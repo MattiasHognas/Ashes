@@ -400,12 +400,20 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
        with `UnknownLoweringBinding("Ordering")` rather than degrading to an arm that never matches,
        which would have answered every comparison `false`.
 
-    Open, and behind this rather than part of it: `Ashes.Trait.Show.show(x)` at a concrete type is
-    still `UnknownLoweringBinding("Ashes_Trait_Show.show")` — the same unresolvable-qualified-name
-    problem as (2), which the `Ord` operators route around rather than solve. And `sort` still does
-    not compile, but for SEM-22 below and not for this: its body's `<=` pins the operand type at the
-    first use, so `sort` types as `List(Int) -> List(Int)` and the three-line `isOrdered` reproducer
-    above still reports `Type mismatch: Int vs Str`.
+    Done (2026-09-16): **a unary trait method named directly now dispatches too.**
+    `Ashes.Trait.Show.show(x)` was `UnknownLoweringBinding("Ashes_Trait_Show.show")` because it has
+    no mapped operator to route through — `traitOperatorCall` recognizes only the binary
+    `Eq.equal`/`Eq.notEqual` forms. `traitUnaryMethodCall` recognizes the unary ones and
+    `emitCoreTraitUnaryDispatch` resolves the trait's evidence for the operand's own type, builds the
+    method's closure for that plan, and calls it once rather than through the curried pair a binary
+    method takes. `Show.show` and `Hash.hash` are wired; the result type is the method's own, fixed
+    by the trait rather than by the operand. Verified against stage 0 on `Int`, `Bool`, `Str`, a
+    `deriving {Show}` constructor and a list (`42|true|"hi"|Circle|[1, 2]` from both), and on
+    `Hash.hash` for `Int` and `Str` including the 64-bit string hash.
+
+    Open: `sort` still does not compile, for **SEM-22** and not for this. Its body's `<=` pins the
+    operand type at the first use, so `sort` types as `List(Int) -> List(Int)`. SEM-22 turns out to
+    be trait-keystone work rather than a generalization tweak — see its entry.
 
     Also found while validating, pre-existing on main and unrelated to traits: a **two-parameter
     curried helper whose second argument is a trait-dispatched comparison result miscompiles** —

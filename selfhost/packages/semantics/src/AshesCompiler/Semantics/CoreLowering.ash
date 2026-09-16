@@ -16426,6 +16426,30 @@ let emitResolvedCoreEquality name intKind floatKind stringKind lower binary =
         | LoweredCoreBinary { leftType = SemString, rightType = SemString } -> emitCoreBoolBinary(stringKind)(binary)
         | _ -> emitCoreTraitEquality(name)(lower)(binary)
 
+// The one-argument counterpart of `emitTraitMethodCalls`: a unary trait method takes its operand
+// directly rather than through a curried pair.
+let emitTraitMethodCall (closureTemp: Int) (operandTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = callState, temp = target } ->
+            callState
+            |> emit(CallClosure(target)(closureTemp)(operandTemp)(-1))
+            |> success(target)(resultType)
+
+// `Ashes.Trait.Show.show(x)` and its unary siblings, the counterpart of the mapped binary operators:
+// resolve the trait's evidence for the operand's own type, build the method's closure for that plan,
+// and call it. A concrete operand resolves an instance directly; inside a generic body the operand's
+// type is the type argument of an active requirement and resolves to that parameter's evidence.
+let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: SemanticType) lower (operandTemp: Int) (operandType: SemanticType) (state: CoreLoweringState) =
+    match resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [operandType]))(state.traitEnvironment) with
+        | TraitEvidenceResolution { plan = Some(plan) } ->
+            match buildTraitMethodClosure(plan)(methodName)(lower)(state) with
+                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(closureState)
+                | failed -> failed
+        | TraitEvidenceResolution { plan = None } ->
+            operandType
+            |> MissingCoreTraitEvidence(traitName)
+            |> failure(state)
+
 let emitResolvedCoreBinary operator lower binary =
     match operator with
         | CoreAddOperator -> emitResolvedCoreAdd(binary)
@@ -18551,6 +18575,29 @@ let traitOperatorCall (function: Expr) (argument: Expr) =
                 | _ -> None
         | _ -> None
 
+// The unary counterpart of `traitOperatorCall`: `Ashes.Trait.Show.show(x)` and its siblings name a
+// trait method directly rather than standing behind an operator, so there is no mapped operator to
+// route them through. The result type is the method's own, fixed by the trait rather than by the
+// operand.
+let traitUnaryMethodCall (function: Expr) =
+    match stripExprAt(function) with
+        | ExprQualifiedVar(qualifier, methodName) ->
+            match (standardTraitName(qualifier), methodName) with
+                | ("Show", "show") -> Some(("Show", "show", SemString))
+                | ("Hash", "hash") -> Some(("Hash", "hash", SemInt))
+                | _ -> None
+        | _ -> None
+
+let lowerTraitUnaryMethodCall (traitName: Str) (methodName: Str) (resultType: SemanticType) argument lower state =
+    match state
+    |> clearConsumerRequest
+    |> lower(argument) with
+        | LoweredCoreValue { state = operandState, temp = operandTemp, semanticType = operandType, error = None } ->
+            operandState
+            |> withConsumerRequest(state.consumerRequest)
+            |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resultType)(lower)(operandTemp)(resolveType(operandState)(operandType))
+        | failed -> failed
+
 let lowerCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
@@ -18755,7 +18802,10 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprCall(function, argument, _whitespace, _layout) ->
             match traitOperatorCall(function)(argument) with
                 | Some((operator, left, right)) -> lowerCoreBinary(operator)(left)(right)(lowerCore)(state)
-                | None -> lowerCallExpression(expression)(function)(argument)(lowerCore)(state)
+                | None ->
+                    match traitUnaryMethodCall(function) with
+                        | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
+                        | None -> lowerCallExpression(expression)(function)(argument)(lowerCore)(state)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->
