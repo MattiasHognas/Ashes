@@ -361,13 +361,40 @@ internal static partial class LlvmCodegen
         return valuePtr;
     }
 
+    /// <summary>
+    /// Whether a runtime-managed value is the only reference to its cell. The empty list is the
+    /// null pointer and carries no header at all, so reading the count at <c>value - 16</c> would
+    /// fault on it; an empty value also owns no cell anyone could reuse, so the honest answer for it
+    /// is "not unique". <see cref="IrInst.RcDup"/> expresses the same fact through a per-instruction
+    /// <c>MayBeEmpty</c> flag, but a uniqueness test carries no such flag and a site that forgets one
+    /// faults rather than mis-answers — so the guard is unconditional here. It costs one predictable
+    /// compare against a load that would otherwise be wrong.
+    /// </summary>
     private static LlvmValueHandle EmitRuntimeRcIsUnique(LlvmCodegenState state, LlvmValueHandle valuePtr)
     {
-        LlvmValueHandle allocationBase = LlvmApi.BuildSub(state.Target.Builder, valuePtr,
+        LlvmBuilderHandle builder = state.Target.Builder;
+        // Zero is not one, so an empty value falls out of the comparison below as "not unique"
+        // without the present-block load ever running for it.
+        LlvmValueHandle countSlot = EmitEntryScratchSlot(state, state.I64, "rc_unique_count_slot");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
+
+        LlvmBasicBlockHandle presentBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_unique_present");
+        LlvmBasicBlockHandle mergeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_unique_merge");
+        LlvmApi.BuildCondBr(builder, IsNonEmptyValue(state, valuePtr, "rc_unique"), presentBlock, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, presentBlock);
+        LlvmValueHandle allocationBase = LlvmApi.BuildSub(builder, valuePtr,
             LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_unique_base");
         LlvmValueHandle count = LoadMemory(state, allocationBase,
             HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_unique_count");
-        return LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Eq, count,
+        LlvmApi.BuildStore(builder, count, countSlot);
+        LlvmApi.BuildBr(builder, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
+        LlvmValueHandle mergedCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "rc_unique_count_merged");
+        return LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, mergedCount,
             LlvmApi.ConstInt(state.I64, 1, 0), "rc_is_unique");
     }
 
