@@ -450,18 +450,39 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   variable is the very variable the binding needs to quantify. So variable 6 is held back,
   `isSame` generalizes to nothing, and the first use pins it.
 
-  **Removing the pending scheme from that environment is not the fix**, though it looks like one:
-  the reproducer then compiles and prints `both`, matching stage 0. It regresses representation
-  classification, because pinning the deferred operand type is what the pending scheme is for. The
-  self-hosted semantics suite fails on `closure_capture.memory`, where `makeAdder`'s report goes
-  from `copy value: 3` and `region: 2` to `conservative unknown: 3` and `conservative unknown: 1 /
-  region: 1` — three precisely classified values become conservative.
+  **Removing the pending scheme from that environment miscompiles, and an earlier revision of this
+  entry was wrong to call it merely a classification regression.** The reproducer does then compile
+  and print `both` — but only because both its operands are interned string literals, so a pointer
+  comparison happens to answer correctly. Five cases tell them apart:
 
-  So the fix has to keep the pin for values that need it while letting a generalizable binding
-  quantify its own variables and carry the constraint: discharge a pending operator default whose
-  variables are confined to the binding being generalized into a trait constraint on its scheme,
-  rather than holding the binding monomorphic. The dispatch machinery on the other side already
-  copes — that is what the passing `both` shows.
+  ```ash
+  let isSame left right = left == right
+
+  let a = Ashes.Text.fromInt(12) + "x"
+
+  let b = Ashes.Text.fromInt(12) + "x"
+  ```
+
+  where the last case is `isSame(a)(b)` over two equal strings built at runtime. Stage 0 answers
+  `TFTFT`; stage 1 with the pending scheme removed answers `TFTF**F**`. It also regresses
+  representation classification — the self-hosted semantics suite fails on `closure_capture.memory`,
+  where `makeAdder` goes from `copy value: 3` and `region: 2` to `conservative unknown: 3` and
+  `conservative unknown: 1 / region: 1` — but the wrong answer is the real objection.
+
+  **The pending default is not a constraint; it is a deferred instruction rewrite**, which is why
+  generalizing over it cannot work. `emitDeferredCoreAdd` and its `==` twin emit a *speculative*
+  `AddInt`/`CmpIntEq` and record `(target, operandType)` so `buildProgram` can swap the instruction
+  for the resolved type's real form once the substitution is final. One emitted body therefore
+  admits exactly one resolved operand type. A binding used at both `Str` and `Int` would need two
+  different instructions out of one body, so pinning the variable is the mechanism working as
+  designed, not an oversight.
+
+  So SEM-22 is not a generalization tweak. Making such a binding polymorphic means routing the
+  operator through **trait evidence** — the body taking an `Eq` dictionary parameter and each use
+  supplying it — instead of through the speculative-instruction path. The selfhost already has that
+  machinery for explicitly constrained bindings (`TraitEvidenceRewriting.ash`); what is missing is
+  inferring the constraint from a deferred operator and sending the body down the dictionary route.
+  That places SEM-22 squarely in the MOD-17 trait-keystone family rather than beside it.
 
   One dead end, so it is not walked twice: reading the generalized scheme back out of
   `inferProgram`'s environment from a probe under `selfhost/tests/semantics` proved nothing,
