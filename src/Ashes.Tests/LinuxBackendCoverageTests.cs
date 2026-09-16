@@ -2551,8 +2551,40 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
-    [Skip("Reproduces the open self-hosting memory defect: one intermediate list leaks per chain "
-        + "stage (49 MB at 32 stages against a constant live set). Un-skip with the fix.")]
+    [Skip("Passes only with the recursion-admitting reclamation classifiers, which are not landed: "
+        + "they cut the self-hosted probe from 7.35 GB to 0.90 GB but segfault the self-hosted "
+        + "semantics suite in collectCoreFunctionUses. Un-skip with a sound version.")]
+    public async Task Linux_backend_recursive_accumulator_loop_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop threading a list of records whose element type is SELF-RECURSIVE, rebuilt once per
+        // stage. IsArenaDeepCopyAdtLayout used to reject any type it re-entered, so such an element
+        // had no deep-copy kind, TcoBackEdgeAllArgsCopyable refused, and the loop emitted no
+        // back-edge reset at all — every stage's allocation stayed for the whole loop (24 MB at 16
+        // stages here, and 7.35 GB compiling one self-hosted semantics module). The reclamation
+        // classifiers now admit the recursion the synthesized copier already handles through its
+        // env[0] self-closure, so the reset is expressible and the loop runs in constant memory.
+        int[] stageCounts = [4, 8, 16];
+        List<MemoryExecutionResult> samples = new(stageCounts.Length);
+        foreach (int stages in stageCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecursiveAccumulatorLoopProgram(stages));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("10000\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("recursive accumulator loop", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    [Skip("The remaining half of the self-hosting memory defect: a straight-line `let` chain has no "
+        + "reset point at all, so admitting recursive accumulators to the back-edge reset (which "
+        + "fixed the loop half) does not reach it. Un-skip with the chain fix.")]
     public async Task Linux_backend_straight_line_rebind_chain_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9081,6 +9113,59 @@ public sealed class LinuxBackendCoverageTests
                 then given (unit) -> Ashes.Number.BigInt.compare(value)(value)
                 else given (unit) -> Ashes.Number.BigInt.compare(value)(value)
             in f(0)
+            """;
+
+    // A loop of `stages` whole-program rebuilds over a list whose element record holds a
+    // self-recursive ADT, the way IrFunction holds instruction trees. The live set is the same 500
+    // records however many stages run.
+    private static string BuildRecursiveAccumulatorLoopProgram(int stages)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Branch(Node, Node)
+
+            type Fn =
+                | fnName: Str
+                | fnBody: List(Node)
+
+            let recursive buildBody k acc =
+                if k <= 0 then acc
+                else buildBody(k - 1)(Branch(Leaf("a"), Leaf("b")) :: acc)
+
+            let recursive genericMap f items =
+                match items with
+                    | [] -> []
+                    | head :: tail -> f(head) :: genericMap(f)(tail)
+
+            let rebuildNode nd =
+                match nd with
+                    | Leaf(s) -> Leaf(s)
+                    | Branch(l, r) -> Branch(l, r)
+
+            let rebuildFn fn =
+                match fn with
+                    | Fn { fnName = name, fnBody = body } ->
+                        Fn(fnName = name, fnBody = genericMap(rebuildNode)(body))
+
+            let recursive buildFns k acc =
+                if k <= 0 then acc
+                else buildFns(k - 1)(Fn(fnName = "f", fnBody = buildBody(20)([])) :: acc)
+
+            let recursive countBody items total =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countBody(tail)(total + 1)
+
+            let recursive countFns fns total =
+                match fns with
+                    | [] -> total
+                    | Fn { fnBody = body } :: tail -> countFns(tail)(total + countBody(body)(0))
+
+            let recursive runStages n (all: List(Fn)) =
+                if n <= 0 then all
+                else runStages(n - 1)(genericMap(rebuildFn)(all))
+
+            Ashes.IO.print(countFns(runStages({{stages}})(buildFns(500)([])))(0))
             """;
 
     // `stages` nested `let`s, each rebuilding the previous stage's record. Every intermediate is
