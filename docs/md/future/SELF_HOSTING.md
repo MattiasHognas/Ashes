@@ -1459,9 +1459,42 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     `Linux_backend_empty_value_uniqueness_test_answers_not_unique` pins the behaviour at the IR
     level and segfaults without the guard.
 
-    The whole investigation, the per-argument classification of the one loop it was isolated to
-    (`emitPerformEvidenceSave` in `CoreCapabilityLowering.ash`), and the eight hypotheses refuted
-    along the way are in `CRASH-NOTES.md` on the unmerged `feature/opt85-recursive-reclamation`.
+    **The evidence, kept because it is what makes that constraint concrete.** A binary search over a
+    temporary `ASHES_TCO_ALLOW_FIRST` gate isolated the whole fault to one loop,
+    `emitPerformEvidenceSave` in `CoreCapabilityLowering.ash:136`, whose six arguments classify as
+
+    ```
+    arg 0 Int                     pass=False canReset=True
+    arg 1 Int                     pass=True  canReset=True
+    arg 2 Int                     pass=False canReset=True
+    arg 3 Int                     pass=True  canReset=True
+    arg 4 List<Int>               cons=True  kind=Shallow    -> 16-byte single-cell copy, emitted
+    arg 5 List<IrInstructionKind> fresh=True kind=DeepAdt    -> promised, NEVER EMITTED
+    ```
+
+    and whose back edge carries only argument 4's copy:
+
+    ```
+    CopyOutArena   DestTemp=86 SrcTemp=57 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
+    RestoreArenaState CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=36
+    CopyOutArena   DestTemp=88 SrcTemp=86 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
+    StoreLocal     Slot=4 Source=88     <- arg 4, compacted
+    StoreLocal     Slot=1 Source=75     <- arg 5, stored RAW
+    ReclaimArenaChunks SavedEndSlot=13 PreRestoreEndSlot=36
+    ```
+
+    Argument 5's successor is `append(instructions)([nextSave])`, a spine rebuilt entirely above the
+    watermark, so the reclaim frees it while the loop parameter still points at it. The fault
+    surfaced far downstream, as `EmitRuntimeRcDrop`'s count load on a null value (`rax = -16`) in
+    `buildProgram`, whose own IR is byte-identical to a pristine build — which is the point: a
+    classifier that over-promises does not fail where it lies.
+
+    Also refuted on that branch, beyond the four above: the two-pass overlap (already implemented, and
+    a third Phase A clone does not help); nullary constructors; the bare recursive self-reference (a
+    real defect, but unrelated to the crash); instantiation-keyed recursion paths; the non-fresh
+    accumulator downgrade; and restricting recursion types to the advancing watermark. Every "admit
+    fewer types" workaround fails for one reason — the win and the fault came from the same
+    instructions.
 
     **(a) does not work as a trigger tweak, and the obstacle is a phase order.** Recording the
     declined reset next to `_abstractElementTmcDeclines` and widening the gate compiles and the
