@@ -1281,10 +1281,23 @@ public abstract record IrInst
     ) : IrInst, IRuntimeManagedTargetResult;
 
     /// <summary>
-    /// Tests whether a runtime-managed value has exactly one owning reference. This operation is
-    /// valid only for values whose allocation carries <see cref="HeapLayouts.RcHeader"/>.
+    /// Tests whether a runtime-managed value has exactly one owning reference. This operation reads
+    /// <see cref="HeapLayouts.RcHeader"/>, so the source must carry one.
     /// </summary>
-    public sealed record RcIsUnique(int Target, int SourceTemp) : IrInst;
+    /// <remarks>
+    /// <paramref name="MayBeEmpty"/> carries the same fact it carries on <see cref="RcDup"/>: the
+    /// source's resolved type admits the empty-list representation, which is the null pointer and
+    /// has no header to read. Codegen then answers "not unique" for an empty value without loading,
+    /// which is also the honest answer — an empty value owns no cell anyone could reuse. Every site
+    /// lowering emits today either tests a value whose type cannot be empty or has already branched
+    /// on emptiness itself, so the flag is false throughout; it exists so that a site which does
+    /// pass a possibly-empty list states the fact instead of faulting on the load.
+    /// </remarks>
+    public sealed record RcIsUnique(
+        int Target,
+        int SourceTemp,
+        bool MayBeEmpty = false
+    ) : IrInst;
 
     /// <summary>
     /// Borrow instruction for compiler-inferred borrowing.

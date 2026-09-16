@@ -1409,6 +1409,57 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_empty_value_uniqueness_test_answers_not_unique()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The empty list is the null pointer and carries no RcHeader, so the unguarded form of this
+        // test would read the count at -16. An empty value also owns no cell anyone could reuse.
+        List<IrInst> instructions = new()
+        {
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.RcIsUnique(1, 0, MayBeEmpty: true),
+            new IrInst.PrintBool(1),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("false\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_possibly_empty_uniqueness_test_still_answers_for_a_present_value()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.RcIsUnique(1, 0, MayBeEmpty: true),
+            new IrInst.PrintBool(1),
+            new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
+            new IrInst.LoadConstInt(2, 0),
+            new IrInst.Return(2),
+        };
+        IrFunction function = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runs_optimized_branch_sunk_runtime_rc_dup()
     {
         if (!OperatingSystem.IsLinux())

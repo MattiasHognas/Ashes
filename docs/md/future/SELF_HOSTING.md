@@ -1442,10 +1442,22 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
 
     Two things survive it. A standing design constraint: those two predicates must stay in lockstep,
     because a classifier that promises `DeepAdt` against an emitter that silently declines does not
-    fail loudly, it resets over live data. And one real defect, worth landing on its own:
-    `IrInst.RcDup` and `IrInst.RcDrop` both carry a `MayBeEmpty` flag and guard the header access,
-    while `IrInst.RcIsUnique` carries neither and reads the reference count at `value - 16`; an empty
-    value owns no cell to reuse, so "not unique" is the honest answer for it.
+    fail loudly, it resets over live data. And one latent trap, now closed: `IrInst.RcDup` and
+    `IrInst.RcDrop` both carry a `MayBeEmpty` flag and guard the header access, while
+    `IrInst.RcIsUnique` carried neither and read the reference count at `value - 16`.
+
+    **No site on main could reach that trap, and the earlier note here that it was a live defect was
+    wrong.** `MayUseEmptyListRepresentation` is exactly `Prune(type) is TypeRef.TList`, so a list is
+    the only runtime-managed value that can be the null pointer — and both list-typed `RcIsUnique`
+    sites (`EmitRuntimeManagedListDrop`, `EmitRuntimeManagedListSpineDrop`) already branch on
+    emptiness before the test, because their walk loops need that branch to terminate anyway. The
+    other nine sites test a tuple, a named record or an ADT, none of which is ever null; their own
+    following `RcDrop` would fault identically if one were. So the guard is worth nothing as an
+    unconditional branch — it would cost a compare per cell inside the list-drop loop for a case
+    that cannot arise — and `RcIsUnique` instead took the same optional `MayBeEmpty` flag `RcDup`
+    carries. Lowering sets it nowhere today; codegen emits the guard only when it is set.
+    `Linux_backend_empty_value_uniqueness_test_answers_not_unique` pins the behaviour at the IR
+    level and segfaults without the guard.
 
     The whole investigation, the per-argument classification of the one loop it was isolated to
     (`emitPerformEvidenceSave` in `CoreCapabilityLowering.ash`), and the eight hypotheses refuted

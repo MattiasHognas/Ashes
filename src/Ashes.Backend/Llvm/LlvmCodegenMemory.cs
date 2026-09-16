@@ -361,12 +361,22 @@ internal static partial class LlvmCodegen
         return valuePtr;
     }
 
-    private static LlvmValueHandle EmitRuntimeRcIsUnique(LlvmCodegenState state, LlvmValueHandle valuePtr)
+    /// <summary>
+    /// Reads the reference count out of a runtime-managed value's <see cref="HeapLayouts.RcHeader"/>.
+    /// The value must carry one — an empty list is the null pointer and does not, which is what
+    /// <see cref="IrInst.RcIsUnique.MayBeEmpty"/> exists to say.
+    /// </summary>
+    private static LlvmValueHandle EmitRuntimeRcCount(LlvmCodegenState state, LlvmValueHandle valuePtr, string name)
     {
         LlvmValueHandle allocationBase = LlvmApi.BuildSub(state.Target.Builder, valuePtr,
-            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_unique_base");
-        LlvmValueHandle count = LoadMemory(state, allocationBase,
-            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_unique_count");
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), name + "_base");
+        return LoadMemory(state, allocationBase,
+            HeapLayouts.RcHeader.ReferenceCountOffsetBytes, name + "_count");
+    }
+
+    private static LlvmValueHandle EmitRuntimeRcIsUnique(LlvmCodegenState state, LlvmValueHandle valuePtr)
+    {
+        LlvmValueHandle count = EmitRuntimeRcCount(state, valuePtr, "rc_unique");
         return LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Eq, count,
             LlvmApi.ConstInt(state.I64, 1, 0), "rc_is_unique");
     }
