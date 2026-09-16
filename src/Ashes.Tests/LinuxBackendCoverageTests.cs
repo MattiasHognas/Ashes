@@ -2551,6 +2551,37 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    [Skip("Reproduces the open self-hosting memory defect: one intermediate list leaks per chain "
+        + "stage (49 MB at 32 stages against a constant live set). Un-skip with the fix.")]
+    public async Task Linux_backend_straight_line_rebind_chain_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A straight-line `let ... in` chain, each stage rebuilding a pointer-bearing record from
+        // the previous one. Only the newest value is ever live: every earlier stage is dead the
+        // moment the next one consumes it, so resident memory must not grow with the chain length.
+        // This is the shape of the self-hosted optimizer's `optimizeIrProgramWithOptions`, where
+        // roughly twenty whole-program stages are threaded through nested lets and each stage's
+        // intermediate stays resident (measured 2026-09-16: ~1.4 MB per stage here, 5.2 GB across
+        // the real optimizer). A tail-recursive loop hides this — its back-edge reset reclaims the
+        // window every iteration — so the chain must be straight-line to expose it.
+        int[] stageCounts = [8, 16, 32];
+        List<MemoryExecutionResult> samples = new(stageCounts.Length);
+        foreach (int stages in stageCounts)
+        {
+            IrProgram ir = LowerProgram(BuildStraightLineRebindChainProgram(stages));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("20000\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("straight-line rebind chain", samples, maxRssKb: 32_000);
+    }
+
+    [Test]
     public async Task Linux_backend_recursive_map_bound_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9051,6 +9082,54 @@ public sealed class LinuxBackendCoverageTests
                 else given (unit) -> Ashes.Number.BigInt.compare(value)(value)
             in f(0)
             """;
+
+    // `stages` nested `let`s, each rebuilding the previous stage's record. Every intermediate is
+    // dead as soon as the next stage consumes it, so the program's live set is one record of
+    // 20,000 strings regardless of how long the chain is.
+    private static string BuildStraightLineRebindChainProgram(int stages)
+    {
+        StringBuilder chain = new();
+        for (int stage = 0; stage < stages; stage++)
+        {
+            string source = stage == 0 ? "start" : $"s{stage - 1}";
+            chain.Append("                let s").Append(stage)
+                .Append(" = stage(").Append(source).AppendLine(") in");
+        }
+
+        // Each stage rebuilds only the cons cells and shares the element strings, so the live set
+        // is the same 20,000-element list however long the chain is.
+        return $$"""
+            type Node =
+                | nodeName: Str
+                | nodeItems: List(Str)
+
+            let recursive buildItems k acc =
+                if k <= 0 then acc
+                else buildItems(k - 1)("item" :: acc)
+
+            let recursive rebuildItems items =
+                match items with
+                    | [] -> []
+                    | head :: tail -> head :: rebuildItems(tail)
+
+            let recursive countItems items total =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countItems(tail)(total + 1)
+
+            let stage node =
+                match node with
+                    | Node { nodeName = name, nodeItems = items } ->
+                        Node(nodeName = name, nodeItems = rebuildItems(items))
+
+            let pipeline start =
+            {{chain.ToString().TrimEnd()}}
+                match s{{stages - 1}} with
+                    | Node { nodeItems = items } -> countItems(items)(0)
+
+            Ashes.IO.print(pipeline(Node(nodeName = "n", nodeItems = buildItems(20000)([]))))
+            """;
+    }
 
     private static string BuildRegionManagedTaskFrameProgram(int iterations)
         => $$"""
