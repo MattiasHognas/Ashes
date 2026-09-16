@@ -1415,6 +1415,20 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     optimizer's stages as a loop rather than a nested `let` chain, since the chain has no reset
     point for (a) to enable.
 
+    **(a) does not work as a trigger tweak, and the obstacle is a phase order.** Recording the
+    declined reset next to `_abstractElementTmcDeclines` and widening the gate compiles and the
+    counter does increment, but nothing specializes and the measurement is unchanged: a back-edge
+    whose argument type is still an inference variable does not decide anything at emission time.
+    It emits an `IrInst.TcoResetPending` placeholder, and `ResolveDeferredTcoResets` makes the real
+    decision **at the end of lowering** — long after `RegisterElementSpecializationCandidate` ran
+    for the enclosing function. The decline signal therefore always arrives too late to make that
+    function a candidate. Whoever picks this up must either predict the decline at emission time
+    from the argument's type alone, or run the specialization decision as a later pass over the
+    already-lowered IR; extending the existing trigger in place cannot work. (`runStages` in the
+    reproducer never even reaches the gate for a second reason worth knowing: a plain top-level
+    `let` is absent from `_topLevelFunctionRefs`, so `stage` and `pipeline` are rejected with
+    `hasRef=False`.)
+
     **Four approaches are already refuted by measurement. Do not repeat them.**
     - *Copy out when the scope allocated but owns nothing by name* (846 sites): extending the
       `hadAliveOwned` guard with an "did anything allocate since the watermark" scan made the probe
