@@ -9,8 +9,10 @@
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.CoreBuiltinLowering
 export (
     value standardTraitEnvironment,
+    value withIntrinsicBuiltinSignatures,
     value standardTraitImplementationBindingName,
 )
 
@@ -372,3 +374,22 @@ let standardTraitEnvironment unit =
     |> registerStandardTraits
     |> registerPrimitiveImplementations
     |> registerStructuralImplementations
+
+// `standardTraitEnvironment` plus the intrinsic builtins' own signatures. The intrinsic modules
+// (`Ashes.IO`, `Ashes.Byte`, `Ashes.Text` and the rest of `coreBuiltinKind`'s) have no shipped
+// `.ash` source, so a stitched program never declares them: lowering knows them through
+// `standardBuiltinLayouts`, and without the same knowledge inference stops at the first one a real
+// program mentions. `Unit` is here for the same reason — it is a built-in type name that
+// `resolveTypeName` does not special-case, so nothing else would define it.
+let recursive addBuiltinSignatures layouts environment =
+    match layouts with
+        | [] -> environment
+        | CoreBuiltinLayout { moduleName = moduleName, memberName = memberName, scheme = scheme } :: rest ->
+            environment
+            |> addTypeBinding(moduleName + "." + memberName)(scheme)
+            |> addBuiltinSignatures(rest)
+
+let withIntrinsicBuiltinSignatures environment =
+    environment
+    |> addInferenceTypeDefinition(0)("Unit")(0)
+    |> addBuiltinSignatures(standardBuiltinLayouts)

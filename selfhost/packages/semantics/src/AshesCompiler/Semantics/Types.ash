@@ -13,6 +13,8 @@ export (
     type TypeScheme(..),
     type TypeVariableSupply(..),
     value initialTypeVariableSupply,
+    value typeVariableSupplyFrom,
+    value reservedInferenceTypeVariableCount,
     value freshTypeVariable,
     value occursInType,
     value applySubstitution,
@@ -60,6 +62,21 @@ type TypeVariableSupply =
 
 let initialTypeVariableSupply : Unit -> TypeVariableSupply =
     given (_unit) -> TypeVariableSupply(nextId = 0)
+
+// A supply that starts above a block of ids some statically embedded `TypeScheme` already
+// quantifies over. Such a scheme is written before any supply runs, so its quantified ids are fixed
+// constants; if a live supply reissues one, `TypeSchemes.ash`'s `instantiate` mints the substitution
+// `(id, SemVariable(id))` and `applySubstitution` recurses on that self-mapping forever. Starting
+// past the reservation is the guarantee; leaving a gap and hoping no program grows into it is not.
+let typeVariableSupplyFrom : Int -> TypeVariableSupply =
+    given (nextId) -> TypeVariableSupply(nextId = nextId)
+
+// The id an inference supply starts above. Two blocks are minted before any supply runs and must
+// never be reissued: `CoreBuiltinLowering`'s builtin signatures quantify over
+// `[0, reservedBuiltinTypeVariableCount)`, and `StandardTraits`' `addStandardTrait` numbers its
+// trait parameters from 1000. Starting past both is the guarantee; relying on the gap between them
+// staying empty is not. Raise this if either block grows past it.
+let reservedInferenceTypeVariableCount = 2000
 
 let freshTypeVariable : TypeVariableSupply -> (SemanticType, TypeVariableSupply) =
     given (supply) ->

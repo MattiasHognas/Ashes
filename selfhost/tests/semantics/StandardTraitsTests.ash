@@ -2,6 +2,8 @@ import Ashes.IO
 import Ashes.Test as test
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.StandardTraits
 let expectStandardTraitDeclarations unit =
@@ -115,9 +117,52 @@ let expectStableImplementationBindingNames unit =
     |> standardTraitImplementationBindingName("Show")("show")
     |> test.assertEqual("__ashes_standard_trait_Show_show_list_parameter2000")
 
+// The intrinsic builtin modules have no shipped `.ash` source, so a stitched program never declares
+// them and inference stops at the first one a real program mentions. `withIntrinsicBuiltinSignatures`
+// gives the environment lowering's own `standardBuiltinLayouts` under the qualified names inference
+// looks them up by.
+let inferredCleanly expression environment =
+    match inferExpression(expression)(environment) with
+        | TypeInferenceResult { error = None } -> true
+        | TypeInferenceResult { error = Some(_error) } -> false
+
+// Without the builtin signatures the same reference is an unknown value, so this pins that the
+// seeding is what resolves it rather than something else already having.
+let expectIntrinsicBuiltinSignaturesAreBound unit =
+    (let bare = emptyTypeEnvironmentForPackage("standalone")
+    in
+        let seeded = withIntrinsicBuiltinSignatures(bare)
+        in
+            ((given (_) ->
+                "print"
+                |> ExprQualifiedVar("Ashes.IO")
+                |> (given (reference) -> inferredCleanly(reference)(bare))
+                |> test.assertEqual(false)))(
+                "compare"
+                |> ExprQualifiedVar("Ashes.Byte")
+                |> (given (reference) -> inferredCleanly(reference)(seeded))
+                |> test.assertEqual(true)
+            ))
+
+// `Unit` is a built-in type name `resolveTypeName` does not special-case, so without this nothing
+// defines it and every real program fails type resolution before reaching its own code.
+let expectUnitTypeNameResolves unit =
+    match "standalone"
+    |> emptyTypeEnvironmentForPackage
+    |> withIntrinsicBuiltinSignatures
+    |> inferenceTypeResolutionContext
+    |> resolveTypeExpression(TypeNamed("Unit")) with
+        | TypeResolutionResult { error = None } -> Unit
+        | TypeResolutionResult { error = Some(error) } ->
+            error
+            |> Ashes.Trait.Show.show
+            |> (given (text) -> test.fail("Unit should resolve: " + text))
+
 let runStandardTraitsTests unit =
     unit
     |> expectStandardTraitDeclarations
+    |> expectIntrinsicBuiltinSignaturesAreBound
+    |> expectUnitTypeNameResolves
     |> expectPrimitiveImplementationMatrix
     |> expectNestedStructuralEvidence
     |> expectResultAndTupleEvidence
