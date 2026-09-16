@@ -1355,6 +1355,42 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     variables. Cross-tabulated, **11,930 of 12,776 (93%) are abandoned because the result type has
     no copy-out kind**.
 
+    **The abandoned-window count is not what costs the memory** (measured 2026-09-16 against a
+    running stage 1, correcting the reading above). Peak live anonymous mapping for the
+    `TypeResolution` probe is 7.13 GiB against 7.35 GiB peak RSS, and the whole of it arrives in one
+    burst: the arena sits flat at 1.70 GiB for the first 12,000 mapping events, rises to 6.95 GiB
+    over the next 4,000, then creeps only 0.18 GiB across the remaining 17,000 and is never given
+    back. Reclamation demonstrably works everywhere else — the run maps 32.95 GiB and unmaps 31.27
+    GiB. Ablating the optimizer drops the peak to 2.67 GiB; ablating its stages one at a time is
+    roughly additive with no dominant pass (captured-closure devirtualization 1.31, currying
+    inlining 0.80, scalarization 0.70, the final bracket/concat pair 0.55, the per-function pipeline
+    0.31), and within the largest, analysis and rewrite leak about equally (0.70 against 0.61).
+    Running the optimizer and **discarding its result** costs the same 7.79 GiB, so the retention is
+    not the result being live. Peak scales linearly with program size at **~450 KB of RSS per
+    lowered IR instruction**, constant to within 25% across a 20x range (Symbols 824 insts/352 MB,
+    Scope 3,134/1.13 GB, ResultReach 3,370/1.66 GB, TypeResolution 16,065/7.01 GB).
+
+    **The reproducer is a straight-line `let` chain, not a loop.** `optimizeIrProgramWithOptions`
+    threads roughly twenty whole-program stages through nested `let ... in` bindings; its lowered
+    IR opens ~22 arena windows in its first 160 instructions and restores one. A minimal chain of
+    `let s(i) = stage(s(i-1)) in` over a pointer-bearing record leaks one intermediate per stage —
+    16.4 MB at 8 stages, 28.7 MB at 16, 49.2 MB at 32 — against a live set that never changes, and
+    `--explain memory` reports exactly one `conservative unknown` placement per stage (stages + 2,
+    at every length measured). The leaked bytes are the intermediate list's cons cells (~1.37 MB per
+    stage for 20,000 cells). `Linux_backend_straight_line_rebind_chain_memory_should_plateau` in
+    `src/Ashes.Tests/LinuxBackendCoverageTests.cs` is that reproducer, skipped until the fix lands.
+    **The same shape inside a tail-recursive loop does not reproduce it** — the back-edge reset
+    reclaims the window every iteration and hides the leak, which is why four earlier reductions
+    (record result, tuple result, whole-program pass chain, pass count) all plateaued and proved
+    nothing. Any future reduction must be straight-line.
+
+    Where it stops, and what to instrument next: inside `stage` the consumed list *is* dropped
+    (`RcDrop ... TypeName=List`), and the caller's `rc_handed_over` guard skips its own drop when the
+    callee reports adoption — so the open question is which side of that hand-over protocol drops
+    nothing. That needs per-site accounting rather than another guess: a site id on `SaveArenaState`
+    plus runtime counters would name the scope directly, and gdb cannot do it because the arena's
+    raw-syscall stub has no CFI to unwind through.
+
     **Four approaches are already refuted by measurement. Do not repeat them.**
     - *Copy out when the scope allocated but owns nothing by name* (846 sites): extending the
       `hadAliveOwned` guard with an "did anything allocate since the watermark" scan made the probe
