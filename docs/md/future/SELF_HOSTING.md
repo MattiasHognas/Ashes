@@ -19,9 +19,10 @@ matching its output instruction for instruction.
 module (2026-09-15, 86 modules, the probe below): 28 compile and link to a working executable, 54
 run out of memory before they reach a diagnostic, and 4 stop with one. Memory is what gates the
 package, not a queue of defects, so it is what step 2 of the work order waits on. Of the four
-diagnostics MOD-20 and MOD-21 are closed, and the fourth turned out to be MOD-17c; MOD-17c remains,
-and so does the miscompile CG-20. Each is worth closing on its own, but none of them unblocks more
-than its own module. SEM-22, an `==` generalization gap the same session found, is filed beside them.
+diagnostics MOD-20 and MOD-21 are closed, and the fourth turned out to be MOD-17c, whose dispatch
+half is now closed too; the miscompile CG-20 is closed. What is left of that sweep is SEM-22, an
+`==` generalization gap that also blocks `sort`, and CG-21, a miscompile found validating MOD-17c.
+Neither unblocks more than its own module.
 
 OPT-85 now carries its measurement: what the arena holds, where it accumulates, **four approaches
 already refuted by measurement**, and the finding that genericity rather than value shape is what
@@ -66,7 +67,7 @@ instruction is a debugging aid, not a requirement.
 1. **Clear the blockers the probe reports.** Run the bootstrap probe over every module of a package
    before fixing the next failure it names, so what remains is a list ordered by how often a shape
    recurs rather than a queue discovered one failure at a time. The semantics package is swept
-   (2026-09-15): what remains there is MOD-17c and CG-20, each confined to its own module, with
+   (2026-09-15): what remains there is SEM-22 and CG-21, each confined to its own module, with
    memory gating the other 54. Gates: BOOT-2.
 2. **Compile the whole self-hosted tree with stage 1.** This is the first real attempt at stage 2
    and the step most likely to turn into memory work rather than a single run: one module currently
@@ -1926,61 +1927,6 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
-- [ ] **CG-20** Two different functions compile to the same scalarized variant, so calling one runs
-  the other's body (2026-09-16). It surfaced as
-  `tests/tco_runtime_managed_list_accumulator_plateau.ash` compiled by stage 1 printing
-  `200000|200000|200000` against stage 0's `200000|1088895|200000`, which is what the self-hosted
-  backend suite (`selfhost/tests/backend`, run from the repository root with `lib/Ashes`) stops on,
-  so that suite is red until this closes. It has nothing to do with `byteLength`, which is correct
-  on its own. Twelve lines reproduce it:
-
-  ```ash
-  let recursive first xs acc =
-      match xs with
-          | [] -> acc
-          | _ :: rest -> first(rest)(acc + 1)
-
-  let recursive second xs acc =
-      match xs with
-          | [] -> acc
-          | _ :: rest -> second(rest)(acc + 10)
-
-  let items = ["a", "b", "c"]
-
-  Ashes.IO.print(Ashes.Text.fromInt(first(items)(0)) + "|" + Ashes.Text.fromInt(second(items)(0)))
-  ```
-
-  Stage 1 prints `3|3` where stage 0 prints `3|30`, and `second(items)(5)` returns `8`, which is
-  `first`'s body with `acc = 5`. Stage 1's final IR has both call sites targeting
-  `lambda_1__scalarenv0`, `first`'s variant.
-
-  **Root cause, traced.** `getOrCreateScalarEnvVariant` in `IrOptimizer.ash` memoizes the variant
-  under `label + "#" + captureCount`, and that key string is released at the function's scope exit
-  while the memo it was stored into is part of the returned state. Printing the memo on both calls
-  shows it exactly: the first call stores `[("lambda_1#1", Some("lambda_1__scalarenv0"))]`, and at
-  the second call the same list reads `[("lambda_3#1", ...)]` — the freed key's cell was reused by
-  the second call's own key, so the lookup hits the first entry and returns `first`'s variant for
-  `second`. The released reference is visible in stage 0's emitted IR for that function as a
-  trailing `RcDrop SourceTemp=... TypeName=String RuntimeManaged=true` on the key's slot, with no
-  retain where `setAssociation` stores it. This is the OPT-79 / OPT-80j family: a let-bound
-  reference-counted value stored into a structure the result keeps, dropped at scope exit.
-
-  **Narrowed.** It disappears if either `inlineCurryingStages` or
-  `scalarizeSingleCaptureStackClosures` is made the identity, so it needs both; it reproduces with
-  stage 1 built at `-O0`, so it is not stage 0's IR optimizer; and widening scalarization's
-  `readsArgumentOwnership` guard from two captures to all capture counts does not fix it.
-
-  **Reproduction in the suite.** `selfhost/tests/semantics/ScalarEnvVariantTests.ash` fails on this
-  today and is deliberately not wired into that suite's `Main.ash`; wiring it in belongs to the fix.
-  It is a 46-second loop, against several minutes for a stage-1 rebuild.
-
-  **What did not reproduce it**, so start past these: five progressively closer stage-0 reductions
-  of the memo shape all give the right answer — a generic `setAssociation` storing a built key into
-  a returned list; the same into a record field; the same threaded through a recursive walk; the
-  same with the key built before a heavily allocating call; and the same with the generic setter
-  also instantiated at a second key type. The emitted IR of the closest reduction is structurally
-  identical to the real one, trailing `RcDrop` included, and still correct — so the trigger needs
-  more of the real context than the memo shape alone.
 - [ ] **CG-21** A two-parameter curried helper whose second argument is a trait-dispatched
   comparison result miscompiles (2026-09-16, found while validating MOD-17c, pre-existing and
   unrelated to it). Three lines reproduce it:

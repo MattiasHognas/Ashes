@@ -56,6 +56,7 @@ import MatchArmScopeTests
 import TcoTests
 import IrValidationTests
 import IrOptimizerTests
+import ScalarEnvVariantTests
 import PerceusLifetimePlacementTests
 import OwnershipInferenceTests
 import HeapLayoutClassificationTests
@@ -128,6 +129,7 @@ let run unit =
     |> (given (_) -> TcoTests.runTcoTests(Unit))
     |> (given (_) -> IrValidationTests.runIrValidationTests(Unit))
     |> (given (_) -> IrOptimizerTests.runIrOptimizerTests(Unit))
+    |> (given (_) -> ScalarEnvVariantTests.runScalarEnvVariantTests(Unit))
     |> (given (_) -> PerceusLifetimePlacementTests.runPerceusLifetimePlacementTests(Unit))
     |> (given (_) -> OwnershipInferenceTests.runOwnershipInferenceTests(Unit))
     |> (given (_) -> HeapLayoutClassificationTests.runHeapLayoutClassificationTests(Unit))
