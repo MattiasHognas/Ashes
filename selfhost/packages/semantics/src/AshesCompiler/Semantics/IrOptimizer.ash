@@ -113,7 +113,7 @@ type LocalCseState =
 // callee (None once a callee proved ineligible), the variants to append to the program, and the
 // counter that keeps generated labels unique.
 type ScalarizeState =
-    | variantByCallee: List((Str, Maybe(Str)))
+    | variantByCallee: List((Str, Int, Maybe(Str)))
     | newFunctions: List(IrFunction)
     | counter: Int
 
@@ -1873,20 +1873,35 @@ let tryBuildScalarEnvVariant (callee: IrFunction) (captureCount: Int) (counter: 
                     else buildScalarEnvVariant(callee)(captureCount)(counter)
     else None
 
-let scalarEnvVariantKey (label: Str) (captureCount: Int) = label + "#" + Ashes.Trait.Show.show(captureCount)
+// The memo is keyed by the callee's label and its capture count side by side, never by a string
+// built from the two. A concatenated key is a freshly allocated string whose only owner is the memo
+// it is stored into, and stage 1 miscompiled exactly that: the key was released at this function's
+// scope exit while the returned state still held it, the next call's own key reused the freed cell,
+// and the lookup then matched a different callee's entry and handed back its variant. Comparing the
+// two fields directly allocates nothing, so there is no reference for the lifetime to get wrong,
+// and both comparisons are primitive.
+let recursive lookupScalarEnvVariant (label: Str) (captureCount: Int) (entries: List((Str, Int, Maybe(Str)))) =
+    match entries with
+        | [] -> None
+        | (entryLabel, entryCount, variant) :: tail ->
+            if entryLabel == label && entryCount == captureCount
+            then Some(variant)
+            else lookupScalarEnvVariant(label)(captureCount)(tail)
+
+// A callee is decided once and never revised, so a newer entry can only shadow an identical one.
+// Prepending is therefore what replacing meant, and it does not rebuild the spine ahead of the key.
+let rememberScalarEnvVariant (label: Str) (captureCount: Int) (variant: Maybe(Str)) (state: ScalarizeState) = state with variantByCallee = (label, captureCount, variant) :: state.variantByCallee
 
 let getOrCreateScalarEnvVariant (label: Str) (captureCount: Int) (functions: List(IrFunction)) (state: ScalarizeState) =
-    (let key = scalarEnvVariantKey(label)(captureCount)
-    in
-        match lookupAssociation(key)(state.variantByCallee) with
-            | Some(memoized) -> (memoized, state)
-            | None ->
-                match lookupFunction(label)(functions) with
-                    | None -> (None, (state with variantByCallee = setAssociation(key)(None)(state.variantByCallee)))
-                    | Some(callee) ->
-                        match tryBuildScalarEnvVariant(callee)(captureCount)(state.counter) with
-                            | None -> (None, (state with variantByCallee = setAssociation(key)(None)(state.variantByCallee)))
-                            | Some(variant) -> (Some(variant.label), (state with variantByCallee = setAssociation(key)(Some(variant.label))(state.variantByCallee), newFunctions = variant :: state.newFunctions, counter = state.counter + 1)))
+    match lookupScalarEnvVariant(label)(captureCount)(state.variantByCallee) with
+        | Some(memoized) -> (memoized, state)
+        | None ->
+            match lookupFunction(label)(functions) with
+                | None -> (None, rememberScalarEnvVariant(label)(captureCount)(None)(state))
+                | Some(callee) ->
+                    match tryBuildScalarEnvVariant(callee)(captureCount)(state.counter) with
+                        | None -> (None, rememberScalarEnvVariant(label)(captureCount)(None)(state))
+                        | Some(variant) -> (Some(variant.label), (rememberScalarEnvVariant(label)(captureCount)(Some(variant.label))(state) with newFunctions = variant :: state.newFunctions, counter = state.counter + 1))
 
 // The caller-side shape: the call's env temp is defined once by an 8- or 16-byte AllocStack,
 // filled by exactly one store per 8-byte capture, and used nowhere else (those stores and this

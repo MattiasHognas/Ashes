@@ -1946,6 +1946,36 @@ preceded the port.
   unresolved at the self call. Regression:
   `selfhost/tests/semantics/DeferredCallCopyOutTests.ash`, which lowers that producer and asserts
   the self call's argument temp is defined before the call reads it.
+- [x] **CG-20** Two different functions compiled to the same scalarized variant, so calling one ran
+  the other's body (2026-09-16). Twelve lines reproduced it — two recursive list folds, one adding
+  1 and one adding 10 — where stage 1 printed `3|3` against stage 0's `3|30`, both call sites
+  targeting `lambda_1__scalarenv0`, the first fold's variant. It is what the self-hosted backend
+  suite stopped on, so that suite was red until this closed.
+
+  `getOrCreateScalarEnvVariant` in `IrOptimizer.ash` memoized the variant under a key built as
+  `label + "#" + show(captureCount)`. That key is a freshly allocated string whose only owner is
+  the memo it is stored into, and it was released at the function's scope exit while the returned
+  state still held it; the next call's own key reused the freed cell, so the lookup matched a
+  different callee's entry. The memo now holds the label and the capture count side by side, with
+  its own lookup comparing the two fields directly, and allocates no key at all — so there is no
+  reference for a lifetime to get wrong, and both comparisons are primitive. It is also cheaper:
+  the concatenation and the `Int` rendering are gone from a whole-program pass.
+
+  `selfhost/tests/semantics/ScalarEnvVariantTests.ash` is the regression and now runs in that
+  suite's `Main.ash`, where it had deliberately been left unwired.
+
+  **The stage-0 lifetime defect behind it is still open and is not filed against a reproducer**,
+  because none exists: six progressively closer stage-0 reductions of the memo shape all give the
+  right answer — a generic `setAssociation` storing a built key into a returned list; the same into
+  a record field; the same threaded through a recursive walk; the same with the key built before a
+  heavily allocating call; the same with the generic setter also instantiated at a second key type;
+  and the same returning the structure as the second element of a tuple, which is the real shape.
+  The emitted IR of the closest reduction is structurally identical to the real one, trailing
+  `RcDrop` included, and still correct, so the trigger needs more of the real context than the memo
+  shape alone. This fix removes the trigger rather than that defect: a let-bound reference-counted
+  value stored into a structure the result keeps can still be released at scope exit somewhere else,
+  and whoever meets it next should start from the OPT-79 / OPT-80j family and from this note rather
+  than from a fresh reduction.
 
 
 ### Object parsing and executable linking
