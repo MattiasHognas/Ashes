@@ -1384,12 +1384,36 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     (record result, tuple result, whole-program pass chain, pass count) all plateaued and proved
     nothing. Any future reduction must be straight-line.
 
-    Where it stops, and what to instrument next: inside `stage` the consumed list *is* dropped
-    (`RcDrop ... TypeName=List`), and the caller's `rc_handed_over` guard skips its own drop when the
-    callee reports adoption — so the open question is which side of that hand-over protocol drops
-    nothing. That needs per-site accounting rather than another guess: a site id on `SaveArenaState`
-    plus runtime counters would name the scope directly, and gdb cannot do it because the arena's
-    raw-syscall stub has no CFI to unwind through.
+    **The cause is an unresolved element layout, and it disables all three reclamation paths at
+    once** (measured 2026-09-16). Inside a polymorphic function every heap intermediate's layout is
+    a type variable, and that single fact means:
+
+    1. `RequestsArenaResult` (`Lowering.cs`) sets the ownership word's bit 1 for any result type
+       that `ContainsUnresolvedLayoutType`, so the callee returns an **arena-placed** value
+       (a plain `Alloc`, not `AllocAdt RuntimeManaged`). The arena is a bump allocator, so a dead
+       intermediate buried under a later live one cannot be freed. Tracing the reproducer prints
+       `[arena-result] List<a>` ten times for three stages.
+    2. `GetTcoListCopyOutKind` returns `None` when the element type is a type variable, so
+       `TcoBackEdgeAllArgsCopyable` fails and a loop emits **no back-edge reset** — even with
+       `freshListRebuild=True`. The non-fresh-list downgrade is not what declines here.
+    3. A `let` binding's arena window unwinds only at the end of the enclosing function, so a
+       nested `let` chain keeps all N intermediates alive by construction.
+
+    **Proof, and the fix it points at.** The same program with one type annotation is flat: a
+    32-stage loop over `List(Str)` holds 9,484 KB, and so does a 128-stage one (9,484 KB at 4, 16,
+    32, 64 and 128 stages), while the generic form grows 8,976 → 13,240 → 17,336 → 25,360 → 46,004
+    KB. Resolving the layout is therefore sufficient. **Monomorphising is not by itself the fix**:
+    annotating the *chain* form makes it worse, 50.5 MB against 17.3 MB at 32 stages, because each
+    stage's result is then RC-normalised with a deep copy. Only the loop form benefits, because only
+    there does a reset point exist.
+
+    So the fix is two parts, and neither works alone: **(a)** broaden
+    `Lowering.ElementSpecialization.cs` from its single trigger (a tail-modulo-constructor cons
+    declined because the element type was still a type variable, counted by
+    `_abstractElementTmcDeclines` and consumed by `RegisterElementSpecializationCandidate`) to also
+    fire on a back-edge reset declined for an abstract argument layout; and **(b)** present the
+    optimizer's stages as a loop rather than a nested `let` chain, since the chain has no reset
+    point for (a) to enable.
 
     **Four approaches are already refuted by measurement. Do not repeat them.**
     - *Copy out when the scope allocated but owns nothing by name* (846 sites): extending the
