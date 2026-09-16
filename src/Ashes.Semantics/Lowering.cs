@@ -647,6 +647,14 @@ public sealed partial class Lowering
     private Dictionary<int, string> _knownFunctionLabelsBySlot = new();
     private Dictionary<int, string> _knownFunctionLabelsByEnvIndex = new();
     private string _lastLoweredLambdaLabel = "";
+
+    // Temporary: counts LOOPS whose back-edge copy-out exists only because recursion was admitted,
+    // so a binary search over ASHES_TCO_ALLOW_FIRST can isolate the one that miscompiles. The gate
+    // is decided once per loop because one loop asks TcoBackEdgeArgCopyOutKind several times and the
+    // answers must agree.
+    private int _recursiveCopyOutIndex;
+
+    private bool _allowRecursiveCopyOutForThisLoop = true;
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
 
@@ -1321,6 +1329,7 @@ public sealed partial class Lowering
     {
         info = TcoBackEdgeRefreshRuntimeManagedParams(info);
         var argTypes = info.ArgTypes;
+        DecideRecursiveCopyOutGateForLoop(info);
         int tcoPreRestoreEndSlot = NewLocal();
 
         if (TcoBackEdgeTryEmitRuntimeManagedReset(info, tcoPreRestoreEndSlot))
@@ -1376,6 +1385,52 @@ public sealed partial class Lowering
         }
 
         EndLivePostsGuard(tcoCopySkipLabel);
+    }
+
+    private void DecideRecursiveCopyOutGateForLoop(PendingTcoReset info)
+    {
+        _allowRecursiveCopyOutForThisLoop = true;
+        if (Environment.GetEnvironmentVariable("ASHES_TCO_ALLOW_FIRST") is not { Length: > 0 } limit
+            || !int.TryParse(limit, System.Globalization.CultureInfo.InvariantCulture, out int allowed))
+        {
+            return;
+        }
+
+        int recursive = -1;
+        for (int i = 0; i < info.ArgTypes.Length; i++)
+        {
+            if (!info.PassThrough[i] && IsRecursionAdmittedOnlyType(info.ArgTypes[i]))
+            {
+                recursive = i;
+                break;
+            }
+        }
+
+        if (recursive < 0)
+        {
+            return;
+        }
+
+        _recursiveCopyOutIndex++;
+        _allowRecursiveCopyOutForThisLoop = _recursiveCopyOutIndex <= allowed;
+        if (Environment.GetEnvironmentVariable("ASHES_TCO_LOG_SITES") is not null)
+        {
+            Console.Error.WriteLine(
+                $"[site {_recursiveCopyOutIndex}] {Pretty(Prune(info.ArgTypes[recursive]))} in {_lastLoweredLambdaLabel}");
+        }
+
+        if (Environment.GetEnvironmentVariable("ASHES_TCO_DUMP_SITE") is { Length: > 0 } dump
+            && int.TryParse(dump, System.Globalization.CultureInfo.InvariantCulture, out int wanted)
+            && wanted == _recursiveCopyOutIndex)
+        {
+            for (int i = 0; i < info.ArgTypes.Length; i++)
+            {
+                Console.Error.WriteLine(
+                    $"[arg {i}] {Pretty(Prune(info.ArgTypes[i]))} pass={info.PassThrough[i]} "
+                    + $"canReset={CanArenaReset(info.ArgTypes[i])} fresh={info.FreshListRebuild[i]} "
+                    + $"cons={info.SingleFreshCons[i]} kind={TcoBackEdgeArgCopyOutKind(info, i, out _, out _)}");
+            }
+        }
     }
 
     private PendingTcoReset TcoBackEdgeRefreshRuntimeManagedParams(PendingTcoReset info)
@@ -2400,15 +2455,23 @@ public sealed partial class Lowering
             return CopyOutKind.None;
         }
 
-        // Temporary bisection hook: with ASHES_TCO_DENY_RECURSIVE set, refuse the back-edge copy-out
-        // for every argument whose kind exists only because the recursion-tolerant walk admitted it.
-        // Structural rather than by name, so no type can slip through the way a hand-written list
-        // lets one through.
-        if (argKind != CopyOutKind.None
-            && Environment.GetEnvironmentVariable("ASHES_TCO_DENY_RECURSIVE") is not null
-            && IsRecursionAdmittedOnlyType(info.ArgTypes[i]))
+        // Temporary bisection hooks over the copy-outs that exist only because the recursion-tolerant
+        // walk admitted their argument. ASHES_TCO_DENY_RECURSIVE refuses all of them;
+        // ASHES_TCO_ALLOW_FIRST=<n> refuses all but the first n, so a binary search over n finds the
+        // single offending loop. Structural rather than by name, so no type slips through.
+        if (argKind != CopyOutKind.None && IsRecursionAdmittedOnlyType(info.ArgTypes[i]))
         {
-            return CopyOutKind.None;
+            if (Environment.GetEnvironmentVariable("ASHES_TCO_DENY_RECURSIVE") is not null)
+            {
+                return CopyOutKind.None;
+            }
+
+            // The decision must be identical across the several calls one loop makes for the same
+            // argument, so the per-loop gate is decided once in EmitTcoBackEdgeArenaBlock.
+            if (!_allowRecursiveCopyOutForThisLoop)
+            {
+                return CopyOutKind.None;
+            }
         }
 
         return argKind;

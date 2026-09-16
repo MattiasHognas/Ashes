@@ -3241,6 +3241,14 @@ public sealed partial class Lowering
     /// The list arm of <see cref="EmitDeepCopy"/>: copy-type/String/inner-list heads use the
     /// CopyOutList primitive; other deep-copyable elements go through the synthesized
     /// recursive list copier; unsupported element types stay shallow.
+    /// <para>
+    /// The element question is asked in the recursion-tolerant form, the same one
+    /// <c>GetTcoListCopyOutKind</c> classifies with. The two must agree: a classifier that promises
+    /// <c>DeepAdt</c> against an emitter that declines and silently returns the original pointer
+    /// leaves the caller resetting the arena in the belief that it holds a self-contained clone,
+    /// and the value dies with the window. The synthesized copier reaches a recursive element
+    /// through its env[0] self-closure, which is exactly what the classifier assumes.
+    /// </para>
     /// </summary>
     private int EmitListDeepCopy(
         int temp,
@@ -3284,7 +3292,7 @@ public sealed partial class Lowering
             return dest;
         }
 
-        if (IsDeepCopyOutSafeType(elemPruned))
+        if (IsRecursiveDeepCopyOutSafeType(elemPruned))
         {
             // Deep-copyable element (fixed-shape ADT / tuple / nested list): a synthesized
             // recursive list copier clones every cell and deep-copies every head, so the

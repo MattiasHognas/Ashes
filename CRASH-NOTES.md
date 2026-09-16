@@ -1,120 +1,91 @@
-# OPT-85 recursive reclamation: the open crash
+# OPT-85 recursive reclamation: resolved, and the result is negative
 
-This branch carries the change that cuts stage 1 compiling one semantics module from **7.35 GB to
-0.90 GB** and from **10.7 s to 3.2 s**. It is not merged because it segfaults the self-hosted
-semantics suite. Everything below is measured.
+**The 87% was not real.** It was memory "saved" by a miscompilation that reset the arena over data
+still in use. With the miscompilation fixed, admitting self-recursive ADTs to the reclamation
+classifiers is **worth nothing measurable**. This branch is a record of that, not a candidate to
+merge as an optimization.
+
+## The three states, measured
+
+| | probe peak RSS | self-hosted semantics suite |
+|---|---|---|
+| baseline (recursion not admitted) | 7.35 GB | passes |
+| recursion admitted, emitter disagreeing | 0.90 GB | **segfaults** |
+| recursion admitted, emitter agreeing | 7.04 GB | passes |
+
+Per module, baseline → correct fix: Symbols 352 → 360 MB, Scope 1,130 → 1,145, ResultReach
+1,660 → 1,659, TypeResolution 7,010 → 7,039. Within noise, and slightly worse in places.
+
+## The defect that produced the fake win
+
+`GetTcoListCopyOutKind` classifies a list argument by its element type; `EmitListDeepCopy` emits the
+copy. They must answer the same question. Switching the *classifier* to the recursion-tolerant
+predicate without switching the *emitter* broke that:
+
+- classifier: `IsRecursiveDeepCopyOutSafeType(element)` → `DeepAdt`, so the loop qualifies for the
+  back-edge reset and the argument counts as copyable;
+- emitter: `IsDeepCopyOutSafeType(element)` → false, so it falls through and **returns the original
+  pointer unchanged** ("unsupported element types stay shallow");
+- the back edge then restores and reclaims the arena believing it holds a self-contained clone.
+
+Isolated to one loop by binary search over `ASHES_TCO_ALLOW_FIRST`: site 415,
+`emitPerformEvidenceSave` in `CoreCapabilityLowering.ash:136`. Its six arguments classify as
+
+```
+arg 0 Int                     pass=False canReset=True
+arg 1 Int                     pass=True  canReset=True
+arg 2 Int                     pass=False canReset=True
+arg 3 Int                     pass=True  canReset=True
+arg 4 List<Int>               cons=True  kind=Shallow    -> 16-byte single-cell copy, emitted
+arg 5 List<IrInstructionKind> fresh=True kind=DeepAdt    -> promised, NEVER EMITTED
+```
+
+and the emitted back edge contains only arg 4's copy:
+
+```
+CopyOutArena   DestTemp=86 SrcTemp=57 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
+RestoreArenaState CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=36
+CopyOutArena   DestTemp=88 SrcTemp=86 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
+StoreLocal     Slot=4 Source=88     <- arg 4, compacted
+StoreLocal     Slot=1 Source=75     <- arg 5, stored RAW
+ReclaimArenaChunks SavedEndSlot=13 PreRestoreEndSlot=36
+```
+
+`arg 5`'s successor is `append(instructions)([nextSave])`, a spine rebuilt entirely above the
+watermark, so the reclaim frees it while the loop parameter still points at it. The observed fault
+was far downstream: `EmitRuntimeRcDrop`'s count load on a null value (`rax = -16`) in `buildProgram`,
+whose own IR is byte-identical to a pristine build.
+
+## The standing design constraint
+
+`GetTcoListCopyOutKind` and `EmitListDeepCopy` must ask the element question with the same predicate.
+A classifier that promises `DeepAdt` against an emitter that silently declines does not fail loudly —
+it produces a reset over live data. The emitter's fall-through is deliberate for genuinely
+unsupported shapes, which is exactly why the classifier must never promise more than it can do.
+
+## What is worth keeping
+
+The `RcIsUnique` empty-value guard, which is independent of all of the above: `RcDup` and `RcDrop`
+both carry a `MayBeEmpty` flag and guard the header access, `RcIsUnique` carried neither and read the
+count at `value - 16`. An empty value owns no cell to reuse, so "not unique" is the honest answer,
+and since a missed site faults rather than mis-answers the guard is unconditional.
+
+## Refuted along the way
+
+The two-pass overlap (already implemented, and a third Phase A clone does not help); nullary
+constructors; the bare recursive self-reference (a real defect, fixed here, unrelated to the crash);
+instantiation-keyed recursion paths; the non-fresh accumulator downgrade; restricting recursion types
+to the advancing watermark; and every "admit fewer types" workaround, since the win and the fault came
+from the same instructions.
 
 ## Reproducing
 
 ```bash
 dotnet run -c Release --project src/Ashes.Cli -- compile --project selfhost/tests/semantics/ashes.json --debug
-gdb -batch -ex "set disable-randomization on" -ex run -ex "x/i \$pc" -ex "info registers rax" \
-    ./selfhost/tests/semantics/out/ashes-selfhost-semantics-tests
+./selfhost/tests/semantics/out/ashes-selfhost-semantics-tests
 ```
 
-A pristine build runs the same suite to completion, so the crash is this change. The run is
-deterministic with randomization disabled: the faulting frame is always `$rbp = 0x7ffffff12240`.
-
-## What the fault is, exactly
-
-```
-=> mov (%rax),%rax     rax = 0xfffffffffffffff0   (= -16)
-```
-
-Not a corrupted pointer — a dereference of **NULL − 16**. `RcHeader.SizeBytes` is 16 and the value
-pointer is `base + 16`, so this is a reference-count read on a null value. Matching the surrounding
-instructions (`cmp $1` / `sete`, then the `0x4000000000000000` immortal-sentinel compare) against
-the emitters identifies it as **`EmitRuntimeRcDrop`**, not `RcDup` and not `RcIsUnique`.
-
-At the IR level it is one instruction:
-
-```
-rc_handed_over_copied_59523:
-    RcDrop SourceTemp=158 TypeName=...CoreProgramUses RuntimeManaged=true
-```
-
-in `buildProgram` (`CoreLowering.ash:20250`). Temp 158 is the `CoreProgramUses` accumulator passed
-to `collectCoreFunctionUses`. `RcDrop` only emits a null guard when `instruction.MayBeEmpty` is set
-(`EmitRuntimeManagedDropInstruction`); this one does not have it, so the header read is unguarded.
-
-## Why it is not a local defect
-
-- Temp 158 is defined by `LoadLocal Target=158 Slot=83` in the merge block
-  `call_reclaim_owned_result_59518`, which **dominates** the drop. The IR is well-formed.
-- `buildProgram`'s IR is **byte-identical** between this branch and a pristine build, as is the IR of
-  all three functions that produce a `CoreProgramUses` (`collectCoreInstructionUses`,
-  `collectCoreFunctionUses`, `includeCoreInstruction`), compared with lambda numbering normalised.
-- At the fault the spill slot (`$rbp - 0x5b8`) holds 0, and a watchpoint shows its last writer is
-  `lambda_14202 + 4` — the function's own prologue.
-
-Identical IR with different behaviour means the zero is **damage done elsewhere**, and this frame is
-only where it surfaces. The change enables an arena reset in **176 loops against 7** before it, so
-the corrupting write is in one of the 169 newly-resetting loops.
-
-## Bisection
-
-`ExternalAbiType` is necessary and sufficient: denying that one recursive type name makes the suite
-pass. It is also load-bearing for the win — denying it returns the probe to 7.35 GB, because it is
-embedded in the large state records and excluding it makes everything containing it
-non-deep-copyable again. A narrow "skip this type" workaround therefore buys nothing.
-
-## Hypotheses tested and refuted
-
-- **The DeepAdt two-pass overlap is missing.** It is not: `TcoBackEdgeEmitPhaseAUpCopies` already
-  clones a `DeepAdt` argument twice specifically to keep Phase B's write disjoint from its read, with
-  the argument written out in a comment.
-- **`RcIsUnique` faults on the empty list.** A real hole — it had no `MayBeEmpty` flag and no guard,
-  unlike `RcDup`/`RcDrop` — and it is fixed on this branch. It is not this crash; the fault is
-  unchanged with the guard in place.
-- **Nullary constructors mixed with payload ones** (`ExternalAbiType` has six). A minimal recursive
-  ADT of that shape threaded as a loop accumulator compiles and runs correctly.
-- **The bare recursive self-reference.** `Node(Int, MapTree, K, V, MapTree)` inside
-  `type MapTree(K, V)` leaves `K`/`V` unsubstituted so `CopyFieldInsideCopier`'s pretty-name
-  comparison misses the self type. Real defect, fixed on this branch, crash unchanged.
-- **Keying the recursion path on the instantiation rather than `symbol.Name`.** `Maybe(A)` nested in
-  `Maybe(B)` counts as re-entry and is answered true without checking the inner instantiation — a
-  genuine hole, but not this crash.
-- **Downgrading a non-fresh recursive accumulator to `None`**, mirroring the existing
-  `FreshListRebuild` rule for lists. The `ExternalAbiType` loops do take a reset with `fresh=False`,
-  but the downgrade leaves the suite crashing.
-- **Restricting recursion-admitted types to the advancing watermark** instead of the fixed one.
-  Still crashes.
-- **Insufficient spacing in the two-pass copy.** The disjointness argument assumes each clone has the
-  same size, which need not hold for a recursive clone. Giving Phase A a *third* clone, so Phase B's
-  source starts a further clone-size above the watermark, does not fix it — so the fault is not the
-  spacing.
-- **Extra synthesized copiers on their own.** With a name-based deny list tuned until the
-  `[AdtDeepCopier]` set matched the baseline exactly (126 both sides), it still crashed — superseded
-  by the structural result above, which shows the list was incomplete rather than the copiers
-  innocent.
-
-## The decisive result: the win and the crash are one mechanism
-
-`ASHES_TCO_DENY_RECURSIVE=1` (the hook in `TcoBackEdgeArgCopyOutKind`) refuses the back-edge
-copy-out for every argument whose kind exists *only* because the recursion-tolerant walk admitted
-it — structurally, by comparing the two capability answers, so no type slips through the way a
-hand-written name list does.
-
-- With it set: **the self-hosted semantics suite passes.**
-- With it set: **the probe is back to 7.35 GB — the entire win is gone.**
-
-So the 87% and the segfault come from exactly the same instructions: the back-edge copy-out of a
-recursion-admitted accumulator. **No subset of admitted types separates them**, which rules out the
-whole family of "admit fewer types" workarounds. Closing this means making that copy-out correct for
-a recursive accumulator, not choosing which types get one.
-
-Note that an earlier name-based deny list appeared to show the opposite; it was simply incomplete —
-the semantics package has far more recursion-admitted types than the two dozen it named, and
-`IrFunction` (with `IrFunctionOrigin`, `CompilerFunctionOwner`, `CoroutineInfo` and their `Maybe`
-wrappers) was among those it missed. Prefer the structural hook over any name list.
-
-## The next instrument
-
-The symptom is reached long after the corrupting write, so watching the victim slot is too late.
-Either bisect the 169 newly-resetting loops directly, or catch the write: find the arena range that
-`buildProgram`'s `CoreProgramUses` lives in, and set a watchpoint on it *before* the loops run.
-
-Instrumentation used, to recreate: an `ASHES_RECURSION_ONLY` / `ASHES_RECURSION_DENY` /
-`ASHES_RECURSION_LOG` hook in `IsArenaDeepCopyAdtLayout`'s re-entry branch (17 recursive type names
-in the semantics package), and a stderr line in `EmitTcoBackEdgeArenaBlock` printing each argument's
-type beside `TcoBackEdgeArgCopyOutKind`.
+Scaffolding on this branch, all env-gated and inert by default: `ASHES_TCO_DENY_RECURSIVE` refuses
+every recursion-admitted back-edge copy-out; `ASHES_TCO_ALLOW_FIRST=<n>` keeps only the first n, for
+binary search; `ASHES_TCO_LOG_SITES` and `ASHES_TCO_DUMP_SITE=<n>` print the sites and one site's
+per-argument classification; `ASHES_LOG_COPIERS` lists every synthesized copier.
