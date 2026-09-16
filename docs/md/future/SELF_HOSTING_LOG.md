@@ -1975,6 +1975,31 @@ preceded the port.
   before a heavily allocating call; the same with the generic setter also instantiated at a second
   key type; and the same returning the structure as the second element of a tuple. All six answer
   correctly. The ingredient they were missing is in OPT-86.
+- [x] **CG-21** A two-parameter curried helper whose second argument is a trait-dispatched
+  comparison result miscompiled (2026-09-16). It was filed as its own defect while validating
+  MOD-17c and turned out to be **the same defect as CG-20**, which closed it.
+
+  ```ash
+  let describe label flag = label + "=" + (if flag then "T" else "F")
+
+  Ashes.IO.print(describe("eq")([1] == [2]))
+  ```
+
+  Stage 1 printed kilobytes of heap bytes where stage 0 prints `eq=F`, and the `Ord` form
+  (`describe("lt")("a" < "b")`) segfaulted on `mov (%rsi),%rax` with `rsi = 1` — a `Bool`
+  dereferenced as a pointer. That is what a call running another function's body looks like from the
+  outside: `describe` is curried over two parameters, so it is exactly the scalarized single-capture
+  closure shape whose variant memo CG-20 corrupted.
+
+  Verified rather than assumed: a stage 1 built from the commit before CG-20's fix still prints the
+  garbage, and one built from the commit after prints `eq=F`. The whole family now matches stage 0 —
+  `lt=T le=T gt=F ge=F eq=F ne=T` from both compilers. Nothing was needed beyond CG-20.
+
+  The narrowing that made it look independent is still worth reading, because it is what pointed at
+  a curried shape: the same helper with one parameter, with a literal `Bool`, over a primitive
+  comparison that never dispatches, and with the comparison consumed directly by an `if`, were all
+  correct. Only the two-parameter form failed, and partial application is what builds the closure
+  that CG-20 mis-specialized.
 
 
 ### Object parsing and executable linking

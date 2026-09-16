@@ -20,9 +20,9 @@ module (2026-09-15, 86 modules, the probe below): 28 compile and link to a worki
 run out of memory before they reach a diagnostic, and 4 stop with one. Memory is what gates the
 package, not a queue of defects, so it is what step 2 of the work order waits on. Of the four
 diagnostics MOD-20 and MOD-21 are closed, and the fourth turned out to be MOD-17c, whose dispatch
-half is now closed too; the miscompile CG-20 is closed. What is left of that sweep is SEM-22, an
-`==` generalization gap that also blocks `sort`, and CG-21, a miscompile found validating MOD-17c.
-Neither unblocks more than its own module.
+half is now closed too; the miscompiles CG-20 and CG-21 are closed, CG-21 having turned out to be
+CG-20 seen from another shape. What is left of that sweep is SEM-22, an `==` generalization gap that
+also blocks `sort`. It does not unblock more than its own module.
 
 OPT-85 now carries its measurement: what the arena holds, where it accumulates, **four approaches
 already refuted by measurement**, and the finding that genericity rather than value shape is what
@@ -67,8 +67,8 @@ instruction is a debugging aid, not a requirement.
 1. **Clear the blockers the probe reports.** Run the bootstrap probe over every module of a package
    before fixing the next failure it names, so what remains is a list ordered by how often a shape
    recurs rather than a queue discovered one failure at a time. The semantics package is swept
-   (2026-09-15): what remains there is SEM-22 and CG-21, each confined to its own module, with
-   memory gating the other 54. Gates: BOOT-2.
+   (2026-09-15): what remains there is SEM-22, confined to its own module, with memory gating the
+   other 54. Gates: BOOT-2.
 2. **Compile the whole self-hosted tree with stage 1.** This is the first real attempt at stage 2
    and the step most likely to turn into memory work rather than a single run: one module currently
    costs roughly 9 GB, and the tree is about 92,000 lines. The memory task is OPT-85, and it carries a
@@ -2016,28 +2016,6 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   `LlvmTargetSetup.cs`, and the partition filter in `EmitProgramModuleFunctions`. Needs
   `ASHES_LLVM_JOBS` and the `ObjectPartitions` compile option, and LNK-14's relocatable merge.
   Stage 0's semantics test program went from 3.4 min to 1.9 min with it.
-- [ ] **CG-21** A two-parameter curried helper whose second argument is a trait-dispatched
-  comparison result miscompiles (2026-09-16, found while validating MOD-17c, pre-existing and
-  unrelated to it). Three lines reproduce it:
-
-  ```ash
-  let describe label flag = label + "=" + (if flag then "T" else "F")
-
-  Ashes.IO.print(describe("eq")([1] == [2]))
-  ```
-
-  Stage 1 prints several kilobytes of heap bytes where stage 0 prints `eq=F`; the `Ord` form of the
-  same shape (`describe("lt")("a" < "b")`) segfaults instead, faulting on `mov (%rsi),%rax` with
-  `rsi = 1` — a `Bool` dereferenced as a pointer. It reproduces on a stage 1 built from an
-  unmodified tree, so it is not MOD-17c's.
-
-  **The partial application is what carries it.** Each of these is correct: the same helper taking
-  one parameter (`let describe flag = ...`, `describe("a" < "b")`); the two-parameter helper with a
-  literal `Bool` (`describe("lt")(true)`); the two-parameter helper over a primitive comparison
-  (`describe("lt")(1 < 2)`, which never dispatches); and the comparison consumed directly by an `if`
-  with no call at all. Only the trait-dispatched result passed as the second curried argument fails,
-  so the suspect is the ownership of a dispatch result evaluated after a partial-application closure
-  has been built, not the dispatch itself.
 
 ### Object parsing and executable linking
 
