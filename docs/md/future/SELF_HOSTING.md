@@ -487,10 +487,39 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
 
   So SEM-22 is not a generalization tweak. Making such a binding polymorphic means routing the
   operator through **trait evidence** — the body taking an `Eq` dictionary parameter and each use
-  supplying it — instead of through the speculative-instruction path. The selfhost already has that
-  machinery for explicitly constrained bindings (`TraitEvidenceRewriting.ash`); what is missing is
-  inferring the constraint from a deferred operator and sending the body down the dictionary route.
-  That places SEM-22 squarely in the MOD-17 trait-keystone family rather than beside it.
+  supplying it — instead of through the speculative-instruction path.
+
+  **Two of the four steps that needs are already done, and the blocker is not the trait machinery**
+  (walked 2026-09-17). Each step below was checked rather than assumed:
+
+  1. **Inference already infers the constraint.** A probe running `inferProgram` on
+     `let isSame left right = left == right` with no use to pin it, and reading the scheme back
+     through `bindingTraitConstraints`, prints
+     `quantified=[... (7, "t7")] constraints=[TraitConstraint(traitName = "Eq", typeArguments =
+     [SemVariable(7)])]`. No inference work is needed for the unannotated case.
+  2. **The elaboration machinery already works.** `lowerCoreProgramWithEnvironment` feeds the
+     binding's scheme constraints to `rewriteTraitConstrainedValue`, and the probe program lowers
+     cleanly through it. `expectTraitConstrainedBindingFailsWithoutEnvironment` in
+     `CoreProgramLoweringTests.ash` pins that the environment is what makes the difference.
+  3. **The CLI supplies no environment, and cannot today.** `lowerCoreProgramWithSourceAndReuse`
+     passes `None`, so `rewriteTraitConstrainedTopLevelValue` returns every value untouched — which
+     is why even an explicitly written `requires {Eq(a)}` is ignored by a real compile. Threading an
+     environment through is a few lines, but the environment cannot be produced:
+     `inferStitchedProject` fails on any real program. Walking it finds `UnknownTypeName("Unit")`
+     first — `Unit` is absent from both `resolveTypeName`'s built-in names and
+     `standardTraitEnvironment`, a one-line fix that was verified — and then
+     `UnknownValue("Ashes.Byte.compare")`. **That second one is the blocker**: the intrinsic builtin
+     modules have no shipped `.ash` source, so a stitched program never defines them, and inference
+     has no counterpart to the lowering's `standardBuiltinLayouts`. Completing SEM-22 therefore
+     starts with giving the inference environment the builtin *value* signatures.
+  4. **Concrete call sites still need evidence.** `rewriteTraitConstrainedTopLevelValue` rewrites
+     references *inside* a constrained binding's value; a use in the trailing expression or in an
+     unconstrained binding gets nothing. The existing test is explicit that it does not cover this —
+     "No call site references `describe`: this proves the value-side rewrite alone".
+
+  So the order is: builtin signatures for inference, then thread the environment through the CLI,
+  then concrete call-site evidence. Only the last is trait-dictionary work; the first is what
+  actually gates it.
 
   One dead end, so it is not walked twice: reading the generalized scheme back out of
   `inferProgram`'s environment from a probe under `selfhost/tests/semantics` proved nothing,
