@@ -508,30 +508,28 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
      `inferStitchedProject` fails on any real program. Walking it finds `UnknownTypeName("Unit")`
      first — `Unit` is absent from both `resolveTypeName`'s built-in names and
      `standardTraitEnvironment`, a one-line fix that was verified — and then
-     `UnknownValue("Ashes.Byte.compare")`. **That second one is the blocker**: the intrinsic builtin
-     modules have no shipped `.ash` source, so a stitched program never defines them, and inference
-     has no counterpart to the lowering's `standardBuiltinLayouts`. Completing SEM-22 therefore
-     starts with giving the inference environment the builtin *value* signatures.
+     `UnknownValue("Ashes.Byte.compare")`. **Both are now fixed**:
+     `withIntrinsicBuiltinSignatures` binds every `standardBuiltinLayouts` entry under the qualified
+     name inference looks it up by and registers `Unit`, and both inference entry points start their
+     type-variable supply above `reservedInferenceTypeVariableCount` — seeding the builtins is
+     exactly what would otherwise have exposed the self-mapping-substitution loop that
+     `reservedBuiltinTypeVariableCount` records.
 
-     That port is short — every entry in `standardBuiltinLayouts` already carries a full
-     `TypeScheme`, so seeding is a fold adding `moduleName + "." + memberName` to the environment —
-     **but do not insert those schemes unrenumbered.** They are quantified over the low ids
-     `reservedBuiltinTypeVariableCount` reserves for them (currently 0–4), and lowering avoids a
-     collision by starting its own supply at 5, while inference's `initialTypeVariableSupply` starts
-     at 0. Inserting them as they stand lets a fresh inference variable be minted with the same id a
-     builtin scheme quantifies, and `instantiate` then builds the self-mapping substitution
-     `(0, SemVariable(0))` that `applySubstitution` recurses on forever — the infinite loop the
-     comment above `reservedBuiltinTypeVariableCount` records, reached from the other side. Either
-     renumber on insert or start inference's supply past the reserved range. Note also that
-     `addStandardTrait` sidesteps this only by picking ids from 1000 up, which is a bet that no
-     program needs a thousand type variables rather than a guarantee.
+     **What that leaves is one genuine type error in the shipped standard library.** Inference now
+     reaches the end of name resolution and type-checks the whole stitched stdlib, stopping on
+     `InferenceUnificationError(TypeMismatch(SemUInt(16), SemUInt(8)))` — on every program, including
+     `Ashes.IO.print("x")`, because the stitcher always pulls the same baseline modules in. It is not
+     the seeded traits colliding with the stitched `Ashes.Trait` source: the same mismatch appears
+     with the seeded traits omitted. The error carries no location, so finding it needs either a span
+     on the diagnostic or a bisection over the shipped modules.
   4. **Concrete call sites still need evidence.** `rewriteTraitConstrainedTopLevelValue` rewrites
      references *inside* a constrained binding's value; a use in the trailing expression or in an
      unconstrained binding gets nothing. The existing test is explicit that it does not cover this —
      "No call site references `describe`: this proves the value-side rewrite alone".
 
-  So the order is: builtin signatures for inference, then thread the environment through the CLI,
-  then concrete call-site evidence. Only the last is trait-dictionary work; the first is what
+  So the order is: the `u16`/`u8` mismatch, then thread the environment through the CLI (a few
+  lines, built and reverted once already — it stays out while it would be inert), then concrete
+  call-site evidence. Only the last is trait-dictionary work; the rest is what
   actually gates it.
 
   One dead end, so it is not walked twice: reading the generalized scheme back out of
