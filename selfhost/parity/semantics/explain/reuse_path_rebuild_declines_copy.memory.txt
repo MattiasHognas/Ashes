@@ -21,7 +21,8 @@ Function: fill
   reuse: entry copy omitted
   reuse: specialization candidate qualification rejected
   representation [lambda_2]
-    conservative unknown: 5
+    conservative unknown: 7
+    region:               2
     runtime rc:           3
     copy value:           6
   representation [lambda_1]

@@ -70,7 +70,7 @@ function lambda_0  [SourceFunction from insertLeft]
     Return                Source=32   (reuse_path_rebuild_declines_copy.ash:11:1)
 
 function lambda_2  [ClosureHelper from fill]
-  locals=15 temps=23
+  locals=19 temps=55
     LoadEnv               Target=0 Index=0   (reuse_path_rebuild_declines_copy.ash:16:1)
     StoreLocal            Slot=2 Source=0   (reuse_path_rebuild_declines_copy.ash:16:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
@@ -109,6 +109,56 @@ function lambda_2  [ClosureHelper from fill]
     LoadLocal             Target=20 Slot=1   (reuse_path_rebuild_declines_copy.ash:19:10)
     StoreLocal            Slot=2 Source=8   (reuse_path_rebuild_declines_copy.ash:19:10)
     StoreLocal            Slot=1 Source=18   (reuse_path_rebuild_declines_copy.ash:19:10)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadLocal             Target=23 Slot=15
+    LoadLocal             Target=24 Slot=3
+    SubInt                Target=25 Left=23 Right=24
+    LoadLocal             Target=26 Slot=5
+    LoadConstInt          Target=27 Value=1
+    ShlInt                Target=28 Left=26 Right=27
+    LoadConstInt          Target=29 Value=4096
+    AddInt                Target=30 Left=28 Right=29
+    CmpIntGt              Target=31 Left=25 Right=30
+    LoadLocal             Target=32 Slot=4
+    LoadLocal             Target=33 Slot=16
+    CmpIntNe              Target=34 Left=33 Right=32
+    OrInt                 Target=35 Left=31 Right=34
+    JumpIfFalse           CondTemp=35 Target=tco_compact_skip_3
+    Alloc                 Target=36 SizeBytes=8
+    MakeClosure           Target=37 FuncLabel=__deepcopy_4 EnvPtrTemp=36 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=36 OffsetBytes=0 Source=37
+    CallClosure           Target=38 ClosureTemp=37 ArgTemp=18
+    Alloc                 Target=39 SizeBytes=8
+    MakeClosure           Target=40 FuncLabel=__deepcopy_4 EnvPtrTemp=39 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=39 OffsetBytes=0 Source=40
+    CallClosure           Target=41 ClosureTemp=40 ArgTemp=38
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=14
+    Alloc                 Target=42 SizeBytes=8
+    MakeClosure           Target=43 FuncLabel=__deepcopy_4 EnvPtrTemp=42 EnvSizeBytes=8
+    StoreMemOffset        BasePtr=42 OffsetBytes=0 Source=43
+    CallClosure           Target=44 ClosureTemp=43 ArgTemp=41
+    StoreLocal            Slot=1 Source=44
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=14
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadLocal             Target=45 Slot=17
+    LoadLocal             Target=46 Slot=3
+    SubInt                Target=47 Left=45 Right=46
+    LoadLocal             Target=48 Slot=18
+    LoadLocal             Target=49 Slot=4
+    CmpIntEq              Target=50 Left=48 Right=49
+    JumpIfFalse           CondTemp=50 Target=tco_compact_rebase_5
+    StoreLocal            Slot=5 Source=47
+    Jump                  Target=tco_compact_recorded_6
+  tco_compact_rebase_5:
+    LoadMemOffset         Target=51 BasePtr=48 OffsetBytes=0
+    LoadConstInt          Target=52 Value=8
+    AddInt                Target=53 Left=51 Right=52
+    StoreLocal            Slot=3 Source=53
+    StoreLocal            Slot=4 Source=48
+    SubInt                Target=54 Left=45 Right=53
+    StoreLocal            Slot=5 Source=54
+  tco_compact_recorded_6:
+  tco_compact_skip_3:
     RestoreStackPointer   Slot=8   (reuse_path_rebuild_declines_copy.ash:19:10)
     Jump                  Target=lambda_2_body   (reuse_path_rebuild_declines_copy.ash:19:10)
     LoadConstInt          Target=21 Value=0   (reuse_path_rebuild_declines_copy.ash:19:10)
@@ -126,6 +176,29 @@ function lambda_1  [SourceFunction from fill]
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (reuse_path_rebuild_declines_copy.ash:16:1)
     MakeClosure           Target=5 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16   (reuse_path_rebuild_declines_copy.ash:16:1)
     Return                Source=5   (reuse_path_rebuild_declines_copy.ash:16:1)
+
+function __deepcopy_4  [AdtDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1
+    LoadEnv               Target=1 Index=0
+    GetAdtTag             Target=2 Ptr=0
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_4_default
+  __deepcopy_4_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0
+    Return                Source=3
+  __deepcopy_4_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=3
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8
+    CallClosure           Target=6 ClosureTemp=1 ArgTemp=5
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=16
+    StoreMemOffset        BasePtr=4 OffsetBytes=16 Source=7
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=24
+    CallClosure           Target=9 ClosureTemp=1 ArgTemp=8
+    StoreMemOffset        BasePtr=4 OffsetBytes=24 Source=9
+    Return                Source=4
+  __deepcopy_4_default:
+    Return                Source=0
 
 function _start_main  [ProgramEntry]
   locals=45 temps=76

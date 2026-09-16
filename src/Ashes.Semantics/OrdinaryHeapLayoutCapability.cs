@@ -53,6 +53,7 @@ internal sealed record OrdinaryHeapLayoutCapability(
     LoweredTempLayoutKind OuterLayout,
     OrdinaryHeapStructuralCopyKind StructuralCopy,
     bool ArenaDeepCopySupported,
+    bool RecursiveArenaDeepCopySupported,
     int? StaticCopySizeBytes,
     bool OwnedChildrenDroppable,
     bool ContainsOwnedChild,

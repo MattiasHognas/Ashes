@@ -3035,11 +3035,33 @@ public sealed partial class Lowering
     private bool IsDeepCopyOutSafeType(TypeRef type) =>
         GetOrdinaryHeapLayoutCapability(type).ArenaDeepCopySupported;
 
+    // The same question for the reclamation classifiers only, which additionally accept a
+    // self-recursive shape because the synthesized copier recurses through its own env[0] closure.
+    // The placement classifiers must keep asking the rejecting form above: admitting a recursive type
+    // there splits one type's constructor arms across arena and reference-counted representations,
+    // and an arena cell's no-op drop never walks into a reference-counted sibling's children.
+    private bool CanRecursiveDeepCopyOutAdt(TypeRef.TNamedType named) =>
+        GetOrdinaryHeapLayoutCapability(named).RecursiveArenaDeepCopySupported;
+
+    private bool IsRecursiveDeepCopyOutSafeType(TypeRef type) =>
+        GetOrdinaryHeapLayoutCapability(type).RecursiveArenaDeepCopySupported;
+
     /// <summary>
     /// Resolves a constructor field type by substituting type parameters with their
     /// concrete type arguments, then pruning any remaining type variables.
     /// </summary>
-    private TypeRef ResolveFieldType(TypeRef fieldType, Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap)
+    /// <param name="fieldType">The declared constructor field type to resolve.</param>
+    /// <param name="typeParamMap">Type parameter substitutions; null leaves the pruned type as is.</param>
+    /// <param name="selfType">When given, the instantiation whose constructors are being walked. A
+    ///   field naming that same symbol with no type arguments — how the standard library writes a
+    ///   recursive self-reference (<c>Node(Int, MapTree, K, V, MapTree)</c> inside
+    ///   <c>type MapTree(K, V)</c>) — denotes this instantiation. Without this the subtree keeps
+    ///   unsubstituted <c>K</c>/<c>V</c>, so <see cref="CopyFieldInsideCopier"/>'s pretty-name
+    ///   comparison does not recognise it as the self type and copies it as something else.</param>
+    private TypeRef ResolveFieldType(
+        TypeRef fieldType,
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap,
+        TypeRef.TNamedType? selfType = null)
     {
         var pruned = Prune(fieldType);
         if (typeParamMap is null)
@@ -3055,14 +3077,22 @@ public sealed partial class Lowering
         {
             case TypeRef.TTypeParam tp:
                 return typeParamMap.TryGetValue(tp.Symbol, out var concrete) ? Prune(concrete) : pruned;
+            case TypeRef.TNamedType bare
+                when bare.TypeArgs.Count == 0
+                    && selfType is not null
+                    && selfType.TypeArgs.Count > 0
+                    && ReferenceEquals(bare.Symbol, selfType.Symbol):
+                return selfType;
             case TypeRef.TNamedType named when named.TypeArgs.Count > 0:
-                return named with { TypeArgs = named.TypeArgs.Select(a => ResolveFieldType(a, typeParamMap)).ToList() };
+                return named with { TypeArgs = named.TypeArgs.Select(a => ResolveFieldType(a, typeParamMap, selfType)).ToList() };
             case TypeRef.TList list:
-                return new TypeRef.TList(ResolveFieldType(list.Element, typeParamMap));
+                return new TypeRef.TList(ResolveFieldType(list.Element, typeParamMap, selfType));
             case TypeRef.TTuple tuple:
-                return new TypeRef.TTuple(tuple.Elements.Select(e => ResolveFieldType(e, typeParamMap)).ToList());
+                return new TypeRef.TTuple(tuple.Elements.Select(e => ResolveFieldType(e, typeParamMap, selfType)).ToList());
             case TypeRef.TFun funType:
-                return new TypeRef.TFun(ResolveFieldType(funType.Arg, typeParamMap), ResolveFieldType(funType.Ret, typeParamMap));
+                return new TypeRef.TFun(
+                    ResolveFieldType(funType.Arg, typeParamMap, selfType),
+                    ResolveFieldType(funType.Ret, typeParamMap, selfType));
             default:
                 return pruned;
         }
@@ -3684,7 +3714,7 @@ public sealed partial class Lowering
             {
                 int fieldTemp = NewTemp();
                 Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, AdtFieldOffsetBytes(ctor, j)));
-                var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
+                var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap, named);
                 int copied = CopyFieldInsideCopier(fieldTemp, fieldType, named, selfTemp);
                 Emit(new IrInst.StoreMemOffset(newTemp, AdtFieldOffsetBytes(ctor, j), copied));
             }
@@ -4207,7 +4237,7 @@ public sealed partial class Lowering
                 // rebuilds it as a self-contained clone, so a tuple accumulator (e.g. a threaded
                 // `(seed, output)`) can reset. Same DeepAdt path as a fixed-shape ADT.
                 staticSizeBytes = 0;
-                return IsDeepCopyOutSafeType(pruned) ? CopyOutKind.DeepAdt : CopyOutKind.None;
+                return IsRecursiveDeepCopyOutSafeType(pruned) ? CopyOutKind.DeepAdt : CopyOutKind.None;
 
             case TypeRef.TNamedType named:
                 if (CanCopyOutAdt(named, out staticSizeBytes))
@@ -4218,7 +4248,7 @@ public sealed partial class Lowering
                 // A pointer-bearing ADT (list/string fields) can still be carried across the reset by a
                 // recursive deep copy — a self-contained clone. Lets a fixed-shape ADT accumulator reset.
                 staticSizeBytes = 0;
-                return CanDeepCopyOutAdt(named) ? CopyOutKind.DeepAdt : CopyOutKind.None;
+                return CanRecursiveDeepCopyOutAdt(named) ? CopyOutKind.DeepAdt : CopyOutKind.None;
 
             default:
                 staticSizeBytes = 0;
@@ -4258,7 +4288,7 @@ public sealed partial class Lowering
         // the synthesized list copier — a self-contained copy, fixed-watermark safe.
         // Lets n-body's List(Body) accumulator reset instead of growing O(N).
         staticSizeBytes = 0;
-        return IsDeepCopyOutSafeType(elemPruned) ? CopyOutKind.DeepAdt : CopyOutKind.None;
+        return IsRecursiveDeepCopyOutSafeType(elemPruned) ? CopyOutKind.DeepAdt : CopyOutKind.None;
     }
 
     // A value about to be released here whose bytes the scope's result may still be naming: a view a

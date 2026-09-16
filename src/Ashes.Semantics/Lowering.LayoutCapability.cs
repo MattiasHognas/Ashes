@@ -188,9 +188,8 @@ public sealed partial class Lowering
         OrdinaryHeapStructuralCopyKind structuralCopy = GetStructuralCopyKind(
             resolved,
             out int? staticCopySizeBytes);
-        bool arenaDeepCopySupported = IsArenaDeepCopyLayout(
-            resolved,
-            new HashSet<string>(StringComparer.Ordinal));
+        (bool arenaDeepCopySupported, bool recursiveArenaDeepCopySupported) =
+            GetArenaDeepCopySupport(resolved);
         bool ownedChildrenDroppable = CanDropOrdinaryValueGraph(
             resolved,
             new HashSet<TypeSymbol>());
@@ -230,6 +229,7 @@ public sealed partial class Lowering
             LayoutForType(resolved),
             structuralCopy,
             arenaDeepCopySupported,
+            recursiveArenaDeepCopySupported,
             staticCopySizeBytes,
             ownedChildrenDroppable,
             containsOwnedChild,
@@ -409,32 +409,53 @@ public sealed partial class Lowering
             : OrdinaryHeapStructuralCopyKind.None;
     }
 
-    private bool IsArenaDeepCopyLayout(TypeRef type, HashSet<string> path)
+    // The rejecting answer the placement classifiers ask for, and the recursion-admitting one the
+    // reclamation classifiers ask for, over the same walk.
+    private (bool Placement, bool Reclamation) GetArenaDeepCopySupport(TypeRef resolved) => (
+        IsArenaDeepCopyLayout(resolved, new HashSet<string>(StringComparer.Ordinal)),
+        IsArenaDeepCopyLayout(resolved, new HashSet<string>(StringComparer.Ordinal), admitRecursion: true));
+
+    private bool IsArenaDeepCopyLayout(TypeRef type, HashSet<string> path, bool admitRecursion = false)
     {
         TypeRef valueType = Prune(type);
         return valueType switch
         {
             _ when CanArenaReset(valueType) => true,
             TypeRef.TStr or TypeRef.TBytes => true,
-            TypeRef.TList list => IsArenaDeepCopyLayout(list.Element, path),
+            TypeRef.TList list => IsArenaDeepCopyLayout(list.Element, path, admitRecursion),
             TypeRef.TTuple tuple => tuple.Elements.All(element =>
-                IsArenaDeepCopyLayout(element, path)),
-            TypeRef.TNamedType named => IsArenaDeepCopyAdtLayout(named, path),
+                IsArenaDeepCopyLayout(element, path, admitRecursion)),
+            TypeRef.TNamedType named => IsArenaDeepCopyAdtLayout(named, path, admitRecursion),
             _ => false,
         };
     }
 
+    /// <param name="named">The instantiation whose constructor fields are walked.</param>
+    /// <param name="path">Type names already on the walk, used to detect re-entry.</param>
+    /// <param name="admitRecursion">When true, re-entering a type already on the path answers true
+    ///   instead of rejecting: <see cref="TrySynthesizeAdtCopier"/> registers its label before
+    ///   emitting the body, so a field of a type whose copier is already being built resolves to
+    ///   that copier and recurses through the env[0] self-closure, and Ashes values are immutable so
+    ///   the graph it walks is finite. Only the reclamation classifiers ask for this; the placement
+    ///   ones keep the rejecting answer, because admitting a recursive type there moves sibling
+    ///   constructor arms onto different representations and an arena cell's no-op drop never walks
+    ///   into a reference-counted sibling's children.</param>
     private bool IsArenaDeepCopyAdtLayout(
         TypeRef.TNamedType named,
-        HashSet<string> path)
+        HashSet<string> path,
+        bool admitRecursion = false)
     {
         TypeSymbol symbol = named.Symbol;
         if (symbol.Constructors.Count == 0
             || BuiltinRegistry.IsResourceTypeName(symbol.Name)
-            || IsResourceBearing(named)
-            || !path.Add(symbol.Name))
+            || IsResourceBearing(named))
         {
             return false;
+        }
+
+        if (!path.Add(symbol.Name))
+        {
+            return admitRecursion;
         }
 
         Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
@@ -453,8 +474,8 @@ public sealed partial class Lowering
         {
             foreach (TypeRef fieldType in constructor.ParameterTypes)
             {
-                TypeRef resolved = ResolveFieldType(fieldType, typeParamMap);
-                if (!IsArenaDeepCopyLayout(resolved, path))
+                TypeRef resolved = ResolveFieldType(fieldType, typeParamMap, named);
+                if (!IsArenaDeepCopyLayout(resolved, path, admitRecursion))
                 {
                     supported = false;
                     break;

@@ -2451,8 +2451,8 @@ public sealed partial class Lowering
                 || CanArenaReset(argTypes[i])
                 || IsResourceHandleType(argTypes[i])
                 || Prune(argTypes[i]) is TypeRef.TStr or TypeRef.TBigInt
-                || (Prune(argTypes[i]) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanDeepCopyOutAdt(n)))
-                || (Prune(argTypes[i]) is TypeRef.TTuple && IsDeepCopyOutSafeType(Prune(argTypes[i])))
+                || (Prune(argTypes[i]) is TypeRef.TNamedType n && (CanCopyOutAdt(n, out _) || CanRecursiveDeepCopyOutAdt(n)))
+                || (Prune(argTypes[i]) is TypeRef.TTuple && IsRecursiveDeepCopyOutSafeType(Prune(argTypes[i])))
                 || (Prune(argTypes[i]) is TypeRef.TList && TcoBackEdgeArgCopyOutKind(info, i, out _, out _) == CopyOutKind.DeepAdt));
     }
 
