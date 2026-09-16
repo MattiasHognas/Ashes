@@ -369,13 +369,50 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     `emitResolvedCoreEquality` falls back to `Eq`, with `<`, `<=`, `>` and `>=` mapped to `less`,
     `lessOrEqual`, `greater` and `greaterOrEqual`. It had to move below that dispatch in the file,
     which is sequentially scoped.
-    Open: the seeded standard implementations supply only `compare`
-    (`standardTraitImplementationMethodName("Ord")`), so `traitMethodTypeAt("Ord")("lessOrEqual")`
-    finds no method and `"a" <= "b"` now stops at `UnsupportedCoreTraitDispatch("Ord", ...)` where
-    it used to stop at `CoreOperatorTypeMismatch("<=", SemString, SemString)`. The four operator
-    methods are trait *defaults* whose bodies call `compare`, so closing this is the
-    default-method selection named above — or, if that proves the longer road, lowering the four
-    operators through `compare` and a match on the resulting `Ordering` the way those defaults do.
+    Done (2026-09-16): `"a" < "b"`, `<=`, `>` and `>=` compile and agree with stage 0 on all twelve
+    combinations of two operands and three orderings. Three things were in the way, and the
+    diagnosis that named only the third was wrong about which fires first.
+
+    1. **Supertrait plans blocked every `Ord` dispatch.** `buildTraitMethodClosure` matched only
+       `TraitEvidenceInstance(..., requirementPlans, [])`, and `Ord` requires `Eq`, so a non-empty
+       supertrait list fell through to the catch-all — which is why the error carried
+       `SemTuple([SemString])` rather than the bare `SemString` a missing method reports. Supertrait
+       plans are now carried and ignored rather than rejected. Only a method body dispatching a
+       supertrait method at the head's own type needs that dictionary, and at a concrete head the
+       dispatch resolves its evidence from the environment instead; where a generic head really
+       would need one the body reports `MissingCoreTraitEvidence` rather than lowering something
+       wrong. Building the dictionaries properly remains open, but nothing needs it yet.
+    2. **The defaults call a sibling method.** Past that, `Ord.compare` inside the four default
+       bodies is a name lowering cannot resolve — `UnknownLoweringBinding("Ord.compare")` — because
+       it denotes no value and the head type it would dispatch at is not pinned on the default
+       lambda's parameters. So the four are emitted the way `notEqual` already was: dispatch
+       `compare`, read the result's tag, test it against the constructors that default accepts. The
+       tests are a branchless `OrInt` fold, deliberately: the predicate is emitted inside whatever
+       expression the comparison appears in, and a label there splits a block the surrounding
+       lowering built as straight-line code — a partially applied call whose argument it is faults
+       when cut in two. `Unordered` is why the accepting sets are listed rather than derived from
+       tag order: `greaterOrEqual` is `Greater` or `Equal`, not "at least `Equal`".
+    3. **`Ordering` had no lowering layout.** `StandardTraits.ash` seeds its four constructors for
+       inference only, so `constructorLayout("Less")` answered `None` for any program that never
+       names the type. They now sit in `standardConstructorLayouts` beside `Unit`, `Maybe` and
+       `Result`, tagged in the declaration order `lib/Ashes/Trait.ash` uses. A missing tag fails
+       with `UnknownLoweringBinding("Ordering")` rather than degrading to an arm that never matches,
+       which would have answered every comparison `false`.
+
+    Open, and behind this rather than part of it: `Ashes.Trait.Show.show(x)` at a concrete type is
+    still `UnknownLoweringBinding("Ashes_Trait_Show.show")` — the same unresolvable-qualified-name
+    problem as (2), which the `Ord` operators route around rather than solve. And `sort` still does
+    not compile, but for SEM-22 below and not for this: its body's `<=` pins the operand type at the
+    first use, so `sort` types as `List(Int) -> List(Int)` and the three-line `isOrdered` reproducer
+    above still reports `Type mismatch: Int vs Str`.
+
+    Also found while validating, pre-existing on main and unrelated to traits: a **two-parameter
+    curried helper whose second argument is a trait-dispatched comparison result miscompiles** —
+    `let describe label flag = label + "=" + (if flag then "T" else "F")` called as
+    `describe("eq")([1] == [2])` prints garbage when built by a pristine stage 1, and the `Ord` form
+    of the same shape segfaults. A one-parameter helper, a literal `Bool` in the two-parameter
+    helper, and the comparison consumed directly by an `if` are all correct, so the partial
+    application is what carries it.
 - [ ] **SEM-22** A binding whose body uses `==` is not generalized: its first use fixes the operand
   type (2026-09-16). Five lines reproduce it, and the failure is symmetric, so it is the first use
   that pins rather than one type being unsupported:
@@ -1944,6 +1981,28 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   also instantiated at a second key type. The emitted IR of the closest reduction is structurally
   identical to the real one, trailing `RcDrop` included, and still correct — so the trigger needs
   more of the real context than the memo shape alone.
+- [ ] **CG-21** A two-parameter curried helper whose second argument is a trait-dispatched
+  comparison result miscompiles (2026-09-16, found while validating MOD-17c, pre-existing and
+  unrelated to it). Three lines reproduce it:
+
+  ```ash
+  let describe label flag = label + "=" + (if flag then "T" else "F")
+
+  Ashes.IO.print(describe("eq")([1] == [2]))
+  ```
+
+  Stage 1 prints several kilobytes of heap bytes where stage 0 prints `eq=F`; the `Ord` form of the
+  same shape (`describe("lt")("a" < "b")`) segfaults instead, faulting on `mov (%rsi),%rax` with
+  `rsi = 1` — a `Bool` dereferenced as a pointer. It reproduces on a stage 1 built from an
+  unmodified tree, so it is not MOD-17c's.
+
+  **The partial application is what carries it.** Each of these is correct: the same helper taking
+  one parameter (`let describe flag = ...`, `describe("a" < "b")`); the two-parameter helper with a
+  literal `Bool` (`describe("lt")(true)`); the two-parameter helper over a primitive comparison
+  (`describe("lt")(1 < 2)`, which never dispatches); and the comparison consumed directly by an `if`
+  with no call at all. Only the trait-dispatched result passed as the second curried argument fails,
+  so the suspect is the ownership of a dispatch result evaluated after a partial-application closure
+  has been built, not the dispatch itself.
 
 ### Object parsing and executable linking
 
