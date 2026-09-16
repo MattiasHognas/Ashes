@@ -12356,7 +12356,7 @@ public sealed partial class Lowering
     {
         LoweredValueRequest argumentRequest =
             LoweredValueRequest.None.WithCallerReportedExpectedType(funType.Arg);
-        if (CalleeResultMayReachArgument(rootExpr, i))
+        if (CalleeResultMayReachArgument(rootExpr, SummaryParameterIndex(collectedArgs, i)))
         {
             // The argument travels on inside the callee's result, so it escapes every binding scope
             // of this function exactly like a tail self-call argument escapes into the next
@@ -12423,7 +12423,7 @@ public sealed partial class Lowering
         }
 
         currentTemp = LowerAppliedClosureCall(
-            rootExpr, collectedArgs[i], i,
+            rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             // A resolved (Shallow/List) result is adopted by its own returns bit regardless of
             // AllowsOrdinaryRcPlacement, the same way EmitPerform's PlanPerformResultOwnership
             // does for a handler arm's result (OPT-49a): adopting a value the callee already
@@ -12463,6 +12463,34 @@ public sealed partial class Lowering
         int wordTemp = NewTemp();
         Emit(new IrInst.OrInt(wordTemp, runtimeManagedArgumentFlagTemp, requestTemp));
         return wordTemp;
+    }
+
+    /// <summary>
+    /// The position in the callee's ownership summary that the applied argument at
+    /// <paramref name="argumentIndex"/> actually binds. A callee with trait constraints is applied
+    /// to its hidden dictionaries first (<c>__trait_evidence_0</c> and friends, always leading —
+    /// the same shape <see cref="LowerCallRoot"/> already recognizes), and the summary's parameter
+    /// list holds only the source parameters, so the two run offset by however many dictionaries
+    /// this call supplies. Asking about argument <c>i</c> while reading <c>Parameters[i]</c> answers
+    /// about the parameter one place to the left of the one being passed.
+    /// </summary>
+    /// <remarks>
+    /// Returns a negative index for a dictionary argument itself, which every consumer already
+    /// treats as "no fact" through its own bounds check. Callers that walk the callee's *scheme*
+    /// rather than its summary — <see cref="IsCalleeParameterQuantifiedInScheme"/> — keep the
+    /// applied index, because the scheme's arrows include the dictionary parameters.
+    /// </remarks>
+    private static int SummaryParameterIndex(IReadOnlyList<Expr> collectedArgs, int argumentIndex)
+    {
+        int dictionaries = 0;
+        while (dictionaries < collectedArgs.Count
+            && collectedArgs[dictionaries] is Expr.Var evidence
+            && evidence.Name.StartsWith("__trait_evidence_", StringComparison.Ordinal))
+        {
+            dictionaries++;
+        }
+
+        return argumentIndex - dictionaries;
     }
 
     private bool IsCalleeParameterQuantifiedInScheme(Expr rootExpr, int argumentIndex)
@@ -12577,12 +12605,14 @@ public sealed partial class Lowering
     // a dangling child: it cost the arena-state plateau workload about 250 bytes an iteration.
     private bool CalleeResultMayReachArgument(Expr rootExpr, int argumentIndex)
         => GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex >= 0
             && argumentIndex < summary.Parameters.Count
             && summary.ResultReachesWhole(summary.Parameters[argumentIndex]);
 
     private bool CalleeResultMayReachParameter(Expr rootExpr, int argumentIndex, int argumentTemp)
         => IsRuntimeManagedResultTemp(argumentTemp)
             && GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex >= 0
             && argumentIndex < summary.Parameters.Count
             && summary.ResultReaches(summary.Parameters[argumentIndex]);
 
@@ -12593,6 +12623,7 @@ public sealed partial class Lowering
     private bool CalleeResultMayKeepParameterWhole(Expr rootExpr, int argumentIndex, int argumentTemp)
         => IsRuntimeManagedResultTemp(argumentTemp)
             && GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex >= 0
             && argumentIndex < summary.Parameters.Count
             && summary.ResultReachesWhole(summary.Parameters[argumentIndex]);
 
@@ -12604,6 +12635,7 @@ public sealed partial class Lowering
     // it, so the caller may release the list it handed over instead of abandoning it to the callee.
     private bool CalleeResultCannotKeepParameterWhole(Expr rootExpr, int argumentIndex)
         => GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex >= 0
             && argumentIndex < summary.Parameters.Count
             && summary.ResultCannotKeepParameterWhole(summary.Parameters[argumentIndex]);
 
@@ -13036,6 +13068,7 @@ public sealed partial class Lowering
             || (TryGetRuntimeManagedPatternBindingArgument(argument, out _)
                     || IsTcoParameterArgument(argument) && IsBorrowedRetainableParameterType(Prune(argumentType)))
                 && GetOwnershipSummaryForCallRoot(rootExpr) is { } patternSummary
+                && argumentIndex >= 0
                 && argumentIndex < patternSummary.Parameters.Count
                 && patternSummary.ResultReaches(patternSummary.Parameters[argumentIndex]);
 
@@ -13061,6 +13094,7 @@ public sealed partial class Lowering
             || !IsBorrowedRetainableParameterType(Prune(argumentType))
             || !(IsTcoParameterArgument(argument) || TryGetRuntimeManagedPatternBindingArgument(argument, out _))
             || GetOwnershipSummaryForCallRoot(rootExpr) is not { } summary
+            || argumentIndex < 0
             || argumentIndex >= summary.Parameters.Count
             || !summary.ResultReaches(summary.Parameters[argumentIndex])
             || !TryGetRuntimeManagedCallArgument(argument, argumentTemp, out int pendingParameterSlot))

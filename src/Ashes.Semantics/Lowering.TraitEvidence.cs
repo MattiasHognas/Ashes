@@ -2153,6 +2153,37 @@ public sealed partial class Lowering
         return dictionaries;
     }
 
+    /// <summary>
+    /// A constrained callee's arguments are lowered here rather than through
+    /// <c>LowerAppliedClosureCall</c>, so none of the call-boundary ownership rules that path
+    /// applies reach them. This restores the one whose absence is a use-after-free rather than a
+    /// missed optimization: a binding this scope still owns, handed to a callee whose own result
+    /// keeps it, is borrowed into that result while the binding's scope-exit release still fires.
+    /// </summary>
+    /// <remarks>
+    /// The whole-parameter question, as at every other retain site — a callee whose result merely
+    /// reaches the argument through destructured components references the children, not the
+    /// argument, and the argument's own release already covers them. <paramref name="realIndex"/> is
+    /// already summary-relative: the dictionaries were applied by
+    /// <c>LowerTraitDictionaryArguments</c> and are not in this list.
+    /// </remarks>
+    private int RetainOwnedDictionaryCallArgumentKeptByResult(
+        string functionName,
+        int realIndex,
+        Expr argument,
+        int argumentTemp,
+        TypeRef argumentType)
+    {
+        if (GetOwnershipSummary(functionName) is not { } summary
+            || realIndex >= summary.Parameters.Count
+            || !summary.ResultReachesWhole(summary.Parameters[realIndex]))
+        {
+            return argumentTemp;
+        }
+
+        return DuplicateRuntimeManagedOwnedValueForTransfer(argument, argumentTemp, argumentType);
+    }
+
     private (List<int> Temps, TypeRef Result)? LowerTraitDictionaryRealArguments(
         IReadOnlyList<Expr> arguments,
         TypeRef functionType,
@@ -2181,6 +2212,8 @@ public sealed partial class Lowering
                     argument,
                     LoweredValueRequest.None.WithCallerReportedExpectedType(function.Arg)).AsPair();
             argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+            argumentTemp = RetainOwnedDictionaryCallArgumentKeptByResult(
+                functionName, argumentTemps.Count, argument, argumentTemp, function.Arg);
             argumentTemps.Add(argumentTemp);
             Unify(function.Arg, argumentType);
             SubsumeCalleeRow(function.Row, span);
