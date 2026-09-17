@@ -609,17 +609,115 @@ let recursive lookupStubVa symbolName stubVas =
             then va
             else lookupStubVa(symbolName)(rest)
 
-let recursive applyTextPatches patches stubVas textVa codeBytes =
+// One relocation with its final value computed: the bytes that replace `[resolvedOffset,
+// resolvedOffset + length)` of the section being patched.
+type ResolvedPatch =
+    | resolvedOffset: Int
+    | resolvedBytes: Bytes
+
+let patchValueBytes width value =
+    if width == 8
+    then
+        8
+        |> Ashes.Byte.allocate
+        |> putU64(0)(Ashes.Number.UInt.fromInt64(value))
+    else
+        4
+        |> Ashes.Byte.allocate
+        |> putU32FromInt(0)(value)
+
+let recursive patchesAscending (previous: Int) (patches: List(ResolvedPatch)) =
     match patches with
-        | [] -> codeBytes
+        | [] -> true
+        | ResolvedPatch { resolvedOffset = offset } :: rest ->
+            if offset < previous
+            then false
+            else patchesAscending(offset)(rest)
+
+let recursive splitPatches (patches: List(ResolvedPatch)) (left: List(ResolvedPatch)) (right: List(ResolvedPatch)) =
+    match patches with
+        | [] -> (left, right)
+        | patch :: rest -> splitPatches(rest)(right)(patch :: left)
+
+let recursive mergePatches (left: List(ResolvedPatch)) (right: List(ResolvedPatch)) (acc: List(ResolvedPatch)) =
+    match (left, right) with
+        | ([], []) -> reverseList(acc)
+        | (patch :: rest, []) -> mergePatches(rest)([])(patch :: acc)
+        | ([], patch :: rest) -> mergePatches([])(rest)(patch :: acc)
+        | (leftPatch :: leftRest, rightPatch :: rightRest) ->
+            if leftPatch.resolvedOffset <= rightPatch.resolvedOffset
+            then mergePatches(leftRest)(right)(leftPatch :: acc)
+            else mergePatches(left)(rightRest)(rightPatch :: acc)
+
+let recursive sortPatches (patches: List(ResolvedPatch)) =
+    match patches with
+        | [] -> []
+        | single :: [] -> [single]
+        | _ ->
+            match splitPatches(patches)([])([]) with
+                | (left, right) ->
+                    mergePatches(sortPatches(left))(sortPatches(right))([])
+
+// A relocation table lists its entries by ascending offset, so the sort is the fallback for an
+// object that does not, not the expected path.
+let orderedPatches (patches: List(ResolvedPatch)) =
+    if patchesAscending(0)(patches)
+    then patches
+    else sortPatches(patches)
+
+let sliceBytes (bytes: Bytes) (start: Int) (length: Int) =
+    length
+    |> Ashes.Byte.subText(bytes)(start)
+    |> Ashes.Byte.fromText
+
+// The section as alternating untouched slices and replacements, in order. A patch that overlaps its
+// predecessor or runs past the end is a malformed object, reported rather than clamped away.
+let recursive patchPieces (bytes: Bytes) (patches: List(ResolvedPatch)) (cursor: Int) (acc: List(Bytes)) =
+    match patches with
+        | [] -> reverseList(sliceBytes(bytes)(cursor)(Ashes.Byte.length(bytes) - cursor) :: acc)
+        | ResolvedPatch { resolvedOffset = offset, resolvedBytes = replacement } :: rest ->
+            if offset < cursor || offset + Ashes.Byte.length(replacement) > Ashes.Byte.length(bytes)
+            then Ashes.IO.panic("linker: a relocation patch overlaps another or lies outside its section")
+            else patchPieces(bytes)(rest)(offset + Ashes.Byte.length(replacement))(replacement :: sliceBytes(bytes)(cursor)(offset - cursor) :: acc)
+
+let recursive appendPairs (pieces: List(Bytes)) (acc: List(Bytes)) =
+    match pieces with
+        | first :: second :: rest -> appendPairs(rest)(Ashes.Byte.append(first)(second) :: acc)
+        | single :: [] -> reverseList(single :: acc)
+        | [] -> reverseList(acc)
+
+// Joins the pieces pairwise, level by level, so every byte is copied once per level: n log n in
+// the piece count where a left-to-right append chain would be quadratic.
+let recursive concatPieces (pieces: List(Bytes)) =
+    match pieces with
+        | [] -> Ashes.Byte.allocate(0)
+        | single :: [] -> single
+        | _ ->
+            []
+            |> appendPairs(pieces)
+            |> concatPieces
+
+// Every update to a `Bytes` is pure, and one that cannot prove its input unique copies the whole
+// buffer first, so writing relocations one at a time costs the section's size per relocation. The
+// section is instead rebuilt once, from the slices no relocation touches and the replacement bytes
+// of each one that does.
+let applyResolvedPatches (patches: List(ResolvedPatch)) (bytes: Bytes) =
+    match patches with
+        | [] -> bytes
+        | _ ->
+            []
+            |> patchPieces(bytes)(orderedPatches(patches))(0)
+            |> concatPieces
+
+let recursive resolveTextPatches patches stubVas textVa acc =
+    match patches with
+        | [] -> reverseList(acc)
         | TextRelocationPatch { patchOffset = patchOffset, patchSymbolName = patchSymbolName, patchAddend = patchAddend } :: rest ->
-            let placeVa = textVa + patchOffset
-            in
-                let value = lookupStubVa(patchSymbolName)(stubVas) + patchAddend - placeVa
-                in
-                    codeBytes
-                    |> putU32FromInt(patchOffset)(value)
-                    |> applyTextPatches(rest)(stubVas)(textVa)
+            let value = lookupStubVa(patchSymbolName)(stubVas) + patchAddend - (textVa + patchOffset)
+            in resolveTextPatches(rest)(stubVas)(textVa)(ResolvedPatch(resolvedOffset = patchOffset, resolvedBytes = patchValueBytes(4)(value)) :: acc)
+
+let applyTextPatches patches stubVas textVa codeBytes =
+    applyResolvedPatches(resolveTextPatches(patches)(stubVas)(textVa)([]))(codeBytes)
 
 // A `.text` reference into `.rodata` or into `.text` itself, either absolute (`S + A`, no
 // patch-site subtraction) or PC-relative (`S + A - P`, `P` the patch site's own final virtual
@@ -628,13 +726,13 @@ let recursive applyTextPatches patches stubVas textVa codeBytes =
 // are each section's own final base address once laid out; every collected patch resolves against
 // one of those two (`dataPatchTargetsText` says which) with the symbol's own section offset
 // already folded into its addend, so unlike `applyTextPatches` there is no per-symbol lookup at
-// all. An 8-byte patch writes the full computed virtual address (`putU64`) rather than truncating
-// to 32 bits (`putU32FromInt`) the way every 4-byte type does. `placeVa` is the final base address
-// of `bytes` itself — `.text`'s when patching code, `.rodata`'s when patching a jump table — so a
-// PC-relative patch subtracts the patch site's own final address whichever section holds it.
-let recursive applyDataPatches patches rodataVa bssVa textVa placeVa bytes =
+// all. An 8-byte patch writes the full computed virtual address rather than truncating to 32 bits
+// the way every 4-byte type does. `placeVa` is the final base address of `bytes` itself —
+// `.text`'s when patching code, `.rodata`'s when patching a jump table — so a PC-relative patch
+// subtracts the patch site's own final address whichever section holds it.
+let recursive resolveDataPatches patches rodataVa bssVa textVa placeVa acc =
     match patches with
-        | [] -> bytes
+        | [] -> reverseList(acc)
         | DataRelocationPatch { dataPatchOffset = patchOffset, dataPatchAddend = patchAddend, dataPatchPcRelative = pcRelative, dataPatchWidth = width, dataPatchTargetsText = targetsText, dataPatchTargetsBss = targetsBss } :: rest ->
             let targetVa =
                 if targetsText
@@ -649,12 +747,12 @@ let recursive applyDataPatches patches rodataVa bssVa textVa placeVa bytes =
                     then targetVa - (placeVa + patchOffset)
                     else targetVa
                 in
-                    let patched =
-                        if width == 8
-                        then
-                            putU64(patchOffset)(Ashes.Number.UInt.fromInt64(value))(bytes)
-                        else putU32FromInt(patchOffset)(value)(bytes)
-                    in applyDataPatches(rest)(rodataVa)(bssVa)(textVa)(placeVa)(patched)
+                    resolveDataPatches(rest)(rodataVa)(bssVa)(textVa)(placeVa)(
+                        ResolvedPatch(resolvedOffset = patchOffset, resolvedBytes = patchValueBytes(width)(value)) :: acc
+                    )
+
+let applyDataPatches patches rodataVa bssVa textVa placeVa bytes =
+    applyResolvedPatches(resolveDataPatches(patches)(rodataVa)(bssVa)(textVa)(placeVa)([]))(bytes)
 
 let linuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2"
 
