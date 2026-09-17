@@ -1,3 +1,5 @@
+using Ashes.Frontend;
+
 namespace Ashes.Semantics;
 
 // A consumer that must own a reference-counted value (an aggregate storing a child, a loop taking
@@ -77,6 +79,76 @@ public sealed partial class Lowering
 
         RecordPossiblySharedChild();
         return resultTemp;
+    }
+
+    /// <summary>
+    /// The tail a reference-counted cell takes over from the accumulator parameter it extends. The
+    /// parameter's first value is whatever the caller passed, so a tail outside the reference-counted
+    /// region is copied into it; one inside is moved into the cell exactly as it was before, with
+    /// no reference taken, because the cell replaces the parameter as its holder.
+    /// </summary>
+    private int EmitReferenceCountedListTail(int tailTemp, TypeRef tailType)
+    {
+        if (!CanTestRepresentation || Prune(tailType) is not TypeRef.TList list)
+        {
+            return tailTemp;
+        }
+
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, tailTemp));
+        int resultSlot = NewLocal();
+        string doneLabel = NewLabel("rc_tail_done");
+        Emit(new IrInst.StoreLocal(resultSlot, tailTemp));
+        // The empty list is the null pointer: nothing to copy and nothing that points anywhere.
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int emptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(emptyTemp, tailTemp, zeroTemp));
+        int keepTemp = NewTemp();
+        Emit(new IrInst.OrInt(keepTemp, referenceCountedTemp, emptyTemp));
+        string copyLabel = NewLabel("rc_tail_copy");
+        Emit(new IrInst.JumpIfFalse(keepTemp, copyLabel));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitRuntimeManagedTcoParamCopyByCopy(tailTemp, list)));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    /// <summary>
+    /// The child a reference-counted parent stores for a string bound out of a pattern. Such a
+    /// string is whatever the matched value's strings are: retaining an arena one retains nothing,
+    /// and the parent would keep a pointer into the arena. The parent takes a reference to a
+    /// reference-counted string and a copy of any other, which stands in for the pattern-owner
+    /// duplicate.
+    /// </summary>
+    private bool TryOwnPatternBoundStringChild(Expr argument, TypeRef fieldType, int sourceTemp, out int ownedTemp)
+    {
+        ownedTemp = sourceTemp;
+        if (!CanTestRepresentation
+            || Prune(fieldType) is not TypeRef.TStr
+            || !IsPerceusPatternOwnerRead(argument)
+            || _patternOwnerNormalizedTemps.Contains(sourceTemp))
+        {
+            return false;
+        }
+
+        ownedTemp = EmitReferenceOrCopy(sourceTemp, () =>
+        {
+            int copiedTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(
+                copiedTemp,
+                sourceTemp,
+                TcoRuntimeManagedCopySize(fieldType),
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            return copiedTemp;
+        });
+        MarkRuntimeManagedTemp(ownedTemp);
+        _patternOwnerNormalizedTemps.Add(ownedTemp);
+        return true;
     }
 
     // A retain in place of a copy leaves the value it was read from sharing that child, so no owner

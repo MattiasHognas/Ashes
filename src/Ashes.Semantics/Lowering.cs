@@ -15420,7 +15420,7 @@ public sealed partial class Lowering
             && Lookup(tcoTail.Name) is Binding.Local tcoTailLocal
             && tcoTailLocal.Slot == tcoTailSlot)
         {
-            return tailTemp;
+            return EmitReferenceCountedListTail(tailTemp, tcoTailLocal.T);
         }
 
         if (tailExpression is not Expr.Var tail

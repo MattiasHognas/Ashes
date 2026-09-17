@@ -1842,6 +1842,12 @@ public sealed partial class Lowering
         }
 
         if (runtimeManagedParent
+            && TryOwnPatternBoundStringChild(argument, fieldType, lowered.Temp, out int ownedStringTemp))
+        {
+            return (ownedStringTemp, lowered.Type);
+        }
+
+        if (runtimeManagedParent
             && !IsRuntimeManagedResultTemp(lowered.Temp)
             && RequiresRuntimeManagedChildCopy(fieldType))
         {
