@@ -1664,6 +1664,14 @@ let describeInstruction instruction =
                     optionalIntOperand("SourceTemp")(sourceTemp)
                 ]
             )
+        | IsReferenceCounted(target, sourceTemp) ->
+            IrInstructionDescription(
+                opcode = "IsReferenceCounted",
+                operands = [
+                    optionalIntOperand("Target")(target),
+                    optionalIntOperand("SourceTemp")(sourceTemp)
+                ]
+            )
         | Borrow(target, sourceTemp) ->
             IrInstructionDescription(
                 opcode = "Borrow",

@@ -272,6 +272,7 @@ let instructionTemps (kind: IrInstructionKind) =
         | RcDrop(t, _, _, _, _, _) -> [t]
         | RcDup(t1, t2, _, _) -> [t1, t2]
         | RcIsUnique(t1, t2) -> [t1, t2]
+        | IsReferenceCounted(t1, t2) -> [t1, t2]
         | Borrow(t1, t2) -> [t1, t2]
         | TcoResetPending(_, temps, _) -> temps
         | SaveArenaState(_, _, _) -> []

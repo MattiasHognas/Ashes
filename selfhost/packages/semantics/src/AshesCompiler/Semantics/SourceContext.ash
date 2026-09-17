@@ -315,6 +315,7 @@ let isRuntimeMachinery (instruction: IrInstructionKind) =
         | RcDrop(_, _, _, _, _, _) -> true
         | RcDup(_, _, _, _) -> true
         | RcIsUnique(_, _) -> true
+        | IsReferenceCounted(_, _) -> true
         | Borrow(_, _) -> true
         | _ -> false
 

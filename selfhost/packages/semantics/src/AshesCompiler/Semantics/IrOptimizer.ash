@@ -1321,6 +1321,7 @@ let isNonAllocatingInst nonAllocatingFns inst =
         | RcDup(_, _, _, _) -> true
         | RcDrop(_, _, _, _, _, _) -> true
         | RcIsUnique(_, _) -> true
+        | IsReferenceCounted(_, _) -> true
         | BytesLength(_, _) -> true
         | BytesGet(_, _, _) -> true
         | BytesCompare(_, _, _) -> true
