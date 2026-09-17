@@ -50,10 +50,13 @@ or project loading fails with a null reference (SEM-20). Point it at one module 
 whole package before fixing anything, so what remains is a list you can order rather than a queue you
 discover one failure at a time.
 
-**Expect it to be slow and hungry.** The probe's own module now costs 3,684 MB and 2.58 s through the
-whole pipeline, down from the 7,313 MB the OPT-85 entry records, but a compiler module in the middle
-of the package still exceeds 24 GB, and compiling the semantics package whole peaked at 51.6 GB after
-10m40s before it had to be killed. That is OPT-85, the memory task behind step 2.
+**Expect it to be slow and hungry.** The probe's own module (`TypeResolution`) costs 3,776 MB and
+2.56 s through the whole pipeline, down from the 7,313 MB the OPT-85 entry records. That figure
+includes a real +92 MB against the 3,684 MB measured just before the builtin layout table was
+completed: 52 more statically embedded schemes are seeded into the inference environment, and 2.5%
+is what they cost. A compiler module in the middle of the package still exceeds 24 GB, and compiling
+the semantics package whole peaked at 51.6 GB after 10m40s before it had to be killed. That is
+OPT-85, the memory task behind step 2.
 
 **When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
 than marking it done here. Read "How to work on this" below before your first change.
