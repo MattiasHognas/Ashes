@@ -33,7 +33,7 @@ Function: go
 
 Function: loop [lambda_5]
   Operations
-    dup:                  1
+    dup:                  0
     drop:                 2
     uniqueness checks:    1
     allocations:          0
@@ -53,7 +53,7 @@ Function: loop
 
 Function: loop [lambda_5__scalarenv0]
   Operations
-    dup:                  1
+    dup:                  0
     drop:                 2
     uniqueness checks:    1
     allocations:          0

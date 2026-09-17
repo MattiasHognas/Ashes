@@ -12900,6 +12900,12 @@ public sealed partial class Lowering
         return retainedTarget;
     }
 
+    // A copy-type argument has no reference count to take. It can still name a runtime-managed
+    // owner — a scalar field bound out of a reference-counted list element is a pattern owner
+    // rooted at that list — and a callee that returns its parameter makes the reach analysis
+    // report that the result keeps it, which together would retain an integer as a pointer.
+    private bool IsCopyTypeCallArgument(TypeRef argumentType) => CanArenaReset(Prune(argumentType));
+
     private int PrepareRuntimeManagedCallArgument(
         Expr argument,
         TypeRef argumentType,
@@ -12944,7 +12950,7 @@ public sealed partial class Lowering
 
             _pendingRuntimeArgumentFlags[flagTemp] = pendingParameterSlot;
         }
-        if (!transfersFreshRuntimeArgument)
+        if (!transfersFreshRuntimeArgument && !IsCopyTypeCallArgument(argumentType))
         {
             // The callee's own AcceptsRuntimeManagedArgument bit (flagTemp) is a trustworthy signal
             // only for a callee the compiler has statically proven entry-normalized — its own entry
