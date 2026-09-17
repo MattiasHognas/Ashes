@@ -438,6 +438,17 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, shouldCache, cacheBlock, freeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheBlock);
+        // TEMPORARY diagnostic: overwrite a freed block's payload, so a read after free shows.
+        if (string.Equals(Environment.GetEnvironmentVariable("ASHES_RC_POISON"), "1", StringComparison.Ordinal))
+        {
+            LlvmValueHandle payload = LlvmApi.BuildIntToPtr(builder,
+                LlvmApi.BuildAdd(builder, allocationBase, LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_poison_addr"),
+                state.I8Ptr, "rc_poison_ptr");
+            LlvmValueHandle payloadSize = LlvmApi.BuildSub(builder, allocationSize,
+                LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_poison_size");
+            LlvmApi.BuildMemSet(builder, payload, LlvmApi.ConstInt(state.I8, 0xDD, 0), payloadSize, 1);
+        }
+
         LlvmValueHandle freeListSlot = EmitRuntimeRcFreeListBinSlot(
             state, allocationSize, "rc_drop");
         LlvmValueHandle freeListHead = LlvmApi.BuildLoad2(builder, state.I64,
@@ -1287,7 +1298,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, overflow, growBlock, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, growBlock);
-        LlvmValueHandle helper = GetOrEmitHeapGrowHelper(state);
+        bool referenceCounted = cursorSlot.Ptr == state.RcArenaCursorSlot.Ptr;
+        LlvmValueHandle helper = GetOrEmitHeapGrowHelper(state, referenceCounted);
         LlvmApi.BuildCall2(
             builder,
             HeapGrowHelperType(state),
@@ -1306,9 +1318,10 @@ internal static partial class LlvmCodegen
             LlvmApi.VoidTypeInContext(state.Target.Context),
             [state.I64Ptr, state.I64Ptr, state.I64]);
 
-    private static LlvmValueHandle GetOrEmitHeapGrowHelper(LlvmCodegenState state)
+    private static LlvmValueHandle GetOrEmitHeapGrowHelper(LlvmCodegenState state, bool referenceCounted)
     {
-        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, HeapGrowHelperName);
+        string helperName = referenceCounted ? ReferenceCountedHeapGrowHelperName : HeapGrowHelperName;
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, helperName);
         if (existing.Ptr != 0)
         {
             return existing;
@@ -1316,7 +1329,7 @@ internal static partial class LlvmCodegen
 
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
-        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, HeapGrowHelperName, HeapGrowHelperType(state));
+        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, helperName, HeapGrowHelperType(state));
         LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
         LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
             LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
@@ -1338,7 +1351,8 @@ internal static partial class LlvmCodegen
             helperState,
             LlvmApi.GetParam(fn, 0),
             LlvmApi.GetParam(fn, 1),
-            LlvmApi.GetParam(fn, 2));
+            LlvmApi.GetParam(fn, 2),
+            referenceCounted);
         LlvmApi.BuildRetVoid(builder);
 
         LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
@@ -1354,7 +1368,7 @@ internal static partial class LlvmCodegen
     /// <see cref="EmitRestoreArenaState"/> can walk back and reclaim abandoned chunks.
     /// </summary>
     private static void EmitHeapGrow(LlvmCodegenState state)
-        => EmitHeapGrow(state, state.HeapCursorSlot, state.HeapEndSlot, LlvmApi.ConstInt(state.I64, 0, 0));
+        => EmitHeapGrow(state, state.HeapCursorSlot, state.HeapEndSlot, LlvmApi.ConstInt(state.I64, 0, 0), referenceCounted: false);
 
     /// <summary>
     /// Allocates a new heap chunk large enough to satisfy an allocation of <paramref name="neededBytes"/>
@@ -1363,7 +1377,7 @@ internal static partial class LlvmCodegen
     /// grows the chunk to <c>neededBytes + overhead</c> so the request fits — without this, the
     /// ensure-space loop would allocate one fixed chunk per iteration forever and exhaust memory.
     /// </summary>
-    private static void EmitHeapGrow(LlvmCodegenState state, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot, LlvmValueHandle neededBytes)
+    private static void EmitHeapGrow(LlvmCodegenState state, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot, LlvmValueHandle neededBytes, bool referenceCounted)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         // Header link = the current chunk's end (0 on the to-space's first grow — harmless, to-space is
@@ -1380,7 +1394,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle standard = LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0);
         LlvmValueHandle fitsStandard = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, fitSize, standard, "grow_heap_fits_standard");
         LlvmValueHandle chunkSize = LlvmApi.BuildSelect(builder, fitsStandard, standard, fitSize, "grow_heap_chunk_size");
-        LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, chunkSize, "grow_heap");
+        LlvmValueHandle chunkBase = referenceCounted
+            ? EmitAllocateReferenceCountedOsMemory(state, chunkSize, prevEnd, "grow_rc_heap")
+            : EmitAllocateOsMemory(state, chunkSize, "grow_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
         EmitHeapChunkSetup(state, chunkBase, chunkSize, prevEnd, cursorSlot, endSlot, "grow_heap");
     }

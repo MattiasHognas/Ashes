@@ -1772,6 +1772,27 @@ public sealed partial class Lowering
         bool consumedListTail,
         Expr? sourceExpression = null)
     {
+        bool copies = !alreadyRuntimeManaged && !(consumedListTail && argType is TypeRef.TList);
+        if (!copies || !GuardSiteEnabled(8) || CanArenaReset(argType) || argType is TypeRef.TFun)
+        {
+            return TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
+                sourceTemp, argType, alreadyRuntimeManaged, aliasesPredecessor, consumedListTail, sourceExpression);
+        }
+
+        return EmitReferenceOrCopy(
+            sourceTemp,
+            () => TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
+                sourceTemp, argType, alreadyRuntimeManaged, aliasesPredecessor, consumedListTail, sourceExpression));
+    }
+
+    private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
+        int sourceTemp,
+        TypeRef argType,
+        bool alreadyRuntimeManaged,
+        bool aliasesPredecessor,
+        bool consumedListTail,
+        Expr? sourceExpression = null)
+    {
         if (alreadyRuntimeManaged)
         {
             return TcoBackEdgeRetainRuntimeManagedArg(sourceTemp, argType, aliasesPredecessor);
@@ -1947,6 +1968,19 @@ public sealed partial class Lowering
 
     private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type, bool releaseAdtSourceChildren = false, Expr? sourceExpression = null)
     {
+        // A copy that also releases the source's children is a move, which a reference cannot stand in for.
+        if (releaseAdtSourceChildren || !GuardSiteEnabled(1) || CanArenaReset(Prune(type)))
+        {
+            return EmitRuntimeManagedTcoDeepCopyByCopy(sourceTemp, type, releaseAdtSourceChildren, sourceExpression);
+        }
+
+        return EmitReferenceOrCopy(
+            sourceTemp,
+            () => EmitRuntimeManagedTcoDeepCopyByCopy(sourceTemp, type, releaseAdtSourceChildren, sourceExpression));
+    }
+
+    private int EmitRuntimeManagedTcoDeepCopyByCopy(int sourceTemp, TypeRef type, bool releaseAdtSourceChildren, Expr? sourceExpression)
+    {
         TypeRef valueType = Prune(type);
         if (CanArenaReset(valueType))
         {
@@ -2027,6 +2061,11 @@ public sealed partial class Lowering
             || CanRuntimeManagePositionalAdt(named);
 
     private int EmitRuntimeManagedTcoListDeepCopy(int sourceTemp, TypeRef elementType)
+        => GuardSiteEnabled(2)
+            ? EmitReferenceOrCopy(sourceTemp, () => EmitRuntimeManagedTcoListDeepCopyByCopy(sourceTemp, elementType))
+            : EmitRuntimeManagedTcoListDeepCopyByCopy(sourceTemp, elementType);
+
+    private int EmitRuntimeManagedTcoListDeepCopyByCopy(int sourceTemp, TypeRef elementType)
     {
         int currentSlot = NewLocal();
         int firstSlot = NewLocal();
@@ -5596,7 +5635,7 @@ public sealed partial class Lowering
                     runtimeConstructor = constructor;
                 }
 
-                bool runtimeDeepUnique = runtimeManaged && prunedValueType switch
+                bool runtimeDeepUnique = runtimeManaged && !CanTestRepresentation && prunedValueType switch
                 {
                     TypeRef.TList => IsFreshListConstructionExpression(let.Value),
                     TypeRef.TNamedType named when CanRuntimeManageRecursiveCopyAdt(named)
@@ -7542,11 +7581,11 @@ public sealed partial class Lowering
                     case IrInst.LoadLocal load when load.Slot == site.LocalSlot:
                         changed |= aliases.Add(load.Target);
                         break;
-                    case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
-                        changed |= aliases.Add(borrow.Target);
-                        break;
                     case IrInst.GetAdtField field when aliases.Contains(field.Ptr):
                         changed |= aliases.Add(field.Target);
+                        break;
+                    case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
+                        changed |= aliases.Add(borrow.Target);
                         break;
                     case IrInst.RcDup duplicate when aliases.Contains(duplicate.SourceTemp):
                         if (!duplicate.RuntimeManaged)
@@ -9519,6 +9558,11 @@ public sealed partial class Lowering
     }
 
     private int EmitRuntimeManagedTcoParamCopy(int sourceTemp, TypeRef type)
+        => GuardSiteEnabled(4) && !CanArenaReset(Prune(type))
+            ? EmitReferenceOrCopy(sourceTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(sourceTemp, type))
+            : EmitRuntimeManagedTcoParamCopyByCopy(sourceTemp, type);
+
+    private int EmitRuntimeManagedTcoParamCopyByCopy(int sourceTemp, TypeRef type)
     {
         int normalizedTemp = NewTemp();
         if (type is TypeRef.TList list)
@@ -9531,18 +9575,18 @@ public sealed partial class Lowering
             }
             else
             {
-                normalizedTemp = EmitRuntimeManagedTcoListDeepCopy(sourceTemp, list.Element);
+                normalizedTemp = EmitRuntimeManagedTcoListDeepCopyByCopy(sourceTemp, list.Element);
             }
         }
         else if (type is TypeRef.TTuple tuple
             && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
         {
-            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopyByCopy(sourceTemp, tuple, releaseAdtSourceChildren: false, sourceExpression: null);
         }
         else if (type is TypeRef.TNamedType named
             && !CanCopyOutAdt(named, out _))
         {
-            normalizedTemp = EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
+            normalizedTemp = EmitRuntimeManagedTcoDeepCopyByCopy(sourceTemp, named, releaseAdtSourceChildren: false, sourceExpression: null);
         }
         else
         {
@@ -15335,10 +15379,16 @@ public sealed partial class Lowering
         string emptyLabel = NewLabel("tmc_close_empty");
         string doneLabel = NewLabel("tmc_close_done");
         Emit(new IrInst.JumpIfFalse(hasDestTemp, emptyLabel));
+        // The spine's cells are reference-counted, and a reference-counted cell never points at arena
+        // memory: a base-case value of any other representation is normalized before it becomes the
+        // last cell's tail.
+        int tailTemp = bodyRuntimeManaged || tco.ResultType is null
+            ? bodyTemp
+            : EmitRuntimeManagedTcoParamCopy(bodyTemp, Prune(tco.ResultType));
         Emit(new IrInst.StoreMemOffset(
             destTemp,
             HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex),
-            bodyTemp));
+            tailTemp));
         int spineTemp = NewTemp();
         Emit(new IrInst.LoadLocal(spineTemp, tco.TmcResultSlot));
         Emit(new IrInst.StoreLocal(resultSlot, spineTemp));
