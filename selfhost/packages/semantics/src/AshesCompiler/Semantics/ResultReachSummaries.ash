@@ -80,13 +80,28 @@ let recursive lookupCount (entries: List(ParameterReachEntry)) (key: Str) =
             then count
             else lookupCount(rest)(key)
 
-let recursive setCount (key: Str) (value: Int) (entries: List(ParameterReachEntry)) =
+let recursive replaceCount (key: Str) (value: Int) (entries: List(ParameterReachEntry)) =
     match entries with
         | [] -> [ParameterReachEntry(parameterName = key, reachCount = value)]
         | (ParameterReachEntry { parameterName = name } as entry) :: rest ->
             if name == key
             then ParameterReachEntry(parameterName = key, reachCount = value) :: rest
-            else entry :: setCount(key)(value)(rest)
+            else entry :: replaceCount(key)(value)(rest)
+
+let recursive holdsCount (entries: List(ParameterReachEntry)) (key: Str) (value: Int) =
+    match entries with
+        | [] -> false
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            if name == key
+            then count == value
+            else holdsCount(rest)(key)(value)
+
+// Counts saturate at the cap, so most writes restate the value an entry already holds; those
+// return the table itself instead of rebuilding the spine ahead of the key.
+let setCount (key: Str) (value: Int) (entries: List(ParameterReachEntry)) =
+    if holdsCount(entries)(key)(value)
+    then entries
+    else replaceCount(key)(value)(entries)
 
 let recursive containsCause (causes: List(ResultReachCause)) (target: ResultReachCause) =
     match causes with
@@ -109,11 +124,56 @@ let capped (value: Int) =
     then reachCap
     else value
 
-let recursive sumCounts (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) =
+let recursive lookupCountOr (missing: Int) (entries: List(ParameterReachEntry)) (key: Str) =
+    match entries with
+        | [] -> missing
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            if name == key
+            then count
+            else lookupCountOr(missing)(rest)(key)
+
+let recursive namesRepeat (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> false
+        | ParameterReachEntry { parameterName = name } :: rest -> lookupCountOr(-1)(rest)(name) >= 0 || namesRepeat(rest)
+
+let recursive sumCountsEntryByEntry (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) =
     match right with
         | [] -> left
         | ParameterReachEntry { parameterName = key, reachCount = count } :: rest ->
-            sumCounts(setCount(key)(capped(lookupCount(left)(key) + count))(left))(rest)
+            sumCountsEntryByEntry(setCount(key)(capped(lookupCount(left)(key) + count))(left))(rest)
+
+let recursive summedOntoLeft (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) (added: List(ParameterReachEntry)) =
+    match left with
+        | [] -> added
+        | (ParameterReachEntry { parameterName = name, reachCount = count } as entry) :: rest ->
+            let other = lookupCountOr(-1)(right)(name)
+            in
+                if other < 0
+                then entry :: summedOntoLeft(rest)(right)(added)
+                else ParameterReachEntry(parameterName = name, reachCount = capped(count + other)) :: summedOntoLeft(rest)(right)(added)
+
+let recursive summedBesideLeft (right: List(ParameterReachEntry)) (left: List(ParameterReachEntry)) =
+    match right with
+        | [] -> []
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            if lookupCountOr(-1)(left)(name) >= 0
+            then summedBesideLeft(rest)(left)
+            else ParameterReachEntry(parameterName = name, reachCount = capped(count)) :: summedBesideLeft(rest)(left)
+
+// The left table with the right one added into it: shared names in place, the right's own names
+// after them in its order. Built in one pass that only reads both tables. Writing the right's
+// entries into the left one at a time hands the table to a helper and takes it back once per entry,
+// and a helper that returns a list it was passed must return an owned one, which for a parameter
+// whose ownership it cannot see is a copy of the whole table. A right table naming something twice
+// keeps the entry-by-entry order, which is what defines the result then.
+let sumCounts (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) =
+    if namesRepeat(right)
+    then sumCountsEntryByEntry(left)(right)
+    else
+        left
+        |> summedBesideLeft(right)
+        |> summedOntoLeft(left)(right)
 
 let recursive anyCapped (entries: List(ParameterReachEntry)) =
     match entries with
@@ -148,16 +208,43 @@ let reachSum (left: ResultReachState) (right: ResultReachState) =
                         |> withCounts(counts)
                     else withCounts(counts)(causes)
 
-let recursive maxCounts (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) =
+let recursive maxCountsEntryByEntry (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) =
     match right with
         | [] -> left
         | ParameterReachEntry { parameterName = key, reachCount = count } :: rest ->
             let current = lookupCount(left)(key)
             in
                 if current > count
-                then maxCounts(left)(rest)
+                then maxCountsEntryByEntry(left)(rest)
                 else
-                    maxCounts(setCount(key)(count)(left))(rest)
+                    maxCountsEntryByEntry(setCount(key)(count)(left))(rest)
+
+let recursive maximizedOntoLeft (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) (added: List(ParameterReachEntry)) =
+    match left with
+        | [] -> added
+        | (ParameterReachEntry { parameterName = name, reachCount = count } as entry) :: rest ->
+            let other = lookupCountOr(-1)(right)(name)
+            in
+                if other < 0 || count > other
+                then entry :: maximizedOntoLeft(rest)(right)(added)
+                else ParameterReachEntry(parameterName = name, reachCount = other) :: maximizedOntoLeft(rest)(right)(added)
+
+let recursive absentFromLeft (right: List(ParameterReachEntry)) (left: List(ParameterReachEntry)) =
+    match right with
+        | [] -> []
+        | (ParameterReachEntry { parameterName = name } as entry) :: rest ->
+            if lookupCountOr(-1)(left)(name) >= 0
+            then absentFromLeft(rest)(left)
+            else entry :: absentFromLeft(rest)(left)
+
+// The branch-join counterpart of `sumCounts`, one reading pass for the same reason.
+let maxCounts (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) =
+    if namesRepeat(right)
+    then maxCountsEntryByEntry(left)(right)
+    else
+        left
+        |> absentFromLeft(right)
+        |> maximizedOntoLeft(left)(right)
 
 // A branch join (at most one arm executes) and the fixpoint join: multiplicities take the maximum.
 let reachJoin (left: ResultReachState) (right: ResultReachState) =

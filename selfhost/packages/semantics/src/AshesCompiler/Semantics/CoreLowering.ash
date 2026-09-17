@@ -406,6 +406,8 @@ type CoreLoweringState =
     | functions: List(IrFunction)
     | bindings: List(CoreBinding)
     | constructorLayouts: List(CoreConstructorLayout)
+    | coverageTypes: TypeEnvironment
+    | dropperTypes: DropperTypes
     | builtinLayouts: List(CoreBuiltinLayout)
     | externalLayouts: List(CoreExternalFunctionLayout)
     | externalFunctions: List(ExternalFunctionAbi)
@@ -849,12 +851,43 @@ let deferredLabelBase = 1000000
 // The standard trait environment every lowering starts from, built once for the whole program.
 let standardLoweringTraitEnvironment = standardTraitEnvironment(Unit)
 
+// The coverage and reachability rules live in `TypeInference.ash`'s `matchCoverageError` — the
+// exact checker the project-inference path runs — fed with a minimal `TypeEnvironment` carrying
+// the live constructor layouts (intrinsic and user-declared alike, deep-copied out of the
+// long-lived state), so the single-file lowering path reports the same non-exhaustive-match,
+// unreachable-arm, and mixed-ADT diagnostics with stage 0's wording. The heap layout classifiers
+// read the same environment. It is rebuilt only where the layouts change and kept on the state:
+// copying every constructor of the program at each query made lowering quadratic in them.
+let recursive constructorInferenceDefinitionsFromLayouts layouts =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { name = name, scheme = scheme, fieldNames = fieldNames } :: rest ->
+            ConstructorInferenceDefinition(
+                name = Ashes.Internal.deepCopy(name),
+                scheme = Ashes.Internal.deepCopy(scheme),
+                fieldNames = Ashes.Internal.deepCopy(fieldNames)
+            ) :: constructorInferenceDefinitionsFromLayouts(rest)
+
+// Adds the layouts a type declaration contributes: their definitions after the ones already
+// there, and their field groups, which the layout classifiers answer from.
+let extendCoverageEnvironment (environment: TypeEnvironment) layouts =
+    (let definitions = constructorInferenceDefinitionsFromLayouts(layouts)
+    in
+        environment with constructors = append(environment.constructors)(definitions), constructorFieldGroups = append(environment.constructorFieldGroups)(heapConstructorFieldGroups(definitions)))
+
+let coverageEnvironmentOf layouts =
+    extendCoverageEnvironment(emptyTypeEnvironment(Unit))(layouts)
+
 let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount unit =
     CoreLoweringState(
         reversedInstructions = [],
         functions = [],
         bindings = [],
         constructorLayouts = constructorLayouts,
+        coverageTypes = coverageEnvironmentOf(constructorLayouts),
+        dropperTypes = constructorLayouts
+        |> constructorInferenceDefinitionsFromLayouts
+        |> prepareDropperTypes,
         builtinLayouts = builtinLayouts,
         externalLayouts = externalLayouts,
         externalFunctions = externalFunctions,
@@ -2848,24 +2881,7 @@ let loweredValueOwnedTypeName lowered =
                 | resolved -> ownedTypeNameOf(resolved)(state.constructorLayouts)
         | _ -> None
 
-// The coverage and reachability rules live in `TypeInference.ash`'s `matchCoverageError` — the
-// exact checker the project-inference path runs — fed here with a minimal `TypeEnvironment`
-// carrying the live constructor layouts (intrinsic and user-declared alike, deep-copied out of
-// the long-lived state), so the single-file lowering path reports the same non-exhaustive-match,
-// unreachable-arm, and mixed-ADT diagnostics with stage 0's wording.
-let recursive constructorInferenceDefinitionsFromLayouts layouts =
-    match layouts with
-        | [] -> []
-        | CoreConstructorLayout { name = name, scheme = scheme, fieldNames = fieldNames } :: rest ->
-            ConstructorInferenceDefinition(
-                name = Ashes.Internal.deepCopy(name),
-                scheme = Ashes.Internal.deepCopy(scheme),
-                fieldNames = Ashes.Internal.deepCopy(fieldNames)
-            ) :: constructorInferenceDefinitionsFromLayouts(rest)
-
-let coverageEnvironment state =
-    match state with
-        | CoreLoweringState { constructorLayouts = layouts } -> emptyTypeEnvironment(Unit) with constructors = constructorInferenceDefinitionsFromLayouts(layouts)
+let coverageEnvironment (state: CoreLoweringState) = state.coverageTypes
 
 let recursive lookupOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
     match plans with
@@ -2913,7 +2929,7 @@ let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLowering
         | Some((semanticType, plan)) ->
             match state with
                 | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-                    match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                    match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | None -> None
                         | Some(synthesis) ->
                             state
@@ -4978,7 +4994,7 @@ let emitInlineListRelease emitter (listTemp: Int) (elementType: SemanticType) (s
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
             match synthesizeOwnedAggregateRelease(listTemp)(elementType
             |> resolveType(state)
-            |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+            |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | None -> state
                 | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
 
@@ -5012,7 +5028,7 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
         | SemNamed(_symbolId, name, _arguments) as named ->
             match state with
                 | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-                    match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                    match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | None ->
                             emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))(state)
                         | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
@@ -5881,7 +5897,7 @@ let recursive allArgumentsCompactable (arguments: List(TcoResetArgument)) (state
 let emitTcoDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
 
 let emitCompactionShallowCopy (sourceTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
@@ -6313,7 +6329,7 @@ let recursive recordArenaCopyPlacements (instructions: List(IrInstructionKind)) 
 let emitArenaResultDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(ArenaResultBoundary) with
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(ArenaResultBoundary) with
                 | (synthesis, resultTemp) ->
                     (state
                     |> spliceInlineReleaseWith(emit)(synthesis)
@@ -6334,7 +6350,7 @@ let arenaResultDropTypeName (semanticType: SemanticType) =
 let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+            match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | Some(synthesis) -> spliceInlineReleaseWith(emit)(synthesis)(state)
                 | None ->
                     emit(RcDrop(valueTemp)(semanticType
@@ -7595,7 +7611,7 @@ let recursive patternOwnerAliases (instructions: List(IrInstruction)) (slot: Int
 let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
+            match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(state.dropperTypes)(cache)(lambdaId)(labelId) with
                 | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
                     (label, (state with dropperLabels = nextCache, functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
@@ -7920,7 +7936,7 @@ let recursive revertReuseAllocations (count: Int) (instructions: List(IrInstruct
 let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
 
 // The entry deep copy of every direct-reuse accumulator the move analysis did not prove unique:
@@ -8291,7 +8307,7 @@ let reuseAccumulatorIsUnique (functionName: Str) (parameter: Str) (state: CoreLo
 let synthesizeAccumulatorCopier (named: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeDeepCopy(0)(named)(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
+            match synthesizeDeepCopy(0)(named)(state.dropperTypes)(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
                 | (InlineReleaseSynthesis { cache = copierCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
                     state with dropperLabels = copierCache, functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
@@ -10047,7 +10063,7 @@ let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
 let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-            match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
+            match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(state.dropperTypes)(cache)(lambdaId)(labelId) with
                 | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
                     (label, (state with dropperLabels = nextCache, functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
@@ -14341,7 +14357,7 @@ let relocateSpecializationField (fieldType: SemanticType) (fieldTemp: Int) (stat
     then
         match state with
             | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId } ->
-                match synthesizeToSpaceCopy(fieldTemp)(resolveType(state)(fieldType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                match synthesizeToSpaceCopy(fieldTemp)(resolveType(state)(fieldType))(state.dropperTypes)(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                     | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
     else (state, fieldTemp)
 
@@ -19871,7 +19887,11 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                                 match buildUserConstructorLayoutsFromIndex(state.typeAliases)(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
                                                     | Error(error) -> Error(error)
                                                     | Ok(newLayouts) ->
-                                                        Ok((state with constructorLayouts = append(existingLayouts)(decideTaglessLayouts(state)(existingLayouts)(newLayouts)), typeSupply = nextSupply))
+                                                        let decidedLayouts = decideTaglessLayouts(state)(existingLayouts)(newLayouts)
+                                                        in
+                                                            Ok((state with constructorLayouts = append(existingLayouts)(decidedLayouts), coverageTypes = extendCoverageEnvironment(state.coverageTypes)(decidedLayouts), dropperTypes = prepareDropperTypes(decidedLayouts
+                                                            |> append(existingLayouts)
+                                                            |> constructorInferenceDefinitionsFromLayouts), typeSupply = nextSupply))
 
 // The runtime capabilities the compiler provides itself; a user `capability` may not redeclare one.
 let isReservedCapabilityName name =

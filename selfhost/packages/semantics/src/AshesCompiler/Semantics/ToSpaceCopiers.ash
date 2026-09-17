@@ -294,8 +294,8 @@ and emitAdtToSpaceCopierField (fieldTemp: Int) (fieldType: SemanticType) (named:
 // advanced; the temp holding the relocated value comes back beside it. `definitions` are the
 // constructors in scope in declaration order (a constructor's tag is its index among its type's
 // constructors).
-let synthesizeToSpaceCopy (valueTemp: Int) (semanticType: SemanticType) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
-    match openDropperBody(definitions)(cache)(nextLambdaId)(nextLabelId) with
+let synthesizeToSpaceCopy (valueTemp: Int) (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
         | (ids, opened) ->
             match emitToSpaceCopyInto(valueTemp)(renumberType(ids)(semanticType))((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
                 | (resultTemp, copied) -> (inlineReleaseResult(copied), resultTemp)

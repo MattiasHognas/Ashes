@@ -270,8 +270,8 @@ and emitCopierField (fieldTemp: Int) (fieldType: SemanticType) (named: SemanticT
 // advanced; the temp holding the clone comes back beside it. `definitions` are the constructors
 // in scope in declaration order (a constructor's tag is its index among its type's constructors),
 // and `purpose` the copy-out purpose of the clone's own leaf copies.
-let synthesizeDeepCopy (valueTemp: Int) (semanticType: SemanticType) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) purpose =
-    match openDropperBody(definitions)(cache)(nextLambdaId)(nextLabelId) with
+let synthesizeDeepCopy (valueTemp: Int) (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) purpose =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
         | (ids, opened) ->
             match emitDeepCopyInto(valueTemp)(renumberType(ids)(semanticType))(purpose)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
                 | (resultTemp, cloned) -> (inlineReleaseResult(cloned), resultTemp)

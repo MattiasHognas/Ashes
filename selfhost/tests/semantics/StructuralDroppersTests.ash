@@ -72,10 +72,14 @@ let namedType (typeName: Str) (_environment: TypeEnvironment) =
             else choiceType
 
 let structuralDropperFor (semanticType: SemanticType) (nextLambdaId: Int) (nextLabelId: Int) (environment: TypeEnvironment) =
-    synthesizeStructuralOwnerDropper(semanticType)(environmentConstructors(environment))(emptyDropperLabelCache)(nextLambdaId)(nextLabelId)
+    synthesizeStructuralOwnerDropper(semanticType)(environment
+    |> environmentConstructors
+    |> prepareDropperTypes)(emptyDropperLabelCache)(nextLambdaId)(nextLabelId)
 
 let adtDropperFor (semanticType: SemanticType) (nextLambdaId: Int) (nextLabelId: Int) (environment: TypeEnvironment) =
-    synthesizeRuntimeManagedAdtDropper(semanticType)(environmentConstructors(environment))(emptyDropperLabelCache)(nextLambdaId)(nextLabelId)
+    synthesizeRuntimeManagedAdtDropper(semanticType)(environment
+    |> environmentConstructors
+    |> prepareDropperTypes)(emptyDropperLabelCache)(nextLambdaId)(nextLabelId)
 
 let originLine (origin: Maybe(IrFunctionOrigin)) =
     match origin with
@@ -390,7 +394,9 @@ let resynthesizeThroughCache (environment: TypeEnvironment) (synthesis: DropperS
     match synthesis with
         | DropperSynthesis { label = Some(first), cache = cache, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
             nextLabelId
-            |> synthesizeStructuralOwnerDropper(namedType("Found")(environment))(environmentConstructors(environment))(cache)(nextLambdaId)
+            |> synthesizeStructuralOwnerDropper(namedType("Found")(environment))(environment
+            |> environmentConstructors
+            |> prepareDropperTypes)(cache)(nextLambdaId)
             |> noDropperDescription
             |> (given (description) -> "first=" + first + " second: " + description)
         | _ -> test.fail("expected a structural dropper for Found")
