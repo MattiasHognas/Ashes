@@ -445,6 +445,16 @@ preceded the port.
   back-edge transforms).
 - [x] **IR-6** Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
+  Followed up (2026-09-17): the two tables this rests on had drifted. `coreBuiltinKind` dispatched
+  152 members, `standardBuiltinLayouts` carried schemes for 100, and a member with a kind and no
+  scheme is unreachable — `lowerCoreQualifiedVariable` finds a builtin only through its layout, so
+  the reference fell past the external table into record field access and failed as
+  `UnknownLoweringBinding("Ashes.Internal.Regex.compileRaw")`, naming a field access that was never
+  in the source. All of `Ashes.Number.Math`, `Ashes.Internal.Regex`, `Ashes.Net.Tcp`,
+  `Ashes.Net.Tcp.Server`, `Ashes.Net.Tls`, `Ashes.Net.Http` and `Ashes.Net.Tls.Server.handshake`
+  were affected, plus `Ashes.Rune.toInt`/`fromInt` and `Ashes.IO.readExact`. All 52 now have schemes
+  transcribed from stage 0's registrations, and `CoreBuiltinLoweringTests.ash` pins one member per
+  module so the tables cannot drift silently again.
 - [x] **IR-7** Lower external calls, resources/destructors, native ownership conventions, library/resource
   references, and target ABI metadata.
 - [x] **IR-10** Resolve a dependency module's combined-source positions through stitched item regions — the
