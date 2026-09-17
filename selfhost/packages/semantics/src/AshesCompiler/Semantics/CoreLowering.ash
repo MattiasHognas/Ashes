@@ -429,7 +429,9 @@ type CoreLoweringState =
     | nextStringId: Int
     | stringLiterals: List(IrStringLiteral)
     | typeSupply: TypeVariableSupply
-    | substitution: List((Int, SemanticType))
+    // Variable-keyed rather than an association list: a whole program's substitution reaches tens
+    // of thousands of entries and every type resolved walks it once per variable.
+    | substitution: MapTree(Int, SemanticType)
     | sourceContext: Maybe(SourceContext)
     | currentSpan: Maybe(TextSpan)
     | currentItem: Int
@@ -924,7 +926,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         // this compilation's fresh-variable numbering never mints those specific low ids, not that
         // anything is missing.
         typeSupply = TypeVariableSupply(nextId = reservedBuiltinTypeVariableCount),
-        substitution = [],
+        substitution = Ashes.Collection.Map.empty,
         sourceContext = None,
         currentSpan = None,
         currentItem = 0,
@@ -1375,7 +1377,7 @@ let instantiateBinding binding state =
 
 let resolveType state semanticType =
     match state with
-        | CoreLoweringState { substitution = substitution } -> applySubstitution(substitution)(semanticType)
+        | CoreLoweringState { substitution = substitution } -> applySubstitutionMap(substitution)(semanticType)
 
 // The environment a `let` generalizes against, read through the current substitution: a variable
 // an enclosing binding's type was unified with since its scheme was recorded (a captured
@@ -1508,7 +1510,7 @@ let bindType left right state =
             |> resolveType(state)
             |> unify(resolveType(state)(left)) with
                 | UnificationResult { substitution = added, error = None } ->
-                    (withSubstitution(append(added)(existing))(state), None)
+                    (withSubstitution(extendSubstitutionMap(added)(existing))(state), None)
                 | UnificationResult { error = Some(error) } ->
                     (state, state
                     |> mismatchSiteOf
