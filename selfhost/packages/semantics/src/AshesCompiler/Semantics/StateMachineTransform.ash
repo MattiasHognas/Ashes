@@ -259,6 +259,7 @@ let getDefinedTemps inst =
         | ProcessKill(t, _) -> [t]
         | RcDup(t, _, _, _) -> [t]
         | RcIsUnique(t, _) -> [t]
+        | IsReferenceCounted(t, _) -> [t]
         | Borrow(t, _) -> [t]
         | CopyOutArena(dest, _, _, _, _, _) -> [dest]
         | CopyOutArenaToSpace(dest, _, _) -> [dest]
@@ -460,6 +461,7 @@ let getUsedTemps inst =
         | RcDrop(s, _, _, _, _, _) -> [s]
         | RcDup(_, s, _, _) -> [s]
         | RcIsUnique(_, s) -> [s]
+        | IsReferenceCounted(_, s) -> [s]
         | Borrow(_, s) -> [s]
         | TcoResetPending(_, usedTemps, _) -> usedTemps
         | CopyOutArena(_, src, _, _, _, _) -> [src]

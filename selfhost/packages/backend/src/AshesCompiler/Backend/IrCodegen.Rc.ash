@@ -24,6 +24,7 @@ export (
     value rcImmortalSentinel,
     value emitRuntimeRcDup,
     value emitRuntimeRcIsUnique,
+    value emitIsReferenceCounted,
     value emitRuntimeRcDrop,
     value emitClosureDropperCall,
     value emitRuntimeRcClosureDrop,
@@ -107,6 +108,15 @@ let emitRuntimeRcIsUnique builder i64 i8 ptrType resultName valueRef =
     |> (given (headerPtr) -> rcLoadCount(builder)(i64)(headerPtr)("rc_unique"))
     |> (given (count) -> rcIsCountOne(builder)(i64)(count)(resultName))
     |> (given (isUnique) -> buildZExt(builder)(isUnique)(i64)(resultName))
+
+// `IsReferenceCounted`: whether a value's address lies inside the region a runtime reserves for
+// its reference-counted heap, so a consumer handed a value of unknown representation can take a
+// reference to it rather than copy it. This backend's reference-counted cells come from libc
+// `malloc` and no region is reserved, so nothing can be inside one and the answer is always `0` —
+// the same answer stage 0's runtime gives when the reservation is refused, and the one every
+// consumer of the test is written against: a value that does not test reference-counted is copied
+// exactly as it was before the test existed.
+let emitIsReferenceCounted i64 = rcConst(i64)(0)
 
 // `RcDrop` on a value that is never the empty list and needs no structural dropper: an immortal
 // value is left alone, a count of `1` frees the header (and with it the payload), anything else

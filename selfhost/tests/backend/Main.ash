@@ -4303,6 +4303,55 @@ let buildRcDupDropModule name context =
     |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
     |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "immortal")]))
 
+// `IsReferenceCounted` asks whether a value lies in the region a runtime reserves for its
+// reference-counted heap. This backend allocates reference-counted cells with libc `malloc` and
+// reserves no region, so every value answers `false` — a reference-counted cell, an arena cell,
+// and the empty list alike — and every consumer of the test copies, as it did before the test
+// existed. Prints `false`, `false`, `false`, `5`.
+let buildIsReferenceCountedModule name context =
+    [
+        1
+        |> LoadConstInt(0)
+        |> irOf,
+        false
+        |> AllocAdt(1)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(1)(0)(0)
+        |> irOf,
+        1
+        |> IsReferenceCounted(2)
+        |> irOf,
+        irOf(PrintBool(2)),
+        false
+        |> AllocAdt(3)(0)(1)(false)
+        |> irOf,
+        false
+        |> SetAdtField(3)(0)(0)
+        |> irOf,
+        3
+        |> IsReferenceCounted(4)
+        |> irOf,
+        irOf(PrintBool(4)),
+        0
+        |> LoadConstInt(5)
+        |> irOf,
+        5
+        |> IsReferenceCounted(6)
+        |> irOf,
+        irOf(PrintBool(6)),
+        None
+        |> RcDrop(1)("Cell")(0)(true)(false)
+        |> irOf,
+        5
+        |> LoadConstInt(7)
+        |> irOf,
+        irOf(PrintInt(7)),
+        irOf(Return(7))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
 // The `mayBeEmpty` forms: `RcDup` and `RcDrop` on the null pointer (the empty list) touch no
 // header, and the same forms on a present cell still retain and release it (two drops after one
 // dup free it exactly once). Prints `7`.
@@ -4609,6 +4658,8 @@ let buildRcClosureDropModule name context =
         |> codegenProgram(name)(context))
 
 let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
+
+let testIsReferenceCounted unit = assertProgramPrintsLines(buildIsReferenceCountedModule)("selfhostBackendIsReferenceCounted")("selfhost_backend_is_reference_counted_e2e")(["false", "false", "false", "5"])
 
 // `CopyFfiBytes` over the four ranges stage 0's `EmitCopyFfiBytes` distinguishes. A foreign
 // pointer is any `i64` address, so the copy path reads a string literal's own payload (its bytes
@@ -5393,6 +5444,7 @@ let run shipped =
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
     |> testRcDupDrop
+    |> testIsReferenceCounted
     |> testCopyFfiBytes
     |> testRcMayBeEmpty
     |> testRcStructuralDrop

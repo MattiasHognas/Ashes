@@ -692,6 +692,7 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(sourceTemp)
                                             |> emitRuntimeRcIsUnique(builder)(i64)(i8)(ptrType)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | IsReferenceCounted(target, _sourceTemp) -> ((target, emitIsReferenceCounted(i64)) :: tempEnv, terminated)
                         // A closure's `CleanupResource` is a no-op for a reference-counted one
                         // (its dropper runs on the last `RcDrop` instead); an arena closure may
                         // carry a dropper (closure+24) for a resource it captured-and-escaped,

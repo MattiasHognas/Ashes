@@ -178,6 +178,7 @@ metadata attached before the instruction enters a function and does not affect e
 | `RcDup` | `Target`, `SourceTemp`, `RuntimeManaged`, `MayBeEmpty` | Split ownership; increments the count for an RC value |
 | `RcDrop` | `SourceTemp`, `TypeName`, `OwnerSlot`, `RuntimeManaged`, `MayBeEmpty` | End one ordinary ownership path; runtime-managed forms perform type-directed RC release |
 | `RcIsUnique` | `Target`, `SourceTemp` | Test whether an RC value has count 1 |
+| `IsReferenceCounted` | `Target`, `SourceTemp` | Test whether a value of statically unknown representation lies in the reference-counted heap |
 | `CleanupResource` | `SourceTemp`, `TypeName` | Deterministically close/reap a language resource; distinct from ordinary RC |
 
 `PerceusLifetimePlacement` consumes the `OwnerSlot` provenance on lexical
@@ -188,6 +189,12 @@ specialized region; it is not an instruction to read an RC header.
 
 `MayBeEmpty` records that the value's resolved type admits the empty-list
 representation, which is the null pointer and carries no reference-count header.
+
+`IsReferenceCounted` asks about an address, not a header, so any word is a valid
+source and an empty, scalar, static, stack or arena value answers 0. A runtime
+whose reference-counted blocks do not live in one reserved region answers 0 for
+everything, which is why every consumer of the test must be written to copy when
+the answer is 0, exactly as it did before the test existed.
 Codegen then skips the count update instead of reading a header 16 bytes below
 address zero. Lowering computes the fact from the resolved type at the one place
 a marker is promoted to runtime RC; codegen never re-derives it, and the

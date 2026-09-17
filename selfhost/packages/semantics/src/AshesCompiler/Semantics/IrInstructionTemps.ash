@@ -546,6 +546,10 @@ let mapInstructionTemps f (kind: IrInstructionKind) =
             T1
             |> f
             |> RcIsUnique(f(T0))
+        | IsReferenceCounted(T0, T1) ->
+            T1
+            |> f
+            |> IsReferenceCounted(f(T0))
         | Borrow(T0, T1) ->
             T1
             |> f

@@ -240,6 +240,12 @@ type IrInstructionKind =
     | RcDrop(IrTemp, Str, IrLocal, Bool, Bool, Maybe(Str))
     | RcDup(IrTemp, IrTemp, Bool, Bool)
     | RcIsUnique(IrTemp, IrTemp)
+    // Whether a heap value of statically unknown representation is a block of the reference-counted
+    // heap: the target is 1 when the source addresses memory inside the region the runtime reserved
+    // for that heap, and 0 for an arena, stack, static or empty value. The answer is about the
+    // address alone, so no header is read and any word is a valid source, and a runtime that could
+    // not reserve the region answers 0 for everything.
+    | IsReferenceCounted(IrTemp, IrTemp)
     | Borrow(IrTemp, IrTemp)
     | TcoResetPending(Int, List(IrTemp), List(IrLocal))
     | SaveArenaState(IrLocal, IrLocal, Bool)

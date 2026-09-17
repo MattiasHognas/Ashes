@@ -186,6 +186,7 @@ let ownershipInstructions =
         RcDrop(0)("List(Int)")(1)(true)(true)(Some("drop_list_int")),
         RcDup(0)(1)(true)(true),
         RcIsUnique(0)(1),
+        IsReferenceCounted(0)(1),
         Borrow(0)(1),
         TcoResetPending(1)([0, 1])([2]),
         SaveArenaState(0)(1)(true),
@@ -277,7 +278,7 @@ let expectCompleteInstructionInventory unit =
     |> (given (_) ->
         ownershipInstructions
         |> length
-        |> test.assertEqual(23))
+        |> test.assertEqual(24))
     |> (given (_) ->
         taskInstructions
         |> length

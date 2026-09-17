@@ -155,6 +155,11 @@ let expectInstructionText unit =
         |> test.assertEqual("    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1 CoroutineLoop=true"))
     |> (given (_) ->
         None
+        |> instruction(IsReferenceCounted(4)(3))
+        |> formatIrInstruction
+        |> test.assertEqual("    IsReferenceCounted    Target=4 SourceTemp=3"))
+    |> (given (_) ->
+        None
         |> instruction(Label("loop"))
         |> formatIrInstruction
         |> test.assertEqual("  loop:"))
