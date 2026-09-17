@@ -43,6 +43,8 @@ export (
     type OwnedReleasePlan(..),
     type InlineReleaseSynthesis(..),
     value synthesizeOwnedAggregateRelease,
+    type DropperTypes(..),
+    value prepareDropperTypes,
     value openDropperBody,
     value renumberType,
     value freshDropperTemp,
@@ -151,11 +153,23 @@ let renumberDefinition (ids: List((Str, Int))) (definition: ConstructorInference
                 fieldNames = fieldNames
             )
 
-let dropperEnvironment (ids: List((Str, Int))) (definitions: List(ConstructorInferenceDefinition)) =
-    emptyTypeEnvironment(Unit) with constructors = map(renumberDefinition(ids))(definitions)
+// The program's constructors as the release and copy synthesizers read them: one symbol id per
+// declared type, every definition renumbered to those ids, and the definitions indexed by the type
+// each builds. Preparing this costs a pass over every constructor of the program, so it is built
+// where the constructors change and shared by every synthesis until they change again.
+type DropperTypes =
+    | dropperTypeIds: List((Str, Int))
+    | dropperTypeEnvironment: TypeEnvironment
 
-let openDropperBody (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
+let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
     (let ids = namedTypeIds(definitions)([])
+    in
+        let renumbered =
+            map(renumberDefinition(ids))(definitions)
+        in DropperTypes(dropperTypeIds = ids, dropperTypeEnvironment = emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)))
+
+let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
+    (let ids = dropperTypes.dropperTypeIds
     in
         (ids, DropperBody(
             reversedInstructions = [],
@@ -165,7 +179,7 @@ let openDropperBody (definitions: List(ConstructorInferenceDefinition)) (cache: 
             functions = [],
             nextLambdaId = nextLambdaId,
             nextLabelId = nextLabelId,
-            environment = dropperEnvironment(ids)(definitions)
+            environment = dropperTypes.dropperTypeEnvironment
         )))
 
 let freshDropperTemp (body: DropperBody) =
@@ -630,15 +644,15 @@ let synthesizeStructuralOwnerDropperIn (semanticType: SemanticType) (body: Dropp
 // helper. `semanticType` is the caller's resolved type; `definitions` are the constructors in
 // scope in declaration order (a constructor's tag is its index among its type's constructors);
 // the cache and counters are the caller's and come back updated.
-let synthesizeStructuralOwnerDropper (semanticType: SemanticType) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
-    match openDropperBody(definitions)(cache)(nextLambdaId)(nextLabelId) with
+let synthesizeStructuralOwnerDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
         | (ids, body) ->
             synthesizeStructuralOwnerDropperIn(renumberType(ids)(semanticType))(body)
 
 // Names the constructor-switching dropper of a named type, synthesizing it once; a type that is
 // not named has no such dropper.
-let synthesizeRuntimeManagedAdtDropper (semanticType: SemanticType) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
-    match openDropperBody(definitions)(cache)(nextLambdaId)(nextLabelId) with
+let synthesizeRuntimeManagedAdtDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
         | (ids, body) ->
             match renumberType(ids)(semanticType) with
                 | SemNamed(_symbolId, _name, _arguments) as named ->
@@ -773,8 +787,8 @@ let inlineReleaseResult (body: DropperBody) =
 // the caller's temp, local, label, and lambda counters so the instructions splice into the
 // caller's function directly; any ADT dropper the walk calls is synthesized into `functions`.
 // `None` when the type's release is a single allocation.
-let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (definitions: List(ConstructorInferenceDefinition)) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
-    match openDropperBody(definitions)(cache)(nextLambdaId)(nextLabelId) with
+let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
         | (ids, opened) ->
             match emitOwnedAggregateRelease(valueTemp)(renumberType(ids)(semanticType))(plan)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
                 | None -> None

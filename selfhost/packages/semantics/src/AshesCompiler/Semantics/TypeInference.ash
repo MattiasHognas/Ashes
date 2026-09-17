@@ -19,6 +19,7 @@ export (
     type TypeEnvironment(..),
     type ExternalFunctionInferenceDefinition(..),
     type ConstructorInferenceDefinition(..),
+    type ConstructorFieldGroup(..),
     type CapabilityInferenceDefinition(..),
     type CapabilityOperationInferenceDefinition(..),
     type CapabilityProviderInferenceDefinition(..),
@@ -69,6 +70,18 @@ type ConstructorInferenceDefinition =
     | name: Str
     | scheme: TypeScheme
     | fieldNames: List(Str)
+
+// One named type's constructors with their field lists already peeled off their curried schemes,
+// in declaration order: what a layout query needs, so an environment that indexes its constructors
+// this way answers one without scanning every constructor it knows. `groupFields` is the answer
+// itself for a type with no parameters; `groupGenericFields` also keeps each constructor's result
+// arguments, the variables a use site's concrete arguments are substituted for.
+type ConstructorFieldGroup =
+    | groupSymbolId: Int
+    | groupTypeName: Str
+    | groupIsGeneric: Bool
+    | groupFields: List((Str, List(SemanticType)))
+    | groupGenericFields: List((Str, List(SemanticType), List(SemanticType)))
 
 type CapabilityOperationInferenceDefinition =
     | name: Str
@@ -121,6 +134,7 @@ type TypeEnvironment =
     | packageId: Str
     | bindings: List((Str, TypeScheme))
     | constructors: List(ConstructorInferenceDefinition)
+    | constructorFieldGroups: List(ConstructorFieldGroup)
     | capabilities: List(CapabilityInferenceDefinition)
     | traits: List(TraitInferenceDefinition)
     | traitImplementations: List(TraitImplementationInferenceDefinition)
@@ -253,7 +267,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 

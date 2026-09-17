@@ -38,6 +38,7 @@ export (
     value heapRuntimeOwnedFieldLayout,
     value heapRuntimeOwnedTupleElementLayout,
     value heapNamedTypeConstructors,
+    value heapConstructorFieldGroups,
     value classifyHeapLayout,
 )
 
@@ -204,32 +205,126 @@ let recursive heapParameterMapping (resultArguments: List(SemanticType)) (concre
         | (SemVariable(variableId) :: restResult, concreteType :: restConcrete) -> (variableId, concreteType) :: heapParameterMapping(restResult)(restConcrete)
         | (_unmapped :: restResult, _concreteType :: restConcrete) -> heapParameterMapping(restResult)(restConcrete)
 
+// The type a constructor's curried scheme body finally produces, read without building anything.
+let recursive heapConstructorResultType (body: SemanticType) =
+    match body with
+        | SemFunction(_parameter, result, None) -> heapConstructorResultType(result)
+        | _ -> body
+
+let heapConstructorBuilds (symbolId: Int) (typeName: Str) (body: SemanticType) =
+    match heapConstructorResultType(body) with
+        | SemNamed(candidateId, candidateName, _arguments) -> candidateId == symbolId && candidateName == typeName
+        | _ -> false
+
 // Every constructor of the named type identified by symbolId, in declaration order, paired with
-// its own fields substituted for this use site's concrete type arguments.
+// its own fields substituted for this use site's concrete type arguments. The scan covers every
+// constructor the environment knows, so one that builds some other type is rejected on its result
+// type alone, before its field list is peeled: each query otherwise allocates in proportion to
+// the whole program's constructors rather than to the one type asked about.
 let recursive heapNamedTypeSubstitutedFields (symbolId: Int) (typeName: Str) (arguments: List(SemanticType)) (constructors: List(ConstructorInferenceDefinition)) =
     match constructors with
         | [] -> []
         | ConstructorInferenceDefinition { name = constructorName, scheme = TypeScheme { body = body } } :: rest ->
-            match heapConstructorFieldShape(body)([]) with
-                | (fieldTypes, SemNamed(candidateId, candidateName, resultArguments)) ->
-                    if candidateId == symbolId && candidateName == typeName
-                    then
+            if heapConstructorBuilds(symbolId)(typeName)(body)
+            then
+                match heapConstructorFieldShape(body)([]) with
+                    | (fieldTypes, SemNamed(_candidateId, _candidateName, resultArguments)) ->
                         let mapping = heapParameterMapping(resultArguments)(arguments)
                         in
                             let substitutedFields =
                                 map(applySubstitution(mapping))(fieldTypes)
                             in (constructorName, substitutedFields) :: heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
-                    else heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
-                | _ -> heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
+                    | _ -> heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
+            else heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
+
+let recursive heapAddToGroups (symbolId: Int) (typeName: Str) (constructorName: Str) (fieldTypes: List(SemanticType)) (resultArguments: List(SemanticType)) (groups: List(ConstructorFieldGroup)) =
+    match groups with
+        | [] ->
+            [
+                ConstructorFieldGroup(
+                    groupSymbolId = symbolId,
+                    groupTypeName = typeName,
+                    groupIsGeneric = length(resultArguments) > 0,
+                    groupFields = [(constructorName, fieldTypes)],
+                    groupGenericFields = [(constructorName, fieldTypes, resultArguments)]
+                )
+            ]
+        | (ConstructorFieldGroup { groupSymbolId = candidateId, groupTypeName = candidateName, groupIsGeneric = isGeneric, groupFields = fields, groupGenericFields = genericFields } as group) :: rest ->
+            if candidateId == symbolId && candidateName == typeName
+            then
+                ConstructorFieldGroup(
+                    groupSymbolId = candidateId,
+                    groupTypeName = candidateName,
+                    groupIsGeneric = isGeneric || length(resultArguments) > 0,
+                    groupFields = (constructorName, fieldTypes) :: fields,
+                    groupGenericFields = (constructorName, fieldTypes, resultArguments) :: genericFields
+                ) :: rest
+            else group :: heapAddToGroups(symbolId)(typeName)(constructorName)(fieldTypes)(resultArguments)(rest)
+
+let recursive heapCollectGroups (constructors: List(ConstructorInferenceDefinition)) (groups: List(ConstructorFieldGroup)) =
+    match constructors with
+        | [] -> groups
+        | ConstructorInferenceDefinition { name = constructorName, scheme = TypeScheme { body = body } } :: rest ->
+            match heapConstructorFieldShape(body)([]) with
+                | (fieldTypes, SemNamed(symbolId, typeName, resultArguments)) ->
+                    groups
+                    |> heapAddToGroups(symbolId)(typeName)(constructorName)(fieldTypes)(resultArguments)
+                    |> heapCollectGroups(rest)
+                | _ -> heapCollectGroups(rest)(groups)
+
+let heapGroupInDeclarationOrder (group: ConstructorFieldGroup) =
+    match group with
+        | ConstructorFieldGroup { groupSymbolId = symbolId, groupTypeName = typeName, groupIsGeneric = isGeneric, groupFields = fields, groupGenericFields = genericFields } ->
+            ConstructorFieldGroup(
+                groupSymbolId = symbolId,
+                groupTypeName = typeName,
+                groupIsGeneric = isGeneric,
+                groupFields = reverse(fields),
+                groupGenericFields = reverse(genericFields)
+            )
+
+// The constructors indexed by the type each builds, for an environment's `constructorFieldGroups`.
+let heapConstructorFieldGroups (constructors: List(ConstructorInferenceDefinition)) =
+    []
+    |> heapCollectGroups(constructors)
+    |> map(heapGroupInDeclarationOrder)
+
+let recursive heapFindGroup (symbolId: Int) (typeName: Str) (groups: List(ConstructorFieldGroup)) =
+    match groups with
+        | [] -> None
+        | (ConstructorFieldGroup { groupSymbolId = candidateId, groupTypeName = candidateName } as group) :: rest ->
+            if candidateId == symbolId && candidateName == typeName
+            then Some(group)
+            else heapFindGroup(symbolId)(typeName)(rest)
+
+let recursive heapSubstituteGroupFields (arguments: List(SemanticType)) (genericFields: List((Str, List(SemanticType), List(SemanticType)))) =
+    match genericFields with
+        | [] -> []
+        | (constructorName, fieldTypes, resultArguments) :: rest ->
+            let mapping = heapParameterMapping(resultArguments)(arguments)
+            in
+                (constructorName, map(applySubstitution(mapping))(fieldTypes)) :: heapSubstituteGroupFields(arguments)(rest)
 
 // The named type's constructors with their fields instantiated at this use site, or an empty list
 // for a type whose constructors are not visible in the environment (a compiler-provided handle).
-let heapNamedTypeConstructors (named: SemanticType) (environment: TypeEnvironment) =
-    match named with
-        | SemNamed(symbolId, name, arguments) ->
+// An environment that indexes its constructors answers from the type's own group, and for a type
+// with no parameters the group's field lists are the answer as they stand; one that does not is
+// scanned whole.
+let heapNamedTypeFields (symbolId: Int) (name: Str) (arguments: List(SemanticType)) (environment: TypeEnvironment) =
+    match environment.constructorFieldGroups with
+        | [] ->
             environment
             |> heapEnvironmentConstructors
             |> heapNamedTypeSubstitutedFields(symbolId)(name)(arguments)
+        | groups ->
+            match heapFindGroup(symbolId)(name)(groups) with
+                | None -> []
+                | Some(ConstructorFieldGroup { groupIsGeneric = false, groupFields = fields }) -> fields
+                | Some(ConstructorFieldGroup { groupGenericFields = genericFields }) -> heapSubstituteGroupFields(arguments)(genericFields)
+
+let heapNamedTypeConstructors (named: SemanticType) (environment: TypeEnvironment) =
+    match named with
+        | SemNamed(symbolId, name, arguments) -> heapNamedTypeFields(symbolId)(name)(arguments)(environment)
         | _ -> []
 
 // Whether the named type's first constructor declares record field names.
@@ -237,12 +332,9 @@ let recursive heapNamedTypeHasFieldNames (symbolId: Int) (typeName: Str) (constr
     match constructors with
         | [] -> false
         | ConstructorInferenceDefinition { scheme = TypeScheme { body = body }, fieldNames = fieldNames } :: rest ->
-            match heapConstructorFieldShape(body)([]) with
-                | (_fieldTypes, SemNamed(candidateId, candidateName, _resultArguments)) ->
-                    if candidateId == symbolId && candidateName == typeName
-                    then length(fieldNames) >= 1
-                    else heapNamedTypeHasFieldNames(symbolId)(typeName)(rest)
-                | _ -> heapNamedTypeHasFieldNames(symbolId)(typeName)(rest)
+            if heapConstructorBuilds(symbolId)(typeName)(body)
+            then length(fieldNames) >= 1
+            else heapNamedTypeHasFieldNames(symbolId)(typeName)(rest)
 
 let heapNamedTypeIsRecord (named: SemanticType) (environment: TypeEnvironment) =
     match named with
@@ -296,9 +388,7 @@ and heapContainsResource (semanticType: SemanticType) (environment: TypeEnvironm
                     if heapPathContains(symbolId)(name)(path)
                     then false
                     else
-                        heapAnyGroupedResource(environment
-                        |> heapEnvironmentConstructors
-                        |> heapNamedTypeSubstitutedFields(symbolId)(name)(arguments))(environment)((symbolId, name) :: path)
+                        heapAnyGroupedResource(heapNamedTypeFields(symbolId)(name)(arguments)(environment))(environment)((symbolId, name) :: path)
             | SemTuple(elements) -> heapAnyResource(elements)(environment)(path)
             | SemList(element) -> heapContainsResource(element)(environment)(path)
             | _ -> false)
@@ -336,9 +426,7 @@ and heapContainsUnresolvedType (semanticType: SemanticType) (environment: TypeEn
                         if heapAnyUnresolved(arguments)(environment)(extendedPath)
                         then true
                         else
-                            heapAnyGroupedUnresolved(environment
-                            |> heapEnvironmentConstructors
-                            |> heapNamedTypeSubstitutedFields(symbolId)(name)(arguments))(environment)(extendedPath)
+                            heapAnyGroupedUnresolved(heapNamedTypeFields(symbolId)(name)(arguments)(environment))(environment)(extendedPath)
             | _ -> false)
 
 // A named type the runtime may never manage as an ordinary reuse cell: a built-in resource handle

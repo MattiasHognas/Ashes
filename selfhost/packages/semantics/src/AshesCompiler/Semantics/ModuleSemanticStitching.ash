@@ -857,12 +857,7 @@ let recursive resolveLocalAt name kind boundary definitions =
     match definitions with
         | [] -> None
         | definition :: rest ->
-            if both(
-                definition.sourceName == name,
-                definition
-                |> definitionVisibleAt(boundary)
-                |> both(sameNamespace(kind)(definition.kind))
-            )
+            if definition.sourceName == name && definitionVisibleAt(boundary)(definition) && sameNamespace(kind)(definition.kind)
             then
                 definition
                 |> deepCopy
@@ -873,10 +868,7 @@ let recursive resolveImported name qualifier kind bindings =
     match bindings with
         | [] -> None
         | StitchedImportBinding { localName = localName, qualifier = bindingQualifier, target = target } :: rest ->
-            if target.kind
-            |> sameNamespace(kind)
-            |> both(bindingQualifier == qualifier)
-            |> both(localName == name)
+            if localName == name && sameNamespace(kind)(target.kind) && bindingQualifier == qualifier
             then
                 target
                 |> deepCopy

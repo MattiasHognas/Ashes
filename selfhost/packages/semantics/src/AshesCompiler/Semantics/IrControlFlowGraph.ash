@@ -12,6 +12,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
+import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.IrInstructions
 export (
     type IrCfgBlock(..),
@@ -82,20 +83,31 @@ let isTerminator (kind: IrInstructionKind) =
         | Return(_source) -> true
         | _ -> false
 
-let recursive collectBlockStarts (instructions: List(IrInstruction)) (index: Int) (count: Int) (starts: List(Int)) =
+let isLabel (kind: IrInstructionKind) =
+    match kind with
+        | Label(_name) -> true
+        | _ -> false
+
+// Block starts are discovered in ascending order, so they accumulate newest-first and `lastStart`
+// stands in for the set's duplicate check: a label right after a terminator is the start that
+// terminator already opened. The list never leaves this loop. A helper that took it and handed it
+// back, changed or not, would have to return an owned list, and for a parameter whose ownership it
+// cannot see that means copying the whole list once per instruction.
+let recursive collectBlockStartsNewestFirst (instructions: List(IrInstruction)) (index: Int) (count: Int) (lastStart: Int) (newestFirst: List(Int)) =
     match instructions with
-        | [] -> starts
+        | [] -> newestFirst
         | IrInstruction { instruction = kind } :: rest ->
-            starts
-            |> (given (current) ->
-                match kind with
-                    | Label(_name) -> sortedSetInsert(index)(current)
-                    | _ -> current)
-            |> (given (current) ->
+            if isLabel(kind) && index > lastStart
+            then collectBlockStartsNewestFirst(rest)(index + 1)(count)(index)(index :: newestFirst)
+            else
                 if isTerminator(kind) && index + 1 < count
-                then sortedSetInsert(index + 1)(current)
-                else current)
-            |> collectBlockStarts(rest)(index + 1)(count)
+                then collectBlockStartsNewestFirst(rest)(index + 1)(count)(index + 1)(index + 1 :: newestFirst)
+                else collectBlockStartsNewestFirst(rest)(index + 1)(count)(lastStart)(newestFirst)
+
+let collectBlockStarts (instructions: List(IrInstruction)) (count: Int) =
+    [0]
+    |> collectBlockStartsNewestFirst(instructions)(0)(count)(0)
+    |> reverse
 
 let recursive blockSpans (starts: List(Int)) (count: Int) =
     match starts with
@@ -191,7 +203,7 @@ let buildCfgBlocks (instructions: List(IrInstruction)) =
     |> length
     |> (given (count) ->
         count
-        |> blockSpans(collectBlockStarts(instructions)(0)(count)([0]))
+        |> blockSpans(collectBlockStarts(instructions)(count))
         |> (given (spans) ->
             0
             |> indexedSuccessors(instructions)(labelBlocks(instructions)(spans)(0))(length(spans))(spans)
