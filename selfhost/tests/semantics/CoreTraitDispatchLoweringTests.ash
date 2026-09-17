@@ -226,6 +226,45 @@ let expectUnaryTraitMethodCallSelectsPerOperandType unit =
     |> occurrences("CallClosure")
     |> (given (count) -> test.assertEqual(true)(count >= 2))
 
+let lookupSource (annotation: Str) = "let recursive lookupIn" + annotation + " env =\n    match env with\n        | [] -> Ashes.Trait.Show.show(key)\n        | (boundKey, value) :: rest ->\n            if boundKey == key\n            then value\n            else lookupIn(key)(rest)\n\nAshes.IO.print(lookupIn(1)([(1, \"one\")]))"
+
+// The operand of a `show` inside a top-level binding is whatever type the binding's own use
+// settles on, and that use comes after the body that dispatches on it. One pass reaching the
+// dispatch sees a type variable; the pass that lowers with the first pass's proof sees the `Int`
+// the call site pinned, and dispatches exactly as writing that type at the parameter does.
+let expectUnaryTraitMethodCallResolvedByALaterUseDispatches unit =
+    match (" key"
+    |> lookupSource
+    |> withStandardTraits
+    |> loweredDump, " (key: Int)"
+    |> lookupSource
+    |> withStandardTraits
+    |> loweredDump) with
+        | (deferred, annotated) ->
+            Unit
+            |> (given (_) ->
+                annotated
+                |> occurrences("CallClosure")
+                |> test.assertEqual(occurrences("CallClosure")(deferred)))
+            |> (given (_) ->
+                annotated
+                |> occurrences("\nfunction ")
+                |> test.assertEqual(occurrences("\nfunction ")(deferred)))
+
+// A deferred site is never lowered against a guess: the type settled on here has no `Show`, so
+// the pass that lowers with the proofs reports that type rather than emitting the constant the
+// first pass stood the site up with.
+let expectUnprovenUnaryTraitMethodCallIsReported unit =
+    match "type Plain =\n    | Plain\n\nlet recursive describe n x =\n    if n <= 0\n    then Ashes.Trait.Show.show(x)\n    else describe(n - 1)(x)\n\nAshes.IO.print(describe(1)(Plain))"
+    |> withStandardTraits
+    |> loweringErrorFor with
+        | MissingCoreTraitEvidence(traitName, operandType) ->
+            Unit
+            |> (given (_) -> test.assertEqual("Show")(traitName))
+            |> (given (_) ->
+                test.assertEqual(SemNamed(0)("Plain")([]))(operandType))
+        | other -> test.fail("expected MissingCoreTraitEvidence, got " + Ashes.Trait.Show.show(other))
+
 let expectComparisonAtAConcreteHeadDispatchesThroughOrd unit =
     "let ordered (a: Str) (b: Str) = a <= b\n\nordered(\"a\")(\"b\")"
     |> withStandardTraits
@@ -287,6 +326,8 @@ let runCoreTraitDispatchLoweringTests unit =
     |> expectNotEqualInAGenericBodyUsesTheActiveEvidence
     |> expectUnaryTraitMethodCallDispatchesAtAConcreteType
     |> expectUnaryTraitMethodCallSelectsPerOperandType
+    |> expectUnaryTraitMethodCallResolvedByALaterUseDispatches
+    |> expectUnprovenUnaryTraitMethodCallIsReported
     |> expectComparisonAtAConcreteHeadDispatchesThroughOrd
     |> expectComparisonReadsTheOrderingTag
     |> expectInclusiveComparisonsTestTwoTags
