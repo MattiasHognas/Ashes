@@ -9913,16 +9913,17 @@ let deferSelfCallResultType (context: CoreCallContext) (arity: Int) (resultType:
 // An argument is expected to have the callee's parameter type. A tail self-call's argument
 // becomes the next iteration's parameter, so it is lowered under the children transfer and its
 // own read of a live owner is retained (stage 0's `LowerCallTcoEvalArg`). An argument the
-// callee's result keeps ITSELF travels on inside that result and escapes this function's binding
+// callee's result may reach travels on inside that result and escapes this function's binding
 // scopes the same way, so it too is lowered under the children transfer (stage 0's
 // `CalleeResultMayReachArgument`): an owned binding stored inside the aggregate is retained,
 // since the binding's own scope-exit release still fires.
 //
-// The whole-parameter question, not the may-alias one. A callee whose result merely reaches the
-// argument through destructured components — one that rebuilds its own record from the fields it
-// matched out — hands back a value referencing the children but not the aggregate, whose own
-// release already covers them. Retaining there adds a reference nothing consumes: a leak per call
-// rather than a dangling child.
+// The may-alias question, not the whole-parameter one. Narrowing it to
+// `calleeResultReachesArgumentWhole` is a miscompilation: a callee whose result reaches the
+// argument only through destructured components still holds those components afterwards, and the
+// self-hosted formatter's own `formatTypeExpression` over a capability row formats wrongly when
+// the retain is skipped. Over-retaining where the caller's binding outlives the call is a leak,
+// which is the safe side of the trade.
 let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Bool) consumed lower functionTemp resolved =
     match resolved with
         | FunctionTypeResolution { state = typedState, error = Some(error) } ->
@@ -9935,7 +9936,7 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     deferredState
                     |> withArgumentRequest(Some(expectedType))(deferredState
                     |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
-                    |> Some)(transfers || calleeResultReachesArgumentWhole(context.facts)(argumentIndexOf(context.facts)(arity)))
+                    |> Some)(transfers || calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
                     |> lower(argument)
                     |> retainTransferredChild(argument)(transfers)
                     |> retainAliasArgumentOwners(argument)(transfers == false && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
