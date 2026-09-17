@@ -9669,6 +9669,19 @@ let retainBorrowedLoopArgument (rootSlot: Maybe(Int)) argumentType argumentTemp 
                         | FreshTemp { state = adoptionState, temp = adoptionTemp } ->
                             (emit(LoadConstInt(adoptionTemp)(0))(adoptionState), passedTemp, Some((passedTemp, adoptionTemp)))
 
+// A copy-type argument has no reference count to take, though it can still name a runtime owner:
+// a scalar field bound out of a reference-counted list element is a pattern binding rooted at that
+// list, and a callee that returns its parameter reads as one whose result keeps it. It passes
+// under the flag it would have had, with nothing retained and nothing handed over.
+let prepareCopyTypeArgument (handOff: CoreArgumentHandOff) functionTemp argumentTemp state =
+    match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
+        | (flagged, acceptsFlagTemp) ->
+            match handOff.pendingRootSlot with
+                | Some(rootSlot) ->
+                    match pendingArgumentFlag(handOff)(rootSlot)(acceptsFlagTemp)(flagged) with
+                        | (registered, flagTemp) -> (registered, argumentTemp, flagTemp, None)
+                | None -> (flagged, argumentTemp, acceptsFlagTemp, None)
+
 let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp argumentTemp state =
     match handOff with
         | CoreArgumentHandOff { borrowsOnly = true, fresh = false, borrowedReach = true, pendingRootSlot = pendingRootSlot } ->
@@ -9679,6 +9692,7 @@ let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp
             else (state, argumentTemp, -1, None)
         | CoreArgumentHandOff { borrowsOnly = true } -> (state, argumentTemp, -1, None)
         | CoreArgumentHandOff { runtimeArgument = false } -> (state, argumentTemp, -1, None)
+        | _copyType when resultSurvivesReset(argumentType)(state) -> prepareCopyTypeArgument(handOff)(functionTemp)(argumentTemp)(state)
         | CoreArgumentHandOff { pendingRootSlot = Some(rootSlot) } ->
             match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
                 | (flagged, acceptsFlagTemp) ->

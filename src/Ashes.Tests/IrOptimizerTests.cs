@@ -1147,7 +1147,9 @@ public sealed class IrOptimizerTests
         // COMPLETE set is covered behaviorally — by tests/tmc_constructor_recursion_semantics.ash for
         // sharing and base cases, and by
         // Linux_backend_llvm_tail_modulo_constructor_result_release_memory_should_plateau.
-        CountRuntimeRcOperations(optimized).ShouldBe(7,
+        // `head` is an `Int`, so handing it to `f` takes no reference: a scalar bound out of a
+        // reference-counted list is rooted at that list without being counted itself.
+        CountRuntimeRcOperations(optimized).ShouldBe(6,
             "The optimizer must retain the runtime-managed result list's lifetime operations.");
     }
 
