@@ -28,12 +28,14 @@ CG-21, CG-21 having turned out to be CG-20 seen from another shape; and the buil
 52-member gap behind `QualifiedShippedReferences`, which had a kind for every `Ashes.Number.Math`,
 `Ashes.Internal.Regex`, `Ashes.Net.*` and `Ashes.Rune` member and a scheme for none of them.
 
-OPT-85 now carries its measurement: what the arena holds, where it accumulates, **four approaches
-already refuted by measurement**, and the finding that genericity rather than value shape is what
-stops the arena resetting. Its first half is fixed — the optimizer's per-function analysis tables
-were quadratic in function size, and making them shadowing prepends cut the probe from 7,313 MB to
-3,761 MB and a large-function program's compile from 39.3 s to 3.87 s. Read it before writing any
-code against it.
+OPT-85 now carries its measurement, and as of 2026-09-17 a **profiling recipe that supersedes the
+reasoning before it**: read the block headed "Profile it; do not reason about it" first. It found
+that the wall is a cliff at the 229-constructor instruction type rather than a per-instruction
+slope, closed five sites that paid for the whole program at every query or release, and names what
+is left: stage 0 copies a whole list whenever a function returns or loops over a list parameter it
+cannot prove is owned. The older material below it — what the arena holds, **four approaches already
+refuted by measurement**, the genericity finding, and the first half's quadratic analysis tables
+(7,313 MB to 3,761 MB) — still stands as a record of what not to retry.
 
 **The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
 that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
@@ -1477,6 +1479,63 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     used to share one, and the cost grows with module size. The numbers, the branch it was measured
     on, and why none of the seven bugs it exposed is independently landable are in the
     [self-hosting log](SELF_HOSTING_LOG.md).
+
+    **Profile it; do not reason about it** (2026-09-17). Everything below this block was derived
+    from phase RSS and ablation, and it pointed at the optimizer. A per-function profile of the real
+    stage-1 CLI says otherwise, and found in a day what that reasoning had not. The recipe:
+    build stage 1 with `--debug`; run it under `perf record -e page-faults -c N --call-graph fp`
+    for allocation and `-F 99 -e cpu-clock` for time; disable transparent huge pages for the
+    process first with `prctl(PR_SET_THP_DISABLE)` in a ten-line launcher, because otherwise one
+    fault is 4 KB or 2 MB and the weights are meaningless; resolve addresses with `addr2line -f`,
+    since the image has DWARF and no symbol table; charge a fault whose leaf is the unnamed runtime
+    allocator to its caller; and bucket by ten-second bin against an RSS timeline polled on the
+    same `/proc/uptime` clock, which is what separates the phases.
+
+    **The wall is a cliff, not a slope.** `IrInstructions` is 314 lines and exhausts 40 GB;
+    `TypeResolution`, many times larger, fits in 3 GB. Everything that imports the 229-constructor
+    instruction type inherits the cost, which is most of the package. So "~450 KB per lowered
+    instruction" below is an average over modules that do not import it and predicts nothing about
+    the ones that do.
+
+    **What the profile found and what is fixed.** Each was a site that scales with the program and
+    is reached in proportion to the program: every structural release and copy deep-copied every
+    constructor in the program and renumbered them again; `coverageEnvironment` rebuilt that copy
+    at each of twelve uses; every heap-layout query scanned every constructor and peeled each
+    one's fields (85% of CPU for minutes on the instruction type); the linker copied the whole
+    `.text` four times per relocation; import resolution built an `Eq(Maybe(Str))` dictionary per
+    binding scanned. All closed. `TypeResolution` 3,777 MB / 2.68 s to 3,024 MB / 1.49 s,
+    `DerivingExpansion` 6,440 MB / 32.78 s to 2,983 MB / 8.01 s, byte-identical output. The
+    instruction-type modules still exhaust 40 GB, after 1:10 rather than 4:24.
+
+    **The cost that remains is a stage-0 calling-convention tax, and it is the next thing to fix.**
+    A function that returns a list parameter must return an owned list and cannot see whether the
+    one it was given is, so it copies it. The lowered IR of a three-line helper that conses onto a
+    `List(Int)` or hands it back holds two `CopyOutList ... RcNormalization` of the *entire* list,
+    and a third (`ArenaResultBoundary`) when the caller wants an arena result. A tail-recursive
+    loop over a typed list does the same to a borrowed argument on entry (`rc_arg_normalize_copy`).
+    Any table threaded through helpers is therefore quadratic, in memory that is never returned.
+    Two instances are rewritten so the list never leaves one loop (`collectBlockStarts`, and
+    `sumCounts`/`maxCounts` in `ResultReachSummaries`); the pattern is everywhere else, and fixing
+    it source by source does not scale. The principled fix is in `Lowering`: a parameter whose
+    caller already passed a reference-counted value (the ownership word's bit 0 says so for a
+    loop's entry today) can be retained instead of copied. That needs the runtime to tell an
+    arena cell from a reference-counted one, which it cannot for cons cells: arena `Str`, `Bytes`
+    and `BigInt` carry an immortal header, cons cells carry none. It is a change to call-boundary
+    ownership in both compilers, so it wants every self-hosted suite and the IR parity fixtures.
+
+    **Making a table monomorphic to avoid dictionary garbage makes it worse.** A generic
+    `lookupAssociation` compares through an `Eq` dictionary, and a curried dictionary method
+    allocates a partial application per comparison: 704 MB of a 4.45 GB compile. Annotating the key
+    `Int` removes that and resolves the element layout, which moves the table from the arena to
+    reference counting and turns on exactly the copies above: 3,577 MB became 4,298 MB. Tried twice,
+    reverted. The dictionary garbage is real, but it has to be fixed in how a saturated call to a
+    dictionary method is lowered, not by typing the call site.
+
+    **Two measurement traps, both hit.** A page-fault profile counts churn and retention alike:
+    fixing a site that faults gigabytes can leave the peak untouched, and did, three times. And a
+    script that greps the compiler's output for a few strings reports nothing for a segfault, so a
+    crash read as an 877 MB, 17-second success for an hour, the byte comparison passing against the
+    previous run's stale executable. Remove the output before every run and print the exit status.
 
     **What the accumulation is** (measured 2026-09-16; the measurement, not a fix). Phase RSS for
     the `TypeResolution` probe: 0.87 GiB after stitching, 1.97 GiB after lowering, 7.08 GiB after
