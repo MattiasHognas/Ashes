@@ -236,10 +236,72 @@ let expectBuiltinRegistry unit =
             | Some(TypeScheme { body = SemFunction(SemPointer(SemUInt(8)), SemFunction(SemUInt(64), SemNamed(_, "Result", SemString :: SemBytes :: []), _row), _outerRow) }) -> Unit
             | _ -> test.fail("Ffi.copyBytes is not typed as *u8 -> u64 -> Result(Str, Bytes)"))
 
+// Every member `coreBuiltinKind` dispatches needs a `standardBuiltinLayouts` entry too: the kind
+// alone lowers the call, but `lowerCoreQualifiedVariable` reaches the kind only through the layout,
+// and a member with no layout falls through to record field access and fails as
+// `UnknownLoweringBinding("<module>.<member>")`. The two tables drifted once — the math, regex,
+// rune, socket and TLS members had kinds and no layouts — so this pins one member from each module
+// that was missing.
+let expectEveryBuiltinKindHasALayout unit =
+    unit
+    |> (given (_) ->
+        match builtinScheme("Ashes.Internal.Regex")("compileRaw") with
+            | Some(TypeScheme { body = SemFunction(SemString, SemInt, None) }) -> Unit
+            | _ -> test.fail("Regex.compileRaw is not typed as Str -> Int"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Internal.Regex")("capturesFrom") with
+            | Some(TypeScheme { body = SemFunction(SemInt, SemFunction(SemString, SemFunction(SemInt, SemNamed(_, "Maybe", SemList(SemNamed(_, "Maybe", SemString :: [])) :: []), _), _), _) }) -> Unit
+            | _ -> test.fail("Regex.capturesFrom is not typed as Int -> Str -> Int -> Maybe(List(Maybe(Str)))"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Number.Math")("sqrt") with
+            | Some(TypeScheme { body = SemFunction(SemFloat, SemFloat, None) }) -> Unit
+            | _ -> test.fail("Math.sqrt is not typed as Float -> Float"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Number.Math")("truncToInt") with
+            | Some(TypeScheme { body = SemFunction(SemFloat, SemInt, None) }) -> Unit
+            | _ -> test.fail("Math.truncToInt is not typed as Float -> Int"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Number.Math")("hypot") with
+            | Some(TypeScheme { body = SemFunction(SemFloat, SemFunction(SemFloat, SemFloat, None), None) }) -> Unit
+            | _ -> test.fail("Math.hypot is not typed as Float -> Float -> Float"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Number.Math")("toFloat") with
+            | Some(TypeScheme { body = SemFunction(SemInt, SemFloat, None) }) -> Unit
+            | _ -> test.fail("Math.toFloat is not typed as Int -> Float"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Rune")("fromInt") with
+            | Some(TypeScheme { body = SemFunction(SemInt, SemNamed(_, "Maybe", SemRune :: []), None) }) -> Unit
+            | _ -> test.fail("Rune.fromInt is not typed as Int -> Maybe(Rune)"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.IO")("readExact") with
+            | Some(TypeScheme { body = SemFunction(SemInt, SemNamed(_, "Result", SemString :: SemString :: []), None) }) -> Unit
+            | _ -> test.fail("IO.readExact is not typed as Int -> Result(Str, Str)"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Net.Tcp")("send") with
+            | Some(TypeScheme { body = SemFunction(SemNamed(_, "Socket", []), SemFunction(SemString, SemNamed(_, "Task", SemString :: SemInt :: []), None), None) }) -> Unit
+            | _ -> test.fail("Tcp.send is not typed as Socket -> Str -> Task(Str, Int)"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Net.Tcp.Server")("listen") with
+            | Some(TypeScheme { body = SemFunction(SemInt, SemNamed(_, "Task", SemString :: SemNamed(_, "Socket", []) :: []), None) }) -> Unit
+            | _ -> test.fail("Tcp.Server.listen is not typed as Int -> Task(Str, Socket)"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Net.Tls")("close") with
+            | Some(TypeScheme { body = SemFunction(SemNamed(_, "TlsSocket", []), SemNamed(_, "Task", SemString :: SemNamed(_, "Unit", []) :: []), None) }) -> Unit
+            | _ -> test.fail("Tls.close is not typed as TlsSocket -> Task(Str, Unit)"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Net.Tls.Server")("handshake") with
+            | Some(TypeScheme { body = SemFunction(SemNamed(_, "Socket", []), SemFunction(SemString, SemFunction(SemString, SemNamed(_, "Task", SemString :: SemNamed(_, "TlsSocket", []) :: []), None), None), None) }) -> Unit
+            | _ -> test.fail("Tls.Server.handshake is not typed as Socket -> Str -> Str -> Task(Str, TlsSocket)"))
+    |> (given (_) ->
+        match builtinScheme("Ashes.Net.Http")("get") with
+            | Some(TypeScheme { body = SemFunction(SemString, SemNamed(_, "Task", SemString :: SemString :: []), None) }) -> Unit
+            | _ -> test.fail("Http.get is not typed as Str -> Task(Str, Str)"))
+
 let runCoreBuiltinLoweringTests unit =
     unit
     |> expectBuiltinCases(builtinCases)
     |> expectRepresentativeInstructions
     |> expectArityFailure
     |> expectBuiltinRegistry
+    |> expectEveryBuiltinKindHasALayout
     |> (given (_) -> Ashes.IO.print("all self-hosted core builtin lowering tests passed"))

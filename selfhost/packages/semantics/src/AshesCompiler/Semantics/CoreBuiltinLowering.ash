@@ -478,6 +478,36 @@ let fileHandleType = SemNamed(0)("FileHandle")([])
 
 let processType = SemNamed(0)("Process")([])
 
+// The compiler-provided socket resource types, each one raw fd-shaped scalar word like
+// `fileHandleType`. `Ashes.Net.Tls`'s handle is distinct from `Ashes.Net.Tcp`'s so a plain socket
+// cannot be passed where a TLS session is expected.
+let socketType = SemNamed(0)("Socket")([])
+
+let tlsSocketType = SemNamed(0)("TlsSocket")([])
+
+// The two shapes every fallible builtin returns: `Result(Str, a)` for one that answers immediately
+// and `Task(Str, a)` for one the async lowering drives, both carrying their failure as a message.
+let stringResultOf valueType = SemNamed(0)("Result")([SemString, valueType])
+
+let stringTaskOf valueType = SemNamed(0)("Task")([SemString, valueType])
+
+let monomorphicScheme body = TypeScheme(quantified = [], body = body, constraints = [])
+
+let floatUnaryScheme =
+    None
+    |> SemFunction(SemFloat)(SemFloat)
+    |> monomorphicScheme
+
+let floatBinaryScheme =
+    None
+    |> SemFunction(SemFloat)(SemFunction(SemFloat)(SemFloat)(None))
+    |> monomorphicScheme
+
+let floatToIntScheme =
+    None
+    |> SemFunction(SemFloat)(SemInt)
+    |> monomorphicScheme
+
 // The number of distinct quantified-variable ids used by EITHER `standardBuiltinLayouts`' schemes
 // below OR `CoreLowering.ash`'s `standardConstructorLayouts` (currently: `print`'s `(0, "a")`;
 // `Maybe`'s `None`/`Some` sharing `(1, "a")`; `Result`'s `Ok`/`Error` sharing `(2, "e")` and
@@ -922,6 +952,156 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.Text")("toHex")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO")("readExact")(
+            None
+            |> SemFunction(SemInt)(stringResultOf(SemString))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Rune")("toInt")(
+            None
+            |> SemFunction(SemRune)(SemInt)
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Rune")("fromInt")(
+            None
+            |> SemFunction(SemInt)(SemNamed(0)("Maybe")([SemRune]))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Internal.Regex")("compileRaw")(
+            None
+            |> SemFunction(SemString)(SemInt)
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Internal.Regex")("compileError")(
+            None
+            |> SemFunction(SemString)(SemString)
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Internal.Regex")("findFrom")(
+            monomorphicScheme(
+                SemFunction(SemInt)(SemFunction(SemString)(SemFunction(SemInt)(SemNamed(0)("Maybe")([SemTuple([SemInt, SemInt])]))(None))(None))(None)
+            )
+        ),
+        standardBuiltinLayout("Ashes.Internal.Regex")("capturesFrom")(
+            monomorphicScheme(
+                SemFunction(SemInt)(SemFunction(SemString)(SemFunction(SemInt)(SemNamed(0)("Maybe")([[SemString]
+                |> SemNamed(0)("Maybe")
+                |> SemList]))(None))(None))(None)
+            )
+        ),
+        standardBuiltinLayout("Ashes.Internal.Regex")("substituteAll")(
+            None
+            |> SemFunction(SemInt)(SemFunction(SemString)(SemFunction(SemString)(SemString)(None))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Number.Math")("toFloat")(
+            None
+            |> SemFunction(SemInt)(SemFloat)
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Number.Math")("sqrt")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("floor")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("ceil")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("round")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("trunc")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("sin")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("cos")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("tan")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("asin")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("acos")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("atan")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("sinh")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("cosh")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("tanh")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("exp")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("expm1")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("ln")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("log2")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("log10")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("log1p")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("cbrt")(floatUnaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("floorToInt")(floatToIntScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("roundToInt")(floatToIntScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("truncToInt")(floatToIntScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("powF")(floatBinaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("atan2")(floatBinaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("hypot")(floatBinaryScheme),
+        standardBuiltinLayout("Ashes.Number.Math")("fmod")(floatBinaryScheme),
+        standardBuiltinLayout("Ashes.Net.Http")("get")(
+            None
+            |> SemFunction(SemString)(stringTaskOf(SemString))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Http")("post")(
+            None
+            |> SemFunction(SemString)(SemFunction(SemString)(stringTaskOf(SemString))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp")("connect")(
+            None
+            |> SemFunction(SemString)(SemFunction(SemInt)(stringTaskOf(socketType))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp")("send")(
+            None
+            |> SemFunction(socketType)(SemFunction(SemString)(stringTaskOf(SemInt))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp")("receive")(
+            None
+            |> SemFunction(socketType)(SemFunction(SemInt)(stringTaskOf(SemString))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp")("close")(
+            None
+            |> SemFunction(socketType)(stringTaskOf(unitType))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp.Server")("listen")(
+            None
+            |> SemFunction(SemInt)(stringTaskOf(socketType))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp.Server")("accept")(
+            None
+            |> SemFunction(socketType)(stringTaskOf(socketType))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp.Server")("forkWorkers")(
+            None
+            |> SemFunction(SemInt)(SemFunction(SemInt)(stringTaskOf(SemInt))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tcp.Server")("setDrainTimeout")(
+            None
+            |> SemFunction(SemInt)(unitType)
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tls")("connect")(
+            None
+            |> SemFunction(SemString)(SemFunction(SemInt)(stringTaskOf(tlsSocketType))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tls")("send")(
+            None
+            |> SemFunction(tlsSocketType)(SemFunction(SemString)(stringTaskOf(SemInt))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tls")("receive")(
+            None
+            |> SemFunction(tlsSocketType)(SemFunction(SemInt)(stringTaskOf(SemString))(None))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tls")("close")(
+            None
+            |> SemFunction(tlsSocketType)(stringTaskOf(unitType))
+            |> monomorphicScheme
+        ),
+        standardBuiltinLayout("Ashes.Net.Tls.Server")("handshake")(
+            None
+            |> SemFunction(socketType)(SemFunction(SemString)(SemFunction(SemString)(stringTaskOf(tlsSocketType))(None))(None))
+            |> monomorphicScheme
         )
     ]
 
