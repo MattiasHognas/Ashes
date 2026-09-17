@@ -15,14 +15,18 @@ The goal right now is a **fixpoint**: the compiler built by the self-hosted comp
 sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
 matching its output instruction for instruction.
 
-**The next task** is OPT-85, the memory task. The semantics package has now been swept module by
-module (2026-09-15, 86 modules, the probe below): 28 compile and link to a working executable, 54
-run out of memory before they reach a diagnostic, and 4 stop with one. Memory is what gates the
-package, not a queue of defects, so it is what step 2 of the work order waits on. Of the four
-diagnostics MOD-20 and MOD-21 are closed, and the fourth turned out to be MOD-17c, whose dispatch
-half is now closed too; the miscompiles CG-20 and CG-21 are closed, CG-21 having turned out to be
-CG-20 seen from another shape. What is left of that sweep is SEM-22, an `==` generalization gap that
-also blocks `sort`. It does not unblock more than its own module.
+**The next task** is OPT-85, the memory task. The semantics package was swept module by module again
+after that first half landed (2026-09-17, 86 modules, the probe below, each run capped at 24 GB of
+address space so an over-budget module fails fast instead of thrashing): **33** compile and link to a
+working executable, **51** exhaust the cap, and **2** stop with a diagnostic. The 2026-09-15 sweep,
+before OPT-85's first half and the CG/MOD fixes, read 28 / 54 / 4. Memory is what gates the package,
+and by a wide margin: three in five modules cannot be compiled at any budget this machine has, while
+the defect queue is down to one entry. That one is SEM-22, an `==` generalization gap that also
+blocks `sort` — `HoverTypeInfo` is the module it stops, and it unblocks nothing else. Everything else
+that sweep found is closed: MOD-20, MOD-21 and MOD-17c's dispatch half; the miscompiles CG-20 and
+CG-21, CG-21 having turned out to be CG-20 seen from another shape; and the builtin layout table's
+52-member gap behind `QualifiedShippedReferences`, which had a kind for every `Ashes.Number.Math`,
+`Ashes.Internal.Regex`, `Ashes.Net.*` and `Ashes.Rune` member and a scheme for none of them.
 
 OPT-85 now carries its measurement: what the arena holds, where it accumulates, **four approaches
 already refuted by measurement**, and the finding that genericity rather than value shape is what
@@ -46,9 +50,10 @@ or project loading fails with a null reference (SEM-20). Point it at one module 
 whole package before fixing anything, so what remains is a list you can order rather than a queue you
 discover one failure at a time.
 
-**Expect it to be slow and hungry.** One compiler module currently costs roughly 9 GB and two and a
-half minutes through the whole pipeline, which is why a whole package does not fit yet. That is
-OPT-85, the memory task behind step 2.
+**Expect it to be slow and hungry.** The probe's own module now costs 3,684 MB and 2.58 s through the
+whole pipeline, down from the 7,313 MB the OPT-85 entry records, but a compiler module in the middle
+of the package still exceeds 24 GB, and compiling the semantics package whole peaked at 51.6 GB after
+10m40s before it had to be killed. That is OPT-85, the memory task behind step 2.
 
 **When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
 than marking it done here. Read "How to work on this" below before your first change.
@@ -164,7 +169,7 @@ changed merely to make the self-hosted port easier.
 | Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
 | IR, optimizer, ownership, backend, linker | Complete IR model/text form, core and builtin lowering, scoped arenas, RC/Perceus insertion, reuse and placement paths, supported tail-modulo-constructor and reverse-list/bytes transforms; a linux-x64 LLVM backend and pure-Ashes ELF linker producing real executables | In progress; zero-cost classification, trait-evidence/static-provider/async lowering, remaining ownership and region-lifetime gaps, fusion correctness, optimization levels, and the other three targets remain; individual checklist items distinguish supported paths from open tails |
 | CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | `fmt`, `init`, `compile`, `run`, `add`, `remove`, `restore`, `tree`, and `why` have implemented surfaces; compile/report options are partial (see CLI-1..CLI-12) | In progress; remaining commands, TestRunner, fuzzing runner, LSP, and DAP remain separate checklist work |
-| Bootstrap | Stage 0 builds an executable stage-1 CLI, and stage 1 compiles, links and runs ordinary programs. Stage 1 also carries compiler modules of its own through lowering, the optimizer and code generation to a working executable: 28 of the semantics package's 86 modules as of 2026-09-15, with memory, not defects, gating most of the rest | Stage-1 artifact available and working on ordinary programs; self-compilation of the whole tree, and the stage-2 against stage-3 fixpoint, not established |
+| Bootstrap | Stage 0 builds an executable stage-1 CLI, and stage 1 compiles, links and runs ordinary programs. Stage 1 also carries compiler modules of its own through lowering, the optimizer and code generation to a working executable: 33 of the semantics package's 86 modules as of 2026-09-17, with memory, not defects, gating the rest — 51 exceed a 24 GB budget and one module is held by a defect | Stage-1 artifact available and working on ordinary programs; self-compilation of the whole tree, and the stage-2 against stage-3 fixpoint, not established |
 
 The current packages intentionally form the same strict dependency graph as the existing toolchain:
 `frontend` has no compiler dependency, `formatter` depends only on `frontend`, and `semantics` depends
