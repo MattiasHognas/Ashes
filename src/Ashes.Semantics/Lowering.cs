@@ -146,6 +146,12 @@ public sealed partial class Lowering
     // This prevents double-Drop and propagates diagnostics through aliases.
     // Aliases are resolved transitively (y → x → z chains are followed).
     private readonly Dictionary<string, string> _ownershipAliases = new(StringComparer.Ordinal);
+
+    // What each ownership scope changed in the alias map, newest last, with the target the name had
+    // before (null for none). The map is keyed by source name, so an alias outliving its scope would
+    // redirect every later binding of the same name, in any function, to an owner that is gone.
+    private readonly Dictionary<Dictionary<string, OwnershipInfo>, List<(string Name, string? Previous)>> _ownershipAliasChanges =
+        new(ReferenceEqualityComparer.Instance);
     private sealed record PatternBindingPlacementSite(
         int LocalSlot,
         int RootParameterSlot,
@@ -5560,7 +5566,7 @@ public sealed partial class Lowering
             return;
         }
 
-        _ownershipAliases[name] = ResolveOwnershipAlias(aliasSourceName);
+        SetScopedOwnershipAlias(name, ResolveOwnershipAlias(aliasSourceName));
     }
 
     private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
