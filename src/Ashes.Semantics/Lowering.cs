@@ -7545,10 +7545,13 @@ public sealed partial class Lowering
                     case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
                         changed |= aliases.Add(borrow.Target);
                         break;
+                    case IrInst.GetAdtField field when aliases.Contains(field.Ptr):
+                        changed |= aliases.Add(field.Target);
+                        break;
                     case IrInst.RcDup duplicate when aliases.Contains(duplicate.SourceTemp):
                         if (!duplicate.RuntimeManaged)
                         {
-                            _inst[i] = duplicate with { RuntimeManaged = true, MayBeEmpty = mayBeEmpty };
+                            _inst[i] = duplicate with { RuntimeManaged = true, MayBeEmpty = mayBeEmpty || duplicate.MayBeEmpty };
                         }
                         changed |= aliases.Add(duplicate.Target);
                         break;

@@ -47,8 +47,8 @@ Function: findHeavy
   representation [lambda_5]
     conservative unknown: 2
     region:               3
-    runtime rc:           19
-    copy value:           5
+    runtime rc:           20
+    copy value:           4
   representation [lambda_4]
     conservative unknown: 1
     region:               3
