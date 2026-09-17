@@ -23,13 +23,13 @@ Function: __deepcopy_list_2
 
 Function: build [lambda_1]
   Operations
-    dup:                  1
+    dup:                  6
     drop:                 8
     uniqueness checks:    4
-    allocations:          4
+    allocations:          5
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               4
 
 Function: build
   Operations
@@ -53,10 +53,10 @@ Function: __rcdrop_structural_6
 
 Function: findHeavy [lambda_5]
   Operations
-    dup:                  3
-    drop:                 16
-    uniqueness checks:    7
-    allocations:          3
+    dup:                  8
+    drop:                 14
+    uniqueness checks:    6
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               4
@@ -74,8 +74,8 @@ Function: findHeavy
 Function: run [lambda_8]
   Operations
     dup:                  1
-    drop:                 6
-    uniqueness checks:    3
+    drop:                 2
+    uniqueness checks:    1
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
@@ -93,20 +93,20 @@ Function: run
 
 Function: build [lambda_1__scalarenv0]
   Operations
-    dup:                  1
+    dup:                  6
     drop:                 8
     uniqueness checks:    4
-    allocations:          4
+    allocations:          5
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               4
 
 Function: findHeavy [lambda_5__scalarenv1]
   Operations
-    dup:                  3
-    drop:                 16
-    uniqueness checks:    7
-    allocations:          3
+    dup:                  8
+    drop:                 14
+    uniqueness checks:    6
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               4

@@ -13,7 +13,7 @@ Function: __rc_cdrop_3
 
 Function: walk [lambda_2$env_normalize]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0
@@ -33,7 +33,7 @@ Function: walk [lambda_1]
 
 Function: walk [lambda_1$env_normalize]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0

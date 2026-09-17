@@ -3,7 +3,7 @@ RC report
 
 Function: collect [lambda_2]
   Operations
-    dup:                  0
+    dup:                  2
     drop:                 3
     uniqueness checks:    0
     allocations:          0
@@ -23,7 +23,7 @@ Function: __rc_cdrop_3
 
 Function: collect [lambda_2$env_normalize]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0

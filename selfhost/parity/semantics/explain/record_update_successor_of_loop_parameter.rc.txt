@@ -23,7 +23,7 @@ Function: __rc_cdrop_2
 
 Function: extend [lambda_1$env_normalize]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0
@@ -43,8 +43,8 @@ Function: extend
 
 Function: scan [lambda_4]
   Operations
-    dup:                  10
-    drop:                 58
+    dup:                  23
+    drop:                 59
     uniqueness checks:    18
     allocations:          2
     reused allocations:   0
@@ -63,7 +63,7 @@ Function: scan
 
 Function: joinAll [lambda_6]
   Operations
-    dup:                  1
+    dup:                  3
     drop:                 11
     uniqueness checks:    3
     allocations:          0
@@ -83,7 +83,7 @@ Function: joinAll
 
 Function: joinAll [lambda_6__scalarenv0]
   Operations
-    dup:                  1
+    dup:                  3
     drop:                 11
     uniqueness checks:    3
     allocations:          0

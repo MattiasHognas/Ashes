@@ -7,7 +7,7 @@ Function: count
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_3]
-    dup:                  1
+    dup:                  6
     drop:                 12
     uniqueness checks:    6
   perceus [lambda_2]
@@ -15,12 +15,12 @@ Function: count
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_3__scalarenv0]
-    dup:                  1
+    dup:                  6
     drop:                 12
     uniqueness checks:    6
   representation [lambda_3]
     conservative unknown: 2
-    runtime rc:           12
+    runtime rc:           18
     copy value:           6
   representation [lambda_2]
     conservative unknown: 1
@@ -31,13 +31,13 @@ Function: makeFunction
     name: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   representation [lambda_0]
     conservative unknown: 1
     region:               2
-    runtime rc:           1
+    runtime rc:           2
 
 Function: mark
   ownership

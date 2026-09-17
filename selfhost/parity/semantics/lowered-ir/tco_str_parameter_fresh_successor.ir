@@ -2,16 +2,25 @@ IR (lowered)
 ============
 
 function lambda_2  [ClosureHelper from collect]
-  locals=17 temps=45
+  locals=19 temps=51
     LoadEnv               Target=0 Index=0   (tco_str_parameter_fresh_successor.ash:7:1)
     StoreLocal            Slot=2 Source=0   (tco_str_parameter_fresh_successor.ash:7:1)
     LoadEnv               Target=1 Index=1   (tco_str_parameter_fresh_successor.ash:7:1)
     StoreLocal            Slot=3 Source=1   (tco_str_parameter_fresh_successor.ash:7:1)
     LoadLocal             Target=23 Slot=3   (tco_str_parameter_fresh_successor.ash:7:1)
-    CopyOutArena          DestTemp=24 SrcTemp=23 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=3 Source=24   (tco_str_parameter_fresh_successor.ash:7:1)
-    LoadConstInt          Target=25 Value=1   (tco_str_parameter_fresh_successor.ash:7:1)
-    StoreLocal            Slot=9 Source=25   (tco_str_parameter_fresh_successor.ash:7:1)
+    IsReferenceCounted    Target=24 SourceTemp=23
+    JumpIfFalse           CondTemp=24 Target=rc_representation_copy_2   (tco_str_parameter_fresh_successor.ash:7:1)
+    RcDup                 Target=25 SourceTemp=23 RuntimeManaged=true
+    StoreLocal            Slot=14 Source=25   (tco_str_parameter_fresh_successor.ash:7:1)
+    Jump                  Target=rc_representation_done_3   (tco_str_parameter_fresh_successor.ash:7:1)
+  rc_representation_copy_2:
+    CopyOutArena          DestTemp=26 SrcTemp=23 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=14 Source=26   (tco_str_parameter_fresh_successor.ash:7:1)
+  rc_representation_done_3:
+    LoadLocal             Target=27 Slot=14   (tco_str_parameter_fresh_successor.ash:7:1)
+    StoreLocal            Slot=3 Source=27   (tco_str_parameter_fresh_successor.ash:7:1)
+    LoadConstInt          Target=28 Value=1   (tco_str_parameter_fresh_successor.ash:7:1)
+    StoreLocal            Slot=9 Source=28   (tco_str_parameter_fresh_successor.ash:7:1)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadConstInt          Target=2 Value=0   (tco_str_parameter_fresh_successor.ash:7:1)
     StoreLocal            Slot=6 Source=2   (tco_str_parameter_fresh_successor.ash:7:1)
@@ -45,57 +54,66 @@ function lambda_2  [ClosureHelper from collect]
     StoreLocal            Slot=2 Source=9   (tco_str_parameter_fresh_successor.ash:10:10)
     StoreLocal            Slot=3 Source=13   (tco_str_parameter_fresh_successor.ash:10:10)
     StoreLocal            Slot=1 Source=17   (tco_str_parameter_fresh_successor.ash:10:10)
-    CopyOutArena          DestTemp=41 SrcTemp=13 RuntimeManaged=true Purpose=RcNormalization
-    LoadLocal             Target=42 Slot=9
-    JumpIfFalse           CondTemp=42 Target=rc_tco_drop_inactive_7
+    IsReferenceCounted    Target=44 SourceTemp=13
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_11
+    RcDup                 Target=45 SourceTemp=13 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=45
+    Jump                  Target=rc_representation_done_12
+  rc_representation_copy_11:
+    CopyOutArena          DestTemp=46 SrcTemp=13 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=18 Source=46
+  rc_representation_done_12:
+    LoadLocal             Target=47 Slot=18
+    LoadLocal             Target=48 Slot=9
+    JumpIfFalse           CondTemp=48 Target=rc_tco_drop_inactive_13
     RcDrop                SourceTemp=19 TypeName=String RuntimeManaged=true
-  rc_tco_drop_inactive_7:
-    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=16
-    LoadConstInt          Target=43 Value=0
-    StoreLocal            Slot=7 Source=43
-    StoreLocal            Slot=8 Source=43
-    StoreLocal            Slot=3 Source=41
-    LoadConstInt          Target=44 Value=1
-    StoreLocal            Slot=9 Source=44
-    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=16
+  rc_tco_drop_inactive_13:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=17
+    LoadConstInt          Target=49 Value=0
+    StoreLocal            Slot=7 Source=49
+    StoreLocal            Slot=8 Source=49
+    StoreLocal            Slot=3 Source=47
+    LoadConstInt          Target=50 Value=1
+    StoreLocal            Slot=9 Source=50
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=17
     RestoreStackPointer   Slot=12   (tco_str_parameter_fresh_successor.ash:10:10)
     Jump                  Target=lambda_2_body   (tco_str_parameter_fresh_successor.ash:10:10)
     LoadConstInt          Target=21 Value=0   (tco_str_parameter_fresh_successor.ash:10:10)
     StoreLocal            Slot=13 Source=21   (tco_str_parameter_fresh_successor.ash:8:5)
   endif_1:
     LoadLocal             Target=22 Slot=13   (tco_str_parameter_fresh_successor.ash:8:5)
-    LoadConstInt          Target=26 Value=0   (tco_str_parameter_fresh_successor.ash:7:1)
-    StoreLocal            Slot=14 Source=26   (tco_str_parameter_fresh_successor.ash:7:1)
-    LoadLocal             Target=27 Slot=3   (tco_str_parameter_fresh_successor.ash:7:1)
-    LoadLocal             Target=28 Slot=9   (tco_str_parameter_fresh_successor.ash:7:1)
-    CmpIntEq              Target=29 Left=27 Right=22   (tco_str_parameter_fresh_successor.ash:7:1)
-    LoadLocal             Target=30 Slot=14   (tco_str_parameter_fresh_successor.ash:7:1)
-    CmpIntEq              Target=31 Left=30 Right=26   (tco_str_parameter_fresh_successor.ash:7:1)
-    AndInt                Target=32 Left=28 Right=29   (tco_str_parameter_fresh_successor.ash:7:1)
-    AndInt                Target=33 Left=32 Right=31   (tco_str_parameter_fresh_successor.ash:7:1)
-    JumpIfFalse           CondTemp=33 Target=rc_tco_exit_transfer_not_selected_2   (tco_str_parameter_fresh_successor.ash:7:1)
-    LoadConstInt          Target=34 Value=1   (tco_str_parameter_fresh_successor.ash:7:1)
-    StoreLocal            Slot=14 Source=34   (tco_str_parameter_fresh_successor.ash:7:1)
-    Jump                  Target=rc_tco_exit_transfer_done_3   (tco_str_parameter_fresh_successor.ash:7:1)
-  rc_tco_exit_transfer_not_selected_2:
-    LoadLocal             Target=35 Slot=9   (tco_str_parameter_fresh_successor.ash:7:1)
-    JumpIfFalse           CondTemp=35 Target=rc_tco_exit_drop_inactive_4   (tco_str_parameter_fresh_successor.ash:7:1)
-    RcDrop                SourceTemp=27 TypeName=String RuntimeManaged=true
-  rc_tco_exit_drop_inactive_4:
-  rc_tco_exit_transfer_done_3:
-    LoadArgumentOwnership Target=36   (tco_str_parameter_fresh_successor.ash:7:1)
+    LoadConstInt          Target=29 Value=0   (tco_str_parameter_fresh_successor.ash:7:1)
+    StoreLocal            Slot=15 Source=29   (tco_str_parameter_fresh_successor.ash:7:1)
+    LoadLocal             Target=30 Slot=3   (tco_str_parameter_fresh_successor.ash:7:1)
+    LoadLocal             Target=31 Slot=9   (tco_str_parameter_fresh_successor.ash:7:1)
+    CmpIntEq              Target=32 Left=30 Right=22   (tco_str_parameter_fresh_successor.ash:7:1)
+    LoadLocal             Target=33 Slot=15   (tco_str_parameter_fresh_successor.ash:7:1)
+    CmpIntEq              Target=34 Left=33 Right=29   (tco_str_parameter_fresh_successor.ash:7:1)
+    AndInt                Target=35 Left=31 Right=32   (tco_str_parameter_fresh_successor.ash:7:1)
+    AndInt                Target=36 Left=35 Right=34   (tco_str_parameter_fresh_successor.ash:7:1)
+    JumpIfFalse           CondTemp=36 Target=rc_tco_exit_transfer_not_selected_4   (tco_str_parameter_fresh_successor.ash:7:1)
     LoadConstInt          Target=37 Value=1   (tco_str_parameter_fresh_successor.ash:7:1)
-    ShrInt                Target=38 Left=36 Right=37   (tco_str_parameter_fresh_successor.ash:7:1)
-    JumpIfFalse           CondTemp=38 Target=rc_result_owned_5   (tco_str_parameter_fresh_successor.ash:7:1)
-    CopyOutArena          DestTemp=39 SrcTemp=22 Purpose=ArenaResultBoundary
+    StoreLocal            Slot=15 Source=37   (tco_str_parameter_fresh_successor.ash:7:1)
+    Jump                  Target=rc_tco_exit_transfer_done_5   (tco_str_parameter_fresh_successor.ash:7:1)
+  rc_tco_exit_transfer_not_selected_4:
+    LoadLocal             Target=38 Slot=9   (tco_str_parameter_fresh_successor.ash:7:1)
+    JumpIfFalse           CondTemp=38 Target=rc_tco_exit_drop_inactive_6   (tco_str_parameter_fresh_successor.ash:7:1)
+    RcDrop                SourceTemp=30 TypeName=String RuntimeManaged=true
+  rc_tco_exit_drop_inactive_6:
+  rc_tco_exit_transfer_done_5:
+    LoadArgumentOwnership Target=39   (tco_str_parameter_fresh_successor.ash:7:1)
+    LoadConstInt          Target=40 Value=1   (tco_str_parameter_fresh_successor.ash:7:1)
+    ShrInt                Target=41 Left=39 Right=40   (tco_str_parameter_fresh_successor.ash:7:1)
+    JumpIfFalse           CondTemp=41 Target=rc_result_owned_7   (tco_str_parameter_fresh_successor.ash:7:1)
+    CopyOutArena          DestTemp=42 SrcTemp=22 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=22 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=15 Source=39   (tco_str_parameter_fresh_successor.ash:7:1)
-    Jump                  Target=rc_result_done_6   (tco_str_parameter_fresh_successor.ash:7:1)
-  rc_result_owned_5:
-    StoreLocal            Slot=15 Source=22   (tco_str_parameter_fresh_successor.ash:7:1)
-  rc_result_done_6:
-    LoadLocal             Target=40 Slot=15   (tco_str_parameter_fresh_successor.ash:7:1)
-    Return                Source=40   (tco_str_parameter_fresh_successor.ash:7:1)
+    StoreLocal            Slot=16 Source=42   (tco_str_parameter_fresh_successor.ash:7:1)
+    Jump                  Target=rc_result_done_8   (tco_str_parameter_fresh_successor.ash:7:1)
+  rc_result_owned_7:
+    StoreLocal            Slot=16 Source=22   (tco_str_parameter_fresh_successor.ash:7:1)
+  rc_result_done_8:
+    LoadLocal             Target=43 Slot=16   (tco_str_parameter_fresh_successor.ash:7:1)
+    Return                Source=43   (tco_str_parameter_fresh_successor.ash:7:1)
 
 function __rc_cdrop_3  [RuntimeManagedClosureDropper]
   locals=2 temps=3
@@ -106,16 +124,25 @@ function __rc_cdrop_3  [RuntimeManagedClosureDropper]
     Return                Source=2   (tco_str_parameter_fresh_successor.ash:7:1)
 
 function lambda_2$env_normalize  [ClosureEnvironmentNormalizer from collect]
-  locals=2 temps=6
+  locals=3 temps=9
     LoadLocal             Target=0 Slot=0   (tco_str_parameter_fresh_successor.ash:7:1)
     LoadLocal             Target=1 Slot=1   (tco_str_parameter_fresh_successor.ash:7:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_str_parameter_fresh_successor.ash:7:1)
     StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_str_parameter_fresh_successor.ash:7:1)
     LoadMemOffset         Target=3 BasePtr=0 OffsetBytes=8   (tco_str_parameter_fresh_successor.ash:7:1)
-    CopyOutArena          DestTemp=4 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
-    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=4   (tco_str_parameter_fresh_successor.ash:7:1)
-    LoadFuncAddr          Target=5 FuncLabel=__rc_cdrop_3   (tco_str_parameter_fresh_successor.ash:7:1)
-    Return                Source=5   (tco_str_parameter_fresh_successor.ash:7:1)
+    IsReferenceCounted    Target=4 SourceTemp=3
+    JumpIfFalse           CondTemp=4 Target=rc_representation_copy_9   (tco_str_parameter_fresh_successor.ash:7:1)
+    RcDup                 Target=5 SourceTemp=3 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=5   (tco_str_parameter_fresh_successor.ash:7:1)
+    Jump                  Target=rc_representation_done_10   (tco_str_parameter_fresh_successor.ash:7:1)
+  rc_representation_copy_9:
+    CopyOutArena          DestTemp=6 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=6   (tco_str_parameter_fresh_successor.ash:7:1)
+  rc_representation_done_10:
+    LoadLocal             Target=7 Slot=2   (tco_str_parameter_fresh_successor.ash:7:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=7   (tco_str_parameter_fresh_successor.ash:7:1)
+    LoadFuncAddr          Target=8 FuncLabel=__rc_cdrop_3   (tco_str_parameter_fresh_successor.ash:7:1)
+    Return                Source=8   (tco_str_parameter_fresh_successor.ash:7:1)
 
 function lambda_1  [ClosureHelper from collect]
   locals=2 temps=5

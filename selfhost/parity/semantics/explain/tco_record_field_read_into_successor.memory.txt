@@ -8,11 +8,11 @@ Function: carry
     pair: consumed, move-safe yes
     result fresh: no
   perceus [lambda_6]
-    dup:                  2
+    dup:                  16
     drop:                 24
     uniqueness checks:    13
   perceus [lambda_6$env_normalize]
-    dup:                  0
+    dup:                  2
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_5]
@@ -26,12 +26,12 @@ Function: carry
   representation [lambda_6]
     conservative unknown: 2
     region:               5
-    runtime rc:           14
+    runtime rc:           22
     copy value:           10
   representation [lambda_5]
     conservative unknown: 1
     region:               2
-    runtime rc:           2
+    runtime rc:           4
   representation [lambda_4]
     region:               3
     copy value:           1
@@ -42,7 +42,7 @@ Function: walk
     pair: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  2
+    dup:                  12
     drop:                 18
     uniqueness checks:    10
   perceus [lambda_0]
@@ -50,13 +50,13 @@ Function: walk
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
-    dup:                  2
+    dup:                  12
     drop:                 18
     uniqueness checks:    10
   representation [lambda_1]
     conservative unknown: 4
     region:               12
-    runtime rc:           10
+    runtime rc:           15
     copy value:           9
   representation [lambda_0]
     region:               3

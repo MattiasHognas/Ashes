@@ -2,64 +2,109 @@ IR (lowered)
 ============
 
 function lambda_2  [ClosureHelper from collect]
-  locals=19 temps=82
+  locals=32 temps=129
     LoadEnv               Target=0 Index=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     StoreLocal            Slot=2 Source=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     LoadEnv               Target=1 Index=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     StoreLocal            Slot=3 Source=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadLocal             Target=30 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CopyOutArena          DestTemp=33 SrcTemp=30 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=34 Ptr=30 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CopyOutArena          DestTemp=35 SrcTemp=34 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=33 FieldIndex=0 Source=35 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=3 Source=33   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadConstInt          Target=36 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=7 Source=36   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadLocal             Target=37 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadArgumentOwnership Target=38   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadConstInt          Target=39 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    AndInt                Target=40 Left=38 Right=39   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    JumpIfFalse           CondTemp=40 Target=rc_arg_normalize_copy_2   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=13 Source=37   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    Jump                  Target=rc_arg_normalize_done_3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rc_arg_normalize_copy_2:
-    LoadConstInt          Target=42 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=14 Source=37   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=15 Source=42   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=16 Source=42   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rc_normalize_list_4:
-    LoadLocal             Target=43 Slot=14   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CmpIntNe              Target=44 Left=43 Right=42   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_end_5   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadMemOffset         Target=45 BasePtr=43 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadMemOffset         Target=46 BasePtr=43 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CopyOutArena          DestTemp=48 SrcTemp=45 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=49 Ptr=45 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CopyOutArena          DestTemp=50 SrcTemp=49 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=48 FieldIndex=0 Source=50 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    Alloc                 Target=51 SizeBytes=16 RuntimeManaged=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreMemOffset        BasePtr=51 OffsetBytes=0 Source=48   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreMemOffset        BasePtr=51 OffsetBytes=8 Source=42   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadLocal             Target=52 Slot=15   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CmpIntNe              Target=53 Left=52 Right=42   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    JumpIfFalse           CondTemp=53 Target=rc_normalize_list_first_6   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadLocal             Target=54 Slot=16   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=51   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    Jump                  Target=rc_normalize_list_linked_7   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rc_normalize_list_first_6:
-    StoreLocal            Slot=15 Source=51   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rc_normalize_list_linked_7:
-    StoreLocal            Slot=16 Source=51   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=14 Source=46   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    Jump                  Target=rc_normalize_list_4   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rc_normalize_list_end_5:
-    LoadLocal             Target=55 Slot=15   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=13 Source=55   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rc_arg_normalize_done_3:
-    LoadLocal             Target=56 Slot=13   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=1 Source=56   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadConstInt          Target=57 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=8 Source=57   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadLocal             Target=56 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    IsReferenceCounted    Target=57 SourceTemp=56
+    JumpIfFalse           CondTemp=57 Target=rc_representation_copy_12   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDup                 Target=58 SourceTemp=56 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=58   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_representation_done_13   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_copy_12:
+    CopyOutArena          DestTemp=61 SrcTemp=56 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=62 Ptr=56 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    IsReferenceCounted    Target=63 SourceTemp=62
+    JumpIfFalse           CondTemp=63 Target=rc_representation_copy_14   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDup                 Target=64 SourceTemp=62 RuntimeManaged=true
+    StoreLocal            Slot=20 Source=64   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_representation_done_15   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_copy_14:
+    CopyOutArena          DestTemp=65 SrcTemp=62 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=20 Source=65   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_done_15:
+    LoadLocal             Target=66 Slot=20   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    SetAdtField           Ptr=61 FieldIndex=0 Source=66 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=19 Source=61   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_done_13:
+    LoadLocal             Target=67 Slot=19   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=3 Source=67   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadConstInt          Target=68 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=7 Source=68   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadLocal             Target=69 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadArgumentOwnership Target=70   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadConstInt          Target=71 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    AndInt                Target=72 Left=70 Right=71   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    JumpIfFalse           CondTemp=72 Target=rc_arg_normalize_copy_16   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=21 Source=69   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_arg_normalize_done_17   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_arg_normalize_copy_16:
+    IsReferenceCounted    Target=73 SourceTemp=69
+    JumpIfFalse           CondTemp=73 Target=rc_representation_copy_18   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDup                 Target=74 SourceTemp=69 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=74   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_representation_done_19   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_copy_18:
+    LoadConstInt          Target=76 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=23 Source=69   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=24 Source=76   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=25 Source=76   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_normalize_list_20:
+    LoadLocal             Target=77 Slot=23   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    CmpIntNe              Target=78 Left=77 Right=76   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    JumpIfFalse           CondTemp=78 Target=rc_normalize_list_end_21   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadMemOffset         Target=79 BasePtr=77 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadMemOffset         Target=80 BasePtr=77 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    IsReferenceCounted    Target=81 SourceTemp=79
+    JumpIfFalse           CondTemp=81 Target=rc_representation_copy_22   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDup                 Target=82 SourceTemp=79 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=82   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_representation_done_23   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_copy_22:
+    CopyOutArena          DestTemp=84 SrcTemp=79 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=85 Ptr=79 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    IsReferenceCounted    Target=86 SourceTemp=85
+    JumpIfFalse           CondTemp=86 Target=rc_representation_copy_24   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDup                 Target=87 SourceTemp=85 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=87   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_representation_done_25   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_copy_24:
+    CopyOutArena          DestTemp=88 SrcTemp=85 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=27 Source=88   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_done_25:
+    LoadLocal             Target=89 Slot=27   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    SetAdtField           Ptr=84 FieldIndex=0 Source=89 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=26 Source=84   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_done_23:
+    LoadLocal             Target=90 Slot=26   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Alloc                 Target=91 SizeBytes=16 RuntimeManaged=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreMemOffset        BasePtr=91 OffsetBytes=0 Source=90   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreMemOffset        BasePtr=91 OffsetBytes=8 Source=76   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadLocal             Target=92 Slot=24   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    CmpIntNe              Target=93 Left=92 Right=76   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    JumpIfFalse           CondTemp=93 Target=rc_normalize_list_first_26   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadLocal             Target=94 Slot=25   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreMemOffset        BasePtr=94 OffsetBytes=8 Source=91   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_normalize_list_linked_27   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_normalize_list_first_26:
+    StoreLocal            Slot=24 Source=91   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_normalize_list_linked_27:
+    StoreLocal            Slot=25 Source=91   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=23 Source=80   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_normalize_list_20   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_normalize_list_end_21:
+    LoadLocal             Target=95 Slot=24   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=22 Source=95   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_done_19:
+    LoadLocal             Target=96 Slot=22   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=21 Source=96   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_arg_normalize_done_17:
+    LoadLocal             Target=97 Slot=21   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=1 Source=97   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadConstInt          Target=98 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=8 Source=98   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadConstInt          Target=2 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     StoreLocal            Slot=6 Source=2   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
@@ -95,109 +140,205 @@ function lambda_2  [ClosureHelper from collect]
     LoadLocal             Target=21 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
     RcDup                 Target=22 SourceTemp=21 RuntimeManaged=true
     LoadLocal             Target=23 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:15:89)
-    Alloc                 Target=24 SizeBytes=16 RuntimeManaged=true   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
-    StoreMemOffset        BasePtr=24 OffsetBytes=0 Source=22   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
-    StoreMemOffset        BasePtr=24 OffsetBytes=8 Source=23   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
-    LoadLocal             Target=25 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
-    LoadLocal             Target=26 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
-    LoadLocal             Target=27 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
+    IsReferenceCounted    Target=24 SourceTemp=23
+    StoreLocal            Slot=13 Source=23   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    LoadConstInt          Target=25 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    CmpIntEq              Target=26 Left=23 Right=25   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    OrInt                 Target=27 Left=24 Right=26   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    JumpIfFalse           CondTemp=27 Target=rc_tail_copy_3   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    Jump                  Target=rc_tail_done_2   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_tail_copy_3:
+    LoadConstInt          Target=29 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreLocal            Slot=14 Source=23   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreLocal            Slot=15 Source=29   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreLocal            Slot=16 Source=29   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_normalize_list_4:
+    LoadLocal             Target=30 Slot=14   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    CmpIntNe              Target=31 Left=30 Right=29   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    JumpIfFalse           CondTemp=31 Target=rc_normalize_list_end_5   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    LoadMemOffset         Target=32 BasePtr=30 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    LoadMemOffset         Target=33 BasePtr=30 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    IsReferenceCounted    Target=34 SourceTemp=32
+    JumpIfFalse           CondTemp=34 Target=rc_representation_copy_6   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    RcDup                 Target=35 SourceTemp=32 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=35   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    Jump                  Target=rc_representation_done_7   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_representation_copy_6:
+    CopyOutArena          DestTemp=37 SrcTemp=32 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=38 Ptr=32 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    IsReferenceCounted    Target=39 SourceTemp=38
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_8   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    RcDup                 Target=40 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=40   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    Jump                  Target=rc_representation_done_9   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_representation_copy_8:
+    CopyOutArena          DestTemp=41 SrcTemp=38 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=18 Source=41   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_representation_done_9:
+    LoadLocal             Target=42 Slot=18   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    SetAdtField           Ptr=37 FieldIndex=0 Source=42 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreLocal            Slot=17 Source=37   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_representation_done_7:
+    LoadLocal             Target=43 Slot=17   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    Alloc                 Target=44 SizeBytes=16 RuntimeManaged=true   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreMemOffset        BasePtr=44 OffsetBytes=0 Source=43   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreMemOffset        BasePtr=44 OffsetBytes=8 Source=29   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    LoadLocal             Target=45 Slot=15   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    CmpIntNe              Target=46 Left=45 Right=29   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    JumpIfFalse           CondTemp=46 Target=rc_normalize_list_first_10   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    LoadLocal             Target=47 Slot=16   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreMemOffset        BasePtr=47 OffsetBytes=8 Source=44   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    Jump                  Target=rc_normalize_list_linked_11   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_normalize_list_first_10:
+    StoreLocal            Slot=15 Source=44   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_normalize_list_linked_11:
+    StoreLocal            Slot=16 Source=44   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreLocal            Slot=14 Source=33   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    Jump                  Target=rc_normalize_list_4   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_normalize_list_end_5:
+    LoadLocal             Target=48 Slot=15   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreLocal            Slot=13 Source=48   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+  rc_tail_done_2:
+    LoadLocal             Target=49 Slot=13   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    Alloc                 Target=50 SizeBytes=16 RuntimeManaged=true   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreMemOffset        BasePtr=50 OffsetBytes=0 Source=22   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    StoreMemOffset        BasePtr=50 OffsetBytes=8 Source=49   (tco_record_parameter_exit_before_list_accumulator.ash:15:84)
+    LoadLocal             Target=51 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
+    LoadLocal             Target=52 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
+    LoadLocal             Target=53 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
     StoreLocal            Slot=2 Source=13   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
     StoreLocal            Slot=3 Source=20   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
-    StoreLocal            Slot=1 Source=24   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
-    CopyOutArena          DestTemp=74 SrcTemp=20 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=75 Ptr=20 FieldIndex=0 Tagless=true
-    CopyOutArena          DestTemp=76 SrcTemp=75 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=74 FieldIndex=0 Source=76 Tagless=true
-    RcDrop                SourceTemp=75 TypeName=String RuntimeManaged=true
-    LoadLocal             Target=77 Slot=7
-    JumpIfFalse           CondTemp=77 Target=rc_tco_drop_inactive_34
-    RcIsUnique            Target=78 SourceTemp=26
-    JumpIfFalse           CondTemp=78 Target=rc_drop_shared_35
-    GetAdtField           Target=79 Ptr=26 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=79 TypeName=String RuntimeManaged=true
-  rc_drop_shared_35:
-    RcDrop                SourceTemp=26 TypeName=State RuntimeManaged=true
-  rc_tco_drop_inactive_34:
-    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=18
-    StoreLocal            Slot=3 Source=74
-    LoadConstInt          Target=80 Value=1
-    StoreLocal            Slot=7 Source=80
-    StoreLocal            Slot=1 Source=24
-    LoadConstInt          Target=81 Value=1
-    StoreLocal            Slot=8 Source=81
-    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=18
+    StoreLocal            Slot=1 Source=50   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
+    IsReferenceCounted    Target=113 SourceTemp=20
+    JumpIfFalse           CondTemp=113 Target=rc_representation_copy_64
+    RcDup                 Target=114 SourceTemp=20 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=114
+    Jump                  Target=rc_representation_done_65
+  rc_representation_copy_64:
+    CopyOutArena          DestTemp=117 SrcTemp=20 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=118 Ptr=20 FieldIndex=0 Tagless=true
+    IsReferenceCounted    Target=119 SourceTemp=118
+    JumpIfFalse           CondTemp=119 Target=rc_representation_copy_66
+    RcDup                 Target=120 SourceTemp=118 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=120
+    Jump                  Target=rc_representation_done_67
+  rc_representation_copy_66:
+    CopyOutArena          DestTemp=121 SrcTemp=118 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=31 Source=121
+  rc_representation_done_67:
+    LoadLocal             Target=122 Slot=31
+    SetAdtField           Ptr=117 FieldIndex=0 Source=122 Tagless=true
+    RcDrop                SourceTemp=118 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=30 Source=117
+  rc_representation_done_65:
+    LoadLocal             Target=123 Slot=30
+    LoadLocal             Target=124 Slot=7
+    JumpIfFalse           CondTemp=124 Target=rc_tco_drop_inactive_68
+    RcIsUnique            Target=125 SourceTemp=52
+    JumpIfFalse           CondTemp=125 Target=rc_drop_shared_69
+    GetAdtField           Target=126 Ptr=52 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=126 TypeName=String RuntimeManaged=true
+  rc_drop_shared_69:
+    RcDrop                SourceTemp=52 TypeName=State RuntimeManaged=true
+  rc_tco_drop_inactive_68:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=29
+    StoreLocal            Slot=3 Source=123
+    LoadConstInt          Target=127 Value=1
+    StoreLocal            Slot=7 Source=127
+    StoreLocal            Slot=1 Source=50
+    LoadConstInt          Target=128 Value=1
+    StoreLocal            Slot=8 Source=128
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=29
     RestoreStackPointer   Slot=11   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
     Jump                  Target=lambda_2_body   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
-    LoadConstInt          Target=28 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
-    StoreLocal            Slot=12 Source=28   (tco_record_parameter_exit_before_list_accumulator.ash:13:5)
+    LoadConstInt          Target=54 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
+    StoreLocal            Slot=12 Source=54   (tco_record_parameter_exit_before_list_accumulator.ash:13:5)
   endif_1:
-    LoadLocal             Target=29 Slot=12   (tco_record_parameter_exit_before_list_accumulator.ash:13:5)
-    LoadLocal             Target=58 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadLocal             Target=59 Slot=7   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    JumpIfFalse           CondTemp=59 Target=rc_tco_exit_drop_inactive_8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    RcIsUnique            Target=60 SourceTemp=58
-    JumpIfFalse           CondTemp=60 Target=rc_drop_shared_9   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    GetAdtField           Target=61 Ptr=58 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    RcDrop                SourceTemp=61 TypeName=String RuntimeManaged=true
-  rc_drop_shared_9:
-    RcDrop                SourceTemp=58 TypeName=State RuntimeManaged=true
-  rc_tco_exit_drop_inactive_8:
-    LoadLocal             Target=62 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadLocal             Target=63 Slot=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    JumpIfFalse           CondTemp=63 Target=rc_tco_exit_drop_inactive_10   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreLocal            Slot=17 Source=62   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rcdrop_list_11:
-    LoadLocal             Target=64 Slot=17   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadConstInt          Target=65 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CmpIntNe              Target=66 Left=64 Right=65   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    JumpIfFalse           CondTemp=66 Target=rcdrop_list_end_13   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    RcIsUnique            Target=67 SourceTemp=64
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_shared_12   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadMemOffset         Target=68 BasePtr=64 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    RcIsUnique            Target=69 SourceTemp=68
-    JumpIfFalse           CondTemp=69 Target=rc_drop_shared_14   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    GetAdtField           Target=70 Ptr=68 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    RcDrop                SourceTemp=70 TypeName=String RuntimeManaged=true
-  rc_drop_shared_14:
-    RcDrop                SourceTemp=68 TypeName=State RuntimeManaged=true
-    LoadMemOffset         Target=71 BasePtr=64 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    RcDrop                SourceTemp=64 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=17 Source=71   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    Jump                  Target=rcdrop_list_11   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rcdrop_list_shared_12:
-    RcDrop                SourceTemp=64 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_13   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-  rcdrop_list_end_13:
-  rc_tco_exit_drop_inactive_10:
-    Return                Source=29   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadLocal             Target=55 Slot=12   (tco_record_parameter_exit_before_list_accumulator.ash:13:5)
+    LoadLocal             Target=99 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadLocal             Target=100 Slot=7   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    JumpIfFalse           CondTemp=100 Target=rc_tco_exit_drop_inactive_28   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcIsUnique            Target=101 SourceTemp=99
+    JumpIfFalse           CondTemp=101 Target=rc_drop_shared_29   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    GetAdtField           Target=102 Ptr=99 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDrop                SourceTemp=102 TypeName=String RuntimeManaged=true
+  rc_drop_shared_29:
+    RcDrop                SourceTemp=99 TypeName=State RuntimeManaged=true
+  rc_tco_exit_drop_inactive_28:
+    LoadLocal             Target=103 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadLocal             Target=104 Slot=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    JumpIfFalse           CondTemp=104 Target=rc_tco_exit_drop_inactive_30   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=28 Source=103   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rcdrop_list_31:
+    LoadLocal             Target=105 Slot=28   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadConstInt          Target=106 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    CmpIntNe              Target=107 Left=105 Right=106   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    JumpIfFalse           CondTemp=107 Target=rcdrop_list_end_33   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcIsUnique            Target=108 SourceTemp=105
+    JumpIfFalse           CondTemp=108 Target=rcdrop_list_shared_32   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadMemOffset         Target=109 BasePtr=105 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcIsUnique            Target=110 SourceTemp=109
+    JumpIfFalse           CondTemp=110 Target=rc_drop_shared_34   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    GetAdtField           Target=111 Ptr=109 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDrop                SourceTemp=111 TypeName=String RuntimeManaged=true
+  rc_drop_shared_34:
+    RcDrop                SourceTemp=109 TypeName=State RuntimeManaged=true
+    LoadMemOffset         Target=112 BasePtr=105 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=112   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rcdrop_list_31   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rcdrop_list_shared_32:
+    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_33   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rcdrop_list_end_33:
+  rc_tco_exit_drop_inactive_30:
+    Return                Source=55   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
 
 function __rc_cdrop_3  [RuntimeManagedClosureDropper]
   locals=2 temps=5
     LoadLocal             Target=0 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     RcIsUnique            Target=2 SourceTemp=1
-    JumpIfFalse           CondTemp=2 Target=rc_drop_shared_15   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    JumpIfFalse           CondTemp=2 Target=rc_drop_shared_35   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     GetAdtField           Target=3 Ptr=1 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
-  rc_drop_shared_15:
+  rc_drop_shared_35:
     RcDrop                SourceTemp=1 TypeName=State RuntimeManaged=true
     LoadConstInt          Target=4 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     Return                Source=4   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
 
 function lambda_2$env_normalize  [ClosureEnvironmentNormalizer from collect]
-  locals=2 temps=9
+  locals=4 temps=15
     LoadLocal             Target=0 Slot=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     LoadLocal             Target=1 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     LoadMemOffset         Target=3 BasePtr=0 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CopyOutArena          DestTemp=5 SrcTemp=3 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=6 Ptr=3 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    CopyOutArena          DestTemp=7 SrcTemp=6 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=5 FieldIndex=0 Source=7 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=5   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    LoadFuncAddr          Target=8 FuncLabel=__rc_cdrop_3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
-    Return                Source=8   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    IsReferenceCounted    Target=4 SourceTemp=3
+    JumpIfFalse           CondTemp=4 Target=rc_representation_copy_36   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDup                 Target=5 SourceTemp=3 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=5   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_representation_done_37   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_copy_36:
+    CopyOutArena          DestTemp=7 SrcTemp=3 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=8 Ptr=3 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    IsReferenceCounted    Target=9 SourceTemp=8
+    JumpIfFalse           CondTemp=9 Target=rc_representation_copy_38   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    RcDup                 Target=10 SourceTemp=8 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=10   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Jump                  Target=rc_representation_done_39   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_copy_38:
+    CopyOutArena          DestTemp=11 SrcTemp=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=11   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_done_39:
+    LoadLocal             Target=12 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    SetAdtField           Ptr=7 FieldIndex=0 Source=12 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreLocal            Slot=2 Source=7   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+  rc_representation_done_37:
+    LoadLocal             Target=13 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=13   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    LoadFuncAddr          Target=14 FuncLabel=__rc_cdrop_3   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
+    Return                Source=14   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
 
 function lambda_1  [ClosureHelper from collect]
   locals=2 temps=5
@@ -227,44 +368,71 @@ function lambda_0  [SourceFunction from collect]
     Return                Source=4   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
 
 function lambda_5  [ClosureHelper from labelBytes]
-  locals=30 temps=73
+  locals=33 temps=82
     LoadEnv               Target=0 Index=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
     StoreLocal            Slot=2 Source=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
     LoadLocal             Target=35 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadConstInt          Target=37 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreLocal            Slot=24 Source=35   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreLocal            Slot=25 Source=37   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreLocal            Slot=26 Source=37   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-  rc_normalize_list_25:
-    LoadLocal             Target=38 Slot=24   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    CmpIntNe              Target=39 Left=38 Right=37   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    JumpIfFalse           CondTemp=39 Target=rc_normalize_list_end_26   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadMemOffset         Target=40 BasePtr=38 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadMemOffset         Target=41 BasePtr=38 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    CopyOutArena          DestTemp=43 SrcTemp=40 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=44 Ptr=40 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    CopyOutArena          DestTemp=45 SrcTemp=44 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=43 FieldIndex=0 Source=45 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    Alloc                 Target=46 SizeBytes=16 RuntimeManaged=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreMemOffset        BasePtr=46 OffsetBytes=0 Source=43   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreMemOffset        BasePtr=46 OffsetBytes=8 Source=37   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadLocal             Target=47 Slot=25   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    CmpIntNe              Target=48 Left=47 Right=37   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_27   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadLocal             Target=49 Slot=26   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreMemOffset        BasePtr=49 OffsetBytes=8 Source=46   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    Jump                  Target=rc_normalize_list_linked_28   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-  rc_normalize_list_first_27:
-    StoreLocal            Slot=25 Source=46   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-  rc_normalize_list_linked_28:
-    StoreLocal            Slot=26 Source=46   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreLocal            Slot=24 Source=41   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    Jump                  Target=rc_normalize_list_25   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-  rc_normalize_list_end_26:
-    LoadLocal             Target=50 Slot=25   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreLocal            Slot=2 Source=50   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadConstInt          Target=51 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreLocal            Slot=8 Source=51   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    IsReferenceCounted    Target=36 SourceTemp=35
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_49   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    RcDup                 Target=37 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=37   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    Jump                  Target=rc_representation_done_50   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_representation_copy_49:
+    LoadConstInt          Target=39 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=25 Source=35   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=26 Source=39   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=27 Source=39   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_normalize_list_51:
+    LoadLocal             Target=40 Slot=25   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    CmpIntNe              Target=41 Left=40 Right=39   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_end_52   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadMemOffset         Target=42 BasePtr=40 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadMemOffset         Target=43 BasePtr=40 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    IsReferenceCounted    Target=44 SourceTemp=42
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_53   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    RcDup                 Target=45 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=45   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    Jump                  Target=rc_representation_done_54   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_representation_copy_53:
+    CopyOutArena          DestTemp=47 SrcTemp=42 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=48 Ptr=42 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    IsReferenceCounted    Target=49 SourceTemp=48
+    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_55   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    RcDup                 Target=50 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=50   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    Jump                  Target=rc_representation_done_56   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_representation_copy_55:
+    CopyOutArena          DestTemp=51 SrcTemp=48 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=29 Source=51   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_representation_done_56:
+    LoadLocal             Target=52 Slot=29   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    SetAdtField           Ptr=47 FieldIndex=0 Source=52 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=28 Source=47   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_representation_done_54:
+    LoadLocal             Target=53 Slot=28   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    Alloc                 Target=54 SizeBytes=16 RuntimeManaged=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreMemOffset        BasePtr=54 OffsetBytes=0 Source=53   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=39   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadLocal             Target=55 Slot=26   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    CmpIntNe              Target=56 Left=55 Right=39   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    JumpIfFalse           CondTemp=56 Target=rc_normalize_list_first_57   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadLocal             Target=57 Slot=27   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=54   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    Jump                  Target=rc_normalize_list_linked_58   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_normalize_list_first_57:
+    StoreLocal            Slot=26 Source=54   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_normalize_list_linked_58:
+    StoreLocal            Slot=27 Source=54   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=25 Source=43   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    Jump                  Target=rc_normalize_list_51   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_normalize_list_end_52:
+    LoadLocal             Target=58 Slot=26   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=24 Source=58   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rc_representation_done_50:
+    LoadLocal             Target=59 Slot=24   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=2 Source=59   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadConstInt          Target=60 Value=1   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=8 Source=60   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
     StoreLocal            Slot=5 Source=1   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
@@ -277,21 +445,21 @@ function lambda_5  [ClosureHelper from labelBytes]
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_19   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_43   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     LoadLocal             Target=5 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:19:17)
     StoreLocal            Slot=12 Source=5   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_16   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-  match_arm_cleanup_19:
+    Jump                  Target=match_end_40   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
+  match_arm_cleanup_43:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_18   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-  match_next_18:
+    Jump                  Target=match_next_42   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
+  match_next_42:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     CmpIntNe              Target=7 Left=2 Right=6   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_20   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_44   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     StoreLocal            Slot=19 Source=8   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
@@ -308,111 +476,111 @@ function lambda_5  [ClosureHelper from labelBytes]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
     LoadLocal             Target=18 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     StoreLocal            Slot=21 Source=18   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
-  rcdrop_list_21:
+  rcdrop_list_45:
     LoadLocal             Target=19 Slot=21   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     LoadConstInt          Target=20 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     CmpIntNe              Target=21 Left=19 Right=20   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
-    JumpIfFalse           CondTemp=21 Target=rcdrop_list_end_23   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
+    JumpIfFalse           CondTemp=21 Target=rcdrop_list_end_47   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     RcIsUnique            Target=22 SourceTemp=19
-    JumpIfFalse           CondTemp=22 Target=rcdrop_list_shared_22   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
+    JumpIfFalse           CondTemp=22 Target=rcdrop_list_shared_46   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     LoadMemOffset         Target=23 BasePtr=19 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     RcIsUnique            Target=24 SourceTemp=23
-    JumpIfFalse           CondTemp=24 Target=rc_drop_shared_24   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
+    JumpIfFalse           CondTemp=24 Target=rc_drop_shared_48   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     GetAdtField           Target=25 Ptr=23 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     RcDrop                SourceTemp=25 TypeName=String RuntimeManaged=true
-  rc_drop_shared_24:
+  rc_drop_shared_48:
     RcDrop                SourceTemp=23 TypeName=State RuntimeManaged=true
     LoadMemOffset         Target=26 BasePtr=19 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=21 Source=26   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
-    Jump                  Target=rcdrop_list_21   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
-  rcdrop_list_shared_22:
+    Jump                  Target=rcdrop_list_45   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
+  rcdrop_list_shared_46:
     RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_23   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
-  rcdrop_list_end_23:
+    Jump                  Target=rcdrop_list_end_47   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
+  rcdrop_list_end_47:
     LoadConstInt          Target=27 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     StoreLocal            Slot=8 Source=27   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     LoadLocal             Target=28 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     LoadLocal             Target=29 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     StoreLocal            Slot=2 Source=17   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     StoreLocal            Slot=1 Source=16   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
-    LoadLocal             Target=62 Slot=8
-    JumpIfFalse           CondTemp=62 Target=rc_tco_drop_inactive_36
-    StoreLocal            Slot=29 Source=28
-  rcdrop_list_37:
-    LoadLocal             Target=63 Slot=29
-    LoadConstInt          Target=64 Value=0
-    CmpIntNe              Target=65 Left=63 Right=64
-    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_39
-    RcIsUnique            Target=66 SourceTemp=63
-    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_38
-    LoadMemOffset         Target=67 BasePtr=63 OffsetBytes=0
-    RcIsUnique            Target=68 SourceTemp=67
-    JumpIfFalse           CondTemp=68 Target=rc_drop_shared_40
-    GetAdtField           Target=69 Ptr=67 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=69 TypeName=String RuntimeManaged=true
-  rc_drop_shared_40:
-    RcDrop                SourceTemp=67 TypeName=State RuntimeManaged=true
-    LoadMemOffset         Target=70 BasePtr=63 OffsetBytes=8
-    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=29 Source=70
-    Jump                  Target=rcdrop_list_37
-  rcdrop_list_shared_38:
-    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_39
-  rcdrop_list_end_39:
-  rc_tco_drop_inactive_36:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=28
-    LoadConstInt          Target=71 Value=0
-    StoreLocal            Slot=6 Source=71
-    StoreLocal            Slot=7 Source=71
+    LoadLocal             Target=71 Slot=8
+    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_70
+    StoreLocal            Slot=32 Source=28
+  rcdrop_list_71:
+    LoadLocal             Target=72 Slot=32
+    LoadConstInt          Target=73 Value=0
+    CmpIntNe              Target=74 Left=72 Right=73
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_73
+    RcIsUnique            Target=75 SourceTemp=72
+    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_72
+    LoadMemOffset         Target=76 BasePtr=72 OffsetBytes=0
+    RcIsUnique            Target=77 SourceTemp=76
+    JumpIfFalse           CondTemp=77 Target=rc_drop_shared_74
+    GetAdtField           Target=78 Ptr=76 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=78 TypeName=String RuntimeManaged=true
+  rc_drop_shared_74:
+    RcDrop                SourceTemp=76 TypeName=State RuntimeManaged=true
+    LoadMemOffset         Target=79 BasePtr=72 OffsetBytes=8
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=79
+    Jump                  Target=rcdrop_list_71
+  rcdrop_list_shared_72:
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_73
+  rcdrop_list_end_73:
+  rc_tco_drop_inactive_70:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
+    LoadConstInt          Target=80 Value=0
+    StoreLocal            Slot=6 Source=80
+    StoreLocal            Slot=7 Source=80
     StoreLocal            Slot=2 Source=17
-    LoadConstInt          Target=72 Value=1
-    StoreLocal            Slot=8 Source=72
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=28
+    LoadConstInt          Target=81 Value=1
+    StoreLocal            Slot=8 Source=81
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
     RestoreStackPointer   Slot=11   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     Jump                  Target=lambda_5_body   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     LoadConstInt          Target=30 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     StoreLocal            Slot=12 Source=30   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_end_16   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-  match_arm_cleanup_20:
+    Jump                  Target=match_end_40   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
+  match_arm_cleanup_44:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
-    Jump                  Target=match_none_17   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-  match_none_17:
+    Jump                  Target=match_none_41   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
+  match_none_41:
     LoadConstInt          Target=33 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
     StoreLocal            Slot=12 Source=33   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-  match_end_16:
+  match_end_40:
     LoadLocal             Target=34 Slot=12   (tco_record_parameter_exit_before_list_accumulator.ash:18:5)
-    LoadLocal             Target=52 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadLocal             Target=53 Slot=8   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    JumpIfFalse           CondTemp=53 Target=rc_tco_exit_drop_inactive_29   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    StoreLocal            Slot=27 Source=52   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-  rcdrop_list_30:
-    LoadLocal             Target=54 Slot=27   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadConstInt          Target=55 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    CmpIntNe              Target=56 Left=54 Right=55   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    JumpIfFalse           CondTemp=56 Target=rcdrop_list_end_32   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    RcIsUnique            Target=57 SourceTemp=54
-    JumpIfFalse           CondTemp=57 Target=rcdrop_list_shared_31   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    LoadMemOffset         Target=58 BasePtr=54 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    RcIsUnique            Target=59 SourceTemp=58
-    JumpIfFalse           CondTemp=59 Target=rc_drop_shared_33   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    GetAdtField           Target=60 Ptr=58 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    RcDrop                SourceTemp=60 TypeName=String RuntimeManaged=true
-  rc_drop_shared_33:
-    RcDrop                SourceTemp=58 TypeName=State RuntimeManaged=true
-    LoadMemOffset         Target=61 BasePtr=54 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=27 Source=61   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-    Jump                  Target=rcdrop_list_30   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-  rcdrop_list_shared_31:
-    RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_32   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
-  rcdrop_list_end_32:
-  rc_tco_exit_drop_inactive_29:
+    LoadLocal             Target=61 Slot=2   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadLocal             Target=62 Slot=8   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    JumpIfFalse           CondTemp=62 Target=rc_tco_exit_drop_inactive_59   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    StoreLocal            Slot=30 Source=61   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rcdrop_list_60:
+    LoadLocal             Target=63 Slot=30   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadConstInt          Target=64 Value=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    CmpIntNe              Target=65 Left=63 Right=64   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_62   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    RcIsUnique            Target=66 SourceTemp=63
+    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_61   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    LoadMemOffset         Target=67 BasePtr=63 OffsetBytes=0   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    RcIsUnique            Target=68 SourceTemp=67
+    JumpIfFalse           CondTemp=68 Target=rc_drop_shared_63   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    GetAdtField           Target=69 Ptr=67 FieldIndex=0 Tagless=true   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    RcDrop                SourceTemp=69 TypeName=String RuntimeManaged=true
+  rc_drop_shared_63:
+    RcDrop                SourceTemp=67 TypeName=State RuntimeManaged=true
+    LoadMemOffset         Target=70 BasePtr=63 OffsetBytes=8   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=70   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+    Jump                  Target=rcdrop_list_60   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rcdrop_list_shared_61:
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_62   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
+  rcdrop_list_end_62:
+  rc_tco_exit_drop_inactive_59:
     Return                Source=34   (tco_record_parameter_exit_before_list_accumulator.ash:17:1)
 
 function lambda_4  [SourceFunction from labelBytes]

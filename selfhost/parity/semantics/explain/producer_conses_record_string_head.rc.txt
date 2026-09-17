@@ -23,7 +23,7 @@ Function: allDeps
 
 Function: countNames [lambda_3]
   Operations
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
     allocations:          0
@@ -43,7 +43,7 @@ Function: countNames
 
 Function: countLists [lambda_5]
   Operations
-    dup:                  1
+    dup:                  2
     drop:                 12
     uniqueness checks:    6
     allocations:          0
@@ -63,7 +63,7 @@ Function: countLists
 
 Function: countNames [lambda_3__scalarenv0]
   Operations
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
     allocations:          0
@@ -73,7 +73,7 @@ Function: countNames [lambda_3__scalarenv0]
 
 Function: countLists [lambda_5__scalarenv1]
   Operations
-    dup:                  1
+    dup:                  2
     drop:                 12
     uniqueness checks:    6
     allocations:          0

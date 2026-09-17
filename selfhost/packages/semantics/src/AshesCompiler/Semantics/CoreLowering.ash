@@ -1219,6 +1219,14 @@ let sourceFunctionOriginFor (name: Str) (state: CoreLoweringState) =
         declarationOffset = spanStart(state.currentSpan)
     )
 
+// Stage 0's `CanTestRepresentation`. A consumer that must own a value it cannot see the
+// representation of asks the value at run time — `IsReferenceCounted` — and takes a reference
+// instead of a copy when the answer is yes. Stage 0 withholds that from a function that may run as
+// a structured-parallelism worker, whose arena another thread tears down independently of this
+// function's scope; this compiler lowers no structured parallelism, so no function it lowers is
+// one of those.
+let canTestRepresentation = true
+
 let recursive letValueIsLambda (value: Expr) =
     match value with
         | ExprAt(_span, inner) -> letValueIsLambda(inner)
@@ -3874,15 +3882,19 @@ and anyProducesFreshTuple (arguments: List(Expr)) (state: CoreLoweringState) =
 // `RuntimeDeepUnique` and `RuntimeConstructor` owner facts: a fresh list literal or cons chain,
 // and a fresh constructor tree of a recursive-copy type, are the only references to their whole
 // graph; a direct constructor application names the constructor whose fields the release walks.
+//
+// A body that may share a child rather than copy it has no such fact to offer: the graph a fresh
+// literal built can be reached from whatever a representation test let a consumer keep, so the
+// release tests for sharing rather than assuming there is none.
 let armOwnerReleasePlan (value: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
             let deepUnique =
-                match resolveType(state)(semanticType) with
+                canTestRepresentation == false && (match resolveType(state)(semanticType) with
                     | SemList(_element) -> isFreshListConstruction(value)
                     | SemNamed(_symbolId, name, _arguments) as named -> canRuntimeManageRecursiveCopyAdt(named)(state) && isFreshConstructorTree(value)(name)(state)
-                    | _ -> false
+                    | _ -> false)
             in
                 let constructorName =
                     match constructorApplicationOf(value)([])(state) with
@@ -4428,6 +4440,50 @@ let locatedInstruction (location: Maybe(IrSourceLocation)) kind = IrInstruction(
 
 let unlocatedInstruction (kind: IrInstructionKind) (state: CoreLoweringState) = state with reversedInstructions = IrInstruction(instruction = kind, location = None) :: state.reversedInstructions
 
+// Stage 0's `EmitReferenceOrCopy`: an owned reference to a value whose representation this site
+// cannot see. A value the runtime answers `IsReferenceCounted` for is retained, because a
+// reference-counted block's children are reference-counted by construction and the reference is as
+// good as the copy it replaces; anything else takes the copy the site would have made anyway. Both
+// arms store into one slot, since this IR has no phi.
+let emitReferenceOrCopy (sourceTemp: Int) emitCopy (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+            match freshLocal(tested) with
+                | FreshLocal { state = slotted, local = resultSlot } ->
+                    match freshLabel("rc_representation_copy")(slotted) with
+                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                            match freshLabel("rc_representation_done")(copyLabelled) with
+                                | FreshLabel { state = doneLabelled, label = doneLabel } ->
+                                    match doneLabelled
+                                    |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
+                                    |> emit(JumpIfFalse(referenceCountedTemp)(copyLabel))
+                                    |> freshTemp with
+                                        | FreshTemp { state = retained, temp = retainedTemp } ->
+                                            match retained
+                                            |> emit(RcDup(retainedTemp)(sourceTemp)(true)(false))
+                                            |> emit(StoreLocal(resultSlot)(retainedTemp))
+                                            |> emit(Jump(doneLabel))
+                                            |> emit(Label(copyLabel))
+                                            |> emitCopy with
+                                                | (copied, copyTemp) ->
+                                                    match copied
+                                                    |> emit(StoreLocal(resultSlot)(copyTemp))
+                                                    |> emit(Label(doneLabel))
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = resulted, temp = resultTemp } ->
+                                                            (emit(LoadLocal(resultTemp)(resultSlot))(resulted), resultTemp)
+
+// Stage 0's guard on `TcoBackEdgeNormalizeRuntimeManagedArg`: the successor a back edge stores
+// into a runtime-managed slot is the value itself when the runtime answers that it is already
+// reference-counted, and the copy otherwise. A value that survives the reset needs neither. The
+// test carries no location, as the rest of the reset does.
+let emitBackEdgeReferenceOrCopy (sourceTemp: Int) (semanticType: SemanticType) emitCopy (state: CoreLoweringState) =
+    if canTestRepresentation == false || resultSurvivesReset(semanticType)(state)
+    then emitCopy(state)
+    else
+        match emitReferenceOrCopy(sourceTemp)(emitCopy)((state with currentSpan = None)) with
+            | (copied, copyTemp) -> ((copied with currentSpan = state.currentSpan), copyTemp)
+
 // The iteration-local owners released at a back edge, stage 0's `EmitOwnedValueDrop` for each:
 // an owner whose release plan reaches past its own cell walks its owned children inline, any
 // other owner releases as one drop naming its slot. The deferred reset carries no location, so
@@ -4749,7 +4805,16 @@ and emitConstructorDeepCopy (sourceTemp: Int) (constructorPlan: (Int, Int, Bool,
             |> (given (copied) -> (copied, resultTemp))
 // Stage 0's `EmitRuntimeManagedTcoDeepCopy` reserves its result temp before a nested list's
 // walk takes over, so a list child costs one unused temp ahead of its copy.
+// The child a copied aggregate stores, stage 0's guard on `EmitRuntimeManagedTcoDeepCopy`: a
+// reference to the original child when the runtime answers that it is already reference-counted,
+// and the copy otherwise. A scalar child is its own word and has no representation to ask about.
 and emitChildDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (false, _plan) -> emitChildDeepCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, ScalarArgumentCopy) -> emitChildDeepCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, _plan) ->
+            emitReferenceOrCopy(sourceTemp)(emitChildDeepCopyByCopy(sourceTemp)(plan))(state)
+and emitChildDeepCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match plan with
         | ListDeepArgumentCopy(_elementPlan) ->
             match freshTemp(state) with
@@ -4817,7 +4882,7 @@ and emitSwitchBranches (sourceTemp: Int) (resultSlot: Int) (endLabel: Str) (case
 // Stage 0's `EmitRuntimeManagedTcoParamCopy`: the copy of a borrowed argument. A string, a
 // same-arity scalar-field ADT, and a list copy into the temp allocated here; a tuple and a
 // runtime-managed ADT walk their children through the deep copy on temps of its own.
-let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+let emitArgumentCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = allocated, temp = normalizedTemp } ->
             match plan with
@@ -4832,6 +4897,16 @@ let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLowe
                 | ShallowAdtArgumentCopy(sizeBytes) ->
                     (emit(CopyOutArena(normalizedTemp)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None))(allocated), normalizedTemp)
                 | ScalarArgumentCopy -> (allocated, sourceTemp)
+
+// The argument an entry normalization owns: the copy above, or a reference to the value the
+// caller handed over when the runtime answers that it is already reference-counted. A scalar is
+// the value itself and has no representation to ask about.
+let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (false, _plan) -> emitArgumentCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, ScalarArgumentCopy) -> emitArgumentCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, _plan) ->
+            emitReferenceOrCopy(sourceTemp)(emitArgumentCopyByCopy(sourceTemp)(plan))(state)
 
 // One argument position of a back edge as the runtime-managed reset sees it: the parameter it
 // feeds, the successor value and the parameter's old value, whether the successor was produced
@@ -5122,6 +5197,16 @@ let unlocatedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLow
     match emitArgumentDeepCopy(sourceTemp)(plan)((state with currentSpan = None)) with
         | (copied, copyTemp) -> ((copied with currentSpan = state.currentSpan), copyTemp)
 
+// The child a copied aggregate stores, stage 0's guard on `EmitRuntimeManagedTcoDeepCopy`: a
+// reference to the original child when the runtime answers that it is already reference-counted,
+// and the copy otherwise. A scalar child is its own word and has no representation to ask about.
+let emitChildReferenceOrCopy (childTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (false, _plan) -> unlocatedDeepCopy(childTemp)(plan)(state)
+        | (_tests, ScalarArgumentCopy) -> unlocatedDeepCopy(childTemp)(plan)(state)
+        | (_tests, _plan) ->
+            emitReferenceOrCopy(childTemp)(unlocatedDeepCopy(childTemp)(plan))(state)
+
 // How the runtime-managed copy of a closure environment re-establishes one capture (stage 0's
 // `EmitRuntimeManagedTcoDeepCopy` inside `SynthesizeRuntimeManagedClosureNormalizer`): a scalar
 // by its word, a string, bytes, or big integer by an owned copy-out, a list over scalars by its
@@ -5262,31 +5347,54 @@ and captureValueCopyInstructions (valueTemp: Int) (copy: CaptureCopy) (temp: Int
             |> locatedInstruction(location)], temp, temp + 1)
         | AdtCaptureCopy(sizeBytes, tagless, children) -> adtCaptureCopyInstructions(valueTemp)(sizeBytes)(tagless)(children)(temp)(location)
 
-let recursive normalizerCopies (layout: List((Int, Str, CaptureCopy, SemanticType))) (temp: Int) (location: Maybe(IrSourceLocation)) =
+// `emitReferenceOrCopy` as instructions, for a synthesized function that numbers its own temps,
+// slots and labels rather than drawing them from the lowering state: the capture is taken by
+// reference when the runtime answers that it is already reference-counted, and copied otherwise.
+// The test and the retain carry no location, as they do everywhere else.
+let guardedCaptureCopy (sourceTemp: Int) (copyTemp: Int) (resultSlot: Int) (labelId: Int) (location: Maybe(IrSourceLocation)) (copyInstructions: List(IrInstruction)) =
+    (let copyLabel = "rc_representation_copy_" + Ashes.Text.fromInt(labelId)
+    in
+        let doneLabel = "rc_representation_done_" + Ashes.Text.fromInt(labelId + 1)
+        in
+            locatedInstruction(None)(IsReferenceCounted(sourceTemp + 1)(sourceTemp)) :: locatedInstruction(location)(JumpIfFalse(sourceTemp + 1)(copyLabel)) :: locatedInstruction(None)(RcDup(sourceTemp + 2)(sourceTemp)(true)(false)) :: locatedInstruction(location)(StoreLocal(resultSlot)(sourceTemp + 2)) :: locatedInstruction(location)(Jump(doneLabel)) :: locatedInstruction(location)(Label(copyLabel)) :: append(copyInstructions)([
+                copyTemp
+                |> StoreLocal(resultSlot)
+                |> locatedInstruction(location),
+                locatedInstruction(location)(Label(doneLabel)),
+                resultSlot
+                |> LoadLocal(copyTemp + 1)
+                |> locatedInstruction(location)
+            ]))
+
+let recursive normalizerCopies (layout: List((Int, Str, CaptureCopy, SemanticType))) (temp: Int) (slot: Int) (labelId: Int) (location: Maybe(IrSourceLocation)) =
     match layout with
-        | [] -> ([], temp)
+        | [] -> ([], temp, slot, labelId)
         | (offset, _text, copy, _resolved) :: rest ->
             match copy with
                 | WordCaptureCopy ->
-                    match normalizerCopies(rest)(temp + 1)(location) with
-                        | (instructions, nextTemp) ->
-                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: instructions, nextTemp)
+                    match normalizerCopies(rest)(temp + 1)(slot)(labelId)(location) with
+                        | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: instructions, nextTemp, nextSlot, nextLabelId)
                 | AdtCaptureCopy(sizeBytes, tagless, children) ->
-                    match adtCaptureCopyInstructions(temp)(sizeBytes)(tagless)(children)(temp + 1)(location) with
+                    match adtCaptureCopyInstructions(temp)(sizeBytes)(tagless)(children)(temp + 3)(location) with
                         | (copyInstructions, copyTemp, afterCopy) ->
-                            match normalizerCopies(rest)(afterCopy)(location) with
-                                | (instructions, nextTemp) ->
-                                    (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(copyInstructions)(locatedInstruction(location)(StoreMemOffset(1)(offset)(copyTemp)) :: instructions), nextTemp)
+                            match normalizerCopies(rest)(afterCopy + 1)(slot + 1)(labelId + 2)(location) with
+                                | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                                    (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(guardedCaptureCopy(temp)(copyTemp)(slot)(labelId)(location)(copyInstructions))(locatedInstruction(location)(StoreMemOffset(1)(offset)(copyTemp + 1)) :: instructions), nextTemp, nextSlot, nextLabelId)
                 // Stage 0 copies a leaf capture through its deep-copy emitter, whose `CopyOutArena`
                 // carries no location; the list copy-out is emitted in place and keeps it.
                 | LeafCaptureCopy(sizeBytes) ->
-                    match normalizerCopies(rest)(temp + 2)(location) with
-                        | (instructions, nextTemp) ->
-                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(None)(CopyOutArena(temp + 1)(temp)(sizeBytes)(true)(RcNormalization)(None)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
+                    match normalizerCopies(rest)(temp + 5)(slot + 1)(labelId + 2)(location) with
+                        | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(guardedCaptureCopy(temp)(temp + 3)(slot)(labelId)(location)([None
+                            |> CopyOutArena(temp + 3)(temp)(sizeBytes)(true)(RcNormalization)
+                            |> locatedInstruction(None)]))(locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 4)) :: instructions), nextTemp, nextSlot, nextLabelId)
                 | ListCaptureCopy(headCopy) ->
-                    match normalizerCopies(rest)(temp + 2)(location) with
-                        | (instructions, nextTemp) ->
-                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(CopyOutList(temp + 1)(temp)(headCopy)(true)(RcNormalization)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
+                    match normalizerCopies(rest)(temp + 5)(slot + 1)(labelId + 2)(location) with
+                        | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(guardedCaptureCopy(temp)(temp + 3)(slot)(labelId)(location)([RcNormalization
+                            |> CopyOutList(temp + 3)(temp)(headCopy)(true)
+                            |> locatedInstruction(location)]))(locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 4)) :: instructions), nextTemp, nextSlot, nextLabelId)
 
 let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layoutText: Str) =
     IrFunctionOrigin(
@@ -5301,16 +5409,18 @@ let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrF
 
 // Stage 0's `lambda$env_normalize` helper: called with the source environment in slot 0 and the
 // target environment in slot 1, it copies every capture across and returns the address of the
-// closure dropper that releases the owned copies, or 0 when the captures own nothing.
-let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str, CaptureCopy, SemanticType))) (location: Maybe(IrSourceLocation)) (dropperLabel: Maybe(Str)) =
-    match normalizerCopies(layout)(2)(location) with
-        | (copies, resultTemp) ->
-            IrFunction(
+// closure dropper that releases the owned copies, or 0 when the captures own nothing. A capture
+// copied under a representation test takes a slot and two labels of its own, so the helper is
+// handed the program's next label id and answers with the one after the ones it used.
+let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str, CaptureCopy, SemanticType))) (location: Maybe(IrSourceLocation)) (dropperLabel: Maybe(Str)) (labelId: Int) =
+    match normalizerCopies(layout)(2)(2)(labelId)(location) with
+        | (copies, resultTemp, slotCount, nextLabelId) ->
+            (IrFunction(
                 label = closureLabel + "$env_normalize",
                 instructions = append(locatedInstruction(location)(LoadLocal(0)(0)) :: locatedInstruction(location)(LoadLocal(1)(1)) :: copies)([locatedInstruction(location)(match dropperLabel with
                     | Some(label) -> LoadFuncAddr(resultTemp)(label)
                     | None -> LoadConstInt(resultTemp)(0)), locatedInstruction(location)(Return(resultTemp))]),
-                localCount = 2,
+                localCount = slotCount,
                 tempCount = resultTemp + 1,
                 hasEnvAndArgParams = true,
                 coroutine = None,
@@ -5322,7 +5432,7 @@ let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrig
                 |> closureNormalizerOrigin(closureLabel + "$env_normalize")(closureLabel)(closureOrigin)
                 |> Some,
                 lifetimesPlaced = false
-            )
+            ), nextLabelId)
 
 // The release of one owned capture inside the closure dropper, stage 0's
 // `EmitRuntimeManagedClosureCaptureDrop`: a list over scalars walks its spine through a cursor
@@ -5443,7 +5553,8 @@ let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (c
                             match synthesizeClosureDropper(owned)(state) with
                                 | (synthesized, label) -> (synthesized, Some(label)) with
                         | (dropped, dropperLabel) ->
-                            dropped with functions = closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(currentLocation(state))(dropperLabel) :: dropped.functions
+                            match closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(currentLocation(state))(dropperLabel)(dropped.nextLabelId) with
+                                | (normalizer, nextLabelId) -> dropped with functions = normalizer :: dropped.functions, nextLabelId = nextLabelId
                 | None -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: state.pendingClosureNormalizers
 
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
@@ -5463,9 +5574,13 @@ let recursive insertClosureNormalizers (pending: List((Str, IrFunctionOrigin, Li
         | (closureLabel, closureOrigin, types, location) :: rest ->
             match scalarCaptureLayout(types)(0)(defaulted)(state) with
                 | Some(layout) ->
-                    functions
-                    |> insertAfterLabel(closureLabel)(closureNormalizerFunction(closureLabel)(closureOrigin)(wordCaptureLayout(layout))(location)(None))
-                    |> insertClosureNormalizers(rest)(defaulted)(state)
+                    // Every capture here is a scalar word, so the helper copies nothing and needs
+                    // no label of its own.
+                    match closureNormalizerFunction(closureLabel)(closureOrigin)(wordCaptureLayout(layout))(location)(None)(state.nextLabelId) with
+                        | (normalizer, _nextLabelId) ->
+                            functions
+                            |> insertAfterLabel(closureLabel)(normalizer)
+                            |> insertClosureNormalizers(rest)(defaulted)(state)
                 | None -> insertClosureNormalizers(rest)(defaulted)(state)(functions)
 
 let finishClosureResult parameterType bodyType finishedBody closure =
@@ -5493,7 +5608,7 @@ let recursive emitBackEdgeChildCopies (sourceTemp: Int) (copyTemp: Int) (tagless
                 | FreshTemp { state = allocated, temp = childTemp } ->
                     match allocated
                     |> unlocatedInstruction(GetAdtField(childTemp)(sourceTemp)(index)(tagless))
-                    |> unlocatedDeepCopy(childTemp)(childCopyPlanOf(childType)(state)) with
+                    |> emitChildReferenceOrCopy(childTemp)(childCopyPlanOf(childType)(state)) with
                         | (copied, copiedChild) ->
                             copied
                             |> unlocatedInstruction(SetAdtField(copyTemp)(index)(copiedChild)(tagless))
@@ -5684,7 +5799,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                                 |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                                 |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
                     else
-                        match emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression)(state) with
+                        match emitBackEdgeReferenceOrCopy(temp)(semanticType)(emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression))(state) with
                             | (copied, copyTemp) -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)(copied)
         | TcoResetArgument { managedStr = Some(activeSlot), parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
             if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
@@ -5693,7 +5808,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                 if isRuntime
                 then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
                 else
-                    match unlocatedDeepCopy(temp)(LeafArgumentCopy(-1))(state) with
+                    match emitBackEdgeReferenceOrCopy(temp)(SemString)(unlocatedDeepCopy(temp)(LeafArgumentCopy(-1)))(state) with
                         | (copied, copyTemp) ->
                             copied
                             |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
@@ -14082,7 +14197,7 @@ let recursive emitLocatedChildCopies (sourceTemp: Int) (copyTemp: Int) (tagless:
                 | FreshTemp { state = allocated, temp = childTemp } ->
                     match allocated
                     |> emit(GetAdtField(childTemp)(sourceTemp)(index)(tagless))
-                    |> unlocatedDeepCopy(childTemp)(childCopyPlanOf(childType)(state)) with
+                    |> emitChildReferenceOrCopy(childTemp)(childCopyPlanOf(childType)(state)) with
                         | (copied, copiedChild) ->
                             copied
                             |> emit(SetAdtField(copyTemp)(index)(copiedChild)(tagless))
@@ -14632,7 +14747,10 @@ let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: Semanti
             then
                 match argumentCopyPlanOf(fieldType)(state) with
                     | Some(plan) ->
-                        match emitArgumentDeepCopy(temp)(plan)(state) with
+                        match if canTestRepresentation
+                        then
+                            emitReferenceOrCopy(temp)(emitArgumentDeepCopy(temp)(plan))(state)
+                        else emitArgumentDeepCopy(temp)(plan)(state) with
                             | (copied, copiedTemp) ->
                                 copied
                                 |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)

@@ -8,11 +8,11 @@ Function: collect
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_2]
-    dup:                  4
+    dup:                  13
     drop:                 9
     uniqueness checks:    4
   perceus [lambda_2$env_normalize]
-    dup:                  0
+    dup:                  2
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1]
@@ -26,12 +26,12 @@ Function: collect
   representation [lambda_2]
     conservative unknown: 2
     region:               4
-    runtime rc:           16
+    runtime rc:           28
     copy value:           9
   representation [lambda_1]
     conservative unknown: 1
     region:               2
-    runtime rc:           2
+    runtime rc:           4
   representation [lambda_0]
     region:               3
     copy value:           1
@@ -64,21 +64,21 @@ Function: reversed
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_10]
-    dup:                  2
-    drop:                 21
+    dup:                  12
+    drop:                 22
     uniqueness checks:    10
   perceus [lambda_9]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_10__scalarenv0]
-    dup:                  2
-    drop:                 21
+    dup:                  12
+    drop:                 22
     uniqueness checks:    10
   representation [lambda_10]
     conservative unknown: 3
     region:               7
-    runtime rc:           26
+    runtime rc:           42
   representation [lambda_9]
     conservative unknown: 1
     region:               3
@@ -90,7 +90,7 @@ Function: total
     labels: consumed, move-safe yes
     result fresh: no
   perceus [lambda_6]
-    dup:                  2
+    dup:                  5
     drop:                 14
     uniqueness checks:    6
   perceus [lambda_5]
@@ -103,7 +103,7 @@ Function: total
     uniqueness checks:    0
   representation [lambda_6]
     region:               1
-    runtime rc:           15
+    runtime rc:           19
     copy value:           10
   representation [lambda_5]
     region:               2

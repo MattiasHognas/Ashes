@@ -7,7 +7,7 @@ Function: step
     s: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  0
+    dup:                  4
     drop:                 7
     uniqueness checks:    3
   perceus [lambda_0]
@@ -15,13 +15,13 @@ Function: step
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
-    dup:                  0
+    dup:                  4
     drop:                 7
     uniqueness checks:    3
   representation [lambda_1]
     conservative unknown: 2
     region:               6
-    runtime rc:           6
+    runtime rc:           8
     copy value:           10
   representation [lambda_0]
     region:               3

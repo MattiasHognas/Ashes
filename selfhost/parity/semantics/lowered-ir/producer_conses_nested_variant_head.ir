@@ -108,16 +108,16 @@ function __rcdrop_6  [RuntimeManagedAdtDropper]
   locals=2 temps=5
     LoadLocal             Target=0 Slot=1   (producer_conses_nested_variant_head.ash:10:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_38   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_48   (producer_conses_nested_variant_head.ash:10:1)
     GetAdtTag             Target=2 Ptr=0   (producer_conses_nested_variant_head.ash:10:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_38   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_ctor_39:
-    Jump                  Target=rcdrop_shared_38   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_ctor_40:
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_48   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_ctor_49:
+    Jump                  Target=rcdrop_shared_48   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_ctor_50:
     GetAdtField           Target=3 Ptr=0 FieldIndex=0   (producer_conses_nested_variant_head.ash:10:1)
     RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
-    Jump                  Target=rcdrop_shared_38   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_shared_38:
+    Jump                  Target=rcdrop_shared_48   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_shared_48:
     RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
     LoadConstInt          Target=4 Value=0   (producer_conses_nested_variant_head.ash:10:1)
     Return                Source=4   (producer_conses_nested_variant_head.ash:10:1)
@@ -126,53 +126,53 @@ function __rcdrop_5  [RuntimeManagedAdtDropper]
   locals=3 temps=17
     LoadLocal             Target=0 Slot=1   (producer_conses_nested_variant_head.ash:10:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_29   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_39   (producer_conses_nested_variant_head.ash:10:1)
     GetAdtTag             Target=2 Ptr=0   (producer_conses_nested_variant_head.ash:10:1)
-    SwitchTag             TagTemp=2 Cases=[4] DefaultLabel=rcdrop_shared_29   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_ctor_30:
-    Jump                  Target=rcdrop_shared_29   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_ctor_31:
+    SwitchTag             TagTemp=2 Cases=[4] DefaultLabel=rcdrop_shared_39   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_ctor_40:
+    Jump                  Target=rcdrop_shared_39   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_ctor_41:
     GetAdtField           Target=3 Ptr=0 FieldIndex=0   (producer_conses_nested_variant_head.ash:10:1)
     RcIsUnique            Target=4 SourceTemp=3
-    JumpIfFalse           CondTemp=4 Target=rc_drop_shared_34   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=4 Target=rc_drop_shared_44   (producer_conses_nested_variant_head.ash:10:1)
     GetAdtField           Target=5 Ptr=3 FieldIndex=0 Tagless=true   (producer_conses_nested_variant_head.ash:10:1)
     RcDrop                SourceTemp=5 TypeName=String RuntimeManaged=true
-  rc_drop_shared_34:
+  rc_drop_shared_44:
     RcDrop                SourceTemp=3 TypeName=Inner RuntimeManaged=true
-    Jump                  Target=rcdrop_shared_29   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_ctor_32:
+    Jump                  Target=rcdrop_shared_39   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_ctor_42:
     GetAdtField           Target=6 Ptr=0 FieldIndex=0   (producer_conses_nested_variant_head.ash:10:1)
     StoreLocal            Slot=2 Source=6   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_list_35:
+  rcdrop_list_45:
     LoadLocal             Target=7 Slot=2   (producer_conses_nested_variant_head.ash:10:1)
     LoadConstInt          Target=8 Value=0   (producer_conses_nested_variant_head.ash:10:1)
     CmpIntNe              Target=9 Left=7 Right=8   (producer_conses_nested_variant_head.ash:10:1)
-    JumpIfFalse           CondTemp=9 Target=rcdrop_list_end_37   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=9 Target=rcdrop_list_end_47   (producer_conses_nested_variant_head.ash:10:1)
     RcIsUnique            Target=10 SourceTemp=7
-    JumpIfFalse           CondTemp=10 Target=rcdrop_list_shared_36   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=10 Target=rcdrop_list_shared_46   (producer_conses_nested_variant_head.ash:10:1)
     LoadMemOffset         Target=11 BasePtr=7 OffsetBytes=0   (producer_conses_nested_variant_head.ash:10:1)
     RcDrop                SourceTemp=11 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=12 BasePtr=7 OffsetBytes=8   (producer_conses_nested_variant_head.ash:10:1)
     RcDrop                SourceTemp=7 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=12   (producer_conses_nested_variant_head.ash:10:1)
-    Jump                  Target=rcdrop_list_35   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_list_shared_36:
+    Jump                  Target=rcdrop_list_45   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_list_shared_46:
     RcDrop                SourceTemp=7 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_37   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_list_end_37:
-    Jump                  Target=rcdrop_shared_29   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_ctor_33:
+    Jump                  Target=rcdrop_list_end_47   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_list_end_47:
+    Jump                  Target=rcdrop_shared_39   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_ctor_43:
     GetAdtField           Target=13 Ptr=0 FieldIndex=0   (producer_conses_nested_variant_head.ash:10:1)
     LoadConstInt          Target=14 Value=0   (producer_conses_nested_variant_head.ash:10:1)
     CallKnown             Target=15 FuncLabel=__rcdrop_6 EnvTemp=14 ArgTemp=13   (producer_conses_nested_variant_head.ash:10:1)
-    Jump                  Target=rcdrop_shared_29   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_shared_29:
+    Jump                  Target=rcdrop_shared_39   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_shared_39:
     RcDrop                SourceTemp=0 TypeName=Inst RuntimeManaged=true
     LoadConstInt          Target=16 Value=0   (producer_conses_nested_variant_head.ash:10:1)
     Return                Source=16   (producer_conses_nested_variant_head.ash:10:1)
 
 function lambda_0  [SourceFunction from bump]
-  locals=52 temps=153
+  locals=57 temps=168
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (producer_conses_nested_variant_head.ash:10:1)
     StoreLocal            Slot=4 Source=0   (producer_conses_nested_variant_head.ash:10:1)
@@ -273,315 +273,426 @@ function lambda_0  [SourceFunction from bump]
     StoreLocal            Slot=26 Source=37   (producer_conses_nested_variant_head.ash:11:5)
     LoadLocal             Target=45 Slot=24   (producer_conses_nested_variant_head.ash:14:42)
     Borrow                Target=46 SourceTemp=45
-    CopyOutArena          DestTemp=48 SrcTemp=46 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=49 Ptr=46 FieldIndex=0 Tagless=true   (producer_conses_nested_variant_head.ash:14:37)
+    IsReferenceCounted    Target=47 SourceTemp=46
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_10   (producer_conses_nested_variant_head.ash:14:37)
+    RcDup                 Target=48 SourceTemp=46 RuntimeManaged=true
     RcDrop                SourceTemp=43 TypeName=Inner OwnerSlot=24
-    CopyOutArena          DestTemp=50 SrcTemp=49 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=48 FieldIndex=0 Source=50 Tagless=true   (producer_conses_nested_variant_head.ash:14:37)
-    LoadLocal             Target=51 Slot=25   (producer_conses_nested_variant_head.ash:14:49)
-    LoadConstInt          Target=52 Value=1   (producer_conses_nested_variant_head.ash:14:53)
-    AddInt                Target=53 Left=51 Right=52   (producer_conses_nested_variant_head.ash:14:49)
-    AllocAdt              Target=54 Tag=1 FieldCount=2 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:14:37)
-    SetAdtField           Ptr=54 FieldIndex=0 Source=48   (producer_conses_nested_variant_head.ash:14:37)
-    SetAdtField           Ptr=54 FieldIndex=1 Source=53   (producer_conses_nested_variant_head.ash:14:37)
-    LoadConstInt          Target=55 Value=0   (producer_conses_nested_variant_head.ash:14:37)
-    Alloc                 Target=56 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:14:37)
-    StoreMemOffset        BasePtr=56 OffsetBytes=0 Source=54   (producer_conses_nested_variant_head.ash:14:37)
-    StoreMemOffset        BasePtr=56 OffsetBytes=8 Source=55   (producer_conses_nested_variant_head.ash:14:37)
-    LoadLocal             Target=57 Slot=5   (producer_conses_nested_variant_head.ash:14:37)
-    LoadConstInt          Target=58 Value=0   (producer_conses_nested_variant_head.ash:14:37)
-    CmpIntNe              Target=59 Left=57 Right=58   (producer_conses_nested_variant_head.ash:14:37)
-    JumpIfFalse           CondTemp=59 Target=tmc_first_10   (producer_conses_nested_variant_head.ash:14:37)
-    StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=56   (producer_conses_nested_variant_head.ash:14:37)
-    Jump                  Target=tmc_link_done_11   (producer_conses_nested_variant_head.ash:14:37)
-  tmc_first_10:
-    StoreLocal            Slot=6 Source=56   (producer_conses_nested_variant_head.ash:14:37)
-  tmc_link_done_11:
-    StoreLocal            Slot=5 Source=56   (producer_conses_nested_variant_head.ash:14:37)
-    LoadLocal             Target=60 Slot=26   (producer_conses_nested_variant_head.ash:14:64)
-    Borrow                Target=61 SourceTemp=60
-    LoadLocal             Target=62 Slot=1   (producer_conses_nested_variant_head.ash:14:37)
-    StoreLocal            Slot=1 Source=61   (producer_conses_nested_variant_head.ash:14:37)
+    StoreLocal            Slot=27 Source=48   (producer_conses_nested_variant_head.ash:14:37)
+    Jump                  Target=rc_representation_done_11   (producer_conses_nested_variant_head.ash:14:37)
+  rc_representation_copy_10:
+    CopyOutArena          DestTemp=50 SrcTemp=46 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=51 Ptr=46 FieldIndex=0 Tagless=true   (producer_conses_nested_variant_head.ash:14:37)
+    RcDrop                SourceTemp=43 TypeName=Inner OwnerSlot=24
+    IsReferenceCounted    Target=52 SourceTemp=51
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_12   (producer_conses_nested_variant_head.ash:14:37)
+    RcDup                 Target=53 SourceTemp=51 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=53   (producer_conses_nested_variant_head.ash:14:37)
+    Jump                  Target=rc_representation_done_13   (producer_conses_nested_variant_head.ash:14:37)
+  rc_representation_copy_12:
+    CopyOutArena          DestTemp=54 SrcTemp=51 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=28 Source=54   (producer_conses_nested_variant_head.ash:14:37)
+  rc_representation_done_13:
+    LoadLocal             Target=55 Slot=28   (producer_conses_nested_variant_head.ash:14:37)
+    SetAdtField           Ptr=50 FieldIndex=0 Source=55 Tagless=true   (producer_conses_nested_variant_head.ash:14:37)
+    StoreLocal            Slot=27 Source=50   (producer_conses_nested_variant_head.ash:14:37)
+  rc_representation_done_11:
+    LoadLocal             Target=56 Slot=27   (producer_conses_nested_variant_head.ash:14:37)
+    LoadLocal             Target=57 Slot=25   (producer_conses_nested_variant_head.ash:14:49)
+    LoadConstInt          Target=58 Value=1   (producer_conses_nested_variant_head.ash:14:53)
+    AddInt                Target=59 Left=57 Right=58   (producer_conses_nested_variant_head.ash:14:49)
+    AllocAdt              Target=60 Tag=1 FieldCount=2 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:14:37)
+    SetAdtField           Ptr=60 FieldIndex=0 Source=56   (producer_conses_nested_variant_head.ash:14:37)
+    SetAdtField           Ptr=60 FieldIndex=1 Source=59   (producer_conses_nested_variant_head.ash:14:37)
+    LoadConstInt          Target=61 Value=0   (producer_conses_nested_variant_head.ash:14:37)
+    Alloc                 Target=62 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:14:37)
+    StoreMemOffset        BasePtr=62 OffsetBytes=0 Source=60   (producer_conses_nested_variant_head.ash:14:37)
+    StoreMemOffset        BasePtr=62 OffsetBytes=8 Source=61   (producer_conses_nested_variant_head.ash:14:37)
+    LoadLocal             Target=63 Slot=5   (producer_conses_nested_variant_head.ash:14:37)
+    LoadConstInt          Target=64 Value=0   (producer_conses_nested_variant_head.ash:14:37)
+    CmpIntNe              Target=65 Left=63 Right=64   (producer_conses_nested_variant_head.ash:14:37)
+    JumpIfFalse           CondTemp=65 Target=tmc_first_14   (producer_conses_nested_variant_head.ash:14:37)
+    StoreMemOffset        BasePtr=63 OffsetBytes=8 Source=62   (producer_conses_nested_variant_head.ash:14:37)
+    Jump                  Target=tmc_link_done_15   (producer_conses_nested_variant_head.ash:14:37)
+  tmc_first_14:
+    StoreLocal            Slot=6 Source=62   (producer_conses_nested_variant_head.ash:14:37)
+  tmc_link_done_15:
+    StoreLocal            Slot=5 Source=62   (producer_conses_nested_variant_head.ash:14:37)
+    LoadLocal             Target=66 Slot=26   (producer_conses_nested_variant_head.ash:14:64)
+    Borrow                Target=67 SourceTemp=66
+    LoadLocal             Target=68 Slot=1   (producer_conses_nested_variant_head.ash:14:37)
+    StoreLocal            Slot=1 Source=67   (producer_conses_nested_variant_head.ash:14:37)
     RcDrop                SourceTemp=37 TypeName=List OwnerSlot=26
     RestoreStackPointer   Slot=9   (producer_conses_nested_variant_head.ash:14:37)
     Jump                  Target=lambda_0_body   (producer_conses_nested_variant_head.ash:14:37)
-    LoadConstInt          Target=63 Value=0   (producer_conses_nested_variant_head.ash:14:37)
-    StoreLocal            Slot=10 Source=63   (producer_conses_nested_variant_head.ash:11:5)
-    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=27
-    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=27
+    LoadConstInt          Target=69 Value=0   (producer_conses_nested_variant_head.ash:14:37)
+    StoreLocal            Slot=10 Source=69   (producer_conses_nested_variant_head.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=29
     Jump                  Target=match_end_0   (producer_conses_nested_variant_head.ash:11:5)
   match_arm_cleanup_9:
-    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=28
-    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=28
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=30
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=30
     Jump                  Target=match_next_8   (producer_conses_nested_variant_head.ash:11:5)
   match_next_8:
-    SaveArenaState        CursorLocalSlot=29 EndLocalSlot=30
-    LoadConstInt          Target=66 Value=0   (producer_conses_nested_variant_head.ash:11:5)
-    CmpIntNe              Target=67 Left=1 Right=66   (producer_conses_nested_variant_head.ash:11:5)
-    JumpIfFalse           CondTemp=67 Target=match_arm_cleanup_13   (producer_conses_nested_variant_head.ash:11:5)
-    LoadMemOffset         Target=68 BasePtr=1 OffsetBytes=0   (producer_conses_nested_variant_head.ash:11:5)
-    LoadMemOffset         Target=69 BasePtr=1 OffsetBytes=8   (producer_conses_nested_variant_head.ash:11:5)
-    LoadConstInt          Target=70 Value=0   (producer_conses_nested_variant_head.ash:11:5)
-    CmpIntNe              Target=71 Left=68 Right=70   (producer_conses_nested_variant_head.ash:11:5)
-    JumpIfFalse           CondTemp=71 Target=match_arm_cleanup_13   (producer_conses_nested_variant_head.ash:11:5)
-    GetAdtTag             Target=72 Ptr=68   (producer_conses_nested_variant_head.ash:11:5)
-    LoadConstInt          Target=74 Value=2   (producer_conses_nested_variant_head.ash:11:5)
-    CmpIntEq              Target=73 Left=72 Right=74   (producer_conses_nested_variant_head.ash:11:5)
-    JumpIfFalse           CondTemp=73 Target=match_arm_cleanup_13   (producer_conses_nested_variant_head.ash:11:5)
-    GetAdtField           Target=75 Ptr=68 FieldIndex=0   (producer_conses_nested_variant_head.ash:11:5)
-    StoreLocal            Slot=31 Source=75   (producer_conses_nested_variant_head.ash:11:5)
-    GetAdtField           Target=76 Ptr=68 FieldIndex=1   (producer_conses_nested_variant_head.ash:11:5)
-    StoreLocal            Slot=32 Source=76   (producer_conses_nested_variant_head.ash:11:5)
-    StoreLocal            Slot=33 Source=69   (producer_conses_nested_variant_head.ash:11:5)
-    LoadLocal             Target=77 Slot=31   (producer_conses_nested_variant_head.ash:15:41)
-    Borrow                Target=78 SourceTemp=77
-    CopyOutList           DestTemp=79 SrcTemp=78 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (producer_conses_nested_variant_head.ash:15:36)
-    RcDrop                SourceTemp=75 TypeName=List OwnerSlot=31
-    LoadLocal             Target=80 Slot=32   (producer_conses_nested_variant_head.ash:15:47)
-    LoadConstInt          Target=81 Value=1   (producer_conses_nested_variant_head.ash:15:51)
-    AddInt                Target=82 Left=80 Right=81   (producer_conses_nested_variant_head.ash:15:47)
-    AllocAdt              Target=83 Tag=2 FieldCount=2 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:15:36)
-    SetAdtField           Ptr=83 FieldIndex=0 Source=79   (producer_conses_nested_variant_head.ash:15:36)
-    SetAdtField           Ptr=83 FieldIndex=1 Source=82   (producer_conses_nested_variant_head.ash:15:36)
-    LoadConstInt          Target=84 Value=0   (producer_conses_nested_variant_head.ash:15:36)
-    Alloc                 Target=85 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:15:36)
-    StoreMemOffset        BasePtr=85 OffsetBytes=0 Source=83   (producer_conses_nested_variant_head.ash:15:36)
-    StoreMemOffset        BasePtr=85 OffsetBytes=8 Source=84   (producer_conses_nested_variant_head.ash:15:36)
-    LoadLocal             Target=86 Slot=5   (producer_conses_nested_variant_head.ash:15:36)
-    LoadConstInt          Target=87 Value=0   (producer_conses_nested_variant_head.ash:15:36)
-    CmpIntNe              Target=88 Left=86 Right=87   (producer_conses_nested_variant_head.ash:15:36)
-    JumpIfFalse           CondTemp=88 Target=tmc_first_14   (producer_conses_nested_variant_head.ash:15:36)
-    StoreMemOffset        BasePtr=86 OffsetBytes=8 Source=85   (producer_conses_nested_variant_head.ash:15:36)
-    Jump                  Target=tmc_link_done_15   (producer_conses_nested_variant_head.ash:15:36)
-  tmc_first_14:
-    StoreLocal            Slot=6 Source=85   (producer_conses_nested_variant_head.ash:15:36)
-  tmc_link_done_15:
-    StoreLocal            Slot=5 Source=85   (producer_conses_nested_variant_head.ash:15:36)
-    LoadLocal             Target=89 Slot=33   (producer_conses_nested_variant_head.ash:15:62)
-    Borrow                Target=90 SourceTemp=89
-    LoadLocal             Target=91 Slot=1   (producer_conses_nested_variant_head.ash:15:36)
-    StoreLocal            Slot=1 Source=90   (producer_conses_nested_variant_head.ash:15:36)
-    RcDrop                SourceTemp=69 TypeName=List OwnerSlot=33
+    SaveArenaState        CursorLocalSlot=31 EndLocalSlot=32
+    LoadConstInt          Target=72 Value=0   (producer_conses_nested_variant_head.ash:11:5)
+    CmpIntNe              Target=73 Left=1 Right=72   (producer_conses_nested_variant_head.ash:11:5)
+    JumpIfFalse           CondTemp=73 Target=match_arm_cleanup_17   (producer_conses_nested_variant_head.ash:11:5)
+    LoadMemOffset         Target=74 BasePtr=1 OffsetBytes=0   (producer_conses_nested_variant_head.ash:11:5)
+    LoadMemOffset         Target=75 BasePtr=1 OffsetBytes=8   (producer_conses_nested_variant_head.ash:11:5)
+    LoadConstInt          Target=76 Value=0   (producer_conses_nested_variant_head.ash:11:5)
+    CmpIntNe              Target=77 Left=74 Right=76   (producer_conses_nested_variant_head.ash:11:5)
+    JumpIfFalse           CondTemp=77 Target=match_arm_cleanup_17   (producer_conses_nested_variant_head.ash:11:5)
+    GetAdtTag             Target=78 Ptr=74   (producer_conses_nested_variant_head.ash:11:5)
+    LoadConstInt          Target=80 Value=2   (producer_conses_nested_variant_head.ash:11:5)
+    CmpIntEq              Target=79 Left=78 Right=80   (producer_conses_nested_variant_head.ash:11:5)
+    JumpIfFalse           CondTemp=79 Target=match_arm_cleanup_17   (producer_conses_nested_variant_head.ash:11:5)
+    GetAdtField           Target=81 Ptr=74 FieldIndex=0   (producer_conses_nested_variant_head.ash:11:5)
+    StoreLocal            Slot=33 Source=81   (producer_conses_nested_variant_head.ash:11:5)
+    GetAdtField           Target=82 Ptr=74 FieldIndex=1   (producer_conses_nested_variant_head.ash:11:5)
+    StoreLocal            Slot=34 Source=82   (producer_conses_nested_variant_head.ash:11:5)
+    StoreLocal            Slot=35 Source=75   (producer_conses_nested_variant_head.ash:11:5)
+    LoadLocal             Target=83 Slot=33   (producer_conses_nested_variant_head.ash:15:41)
+    Borrow                Target=84 SourceTemp=83
+    IsReferenceCounted    Target=85 SourceTemp=84
+    JumpIfFalse           CondTemp=85 Target=rc_representation_copy_18   (producer_conses_nested_variant_head.ash:15:36)
+    RcDup                 Target=86 SourceTemp=84 RuntimeManaged=true
+    RcDrop                SourceTemp=81 TypeName=List OwnerSlot=33
+    StoreLocal            Slot=36 Source=86   (producer_conses_nested_variant_head.ash:15:36)
+    Jump                  Target=rc_representation_done_19   (producer_conses_nested_variant_head.ash:15:36)
+  rc_representation_copy_18:
+    CopyOutList           DestTemp=87 SrcTemp=84 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (producer_conses_nested_variant_head.ash:15:36)
+    RcDrop                SourceTemp=81 TypeName=List OwnerSlot=33
+    StoreLocal            Slot=36 Source=87   (producer_conses_nested_variant_head.ash:15:36)
+  rc_representation_done_19:
+    LoadLocal             Target=88 Slot=36   (producer_conses_nested_variant_head.ash:15:36)
+    LoadLocal             Target=89 Slot=34   (producer_conses_nested_variant_head.ash:15:47)
+    LoadConstInt          Target=90 Value=1   (producer_conses_nested_variant_head.ash:15:51)
+    AddInt                Target=91 Left=89 Right=90   (producer_conses_nested_variant_head.ash:15:47)
+    AllocAdt              Target=92 Tag=2 FieldCount=2 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:15:36)
+    SetAdtField           Ptr=92 FieldIndex=0 Source=88   (producer_conses_nested_variant_head.ash:15:36)
+    SetAdtField           Ptr=92 FieldIndex=1 Source=91   (producer_conses_nested_variant_head.ash:15:36)
+    LoadConstInt          Target=93 Value=0   (producer_conses_nested_variant_head.ash:15:36)
+    Alloc                 Target=94 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:15:36)
+    StoreMemOffset        BasePtr=94 OffsetBytes=0 Source=92   (producer_conses_nested_variant_head.ash:15:36)
+    StoreMemOffset        BasePtr=94 OffsetBytes=8 Source=93   (producer_conses_nested_variant_head.ash:15:36)
+    LoadLocal             Target=95 Slot=5   (producer_conses_nested_variant_head.ash:15:36)
+    LoadConstInt          Target=96 Value=0   (producer_conses_nested_variant_head.ash:15:36)
+    CmpIntNe              Target=97 Left=95 Right=96   (producer_conses_nested_variant_head.ash:15:36)
+    JumpIfFalse           CondTemp=97 Target=tmc_first_20   (producer_conses_nested_variant_head.ash:15:36)
+    StoreMemOffset        BasePtr=95 OffsetBytes=8 Source=94   (producer_conses_nested_variant_head.ash:15:36)
+    Jump                  Target=tmc_link_done_21   (producer_conses_nested_variant_head.ash:15:36)
+  tmc_first_20:
+    StoreLocal            Slot=6 Source=94   (producer_conses_nested_variant_head.ash:15:36)
+  tmc_link_done_21:
+    StoreLocal            Slot=5 Source=94   (producer_conses_nested_variant_head.ash:15:36)
+    LoadLocal             Target=98 Slot=35   (producer_conses_nested_variant_head.ash:15:62)
+    Borrow                Target=99 SourceTemp=98
+    LoadLocal             Target=100 Slot=1   (producer_conses_nested_variant_head.ash:15:36)
+    StoreLocal            Slot=1 Source=99   (producer_conses_nested_variant_head.ash:15:36)
+    RcDrop                SourceTemp=75 TypeName=List OwnerSlot=35
     RestoreStackPointer   Slot=9   (producer_conses_nested_variant_head.ash:15:36)
     Jump                  Target=lambda_0_body   (producer_conses_nested_variant_head.ash:15:36)
-    LoadConstInt          Target=92 Value=0   (producer_conses_nested_variant_head.ash:15:36)
-    StoreLocal            Slot=10 Source=92   (producer_conses_nested_variant_head.ash:11:5)
-    RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=34
-    ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=34
+    LoadConstInt          Target=101 Value=0   (producer_conses_nested_variant_head.ash:15:36)
+    StoreLocal            Slot=10 Source=101   (producer_conses_nested_variant_head.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=31 EndLocalSlot=32 PreRestoreEndSlot=37
+    ReclaimArenaChunks    SavedEndSlot=32 PreRestoreEndSlot=37
     Jump                  Target=match_end_0   (producer_conses_nested_variant_head.ash:11:5)
-  match_arm_cleanup_13:
-    RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=35
-    ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=35
-    Jump                  Target=match_next_12   (producer_conses_nested_variant_head.ash:11:5)
-  match_next_12:
-    SaveArenaState        CursorLocalSlot=36 EndLocalSlot=37
-    LoadConstInt          Target=95 Value=0   (producer_conses_nested_variant_head.ash:11:5)
-    CmpIntNe              Target=96 Left=1 Right=95   (producer_conses_nested_variant_head.ash:11:5)
-    JumpIfFalse           CondTemp=96 Target=match_arm_cleanup_16   (producer_conses_nested_variant_head.ash:11:5)
-    LoadMemOffset         Target=97 BasePtr=1 OffsetBytes=0   (producer_conses_nested_variant_head.ash:11:5)
-    LoadMemOffset         Target=98 BasePtr=1 OffsetBytes=8   (producer_conses_nested_variant_head.ash:11:5)
-    LoadConstInt          Target=99 Value=0   (producer_conses_nested_variant_head.ash:11:5)
-    CmpIntNe              Target=100 Left=97 Right=99   (producer_conses_nested_variant_head.ash:11:5)
-    JumpIfFalse           CondTemp=100 Target=match_arm_cleanup_16   (producer_conses_nested_variant_head.ash:11:5)
-    GetAdtTag             Target=101 Ptr=97   (producer_conses_nested_variant_head.ash:11:5)
-    LoadConstInt          Target=103 Value=3   (producer_conses_nested_variant_head.ash:11:5)
-    CmpIntEq              Target=102 Left=101 Right=103   (producer_conses_nested_variant_head.ash:11:5)
-    JumpIfFalse           CondTemp=102 Target=match_arm_cleanup_16   (producer_conses_nested_variant_head.ash:11:5)
-    GetAdtField           Target=104 Ptr=97 FieldIndex=0   (producer_conses_nested_variant_head.ash:11:5)
-    StoreLocal            Slot=38 Source=104   (producer_conses_nested_variant_head.ash:11:5)
-    GetAdtField           Target=105 Ptr=97 FieldIndex=1   (producer_conses_nested_variant_head.ash:11:5)
-    StoreLocal            Slot=39 Source=105   (producer_conses_nested_variant_head.ash:11:5)
-    StoreLocal            Slot=40 Source=98   (producer_conses_nested_variant_head.ash:11:5)
-    LoadLocal             Target=106 Slot=38   (producer_conses_nested_variant_head.ash:16:38)
-    Borrow                Target=107 SourceTemp=106
-    GetAdtTag             Target=109 Ptr=107   (producer_conses_nested_variant_head.ash:16:34)
-    SwitchTag             TagTemp=109 Cases=[2] DefaultLabel=rc_normalize_adt_17   (producer_conses_nested_variant_head.ash:16:34)
-  rc_normalize_adt_17:
-    CopyOutArena          DestTemp=110 SrcTemp=107 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    RcDrop                SourceTemp=104 TypeName=Maybe OwnerSlot=38
-    StoreLocal            Slot=41 Source=110   (producer_conses_nested_variant_head.ash:16:34)
-    Jump                  Target=rc_normalize_adt_end_19   (producer_conses_nested_variant_head.ash:16:34)
-  rc_normalize_adt_18:
-    CopyOutArena          DestTemp=111 SrcTemp=107 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=112 Ptr=107 FieldIndex=0   (producer_conses_nested_variant_head.ash:16:34)
-    RcDrop                SourceTemp=104 TypeName=Maybe OwnerSlot=38
-    CopyOutArena          DestTemp=113 SrcTemp=112 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=111 FieldIndex=0 Source=113   (producer_conses_nested_variant_head.ash:16:34)
-    StoreLocal            Slot=41 Source=111   (producer_conses_nested_variant_head.ash:16:34)
-    Jump                  Target=rc_normalize_adt_end_19   (producer_conses_nested_variant_head.ash:16:34)
-  rc_normalize_adt_end_19:
-    LoadLocal             Target=114 Slot=41   (producer_conses_nested_variant_head.ash:16:34)
-    LoadLocal             Target=115 Slot=39   (producer_conses_nested_variant_head.ash:16:43)
-    LoadConstInt          Target=116 Value=1   (producer_conses_nested_variant_head.ash:16:47)
-    AddInt                Target=117 Left=115 Right=116   (producer_conses_nested_variant_head.ash:16:43)
-    AllocAdt              Target=118 Tag=3 FieldCount=2 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:16:34)
-    SetAdtField           Ptr=118 FieldIndex=0 Source=114   (producer_conses_nested_variant_head.ash:16:34)
-    SetAdtField           Ptr=118 FieldIndex=1 Source=117   (producer_conses_nested_variant_head.ash:16:34)
-    LoadConstInt          Target=119 Value=0   (producer_conses_nested_variant_head.ash:16:34)
-    Alloc                 Target=120 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:16:34)
-    StoreMemOffset        BasePtr=120 OffsetBytes=0 Source=118   (producer_conses_nested_variant_head.ash:16:34)
-    StoreMemOffset        BasePtr=120 OffsetBytes=8 Source=119   (producer_conses_nested_variant_head.ash:16:34)
-    LoadLocal             Target=121 Slot=5   (producer_conses_nested_variant_head.ash:16:34)
-    LoadConstInt          Target=122 Value=0   (producer_conses_nested_variant_head.ash:16:34)
-    CmpIntNe              Target=123 Left=121 Right=122   (producer_conses_nested_variant_head.ash:16:34)
-    JumpIfFalse           CondTemp=123 Target=tmc_first_20   (producer_conses_nested_variant_head.ash:16:34)
-    StoreMemOffset        BasePtr=121 OffsetBytes=8 Source=120   (producer_conses_nested_variant_head.ash:16:34)
-    Jump                  Target=tmc_link_done_21   (producer_conses_nested_variant_head.ash:16:34)
-  tmc_first_20:
-    StoreLocal            Slot=6 Source=120   (producer_conses_nested_variant_head.ash:16:34)
-  tmc_link_done_21:
-    StoreLocal            Slot=5 Source=120   (producer_conses_nested_variant_head.ash:16:34)
-    LoadLocal             Target=124 Slot=40   (producer_conses_nested_variant_head.ash:16:58)
-    Borrow                Target=125 SourceTemp=124
-    LoadLocal             Target=126 Slot=1   (producer_conses_nested_variant_head.ash:16:34)
-    StoreLocal            Slot=1 Source=125   (producer_conses_nested_variant_head.ash:16:34)
-    RcDrop                SourceTemp=98 TypeName=List OwnerSlot=40
+  match_arm_cleanup_17:
+    RestoreArenaState     CursorLocalSlot=31 EndLocalSlot=32 PreRestoreEndSlot=38
+    ReclaimArenaChunks    SavedEndSlot=32 PreRestoreEndSlot=38
+    Jump                  Target=match_next_16   (producer_conses_nested_variant_head.ash:11:5)
+  match_next_16:
+    SaveArenaState        CursorLocalSlot=39 EndLocalSlot=40
+    LoadConstInt          Target=104 Value=0   (producer_conses_nested_variant_head.ash:11:5)
+    CmpIntNe              Target=105 Left=1 Right=104   (producer_conses_nested_variant_head.ash:11:5)
+    JumpIfFalse           CondTemp=105 Target=match_arm_cleanup_22   (producer_conses_nested_variant_head.ash:11:5)
+    LoadMemOffset         Target=106 BasePtr=1 OffsetBytes=0   (producer_conses_nested_variant_head.ash:11:5)
+    LoadMemOffset         Target=107 BasePtr=1 OffsetBytes=8   (producer_conses_nested_variant_head.ash:11:5)
+    LoadConstInt          Target=108 Value=0   (producer_conses_nested_variant_head.ash:11:5)
+    CmpIntNe              Target=109 Left=106 Right=108   (producer_conses_nested_variant_head.ash:11:5)
+    JumpIfFalse           CondTemp=109 Target=match_arm_cleanup_22   (producer_conses_nested_variant_head.ash:11:5)
+    GetAdtTag             Target=110 Ptr=106   (producer_conses_nested_variant_head.ash:11:5)
+    LoadConstInt          Target=112 Value=3   (producer_conses_nested_variant_head.ash:11:5)
+    CmpIntEq              Target=111 Left=110 Right=112   (producer_conses_nested_variant_head.ash:11:5)
+    JumpIfFalse           CondTemp=111 Target=match_arm_cleanup_22   (producer_conses_nested_variant_head.ash:11:5)
+    GetAdtField           Target=113 Ptr=106 FieldIndex=0   (producer_conses_nested_variant_head.ash:11:5)
+    StoreLocal            Slot=41 Source=113   (producer_conses_nested_variant_head.ash:11:5)
+    GetAdtField           Target=114 Ptr=106 FieldIndex=1   (producer_conses_nested_variant_head.ash:11:5)
+    StoreLocal            Slot=42 Source=114   (producer_conses_nested_variant_head.ash:11:5)
+    StoreLocal            Slot=43 Source=107   (producer_conses_nested_variant_head.ash:11:5)
+    LoadLocal             Target=115 Slot=41   (producer_conses_nested_variant_head.ash:16:38)
+    Borrow                Target=116 SourceTemp=115
+    IsReferenceCounted    Target=117 SourceTemp=116
+    JumpIfFalse           CondTemp=117 Target=rc_representation_copy_23   (producer_conses_nested_variant_head.ash:16:34)
+    RcDup                 Target=118 SourceTemp=116 RuntimeManaged=true
+    RcDrop                SourceTemp=113 TypeName=Maybe OwnerSlot=41
+    StoreLocal            Slot=44 Source=118   (producer_conses_nested_variant_head.ash:16:34)
+    Jump                  Target=rc_representation_done_24   (producer_conses_nested_variant_head.ash:16:34)
+  rc_representation_copy_23:
+    GetAdtTag             Target=120 Ptr=116   (producer_conses_nested_variant_head.ash:16:34)
+    SwitchTag             TagTemp=120 Cases=[2] DefaultLabel=rc_normalize_adt_25   (producer_conses_nested_variant_head.ash:16:34)
+  rc_normalize_adt_25:
+    CopyOutArena          DestTemp=121 SrcTemp=116 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    RcDrop                SourceTemp=113 TypeName=Maybe OwnerSlot=41
+    StoreLocal            Slot=45 Source=121   (producer_conses_nested_variant_head.ash:16:34)
+    Jump                  Target=rc_normalize_adt_end_27   (producer_conses_nested_variant_head.ash:16:34)
+  rc_normalize_adt_26:
+    CopyOutArena          DestTemp=122 SrcTemp=116 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=123 Ptr=116 FieldIndex=0   (producer_conses_nested_variant_head.ash:16:34)
+    RcDrop                SourceTemp=113 TypeName=Maybe OwnerSlot=41
+    IsReferenceCounted    Target=124 SourceTemp=123
+    JumpIfFalse           CondTemp=124 Target=rc_representation_copy_28   (producer_conses_nested_variant_head.ash:16:34)
+    RcDup                 Target=125 SourceTemp=123 RuntimeManaged=true
+    StoreLocal            Slot=46 Source=125   (producer_conses_nested_variant_head.ash:16:34)
+    Jump                  Target=rc_representation_done_29   (producer_conses_nested_variant_head.ash:16:34)
+  rc_representation_copy_28:
+    CopyOutArena          DestTemp=126 SrcTemp=123 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=46 Source=126   (producer_conses_nested_variant_head.ash:16:34)
+  rc_representation_done_29:
+    LoadLocal             Target=127 Slot=46   (producer_conses_nested_variant_head.ash:16:34)
+    SetAdtField           Ptr=122 FieldIndex=0 Source=127   (producer_conses_nested_variant_head.ash:16:34)
+    StoreLocal            Slot=45 Source=122   (producer_conses_nested_variant_head.ash:16:34)
+    Jump                  Target=rc_normalize_adt_end_27   (producer_conses_nested_variant_head.ash:16:34)
+  rc_normalize_adt_end_27:
+    LoadLocal             Target=128 Slot=45   (producer_conses_nested_variant_head.ash:16:34)
+    StoreLocal            Slot=44 Source=128   (producer_conses_nested_variant_head.ash:16:34)
+  rc_representation_done_24:
+    LoadLocal             Target=129 Slot=44   (producer_conses_nested_variant_head.ash:16:34)
+    LoadLocal             Target=130 Slot=42   (producer_conses_nested_variant_head.ash:16:43)
+    LoadConstInt          Target=131 Value=1   (producer_conses_nested_variant_head.ash:16:47)
+    AddInt                Target=132 Left=130 Right=131   (producer_conses_nested_variant_head.ash:16:43)
+    AllocAdt              Target=133 Tag=3 FieldCount=2 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:16:34)
+    SetAdtField           Ptr=133 FieldIndex=0 Source=129   (producer_conses_nested_variant_head.ash:16:34)
+    SetAdtField           Ptr=133 FieldIndex=1 Source=132   (producer_conses_nested_variant_head.ash:16:34)
+    LoadConstInt          Target=134 Value=0   (producer_conses_nested_variant_head.ash:16:34)
+    Alloc                 Target=135 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:16:34)
+    StoreMemOffset        BasePtr=135 OffsetBytes=0 Source=133   (producer_conses_nested_variant_head.ash:16:34)
+    StoreMemOffset        BasePtr=135 OffsetBytes=8 Source=134   (producer_conses_nested_variant_head.ash:16:34)
+    LoadLocal             Target=136 Slot=5   (producer_conses_nested_variant_head.ash:16:34)
+    LoadConstInt          Target=137 Value=0   (producer_conses_nested_variant_head.ash:16:34)
+    CmpIntNe              Target=138 Left=136 Right=137   (producer_conses_nested_variant_head.ash:16:34)
+    JumpIfFalse           CondTemp=138 Target=tmc_first_30   (producer_conses_nested_variant_head.ash:16:34)
+    StoreMemOffset        BasePtr=136 OffsetBytes=8 Source=135   (producer_conses_nested_variant_head.ash:16:34)
+    Jump                  Target=tmc_link_done_31   (producer_conses_nested_variant_head.ash:16:34)
+  tmc_first_30:
+    StoreLocal            Slot=6 Source=135   (producer_conses_nested_variant_head.ash:16:34)
+  tmc_link_done_31:
+    StoreLocal            Slot=5 Source=135   (producer_conses_nested_variant_head.ash:16:34)
+    LoadLocal             Target=139 Slot=43   (producer_conses_nested_variant_head.ash:16:58)
+    Borrow                Target=140 SourceTemp=139
+    LoadLocal             Target=141 Slot=1   (producer_conses_nested_variant_head.ash:16:34)
+    StoreLocal            Slot=1 Source=140   (producer_conses_nested_variant_head.ash:16:34)
+    RcDrop                SourceTemp=107 TypeName=List OwnerSlot=43
     RestoreStackPointer   Slot=9   (producer_conses_nested_variant_head.ash:16:34)
     Jump                  Target=lambda_0_body   (producer_conses_nested_variant_head.ash:16:34)
-    LoadConstInt          Target=127 Value=0   (producer_conses_nested_variant_head.ash:16:34)
-    StoreLocal            Slot=10 Source=127   (producer_conses_nested_variant_head.ash:11:5)
-    RestoreArenaState     CursorLocalSlot=36 EndLocalSlot=37 PreRestoreEndSlot=42
-    ReclaimArenaChunks    SavedEndSlot=37 PreRestoreEndSlot=42
+    LoadConstInt          Target=142 Value=0   (producer_conses_nested_variant_head.ash:16:34)
+    StoreLocal            Slot=10 Source=142   (producer_conses_nested_variant_head.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=39 EndLocalSlot=40 PreRestoreEndSlot=47
+    ReclaimArenaChunks    SavedEndSlot=40 PreRestoreEndSlot=47
     Jump                  Target=match_end_0   (producer_conses_nested_variant_head.ash:11:5)
-  match_arm_cleanup_16:
-    RestoreArenaState     CursorLocalSlot=36 EndLocalSlot=37 PreRestoreEndSlot=43
-    ReclaimArenaChunks    SavedEndSlot=37 PreRestoreEndSlot=43
+  match_arm_cleanup_22:
+    RestoreArenaState     CursorLocalSlot=39 EndLocalSlot=40 PreRestoreEndSlot=48
+    ReclaimArenaChunks    SavedEndSlot=40 PreRestoreEndSlot=48
     Jump                  Target=match_none_1   (producer_conses_nested_variant_head.ash:11:5)
   match_none_1:
-    LoadConstInt          Target=130 Value=0   (producer_conses_nested_variant_head.ash:11:5)
-    StoreLocal            Slot=10 Source=130   (producer_conses_nested_variant_head.ash:11:5)
+    LoadConstInt          Target=145 Value=0   (producer_conses_nested_variant_head.ash:11:5)
+    StoreLocal            Slot=10 Source=145   (producer_conses_nested_variant_head.ash:11:5)
   match_end_0:
-    LoadLocal             Target=131 Slot=10   (producer_conses_nested_variant_head.ash:11:5)
-    LoadLocal             Target=132 Slot=5   (producer_conses_nested_variant_head.ash:10:1)
-    LoadConstInt          Target=133 Value=0   (producer_conses_nested_variant_head.ash:10:1)
-    CmpIntNe              Target=134 Left=132 Right=133   (producer_conses_nested_variant_head.ash:10:1)
-    JumpIfFalse           CondTemp=134 Target=tmc_close_empty_22   (producer_conses_nested_variant_head.ash:10:1)
-    StoreMemOffset        BasePtr=132 OffsetBytes=8 Source=131   (producer_conses_nested_variant_head.ash:10:1)
-    LoadLocal             Target=135 Slot=6   (producer_conses_nested_variant_head.ash:10:1)
-    StoreLocal            Slot=44 Source=135   (producer_conses_nested_variant_head.ash:10:1)
-    Jump                  Target=tmc_close_done_23   (producer_conses_nested_variant_head.ash:10:1)
-  tmc_close_empty_22:
-    StoreLocal            Slot=44 Source=131   (producer_conses_nested_variant_head.ash:10:1)
-  tmc_close_done_23:
-    LoadLocal             Target=136 Slot=44   (producer_conses_nested_variant_head.ash:10:1)
-    LoadConstInt          Target=137 Value=0   (producer_conses_nested_variant_head.ash:10:1)
-    StoreLocal            Slot=45 Source=137   (producer_conses_nested_variant_head.ash:10:1)
-    LoadArgumentOwnership Target=138   (producer_conses_nested_variant_head.ash:10:1)
-    LoadConstInt          Target=139 Value=1   (producer_conses_nested_variant_head.ash:10:1)
-    ShrInt                Target=140 Left=138 Right=139   (producer_conses_nested_variant_head.ash:10:1)
-    JumpIfFalse           CondTemp=140 Target=rc_result_owned_24   (producer_conses_nested_variant_head.ash:10:1)
-    Alloc                 Target=141 SizeBytes=8   (producer_conses_nested_variant_head.ash:10:1)
-    MakeClosure           Target=142 FuncLabel=__deepcopy_list_1 EnvPtrTemp=141 EnvSizeBytes=8   (producer_conses_nested_variant_head.ash:10:1)
-    StoreMemOffset        BasePtr=141 OffsetBytes=0 Source=142   (producer_conses_nested_variant_head.ash:10:1)
-    CallClosure           Target=143 ClosureTemp=142 ArgTemp=136   (producer_conses_nested_variant_head.ash:10:1)
-    StoreLocal            Slot=47 Source=136   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_list_26:
-    LoadLocal             Target=144 Slot=47   (producer_conses_nested_variant_head.ash:10:1)
-    LoadConstInt          Target=145 Value=0   (producer_conses_nested_variant_head.ash:10:1)
-    CmpIntNe              Target=146 Left=144 Right=145   (producer_conses_nested_variant_head.ash:10:1)
-    JumpIfFalse           CondTemp=146 Target=rcdrop_list_end_28   (producer_conses_nested_variant_head.ash:10:1)
-    RcIsUnique            Target=147 SourceTemp=144
-    JumpIfFalse           CondTemp=147 Target=rcdrop_list_shared_27   (producer_conses_nested_variant_head.ash:10:1)
-    LoadMemOffset         Target=148 BasePtr=144 OffsetBytes=0   (producer_conses_nested_variant_head.ash:10:1)
-    LoadConstInt          Target=149 Value=0   (producer_conses_nested_variant_head.ash:10:1)
-    CallKnown             Target=150 FuncLabel=__rcdrop_5 EnvTemp=149 ArgTemp=148   (producer_conses_nested_variant_head.ash:10:1)
-    LoadMemOffset         Target=151 BasePtr=144 OffsetBytes=8   (producer_conses_nested_variant_head.ash:10:1)
-    RcDrop                SourceTemp=144 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=47 Source=151   (producer_conses_nested_variant_head.ash:10:1)
-    Jump                  Target=rcdrop_list_26   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_list_shared_27:
-    RcDrop                SourceTemp=144 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_28   (producer_conses_nested_variant_head.ash:10:1)
-  rcdrop_list_end_28:
-    StoreLocal            Slot=46 Source=143   (producer_conses_nested_variant_head.ash:10:1)
-    Jump                  Target=rc_result_done_25   (producer_conses_nested_variant_head.ash:10:1)
-  rc_result_owned_24:
-    StoreLocal            Slot=46 Source=136   (producer_conses_nested_variant_head.ash:10:1)
-  rc_result_done_25:
-    LoadLocal             Target=152 Slot=46   (producer_conses_nested_variant_head.ash:10:1)
-    Return                Source=152   (producer_conses_nested_variant_head.ash:10:1)
+    LoadLocal             Target=146 Slot=10   (producer_conses_nested_variant_head.ash:11:5)
+    LoadLocal             Target=147 Slot=5   (producer_conses_nested_variant_head.ash:10:1)
+    LoadConstInt          Target=148 Value=0   (producer_conses_nested_variant_head.ash:10:1)
+    CmpIntNe              Target=149 Left=147 Right=148   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=149 Target=tmc_close_empty_32   (producer_conses_nested_variant_head.ash:10:1)
+    StoreMemOffset        BasePtr=147 OffsetBytes=8 Source=146   (producer_conses_nested_variant_head.ash:10:1)
+    LoadLocal             Target=150 Slot=6   (producer_conses_nested_variant_head.ash:10:1)
+    StoreLocal            Slot=49 Source=150   (producer_conses_nested_variant_head.ash:10:1)
+    Jump                  Target=tmc_close_done_33   (producer_conses_nested_variant_head.ash:10:1)
+  tmc_close_empty_32:
+    StoreLocal            Slot=49 Source=146   (producer_conses_nested_variant_head.ash:10:1)
+  tmc_close_done_33:
+    LoadLocal             Target=151 Slot=49   (producer_conses_nested_variant_head.ash:10:1)
+    LoadConstInt          Target=152 Value=0   (producer_conses_nested_variant_head.ash:10:1)
+    StoreLocal            Slot=50 Source=152   (producer_conses_nested_variant_head.ash:10:1)
+    LoadArgumentOwnership Target=153   (producer_conses_nested_variant_head.ash:10:1)
+    LoadConstInt          Target=154 Value=1   (producer_conses_nested_variant_head.ash:10:1)
+    ShrInt                Target=155 Left=153 Right=154   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=155 Target=rc_result_owned_34   (producer_conses_nested_variant_head.ash:10:1)
+    Alloc                 Target=156 SizeBytes=8   (producer_conses_nested_variant_head.ash:10:1)
+    MakeClosure           Target=157 FuncLabel=__deepcopy_list_1 EnvPtrTemp=156 EnvSizeBytes=8   (producer_conses_nested_variant_head.ash:10:1)
+    StoreMemOffset        BasePtr=156 OffsetBytes=0 Source=157   (producer_conses_nested_variant_head.ash:10:1)
+    CallClosure           Target=158 ClosureTemp=157 ArgTemp=151   (producer_conses_nested_variant_head.ash:10:1)
+    StoreLocal            Slot=52 Source=151   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_list_36:
+    LoadLocal             Target=159 Slot=52   (producer_conses_nested_variant_head.ash:10:1)
+    LoadConstInt          Target=160 Value=0   (producer_conses_nested_variant_head.ash:10:1)
+    CmpIntNe              Target=161 Left=159 Right=160   (producer_conses_nested_variant_head.ash:10:1)
+    JumpIfFalse           CondTemp=161 Target=rcdrop_list_end_38   (producer_conses_nested_variant_head.ash:10:1)
+    RcIsUnique            Target=162 SourceTemp=159
+    JumpIfFalse           CondTemp=162 Target=rcdrop_list_shared_37   (producer_conses_nested_variant_head.ash:10:1)
+    LoadMemOffset         Target=163 BasePtr=159 OffsetBytes=0   (producer_conses_nested_variant_head.ash:10:1)
+    LoadConstInt          Target=164 Value=0   (producer_conses_nested_variant_head.ash:10:1)
+    CallKnown             Target=165 FuncLabel=__rcdrop_5 EnvTemp=164 ArgTemp=163   (producer_conses_nested_variant_head.ash:10:1)
+    LoadMemOffset         Target=166 BasePtr=159 OffsetBytes=8   (producer_conses_nested_variant_head.ash:10:1)
+    RcDrop                SourceTemp=159 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=52 Source=166   (producer_conses_nested_variant_head.ash:10:1)
+    Jump                  Target=rcdrop_list_36   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_list_shared_37:
+    RcDrop                SourceTemp=159 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_38   (producer_conses_nested_variant_head.ash:10:1)
+  rcdrop_list_end_38:
+    StoreLocal            Slot=51 Source=158   (producer_conses_nested_variant_head.ash:10:1)
+    Jump                  Target=rc_result_done_35   (producer_conses_nested_variant_head.ash:10:1)
+  rc_result_owned_34:
+    StoreLocal            Slot=51 Source=151   (producer_conses_nested_variant_head.ash:10:1)
+  rc_result_done_35:
+    LoadLocal             Target=167 Slot=51   (producer_conses_nested_variant_head.ash:10:1)
+    Return                Source=167   (producer_conses_nested_variant_head.ash:10:1)
 
 function lambda_8  [ClosureHelper from count]
-  locals=31 temps=88
+  locals=38 temps=109
     LoadEnv               Target=0 Index=0   (producer_conses_nested_variant_head.ash:18:1)
     StoreLocal            Slot=2 Source=0   (producer_conses_nested_variant_head.ash:18:1)
     LoadLocal             Target=32 Slot=2   (producer_conses_nested_variant_head.ash:18:1)
-    LoadConstInt          Target=34 Value=0   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=23 Source=32   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=24 Source=34   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=25 Source=34   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_list_49:
-    LoadLocal             Target=35 Slot=23   (producer_conses_nested_variant_head.ash:18:1)
-    CmpIntNe              Target=36 Left=35 Right=34   (producer_conses_nested_variant_head.ash:18:1)
-    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_end_50   (producer_conses_nested_variant_head.ash:18:1)
-    LoadMemOffset         Target=37 BasePtr=35 OffsetBytes=0   (producer_conses_nested_variant_head.ash:18:1)
-    LoadMemOffset         Target=38 BasePtr=35 OffsetBytes=8   (producer_conses_nested_variant_head.ash:18:1)
-    GetAdtTag             Target=40 Ptr=37   (producer_conses_nested_variant_head.ash:18:1)
-    SwitchTag             TagTemp=40 Cases=[4] DefaultLabel=rc_normalize_adt_51   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_51:
-    CopyOutArena          DestTemp=41 SrcTemp=37 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=26 Source=41   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_adt_end_55   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_52:
-    CopyOutArena          DestTemp=42 SrcTemp=37 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=43 Ptr=37 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
-    CopyOutArena          DestTemp=45 SrcTemp=43 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=46 Ptr=43 FieldIndex=0 Tagless=true   (producer_conses_nested_variant_head.ash:18:1)
-    CopyOutArena          DestTemp=47 SrcTemp=46 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=45 FieldIndex=0 Source=47 Tagless=true   (producer_conses_nested_variant_head.ash:18:1)
-    SetAdtField           Ptr=42 FieldIndex=0 Source=45   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=26 Source=42   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_adt_end_55   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_53:
-    CopyOutArena          DestTemp=48 SrcTemp=37 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=49 Ptr=37 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
-    CopyOutList           DestTemp=50 SrcTemp=49 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (producer_conses_nested_variant_head.ash:18:1)
-    SetAdtField           Ptr=48 FieldIndex=0 Source=50   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=26 Source=48   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_adt_end_55   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_54:
-    CopyOutArena          DestTemp=51 SrcTemp=37 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=52 Ptr=37 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
-    GetAdtTag             Target=54 Ptr=52   (producer_conses_nested_variant_head.ash:18:1)
-    SwitchTag             TagTemp=54 Cases=[2] DefaultLabel=rc_normalize_adt_56   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_56:
-    CopyOutArena          DestTemp=55 SrcTemp=52 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=27 Source=55   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_adt_end_58   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_57:
-    CopyOutArena          DestTemp=56 SrcTemp=52 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=57 Ptr=52 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
-    CopyOutArena          DestTemp=58 SrcTemp=57 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=56 FieldIndex=0 Source=58   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=27 Source=56   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_adt_end_58   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_end_58:
-    LoadLocal             Target=59 Slot=27   (producer_conses_nested_variant_head.ash:18:1)
-    SetAdtField           Ptr=51 FieldIndex=0 Source=59   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=26 Source=51   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_adt_end_55   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_adt_end_55:
-    LoadLocal             Target=60 Slot=26   (producer_conses_nested_variant_head.ash:18:1)
-    Alloc                 Target=61 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:18:1)
-    StoreMemOffset        BasePtr=61 OffsetBytes=0 Source=60   (producer_conses_nested_variant_head.ash:18:1)
-    StoreMemOffset        BasePtr=61 OffsetBytes=8 Source=34   (producer_conses_nested_variant_head.ash:18:1)
-    LoadLocal             Target=62 Slot=24   (producer_conses_nested_variant_head.ash:18:1)
-    CmpIntNe              Target=63 Left=62 Right=34   (producer_conses_nested_variant_head.ash:18:1)
-    JumpIfFalse           CondTemp=63 Target=rc_normalize_list_first_59   (producer_conses_nested_variant_head.ash:18:1)
-    LoadLocal             Target=64 Slot=25   (producer_conses_nested_variant_head.ash:18:1)
-    StoreMemOffset        BasePtr=64 OffsetBytes=8 Source=61   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_list_linked_60   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_list_first_59:
-    StoreLocal            Slot=24 Source=61   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_list_linked_60:
-    StoreLocal            Slot=25 Source=61   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=23 Source=38   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rc_normalize_list_49   (producer_conses_nested_variant_head.ash:18:1)
-  rc_normalize_list_end_50:
-    LoadLocal             Target=65 Slot=24   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=2 Source=65   (producer_conses_nested_variant_head.ash:18:1)
-    LoadConstInt          Target=66 Value=1   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=8 Source=66   (producer_conses_nested_variant_head.ash:18:1)
+    IsReferenceCounted    Target=33 SourceTemp=32
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_59   (producer_conses_nested_variant_head.ash:18:1)
+    RcDup                 Target=34 SourceTemp=32 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=34   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_representation_done_60   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_copy_59:
+    LoadConstInt          Target=36 Value=0   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=24 Source=32   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=25 Source=36   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=26 Source=36   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_list_61:
+    LoadLocal             Target=37 Slot=24   (producer_conses_nested_variant_head.ash:18:1)
+    CmpIntNe              Target=38 Left=37 Right=36   (producer_conses_nested_variant_head.ash:18:1)
+    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_end_62   (producer_conses_nested_variant_head.ash:18:1)
+    LoadMemOffset         Target=39 BasePtr=37 OffsetBytes=0   (producer_conses_nested_variant_head.ash:18:1)
+    LoadMemOffset         Target=40 BasePtr=37 OffsetBytes=8   (producer_conses_nested_variant_head.ash:18:1)
+    IsReferenceCounted    Target=41 SourceTemp=39
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_63   (producer_conses_nested_variant_head.ash:18:1)
+    RcDup                 Target=42 SourceTemp=39 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=42   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_representation_done_64   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_copy_63:
+    GetAdtTag             Target=44 Ptr=39   (producer_conses_nested_variant_head.ash:18:1)
+    SwitchTag             TagTemp=44 Cases=[4] DefaultLabel=rc_normalize_adt_65   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_65:
+    CopyOutArena          DestTemp=45 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=28 Source=45   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_adt_end_69   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_66:
+    CopyOutArena          DestTemp=46 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=47 Ptr=39 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
+    IsReferenceCounted    Target=48 SourceTemp=47
+    JumpIfFalse           CondTemp=48 Target=rc_representation_copy_70   (producer_conses_nested_variant_head.ash:18:1)
+    RcDup                 Target=49 SourceTemp=47 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=49   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_representation_done_71   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_copy_70:
+    CopyOutArena          DestTemp=51 SrcTemp=47 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=52 Ptr=47 FieldIndex=0 Tagless=true   (producer_conses_nested_variant_head.ash:18:1)
+    IsReferenceCounted    Target=53 SourceTemp=52
+    JumpIfFalse           CondTemp=53 Target=rc_representation_copy_72   (producer_conses_nested_variant_head.ash:18:1)
+    RcDup                 Target=54 SourceTemp=52 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=54   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_representation_done_73   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_copy_72:
+    CopyOutArena          DestTemp=55 SrcTemp=52 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=30 Source=55   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_done_73:
+    LoadLocal             Target=56 Slot=30   (producer_conses_nested_variant_head.ash:18:1)
+    SetAdtField           Ptr=51 FieldIndex=0 Source=56 Tagless=true   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=29 Source=51   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_done_71:
+    LoadLocal             Target=57 Slot=29   (producer_conses_nested_variant_head.ash:18:1)
+    SetAdtField           Ptr=46 FieldIndex=0 Source=57   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=28 Source=46   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_adt_end_69   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_67:
+    CopyOutArena          DestTemp=58 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=59 Ptr=39 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
+    IsReferenceCounted    Target=60 SourceTemp=59
+    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_74   (producer_conses_nested_variant_head.ash:18:1)
+    RcDup                 Target=61 SourceTemp=59 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=61   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_representation_done_75   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_copy_74:
+    CopyOutList           DestTemp=62 SrcTemp=59 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=31 Source=62   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_done_75:
+    LoadLocal             Target=63 Slot=31   (producer_conses_nested_variant_head.ash:18:1)
+    SetAdtField           Ptr=58 FieldIndex=0 Source=63   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=28 Source=58   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_adt_end_69   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_68:
+    CopyOutArena          DestTemp=64 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=65 Ptr=39 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
+    IsReferenceCounted    Target=66 SourceTemp=65
+    JumpIfFalse           CondTemp=66 Target=rc_representation_copy_76   (producer_conses_nested_variant_head.ash:18:1)
+    RcDup                 Target=67 SourceTemp=65 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=67   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_representation_done_77   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_copy_76:
+    GetAdtTag             Target=69 Ptr=65   (producer_conses_nested_variant_head.ash:18:1)
+    SwitchTag             TagTemp=69 Cases=[2] DefaultLabel=rc_normalize_adt_78   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_78:
+    CopyOutArena          DestTemp=70 SrcTemp=65 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=33 Source=70   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_adt_end_80   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_79:
+    CopyOutArena          DestTemp=71 SrcTemp=65 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=72 Ptr=65 FieldIndex=0   (producer_conses_nested_variant_head.ash:18:1)
+    IsReferenceCounted    Target=73 SourceTemp=72
+    JumpIfFalse           CondTemp=73 Target=rc_representation_copy_81   (producer_conses_nested_variant_head.ash:18:1)
+    RcDup                 Target=74 SourceTemp=72 RuntimeManaged=true
+    StoreLocal            Slot=34 Source=74   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_representation_done_82   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_copy_81:
+    CopyOutArena          DestTemp=75 SrcTemp=72 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=34 Source=75   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_done_82:
+    LoadLocal             Target=76 Slot=34   (producer_conses_nested_variant_head.ash:18:1)
+    SetAdtField           Ptr=71 FieldIndex=0 Source=76   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=33 Source=71   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_adt_end_80   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_end_80:
+    LoadLocal             Target=77 Slot=33   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=32 Source=77   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_done_77:
+    LoadLocal             Target=78 Slot=32   (producer_conses_nested_variant_head.ash:18:1)
+    SetAdtField           Ptr=64 FieldIndex=0 Source=78   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=28 Source=64   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_adt_end_69   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_adt_end_69:
+    LoadLocal             Target=79 Slot=28   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=27 Source=79   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_done_64:
+    LoadLocal             Target=80 Slot=27   (producer_conses_nested_variant_head.ash:18:1)
+    Alloc                 Target=81 SizeBytes=16 RuntimeManaged=true   (producer_conses_nested_variant_head.ash:18:1)
+    StoreMemOffset        BasePtr=81 OffsetBytes=0 Source=80   (producer_conses_nested_variant_head.ash:18:1)
+    StoreMemOffset        BasePtr=81 OffsetBytes=8 Source=36   (producer_conses_nested_variant_head.ash:18:1)
+    LoadLocal             Target=82 Slot=25   (producer_conses_nested_variant_head.ash:18:1)
+    CmpIntNe              Target=83 Left=82 Right=36   (producer_conses_nested_variant_head.ash:18:1)
+    JumpIfFalse           CondTemp=83 Target=rc_normalize_list_first_83   (producer_conses_nested_variant_head.ash:18:1)
+    LoadLocal             Target=84 Slot=26   (producer_conses_nested_variant_head.ash:18:1)
+    StoreMemOffset        BasePtr=84 OffsetBytes=8 Source=81   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_list_linked_84   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_list_first_83:
+    StoreLocal            Slot=25 Source=81   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_list_linked_84:
+    StoreLocal            Slot=26 Source=81   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=24 Source=40   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rc_normalize_list_61   (producer_conses_nested_variant_head.ash:18:1)
+  rc_normalize_list_end_62:
+    LoadLocal             Target=85 Slot=25   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=23 Source=85   (producer_conses_nested_variant_head.ash:18:1)
+  rc_representation_done_60:
+    LoadLocal             Target=86 Slot=23   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=2 Source=86   (producer_conses_nested_variant_head.ash:18:1)
+    LoadConstInt          Target=87 Value=1   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=8 Source=87   (producer_conses_nested_variant_head.ash:18:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (producer_conses_nested_variant_head.ash:18:1)
     StoreLocal            Slot=5 Source=1   (producer_conses_nested_variant_head.ash:18:1)
@@ -594,21 +705,21 @@ function lambda_8  [ClosureHelper from count]
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (producer_conses_nested_variant_head.ash:19:5)
     CmpIntEq              Target=4 Left=2 Right=3   (producer_conses_nested_variant_head.ash:19:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_44   (producer_conses_nested_variant_head.ash:19:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_54   (producer_conses_nested_variant_head.ash:19:5)
     LoadLocal             Target=5 Slot=1   (producer_conses_nested_variant_head.ash:20:17)
     StoreLocal            Slot=12 Source=5   (producer_conses_nested_variant_head.ash:19:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_41   (producer_conses_nested_variant_head.ash:19:5)
-  match_arm_cleanup_44:
+    Jump                  Target=match_end_51   (producer_conses_nested_variant_head.ash:19:5)
+  match_arm_cleanup_54:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_43   (producer_conses_nested_variant_head.ash:19:5)
-  match_next_43:
+    Jump                  Target=match_next_53   (producer_conses_nested_variant_head.ash:19:5)
+  match_next_53:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (producer_conses_nested_variant_head.ash:19:5)
     CmpIntNe              Target=7 Left=2 Right=6   (producer_conses_nested_variant_head.ash:19:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_45   (producer_conses_nested_variant_head.ash:19:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_55   (producer_conses_nested_variant_head.ash:19:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (producer_conses_nested_variant_head.ash:19:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (producer_conses_nested_variant_head.ash:19:5)
     StoreLocal            Slot=19 Source=9   (producer_conses_nested_variant_head.ash:19:5)
@@ -621,99 +732,99 @@ function lambda_8  [ClosureHelper from count]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=16 Slot=2   (producer_conses_nested_variant_head.ash:21:24)
     StoreLocal            Slot=20 Source=16   (producer_conses_nested_variant_head.ash:21:24)
-  rcdrop_list_46:
+  rcdrop_list_56:
     LoadLocal             Target=17 Slot=20   (producer_conses_nested_variant_head.ash:21:24)
     LoadConstInt          Target=18 Value=0   (producer_conses_nested_variant_head.ash:21:24)
     CmpIntNe              Target=19 Left=17 Right=18   (producer_conses_nested_variant_head.ash:21:24)
-    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_48   (producer_conses_nested_variant_head.ash:21:24)
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_58   (producer_conses_nested_variant_head.ash:21:24)
     RcIsUnique            Target=20 SourceTemp=17
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_47   (producer_conses_nested_variant_head.ash:21:24)
+    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_57   (producer_conses_nested_variant_head.ash:21:24)
     LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (producer_conses_nested_variant_head.ash:21:24)
     LoadConstInt          Target=22 Value=0   (producer_conses_nested_variant_head.ash:21:24)
     CallKnown             Target=23 FuncLabel=__rcdrop_5 EnvTemp=22 ArgTemp=21   (producer_conses_nested_variant_head.ash:21:24)
     LoadMemOffset         Target=24 BasePtr=17 OffsetBytes=8   (producer_conses_nested_variant_head.ash:21:24)
     RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=20 Source=24   (producer_conses_nested_variant_head.ash:21:24)
-    Jump                  Target=rcdrop_list_46   (producer_conses_nested_variant_head.ash:21:24)
-  rcdrop_list_shared_47:
+    Jump                  Target=rcdrop_list_56   (producer_conses_nested_variant_head.ash:21:24)
+  rcdrop_list_shared_57:
     RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_48   (producer_conses_nested_variant_head.ash:21:24)
-  rcdrop_list_end_48:
+    Jump                  Target=rcdrop_list_end_58   (producer_conses_nested_variant_head.ash:21:24)
+  rcdrop_list_end_58:
     LoadConstInt          Target=25 Value=0   (producer_conses_nested_variant_head.ash:21:24)
     StoreLocal            Slot=8 Source=25   (producer_conses_nested_variant_head.ash:21:24)
     LoadLocal             Target=26 Slot=2   (producer_conses_nested_variant_head.ash:21:24)
     LoadLocal             Target=27 Slot=1   (producer_conses_nested_variant_head.ash:21:24)
     StoreLocal            Slot=2 Source=15   (producer_conses_nested_variant_head.ash:21:24)
     StoreLocal            Slot=1 Source=14   (producer_conses_nested_variant_head.ash:21:24)
-    LoadLocal             Target=77 Slot=8
-    JumpIfFalse           CondTemp=77 Target=rc_tco_drop_inactive_73
-    StoreLocal            Slot=30 Source=26
-  rcdrop_list_74:
-    LoadLocal             Target=78 Slot=30
-    LoadConstInt          Target=79 Value=0
-    CmpIntNe              Target=80 Left=78 Right=79
-    JumpIfFalse           CondTemp=80 Target=rcdrop_list_end_76
-    RcIsUnique            Target=81 SourceTemp=78
-    JumpIfFalse           CondTemp=81 Target=rcdrop_list_shared_75
-    LoadMemOffset         Target=82 BasePtr=78 OffsetBytes=0
-    LoadConstInt          Target=83 Value=0
-    CallKnown             Target=84 FuncLabel=__rcdrop_5 EnvTemp=83 ArgTemp=82
-    LoadMemOffset         Target=85 BasePtr=78 OffsetBytes=8
-    RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=30 Source=85
-    Jump                  Target=rcdrop_list_74
-  rcdrop_list_shared_75:
-    RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_76
-  rcdrop_list_end_76:
-  rc_tco_drop_inactive_73:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
-    LoadConstInt          Target=86 Value=0
-    StoreLocal            Slot=6 Source=86
-    StoreLocal            Slot=7 Source=86
+    LoadLocal             Target=98 Slot=8
+    JumpIfFalse           CondTemp=98 Target=rc_tco_drop_inactive_97
+    StoreLocal            Slot=37 Source=26
+  rcdrop_list_98:
+    LoadLocal             Target=99 Slot=37
+    LoadConstInt          Target=100 Value=0
+    CmpIntNe              Target=101 Left=99 Right=100
+    JumpIfFalse           CondTemp=101 Target=rcdrop_list_end_100
+    RcIsUnique            Target=102 SourceTemp=99
+    JumpIfFalse           CondTemp=102 Target=rcdrop_list_shared_99
+    LoadMemOffset         Target=103 BasePtr=99 OffsetBytes=0
+    LoadConstInt          Target=104 Value=0
+    CallKnown             Target=105 FuncLabel=__rcdrop_5 EnvTemp=104 ArgTemp=103
+    LoadMemOffset         Target=106 BasePtr=99 OffsetBytes=8
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=37 Source=106
+    Jump                  Target=rcdrop_list_98
+  rcdrop_list_shared_99:
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_100
+  rcdrop_list_end_100:
+  rc_tco_drop_inactive_97:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=36
+    LoadConstInt          Target=107 Value=0
+    StoreLocal            Slot=6 Source=107
+    StoreLocal            Slot=7 Source=107
     StoreLocal            Slot=2 Source=15
-    LoadConstInt          Target=87 Value=1
-    StoreLocal            Slot=8 Source=87
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=29
+    LoadConstInt          Target=108 Value=1
+    StoreLocal            Slot=8 Source=108
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=36
     RestoreStackPointer   Slot=11   (producer_conses_nested_variant_head.ash:21:24)
     Jump                  Target=lambda_8_body   (producer_conses_nested_variant_head.ash:21:24)
     LoadConstInt          Target=28 Value=0   (producer_conses_nested_variant_head.ash:21:24)
     StoreLocal            Slot=12 Source=28   (producer_conses_nested_variant_head.ash:19:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
-    Jump                  Target=match_end_41   (producer_conses_nested_variant_head.ash:19:5)
-  match_arm_cleanup_45:
+    Jump                  Target=match_end_51   (producer_conses_nested_variant_head.ash:19:5)
+  match_arm_cleanup_55:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_none_42   (producer_conses_nested_variant_head.ash:19:5)
-  match_none_42:
+    Jump                  Target=match_none_52   (producer_conses_nested_variant_head.ash:19:5)
+  match_none_52:
     LoadConstInt          Target=30 Value=0   (producer_conses_nested_variant_head.ash:19:5)
     StoreLocal            Slot=12 Source=30   (producer_conses_nested_variant_head.ash:19:5)
-  match_end_41:
+  match_end_51:
     LoadLocal             Target=31 Slot=12   (producer_conses_nested_variant_head.ash:19:5)
-    LoadLocal             Target=67 Slot=2   (producer_conses_nested_variant_head.ash:18:1)
-    LoadLocal             Target=68 Slot=8   (producer_conses_nested_variant_head.ash:18:1)
-    JumpIfFalse           CondTemp=68 Target=rc_tco_exit_drop_inactive_61   (producer_conses_nested_variant_head.ash:18:1)
-    StoreLocal            Slot=28 Source=67   (producer_conses_nested_variant_head.ash:18:1)
-  rcdrop_list_62:
-    LoadLocal             Target=69 Slot=28   (producer_conses_nested_variant_head.ash:18:1)
-    LoadConstInt          Target=70 Value=0   (producer_conses_nested_variant_head.ash:18:1)
-    CmpIntNe              Target=71 Left=69 Right=70   (producer_conses_nested_variant_head.ash:18:1)
-    JumpIfFalse           CondTemp=71 Target=rcdrop_list_end_64   (producer_conses_nested_variant_head.ash:18:1)
-    RcIsUnique            Target=72 SourceTemp=69
-    JumpIfFalse           CondTemp=72 Target=rcdrop_list_shared_63   (producer_conses_nested_variant_head.ash:18:1)
-    LoadMemOffset         Target=73 BasePtr=69 OffsetBytes=0   (producer_conses_nested_variant_head.ash:18:1)
-    LoadConstInt          Target=74 Value=0   (producer_conses_nested_variant_head.ash:18:1)
-    CallKnown             Target=75 FuncLabel=__rcdrop_5 EnvTemp=74 ArgTemp=73   (producer_conses_nested_variant_head.ash:18:1)
-    LoadMemOffset         Target=76 BasePtr=69 OffsetBytes=8   (producer_conses_nested_variant_head.ash:18:1)
-    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=28 Source=76   (producer_conses_nested_variant_head.ash:18:1)
-    Jump                  Target=rcdrop_list_62   (producer_conses_nested_variant_head.ash:18:1)
-  rcdrop_list_shared_63:
-    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_64   (producer_conses_nested_variant_head.ash:18:1)
-  rcdrop_list_end_64:
-  rc_tco_exit_drop_inactive_61:
+    LoadLocal             Target=88 Slot=2   (producer_conses_nested_variant_head.ash:18:1)
+    LoadLocal             Target=89 Slot=8   (producer_conses_nested_variant_head.ash:18:1)
+    JumpIfFalse           CondTemp=89 Target=rc_tco_exit_drop_inactive_85   (producer_conses_nested_variant_head.ash:18:1)
+    StoreLocal            Slot=35 Source=88   (producer_conses_nested_variant_head.ash:18:1)
+  rcdrop_list_86:
+    LoadLocal             Target=90 Slot=35   (producer_conses_nested_variant_head.ash:18:1)
+    LoadConstInt          Target=91 Value=0   (producer_conses_nested_variant_head.ash:18:1)
+    CmpIntNe              Target=92 Left=90 Right=91   (producer_conses_nested_variant_head.ash:18:1)
+    JumpIfFalse           CondTemp=92 Target=rcdrop_list_end_88   (producer_conses_nested_variant_head.ash:18:1)
+    RcIsUnique            Target=93 SourceTemp=90
+    JumpIfFalse           CondTemp=93 Target=rcdrop_list_shared_87   (producer_conses_nested_variant_head.ash:18:1)
+    LoadMemOffset         Target=94 BasePtr=90 OffsetBytes=0   (producer_conses_nested_variant_head.ash:18:1)
+    LoadConstInt          Target=95 Value=0   (producer_conses_nested_variant_head.ash:18:1)
+    CallKnown             Target=96 FuncLabel=__rcdrop_5 EnvTemp=95 ArgTemp=94   (producer_conses_nested_variant_head.ash:18:1)
+    LoadMemOffset         Target=97 BasePtr=90 OffsetBytes=8   (producer_conses_nested_variant_head.ash:18:1)
+    RcDrop                SourceTemp=90 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=35 Source=97   (producer_conses_nested_variant_head.ash:18:1)
+    Jump                  Target=rcdrop_list_86   (producer_conses_nested_variant_head.ash:18:1)
+  rcdrop_list_shared_87:
+    RcDrop                SourceTemp=90 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_88   (producer_conses_nested_variant_head.ash:18:1)
+  rcdrop_list_end_88:
+  rc_tco_exit_drop_inactive_85:
     Return                Source=31   (producer_conses_nested_variant_head.ash:18:1)
 
 function lambda_7  [SourceFunction from count]
@@ -790,43 +901,43 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=33 Value=1   (producer_conses_nested_variant_head.ash:23:41)
     AndInt                Target=34 Left=32 Right=33   (producer_conses_nested_variant_head.ash:23:41)
     StoreLocal            Slot=9 Source=29   (producer_conses_nested_variant_head.ash:23:41)
-    JumpIfFalse           CondTemp=34 Target=rc_call_argument_not_retained_65   (producer_conses_nested_variant_head.ash:23:41)
+    JumpIfFalse           CondTemp=34 Target=rc_call_argument_not_retained_89   (producer_conses_nested_variant_head.ash:23:41)
     RcDup                 Target=35 SourceTemp=29 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=9 Source=35   (producer_conses_nested_variant_head.ash:23:41)
-  rc_call_argument_not_retained_65:
+  rc_call_argument_not_retained_89:
     LoadLocal             Target=36 Slot=9   (producer_conses_nested_variant_head.ash:23:41)
     CallClosure           Target=37 ClosureTemp=5 ArgTemp=36 RuntimeManagedArgumentFlagTemp=34   (producer_conses_nested_variant_head.ash:23:41)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=10
     StoreLocal            Slot=11 Source=29   (producer_conses_nested_variant_head.ash:23:41)
-  rcdrop_list_66:
+  rcdrop_list_90:
     LoadLocal             Target=38 Slot=11   (producer_conses_nested_variant_head.ash:23:41)
     LoadConstInt          Target=39 Value=0   (producer_conses_nested_variant_head.ash:23:41)
     CmpIntNe              Target=40 Left=38 Right=39   (producer_conses_nested_variant_head.ash:23:41)
-    JumpIfFalse           CondTemp=40 Target=rcdrop_list_end_68   (producer_conses_nested_variant_head.ash:23:41)
+    JumpIfFalse           CondTemp=40 Target=rcdrop_list_end_92   (producer_conses_nested_variant_head.ash:23:41)
     RcIsUnique            Target=41 SourceTemp=38
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_shared_67   (producer_conses_nested_variant_head.ash:23:41)
+    JumpIfFalse           CondTemp=41 Target=rcdrop_list_shared_91   (producer_conses_nested_variant_head.ash:23:41)
     LoadMemOffset         Target=42 BasePtr=38 OffsetBytes=0   (producer_conses_nested_variant_head.ash:23:41)
     LoadConstInt          Target=43 Value=0   (producer_conses_nested_variant_head.ash:23:41)
     CallKnown             Target=44 FuncLabel=__rcdrop_5 EnvTemp=43 ArgTemp=42   (producer_conses_nested_variant_head.ash:23:41)
     LoadMemOffset         Target=45 BasePtr=38 OffsetBytes=8   (producer_conses_nested_variant_head.ash:23:41)
     RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=11 Source=45   (producer_conses_nested_variant_head.ash:23:41)
-    Jump                  Target=rcdrop_list_66   (producer_conses_nested_variant_head.ash:23:41)
-  rcdrop_list_shared_67:
+    Jump                  Target=rcdrop_list_90   (producer_conses_nested_variant_head.ash:23:41)
+  rcdrop_list_shared_91:
     RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_68   (producer_conses_nested_variant_head.ash:23:41)
-  rcdrop_list_end_68:
+    Jump                  Target=rcdrop_list_end_92   (producer_conses_nested_variant_head.ash:23:41)
+  rcdrop_list_end_92:
     LoadMemOffset         Target=46 BasePtr=4 OffsetBytes=16   (producer_conses_nested_variant_head.ash:23:35)
     LoadConstInt          Target=47 Value=62   (producer_conses_nested_variant_head.ash:23:35)
     ShrInt                Target=48 Left=46 Right=47   (producer_conses_nested_variant_head.ash:23:35)
     LoadConstInt          Target=49 Value=1   (producer_conses_nested_variant_head.ash:23:35)
     AndInt                Target=50 Left=48 Right=49   (producer_conses_nested_variant_head.ash:23:35)
     StoreLocal            Slot=12 Source=37   (producer_conses_nested_variant_head.ash:23:35)
-    JumpIfFalse           CondTemp=50 Target=rc_call_argument_not_retained_69   (producer_conses_nested_variant_head.ash:23:35)
+    JumpIfFalse           CondTemp=50 Target=rc_call_argument_not_retained_93   (producer_conses_nested_variant_head.ash:23:35)
     RcDup                 Target=51 SourceTemp=37 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=12 Source=51   (producer_conses_nested_variant_head.ash:23:35)
-  rc_call_argument_not_retained_69:
+  rc_call_argument_not_retained_93:
     LoadLocal             Target=52 Slot=12   (producer_conses_nested_variant_head.ash:23:35)
     CallClosure           Target=53 ClosureTemp=4 ArgTemp=52 RuntimeManagedArgumentFlagTemp=50   (producer_conses_nested_variant_head.ash:23:35)
     LoadConstInt          Target=54 Value=0   (producer_conses_nested_variant_head.ash:23:121)
@@ -834,24 +945,24 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=13
     StoreLocal            Slot=14 Source=37   (producer_conses_nested_variant_head.ash:23:35)
-  rcdrop_list_70:
+  rcdrop_list_94:
     LoadLocal             Target=56 Slot=14   (producer_conses_nested_variant_head.ash:23:35)
     LoadConstInt          Target=57 Value=0   (producer_conses_nested_variant_head.ash:23:35)
     CmpIntNe              Target=58 Left=56 Right=57   (producer_conses_nested_variant_head.ash:23:35)
-    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_72   (producer_conses_nested_variant_head.ash:23:35)
+    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_96   (producer_conses_nested_variant_head.ash:23:35)
     RcIsUnique            Target=59 SourceTemp=56
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_71   (producer_conses_nested_variant_head.ash:23:35)
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_95   (producer_conses_nested_variant_head.ash:23:35)
     LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=0   (producer_conses_nested_variant_head.ash:23:35)
     LoadConstInt          Target=61 Value=0   (producer_conses_nested_variant_head.ash:23:35)
     CallKnown             Target=62 FuncLabel=__rcdrop_5 EnvTemp=61 ArgTemp=60   (producer_conses_nested_variant_head.ash:23:35)
     LoadMemOffset         Target=63 BasePtr=56 OffsetBytes=8   (producer_conses_nested_variant_head.ash:23:35)
     RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=14 Source=63   (producer_conses_nested_variant_head.ash:23:35)
-    Jump                  Target=rcdrop_list_70   (producer_conses_nested_variant_head.ash:23:35)
-  rcdrop_list_shared_71:
+    Jump                  Target=rcdrop_list_94   (producer_conses_nested_variant_head.ash:23:35)
+  rcdrop_list_shared_95:
     RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_72   (producer_conses_nested_variant_head.ash:23:35)
-  rcdrop_list_end_72:
+    Jump                  Target=rcdrop_list_end_96   (producer_conses_nested_variant_head.ash:23:35)
+  rcdrop_list_end_96:
     TextFromInt           Target=64 ValueTemp=55   (producer_conses_nested_variant_head.ash:23:16)
     PrintStr              Source=64   (producer_conses_nested_variant_head.ash:23:1)
     AllocAdt              Target=65 Tag=0 FieldCount=0   (producer_conses_nested_variant_head.ash:23:1)

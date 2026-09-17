@@ -101,16 +101,25 @@ function __rc_cdrop_3  [RuntimeManagedClosureDropper]
     Return                Source=7   (tco_list_walk.ash:1:1)
 
 function lambda_2$env_normalize  [ClosureEnvironmentNormalizer from walk]
-  locals=2 temps=6
+  locals=3 temps=9
     LoadLocal             Target=0 Slot=0   (tco_list_walk.ash:1:1)
     LoadLocal             Target=1 Slot=1   (tco_list_walk.ash:1:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_list_walk.ash:1:1)
-    CopyOutList           DestTemp=3 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_walk.ash:1:1)
-    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=3   (tco_list_walk.ash:1:1)
-    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (tco_list_walk.ash:1:1)
-    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=4   (tco_list_walk.ash:1:1)
-    LoadFuncAddr          Target=5 FuncLabel=__rc_cdrop_3   (tco_list_walk.ash:1:1)
-    Return                Source=5   (tco_list_walk.ash:1:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_8   (tco_list_walk.ash:1:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_list_walk.ash:1:1)
+    Jump                  Target=rc_representation_done_9   (tco_list_walk.ash:1:1)
+  rc_representation_copy_8:
+    CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=2 Source=5   (tco_list_walk.ash:1:1)
+  rc_representation_done_9:
+    LoadLocal             Target=6 Slot=2   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (tco_list_walk.ash:1:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=7   (tco_list_walk.ash:1:1)
+    LoadFuncAddr          Target=8 FuncLabel=__rc_cdrop_3   (tco_list_walk.ash:1:1)
+    Return                Source=8   (tco_list_walk.ash:1:1)
 
 function lambda_1  [ClosureHelper from walk]
   locals=2 temps=5
@@ -123,14 +132,23 @@ function lambda_1  [ClosureHelper from walk]
     Return                Source=4   (tco_list_walk.ash:1:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from walk]
-  locals=2 temps=5
+  locals=3 temps=8
     LoadLocal             Target=0 Slot=0   (tco_list_walk.ash:1:1)
     LoadLocal             Target=1 Slot=1   (tco_list_walk.ash:1:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_list_walk.ash:1:1)
-    CopyOutList           DestTemp=3 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_walk.ash:1:1)
-    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=3   (tco_list_walk.ash:1:1)
-    LoadFuncAddr          Target=4 FuncLabel=__rc_cdrop_3   (tco_list_walk.ash:1:1)
-    Return                Source=4   (tco_list_walk.ash:1:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_10   (tco_list_walk.ash:1:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_list_walk.ash:1:1)
+    Jump                  Target=rc_representation_done_11   (tco_list_walk.ash:1:1)
+  rc_representation_copy_10:
+    CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=2 Source=5   (tco_list_walk.ash:1:1)
+  rc_representation_done_11:
+    LoadLocal             Target=6 Slot=2   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (tco_list_walk.ash:1:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_3   (tco_list_walk.ash:1:1)
+    Return                Source=7   (tco_list_walk.ash:1:1)
 
 function lambda_0  [SourceFunction from walk]
   locals=2 temps=5

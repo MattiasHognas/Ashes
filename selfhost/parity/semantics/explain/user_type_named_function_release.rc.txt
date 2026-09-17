@@ -3,7 +3,7 @@ RC report
 
 Function: makeFunction
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          2
@@ -33,7 +33,7 @@ Function: __rcdrop_4
 
 Function: count [lambda_3]
   Operations
-    dup:                  1
+    dup:                  6
     drop:                 12
     uniqueness checks:    6
     allocations:          1
@@ -53,7 +53,7 @@ Function: count
 
 Function: count [lambda_3__scalarenv0]
   Operations
-    dup:                  1
+    dup:                  6
     drop:                 12
     uniqueness checks:    6
     allocations:          1

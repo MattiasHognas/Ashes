@@ -4,8 +4,8 @@ RC report
 Function: _start_main
   Operations
     dup:                  0
-    drop:                 2
-    uniqueness checks:    0
+    drop:                 3
+    uniqueness checks:    1
     allocations:          4
     reused allocations:   0
     reuse tokens:         0

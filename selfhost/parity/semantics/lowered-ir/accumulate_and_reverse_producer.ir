@@ -91,172 +91,180 @@ function __rcdrop_5  [RuntimeManagedAdtDropper]
   locals=2 temps=5
     LoadLocal             Target=0 Slot=1   (accumulate_and_reverse_producer.ash:14:17)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_21   (accumulate_and_reverse_producer.ash:14:17)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_27   (accumulate_and_reverse_producer.ash:14:17)
     GetAdtTag             Target=2 Ptr=0   (accumulate_and_reverse_producer.ash:14:17)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_21   (accumulate_and_reverse_producer.ash:14:17)
-  rcdrop_ctor_22:
-    Jump                  Target=rcdrop_shared_21   (accumulate_and_reverse_producer.ash:14:17)
-  rcdrop_ctor_23:
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_27   (accumulate_and_reverse_producer.ash:14:17)
+  rcdrop_ctor_28:
+    Jump                  Target=rcdrop_shared_27   (accumulate_and_reverse_producer.ash:14:17)
+  rcdrop_ctor_29:
     GetAdtField           Target=3 Ptr=0 FieldIndex=0   (accumulate_and_reverse_producer.ash:14:17)
     RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
-    Jump                  Target=rcdrop_shared_21   (accumulate_and_reverse_producer.ash:14:17)
-  rcdrop_shared_21:
+    Jump                  Target=rcdrop_shared_27   (accumulate_and_reverse_producer.ash:14:17)
+  rcdrop_shared_27:
     RcDrop                SourceTemp=0 TypeName=Inst RuntimeManaged=true
     LoadConstInt          Target=4 Value=0   (accumulate_and_reverse_producer.ash:14:17)
     Return                Source=4   (accumulate_and_reverse_producer.ash:14:17)
 
-function __deepcopy_7  [AdtDeepCopier]
-  locals=2 temps=10
-    LoadLocal             Target=0 Slot=1   (accumulate_and_reverse_producer.ash:12:1)
-    LoadEnv               Target=1 Index=0   (accumulate_and_reverse_producer.ash:12:1)
-    GetAdtTag             Target=2 Ptr=0   (accumulate_and_reverse_producer.ash:12:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_7_default   (accumulate_and_reverse_producer.ash:12:1)
-  __deepcopy_7_c0:
-    AllocAdt              Target=3 Tag=0 FieldCount=2   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=4   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=16   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=5   (accumulate_and_reverse_producer.ash:12:1)
-    Return                Source=3   (accumulate_and_reverse_producer.ash:12:1)
-  __deepcopy_7_c1:
-    AllocAdt              Target=6 Tag=1 FieldCount=2   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    CopyOutArena          DestTemp=8 SrcTemp=7 Purpose=IndependentClone
-    StoreMemOffset        BasePtr=6 OffsetBytes=8 Source=8   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=9 BasePtr=0 OffsetBytes=16   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=6 OffsetBytes=16 Source=9   (accumulate_and_reverse_producer.ash:12:1)
-    Return                Source=6   (accumulate_and_reverse_producer.ash:12:1)
-  __deepcopy_7_default:
-    Return                Source=0   (accumulate_and_reverse_producer.ash:12:1)
-
-function __deepcopy_list_6  [ListDeepCopier]
-  locals=2 temps=12
-    LoadLocal             Target=0 Slot=1   (accumulate_and_reverse_producer.ash:12:1)
-    LoadEnv               Target=1 Index=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=2 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntEq              Target=3 Left=0 Right=2   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_6_copy   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=4 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    Return                Source=4   (accumulate_and_reverse_producer.ash:12:1)
-  __deepcopy_list_6_copy:
-    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    Alloc                 Target=7 SizeBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    MakeClosure           Target=8 FuncLabel=__deepcopy_7 EnvPtrTemp=7 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (accumulate_and_reverse_producer.ash:12:1)
-    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (accumulate_and_reverse_producer.ash:12:1)
-    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (accumulate_and_reverse_producer.ash:12:1)
-    Alloc                 Target=11 SizeBytes=16   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (accumulate_and_reverse_producer.ash:12:1)
-    Return                Source=11   (accumulate_and_reverse_producer.ash:12:1)
-
 function lambda_4  [ClosureHelper from bumpInto]
-  locals=58 temps=236
+  locals=79 temps=294
     LoadEnv               Target=0 Index=0   (accumulate_and_reverse_producer.ash:12:1)
     StoreLocal            Slot=2 Source=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=120 Slot=2   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=122 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=40 Source=120   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=41 Source=122   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=42 Source=122   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_33:
-    LoadLocal             Target=123 Slot=40   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntNe              Target=124 Left=123 Right=122   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=124 Target=rc_normalize_list_end_34   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=125 BasePtr=123 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=126 BasePtr=123 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    GetAdtTag             Target=128 Ptr=125   (accumulate_and_reverse_producer.ash:12:1)
-    SwitchTag             TagTemp=128 Cases=[2] DefaultLabel=rc_normalize_adt_35   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_adt_35:
-    CopyOutArena          DestTemp=129 SrcTemp=125 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=43 Source=129   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_adt_end_37   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_adt_36:
-    CopyOutArena          DestTemp=130 SrcTemp=125 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=131 Ptr=125 FieldIndex=0   (accumulate_and_reverse_producer.ash:12:1)
-    CopyOutArena          DestTemp=132 SrcTemp=131 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=130 FieldIndex=0 Source=132   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=43 Source=130   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_adt_end_37   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_adt_end_37:
-    LoadLocal             Target=133 Slot=43   (accumulate_and_reverse_producer.ash:12:1)
-    Alloc                 Target=134 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=134 OffsetBytes=0 Source=133   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=134 OffsetBytes=8 Source=122   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=135 Slot=41   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntNe              Target=136 Left=135 Right=122   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=136 Target=rc_normalize_list_first_38   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=137 Slot=42   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=137 OffsetBytes=8 Source=134   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_list_linked_39   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_first_38:
-    StoreLocal            Slot=41 Source=134   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_linked_39:
-    StoreLocal            Slot=42 Source=134   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=40 Source=126   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_list_33   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_end_34:
-    LoadLocal             Target=138 Slot=41   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=2 Source=138   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=139 Value=1   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=6 Source=139   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=140 Slot=1   (accumulate_and_reverse_producer.ash:12:1)
-    LoadArgumentOwnership Target=141   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=142 Value=1   (accumulate_and_reverse_producer.ash:12:1)
-    AndInt                Target=143 Left=141 Right=142   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=143 Target=rc_arg_normalize_copy_40   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=44 Source=140   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_arg_normalize_done_41   (accumulate_and_reverse_producer.ash:12:1)
-  rc_arg_normalize_copy_40:
-    LoadConstInt          Target=145 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=45 Source=140   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=46 Source=145   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=47 Source=145   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_42:
-    LoadLocal             Target=146 Slot=45   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntNe              Target=147 Left=146 Right=145   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=147 Target=rc_normalize_list_end_43   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=148 BasePtr=146 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=149 BasePtr=146 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    GetAdtTag             Target=151 Ptr=148   (accumulate_and_reverse_producer.ash:12:1)
-    SwitchTag             TagTemp=151 Cases=[2] DefaultLabel=rc_normalize_adt_44   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_adt_44:
-    CopyOutArena          DestTemp=152 SrcTemp=148 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=48 Source=152   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_adt_end_46   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_adt_45:
-    CopyOutArena          DestTemp=153 SrcTemp=148 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=154 Ptr=148 FieldIndex=0   (accumulate_and_reverse_producer.ash:12:1)
-    CopyOutArena          DestTemp=155 SrcTemp=154 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=153 FieldIndex=0 Source=155   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=48 Source=153   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_adt_end_46   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_adt_end_46:
-    LoadLocal             Target=156 Slot=48   (accumulate_and_reverse_producer.ash:12:1)
-    Alloc                 Target=157 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=157 OffsetBytes=0 Source=156   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=157 OffsetBytes=8 Source=145   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=158 Slot=46   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntNe              Target=159 Left=158 Right=145   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=159 Target=rc_normalize_list_first_47   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=160 Slot=47   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=160 OffsetBytes=8 Source=157   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_list_linked_48   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_first_47:
-    StoreLocal            Slot=46 Source=157   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_linked_48:
-    StoreLocal            Slot=47 Source=157   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=45 Source=149   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_normalize_list_42   (accumulate_and_reverse_producer.ash:12:1)
-  rc_normalize_list_end_43:
-    LoadLocal             Target=161 Slot=46   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=44 Source=161   (accumulate_and_reverse_producer.ash:12:1)
-  rc_arg_normalize_done_41:
-    LoadLocal             Target=162 Slot=44   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=1 Source=162   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=163 Value=1   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=7 Source=163   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=190 Slot=2   (accumulate_and_reverse_producer.ash:12:1)
+    IsReferenceCounted    Target=191 SourceTemp=190
+    JumpIfFalse           CondTemp=191 Target=rc_representation_copy_67   (accumulate_and_reverse_producer.ash:12:1)
+    RcDup                 Target=192 SourceTemp=190 RuntimeManaged=true
+    StoreLocal            Slot=58 Source=192   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_representation_done_68   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_copy_67:
+    LoadConstInt          Target=194 Value=0   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=59 Source=190   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=60 Source=194   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=61 Source=194   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_69:
+    LoadLocal             Target=195 Slot=59   (accumulate_and_reverse_producer.ash:12:1)
+    CmpIntNe              Target=196 Left=195 Right=194   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=196 Target=rc_normalize_list_end_70   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=197 BasePtr=195 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=198 BasePtr=195 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
+    IsReferenceCounted    Target=199 SourceTemp=197
+    JumpIfFalse           CondTemp=199 Target=rc_representation_copy_71   (accumulate_and_reverse_producer.ash:12:1)
+    RcDup                 Target=200 SourceTemp=197 RuntimeManaged=true
+    StoreLocal            Slot=62 Source=200   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_representation_done_72   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_copy_71:
+    GetAdtTag             Target=202 Ptr=197   (accumulate_and_reverse_producer.ash:12:1)
+    SwitchTag             TagTemp=202 Cases=[2] DefaultLabel=rc_normalize_adt_73   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_adt_73:
+    CopyOutArena          DestTemp=203 SrcTemp=197 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=63 Source=203   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_adt_end_75   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_adt_74:
+    CopyOutArena          DestTemp=204 SrcTemp=197 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=205 Ptr=197 FieldIndex=0   (accumulate_and_reverse_producer.ash:12:1)
+    IsReferenceCounted    Target=206 SourceTemp=205
+    JumpIfFalse           CondTemp=206 Target=rc_representation_copy_76   (accumulate_and_reverse_producer.ash:12:1)
+    RcDup                 Target=207 SourceTemp=205 RuntimeManaged=true
+    StoreLocal            Slot=64 Source=207   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_representation_done_77   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_copy_76:
+    CopyOutArena          DestTemp=208 SrcTemp=205 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=64 Source=208   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_done_77:
+    LoadLocal             Target=209 Slot=64   (accumulate_and_reverse_producer.ash:12:1)
+    SetAdtField           Ptr=204 FieldIndex=0 Source=209   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=63 Source=204   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_adt_end_75   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_adt_end_75:
+    LoadLocal             Target=210 Slot=63   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=62 Source=210   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_done_72:
+    LoadLocal             Target=211 Slot=62   (accumulate_and_reverse_producer.ash:12:1)
+    Alloc                 Target=212 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:12:1)
+    StoreMemOffset        BasePtr=212 OffsetBytes=0 Source=211   (accumulate_and_reverse_producer.ash:12:1)
+    StoreMemOffset        BasePtr=212 OffsetBytes=8 Source=194   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=213 Slot=60   (accumulate_and_reverse_producer.ash:12:1)
+    CmpIntNe              Target=214 Left=213 Right=194   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=214 Target=rc_normalize_list_first_78   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=215 Slot=61   (accumulate_and_reverse_producer.ash:12:1)
+    StoreMemOffset        BasePtr=215 OffsetBytes=8 Source=212   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_list_linked_79   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_first_78:
+    StoreLocal            Slot=60 Source=212   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_linked_79:
+    StoreLocal            Slot=61 Source=212   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=59 Source=198   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_list_69   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_end_70:
+    LoadLocal             Target=216 Slot=60   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=58 Source=216   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_done_68:
+    LoadLocal             Target=217 Slot=58   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=2 Source=217   (accumulate_and_reverse_producer.ash:12:1)
+    LoadConstInt          Target=218 Value=1   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=6 Source=218   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=219 Slot=1   (accumulate_and_reverse_producer.ash:12:1)
+    LoadArgumentOwnership Target=220   (accumulate_and_reverse_producer.ash:12:1)
+    LoadConstInt          Target=221 Value=1   (accumulate_and_reverse_producer.ash:12:1)
+    AndInt                Target=222 Left=220 Right=221   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=222 Target=rc_arg_normalize_copy_80   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=65 Source=219   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_arg_normalize_done_81   (accumulate_and_reverse_producer.ash:12:1)
+  rc_arg_normalize_copy_80:
+    IsReferenceCounted    Target=223 SourceTemp=219
+    JumpIfFalse           CondTemp=223 Target=rc_representation_copy_82   (accumulate_and_reverse_producer.ash:12:1)
+    RcDup                 Target=224 SourceTemp=219 RuntimeManaged=true
+    StoreLocal            Slot=66 Source=224   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_representation_done_83   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_copy_82:
+    LoadConstInt          Target=226 Value=0   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=67 Source=219   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=68 Source=226   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=69 Source=226   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_84:
+    LoadLocal             Target=227 Slot=67   (accumulate_and_reverse_producer.ash:12:1)
+    CmpIntNe              Target=228 Left=227 Right=226   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=228 Target=rc_normalize_list_end_85   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=229 BasePtr=227 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=230 BasePtr=227 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
+    IsReferenceCounted    Target=231 SourceTemp=229
+    JumpIfFalse           CondTemp=231 Target=rc_representation_copy_86   (accumulate_and_reverse_producer.ash:12:1)
+    RcDup                 Target=232 SourceTemp=229 RuntimeManaged=true
+    StoreLocal            Slot=70 Source=232   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_representation_done_87   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_copy_86:
+    GetAdtTag             Target=234 Ptr=229   (accumulate_and_reverse_producer.ash:12:1)
+    SwitchTag             TagTemp=234 Cases=[2] DefaultLabel=rc_normalize_adt_88   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_adt_88:
+    CopyOutArena          DestTemp=235 SrcTemp=229 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=71 Source=235   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_adt_end_90   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_adt_89:
+    CopyOutArena          DestTemp=236 SrcTemp=229 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=237 Ptr=229 FieldIndex=0   (accumulate_and_reverse_producer.ash:12:1)
+    IsReferenceCounted    Target=238 SourceTemp=237
+    JumpIfFalse           CondTemp=238 Target=rc_representation_copy_91   (accumulate_and_reverse_producer.ash:12:1)
+    RcDup                 Target=239 SourceTemp=237 RuntimeManaged=true
+    StoreLocal            Slot=72 Source=239   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_representation_done_92   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_copy_91:
+    CopyOutArena          DestTemp=240 SrcTemp=237 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=72 Source=240   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_done_92:
+    LoadLocal             Target=241 Slot=72   (accumulate_and_reverse_producer.ash:12:1)
+    SetAdtField           Ptr=236 FieldIndex=0 Source=241   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=71 Source=236   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_adt_end_90   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_adt_end_90:
+    LoadLocal             Target=242 Slot=71   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=70 Source=242   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_done_87:
+    LoadLocal             Target=243 Slot=70   (accumulate_and_reverse_producer.ash:12:1)
+    Alloc                 Target=244 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:12:1)
+    StoreMemOffset        BasePtr=244 OffsetBytes=0 Source=243   (accumulate_and_reverse_producer.ash:12:1)
+    StoreMemOffset        BasePtr=244 OffsetBytes=8 Source=226   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=245 Slot=68   (accumulate_and_reverse_producer.ash:12:1)
+    CmpIntNe              Target=246 Left=245 Right=226   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=246 Target=rc_normalize_list_first_93   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=247 Slot=69   (accumulate_and_reverse_producer.ash:12:1)
+    StoreMemOffset        BasePtr=247 OffsetBytes=8 Source=244   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_list_linked_94   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_first_93:
+    StoreLocal            Slot=68 Source=244   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_linked_94:
+    StoreLocal            Slot=69 Source=244   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=67 Source=230   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rc_normalize_list_84   (accumulate_and_reverse_producer.ash:12:1)
+  rc_normalize_list_end_85:
+    LoadLocal             Target=248 Slot=68   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=66 Source=248   (accumulate_and_reverse_producer.ash:12:1)
+  rc_representation_done_83:
+    LoadLocal             Target=249 Slot=66   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=65 Source=249   (accumulate_and_reverse_producer.ash:12:1)
+  rc_arg_normalize_done_81:
+    LoadLocal             Target=250 Slot=65   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=1 Source=250   (accumulate_and_reverse_producer.ash:12:1)
+    LoadConstInt          Target=251 Value=1   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=7 Source=251   (accumulate_and_reverse_producer.ash:12:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (accumulate_and_reverse_producer.ash:12:1)
     StoreLocal            Slot=5 Source=1   (accumulate_and_reverse_producer.ash:12:1)
@@ -280,402 +288,520 @@ function lambda_4  [ClosureHelper from bumpInto]
     RcDup                 Target=13 SourceTemp=7 RuntimeManaged=true MayBeEmpty=true
     CallClosure           Target=14 ClosureTemp=6 ArgTemp=13 RuntimeManagedArgumentFlagTemp=12   (accumulate_and_reverse_producer.ash:14:17)
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
-    LoadConstInt          Target=15 Value=0   (accumulate_and_reverse_producer.ash:14:17)
-    StoreLocal            Slot=17 Source=14   (accumulate_and_reverse_producer.ash:14:17)
-    StoreLocal            Slot=18 Source=15   (accumulate_and_reverse_producer.ash:14:17)
-    StoreLocal            Slot=19 Source=15   (accumulate_and_reverse_producer.ash:14:17)
-  rc_normalize_list_9:
-    LoadLocal             Target=16 Slot=17   (accumulate_and_reverse_producer.ash:14:17)
-    CmpIntNe              Target=17 Left=16 Right=15   (accumulate_and_reverse_producer.ash:14:17)
-    JumpIfFalse           CondTemp=17 Target=rc_normalize_list_end_10   (accumulate_and_reverse_producer.ash:14:17)
-    LoadMemOffset         Target=18 BasePtr=16 OffsetBytes=0   (accumulate_and_reverse_producer.ash:14:17)
-    LoadMemOffset         Target=19 BasePtr=16 OffsetBytes=8   (accumulate_and_reverse_producer.ash:14:17)
-    GetAdtTag             Target=21 Ptr=18   (accumulate_and_reverse_producer.ash:14:17)
-    SwitchTag             TagTemp=21 Cases=[2] DefaultLabel=rc_normalize_adt_11   (accumulate_and_reverse_producer.ash:14:17)
-  rc_normalize_adt_11:
-    CopyOutArena          DestTemp=22 SrcTemp=18 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=20 Source=22   (accumulate_and_reverse_producer.ash:14:17)
-    Jump                  Target=rc_normalize_adt_end_13   (accumulate_and_reverse_producer.ash:14:17)
-  rc_normalize_adt_12:
-    CopyOutArena          DestTemp=23 SrcTemp=18 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=24 Ptr=18 FieldIndex=0   (accumulate_and_reverse_producer.ash:14:17)
-    CopyOutArena          DestTemp=25 SrcTemp=24 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=23 FieldIndex=0 Source=25   (accumulate_and_reverse_producer.ash:14:17)
-    StoreLocal            Slot=20 Source=23   (accumulate_and_reverse_producer.ash:14:17)
-    Jump                  Target=rc_normalize_adt_end_13   (accumulate_and_reverse_producer.ash:14:17)
-  rc_normalize_adt_end_13:
-    LoadLocal             Target=26 Slot=20   (accumulate_and_reverse_producer.ash:14:17)
-    Alloc                 Target=27 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:14:17)
-    StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=26   (accumulate_and_reverse_producer.ash:14:17)
-    StoreMemOffset        BasePtr=27 OffsetBytes=8 Source=15   (accumulate_and_reverse_producer.ash:14:17)
-    LoadLocal             Target=28 Slot=18   (accumulate_and_reverse_producer.ash:14:17)
-    CmpIntNe              Target=29 Left=28 Right=15   (accumulate_and_reverse_producer.ash:14:17)
-    JumpIfFalse           CondTemp=29 Target=rc_normalize_list_first_14   (accumulate_and_reverse_producer.ash:14:17)
-    LoadLocal             Target=30 Slot=19   (accumulate_and_reverse_producer.ash:14:17)
-    StoreMemOffset        BasePtr=30 OffsetBytes=8 Source=27   (accumulate_and_reverse_producer.ash:14:17)
-    Jump                  Target=rc_normalize_list_linked_15   (accumulate_and_reverse_producer.ash:14:17)
-  rc_normalize_list_first_14:
-    StoreLocal            Slot=18 Source=27   (accumulate_and_reverse_producer.ash:14:17)
-  rc_normalize_list_linked_15:
-    StoreLocal            Slot=19 Source=27   (accumulate_and_reverse_producer.ash:14:17)
-    StoreLocal            Slot=17 Source=19   (accumulate_and_reverse_producer.ash:14:17)
-    Jump                  Target=rc_normalize_list_9   (accumulate_and_reverse_producer.ash:14:17)
-  rc_normalize_list_end_10:
-    LoadLocal             Target=31 Slot=18   (accumulate_and_reverse_producer.ash:14:17)
+    IsReferenceCounted    Target=15 SourceTemp=14
+    JumpIfFalse           CondTemp=15 Target=rc_representation_copy_9   (accumulate_and_reverse_producer.ash:14:17)
+    RcDup                 Target=16 SourceTemp=14 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=16   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_representation_done_10   (accumulate_and_reverse_producer.ash:14:17)
+  rc_representation_copy_9:
+    LoadConstInt          Target=17 Value=0   (accumulate_and_reverse_producer.ash:14:17)
+    StoreLocal            Slot=18 Source=14   (accumulate_and_reverse_producer.ash:14:17)
+    StoreLocal            Slot=19 Source=17   (accumulate_and_reverse_producer.ash:14:17)
+    StoreLocal            Slot=20 Source=17   (accumulate_and_reverse_producer.ash:14:17)
+  rc_normalize_list_11:
+    LoadLocal             Target=18 Slot=18   (accumulate_and_reverse_producer.ash:14:17)
+    CmpIntNe              Target=19 Left=18 Right=17   (accumulate_and_reverse_producer.ash:14:17)
+    JumpIfFalse           CondTemp=19 Target=rc_normalize_list_end_12   (accumulate_and_reverse_producer.ash:14:17)
+    LoadMemOffset         Target=20 BasePtr=18 OffsetBytes=0   (accumulate_and_reverse_producer.ash:14:17)
+    LoadMemOffset         Target=21 BasePtr=18 OffsetBytes=8   (accumulate_and_reverse_producer.ash:14:17)
+    IsReferenceCounted    Target=22 SourceTemp=20
+    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_13   (accumulate_and_reverse_producer.ash:14:17)
+    RcDup                 Target=23 SourceTemp=20 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=23   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_representation_done_14   (accumulate_and_reverse_producer.ash:14:17)
+  rc_representation_copy_13:
+    GetAdtTag             Target=25 Ptr=20   (accumulate_and_reverse_producer.ash:14:17)
+    SwitchTag             TagTemp=25 Cases=[2] DefaultLabel=rc_normalize_adt_15   (accumulate_and_reverse_producer.ash:14:17)
+  rc_normalize_adt_15:
+    CopyOutArena          DestTemp=26 SrcTemp=20 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=22 Source=26   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_normalize_adt_end_17   (accumulate_and_reverse_producer.ash:14:17)
+  rc_normalize_adt_16:
+    CopyOutArena          DestTemp=27 SrcTemp=20 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=28 Ptr=20 FieldIndex=0   (accumulate_and_reverse_producer.ash:14:17)
+    IsReferenceCounted    Target=29 SourceTemp=28
+    JumpIfFalse           CondTemp=29 Target=rc_representation_copy_18   (accumulate_and_reverse_producer.ash:14:17)
+    RcDup                 Target=30 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=30   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_representation_done_19   (accumulate_and_reverse_producer.ash:14:17)
+  rc_representation_copy_18:
+    CopyOutArena          DestTemp=31 SrcTemp=28 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=23 Source=31   (accumulate_and_reverse_producer.ash:14:17)
+  rc_representation_done_19:
+    LoadLocal             Target=32 Slot=23   (accumulate_and_reverse_producer.ash:14:17)
+    SetAdtField           Ptr=27 FieldIndex=0 Source=32   (accumulate_and_reverse_producer.ash:14:17)
+    StoreLocal            Slot=22 Source=27   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_normalize_adt_end_17   (accumulate_and_reverse_producer.ash:14:17)
+  rc_normalize_adt_end_17:
+    LoadLocal             Target=33 Slot=22   (accumulate_and_reverse_producer.ash:14:17)
+    StoreLocal            Slot=21 Source=33   (accumulate_and_reverse_producer.ash:14:17)
+  rc_representation_done_14:
+    LoadLocal             Target=34 Slot=21   (accumulate_and_reverse_producer.ash:14:17)
+    Alloc                 Target=35 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:14:17)
+    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=34   (accumulate_and_reverse_producer.ash:14:17)
+    StoreMemOffset        BasePtr=35 OffsetBytes=8 Source=17   (accumulate_and_reverse_producer.ash:14:17)
+    LoadLocal             Target=36 Slot=19   (accumulate_and_reverse_producer.ash:14:17)
+    CmpIntNe              Target=37 Left=36 Right=17   (accumulate_and_reverse_producer.ash:14:17)
+    JumpIfFalse           CondTemp=37 Target=rc_normalize_list_first_20   (accumulate_and_reverse_producer.ash:14:17)
+    LoadLocal             Target=38 Slot=20   (accumulate_and_reverse_producer.ash:14:17)
+    StoreMemOffset        BasePtr=38 OffsetBytes=8 Source=35   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_normalize_list_linked_21   (accumulate_and_reverse_producer.ash:14:17)
+  rc_normalize_list_first_20:
+    StoreLocal            Slot=19 Source=35   (accumulate_and_reverse_producer.ash:14:17)
+  rc_normalize_list_linked_21:
+    StoreLocal            Slot=20 Source=35   (accumulate_and_reverse_producer.ash:14:17)
+    StoreLocal            Slot=18 Source=21   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_normalize_list_11   (accumulate_and_reverse_producer.ash:14:17)
+  rc_normalize_list_end_12:
+    LoadLocal             Target=39 Slot=19   (accumulate_and_reverse_producer.ash:14:17)
+    StoreLocal            Slot=17 Source=39   (accumulate_and_reverse_producer.ash:14:17)
+  rc_representation_done_10:
+    LoadLocal             Target=40 Slot=17   (accumulate_and_reverse_producer.ash:14:17)
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
-    JumpIfFalse           CondTemp=12 Target=rc_handed_over_not_adopted_16   (accumulate_and_reverse_producer.ash:14:17)
-    Jump                  Target=rc_handed_over_done_17   (accumulate_and_reverse_producer.ash:14:17)
-  rc_handed_over_not_adopted_16:
-    StoreLocal            Slot=21 Source=13   (accumulate_and_reverse_producer.ash:14:17)
-  rcdrop_list_18:
-    LoadLocal             Target=32 Slot=21   (accumulate_and_reverse_producer.ash:14:17)
-    LoadConstInt          Target=33 Value=0   (accumulate_and_reverse_producer.ash:14:17)
-    CmpIntNe              Target=34 Left=32 Right=33   (accumulate_and_reverse_producer.ash:14:17)
-    JumpIfFalse           CondTemp=34 Target=rcdrop_list_end_20   (accumulate_and_reverse_producer.ash:14:17)
-    RcIsUnique            Target=35 SourceTemp=32
-    JumpIfFalse           CondTemp=35 Target=rcdrop_list_shared_19   (accumulate_and_reverse_producer.ash:14:17)
-    LoadMemOffset         Target=36 BasePtr=32 OffsetBytes=0   (accumulate_and_reverse_producer.ash:14:17)
-    LoadConstInt          Target=37 Value=0   (accumulate_and_reverse_producer.ash:14:17)
-    CallKnown             Target=38 FuncLabel=__rcdrop_5 EnvTemp=37 ArgTemp=36   (accumulate_and_reverse_producer.ash:14:17)
-    LoadMemOffset         Target=39 BasePtr=32 OffsetBytes=8   (accumulate_and_reverse_producer.ash:14:17)
-    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=21 Source=39   (accumulate_and_reverse_producer.ash:14:17)
-    Jump                  Target=rcdrop_list_18   (accumulate_and_reverse_producer.ash:14:17)
-  rcdrop_list_shared_19:
-    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_20   (accumulate_and_reverse_producer.ash:14:17)
-  rcdrop_list_end_20:
-  rc_handed_over_done_17:
-    StoreLocal            Slot=11 Source=31   (accumulate_and_reverse_producer.ash:13:5)
-    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=22
+    JumpIfFalse           CondTemp=12 Target=rc_handed_over_not_adopted_22   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rc_handed_over_done_23   (accumulate_and_reverse_producer.ash:14:17)
+  rc_handed_over_not_adopted_22:
+    StoreLocal            Slot=24 Source=13   (accumulate_and_reverse_producer.ash:14:17)
+  rcdrop_list_24:
+    LoadLocal             Target=41 Slot=24   (accumulate_and_reverse_producer.ash:14:17)
+    LoadConstInt          Target=42 Value=0   (accumulate_and_reverse_producer.ash:14:17)
+    CmpIntNe              Target=43 Left=41 Right=42   (accumulate_and_reverse_producer.ash:14:17)
+    JumpIfFalse           CondTemp=43 Target=rcdrop_list_end_26   (accumulate_and_reverse_producer.ash:14:17)
+    RcIsUnique            Target=44 SourceTemp=41
+    JumpIfFalse           CondTemp=44 Target=rcdrop_list_shared_25   (accumulate_and_reverse_producer.ash:14:17)
+    LoadMemOffset         Target=45 BasePtr=41 OffsetBytes=0   (accumulate_and_reverse_producer.ash:14:17)
+    LoadConstInt          Target=46 Value=0   (accumulate_and_reverse_producer.ash:14:17)
+    CallKnown             Target=47 FuncLabel=__rcdrop_5 EnvTemp=46 ArgTemp=45   (accumulate_and_reverse_producer.ash:14:17)
+    LoadMemOffset         Target=48 BasePtr=41 OffsetBytes=8   (accumulate_and_reverse_producer.ash:14:17)
+    RcDrop                SourceTemp=41 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=24 Source=48   (accumulate_and_reverse_producer.ash:14:17)
+    Jump                  Target=rcdrop_list_24   (accumulate_and_reverse_producer.ash:14:17)
+  rcdrop_list_shared_25:
+    RcDrop                SourceTemp=41 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_26   (accumulate_and_reverse_producer.ash:14:17)
+  rcdrop_list_end_26:
+  rc_handed_over_done_23:
+    StoreLocal            Slot=11 Source=40   (accumulate_and_reverse_producer.ash:13:5)
     Jump                  Target=match_end_5   (accumulate_and_reverse_producer.ash:13:5)
   match_arm_cleanup_8:
-    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=23
-    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=23
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=26
     Jump                  Target=match_next_7   (accumulate_and_reverse_producer.ash:13:5)
   match_next_7:
-    SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
-    LoadConstInt          Target=40 Value=0   (accumulate_and_reverse_producer.ash:13:5)
-    CmpIntNe              Target=41 Left=2 Right=40   (accumulate_and_reverse_producer.ash:13:5)
-    JumpIfFalse           CondTemp=41 Target=match_arm_cleanup_25   (accumulate_and_reverse_producer.ash:13:5)
-    LoadMemOffset         Target=42 BasePtr=2 OffsetBytes=0   (accumulate_and_reverse_producer.ash:13:5)
-    LoadMemOffset         Target=43 BasePtr=2 OffsetBytes=8   (accumulate_and_reverse_producer.ash:13:5)
-    LoadConstInt          Target=44 Value=0   (accumulate_and_reverse_producer.ash:13:5)
-    CmpIntNe              Target=45 Left=42 Right=44   (accumulate_and_reverse_producer.ash:13:5)
-    JumpIfFalse           CondTemp=45 Target=match_arm_cleanup_25   (accumulate_and_reverse_producer.ash:13:5)
-    GetAdtTag             Target=46 Ptr=42   (accumulate_and_reverse_producer.ash:13:5)
-    LoadConstInt          Target=48 Value=0   (accumulate_and_reverse_producer.ash:13:5)
-    CmpIntEq              Target=47 Left=46 Right=48   (accumulate_and_reverse_producer.ash:13:5)
-    JumpIfFalse           CondTemp=47 Target=match_arm_cleanup_25   (accumulate_and_reverse_producer.ash:13:5)
-    GetAdtField           Target=49 Ptr=42 FieldIndex=0   (accumulate_and_reverse_producer.ash:13:5)
-    StoreLocal            Slot=26 Source=49   (accumulate_and_reverse_producer.ash:13:5)
-    GetAdtField           Target=50 Ptr=42 FieldIndex=1   (accumulate_and_reverse_producer.ash:13:5)
-    StoreLocal            Slot=27 Source=50   (accumulate_and_reverse_producer.ash:13:5)
-    StoreLocal            Slot=28 Source=43   (accumulate_and_reverse_producer.ash:13:5)
-    LoadLocal             Target=51 Slot=28   (accumulate_and_reverse_producer.ash:15:41)
-    Borrow                Target=52 SourceTemp=51
-    LoadLocal             Target=53 Slot=26   (accumulate_and_reverse_producer.ash:15:51)
-    LoadConstInt          Target=54 Value=1   (accumulate_and_reverse_producer.ash:15:55)
-    AddInt                Target=55 Left=53 Right=54   (accumulate_and_reverse_producer.ash:15:51)
-    LoadLocal             Target=56 Slot=27   (accumulate_and_reverse_producer.ash:15:58)
-    Borrow                Target=57 SourceTemp=56
-    RcDup                 Target=58 SourceTemp=57
-    RcDrop                SourceTemp=50 TypeName=PatternBinding OwnerSlot=27
-    AllocAdt              Target=59 Tag=0 FieldCount=2 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:15:47)
-    SetAdtField           Ptr=59 FieldIndex=0 Source=55   (accumulate_and_reverse_producer.ash:15:47)
-    SetAdtField           Ptr=59 FieldIndex=1 Source=58   (accumulate_and_reverse_producer.ash:15:47)
-    LoadLocal             Target=60 Slot=1   (accumulate_and_reverse_producer.ash:15:64)
-    Alloc                 Target=61 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:15:47)
-    StoreMemOffset        BasePtr=61 OffsetBytes=0 Source=59   (accumulate_and_reverse_producer.ash:15:47)
-    StoreMemOffset        BasePtr=61 OffsetBytes=8 Source=60   (accumulate_and_reverse_producer.ash:15:47)
-    RcDup                 Target=62 SourceTemp=52 RuntimeManaged=true MayBeEmpty=true
-    RcDrop                SourceTemp=43 TypeName=List OwnerSlot=28
-    LoadLocal             Target=63 Slot=2   (accumulate_and_reverse_producer.ash:15:32)
-    StoreLocal            Slot=29 Source=63   (accumulate_and_reverse_producer.ash:15:32)
-  rcdrop_list_26:
-    LoadLocal             Target=64 Slot=29   (accumulate_and_reverse_producer.ash:15:32)
-    LoadConstInt          Target=65 Value=0   (accumulate_and_reverse_producer.ash:15:32)
-    CmpIntNe              Target=66 Left=64 Right=65   (accumulate_and_reverse_producer.ash:15:32)
-    JumpIfFalse           CondTemp=66 Target=rcdrop_list_end_28   (accumulate_and_reverse_producer.ash:15:32)
-    RcIsUnique            Target=67 SourceTemp=64
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_shared_27   (accumulate_and_reverse_producer.ash:15:32)
-    LoadMemOffset         Target=68 BasePtr=64 OffsetBytes=0   (accumulate_and_reverse_producer.ash:15:32)
-    LoadConstInt          Target=69 Value=0   (accumulate_and_reverse_producer.ash:15:32)
-    CallKnown             Target=70 FuncLabel=__rcdrop_5 EnvTemp=69 ArgTemp=68   (accumulate_and_reverse_producer.ash:15:32)
-    LoadMemOffset         Target=71 BasePtr=64 OffsetBytes=8   (accumulate_and_reverse_producer.ash:15:32)
-    RcDrop                SourceTemp=64 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=29 Source=71   (accumulate_and_reverse_producer.ash:15:32)
-    Jump                  Target=rcdrop_list_26   (accumulate_and_reverse_producer.ash:15:32)
-  rcdrop_list_shared_27:
-    RcDrop                SourceTemp=64 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_28   (accumulate_and_reverse_producer.ash:15:32)
-  rcdrop_list_end_28:
-    LoadConstInt          Target=72 Value=0   (accumulate_and_reverse_producer.ash:15:32)
-    StoreLocal            Slot=6 Source=72   (accumulate_and_reverse_producer.ash:15:32)
-    LoadLocal             Target=73 Slot=2   (accumulate_and_reverse_producer.ash:15:32)
-    LoadLocal             Target=74 Slot=1   (accumulate_and_reverse_producer.ash:15:32)
-    StoreLocal            Slot=2 Source=62   (accumulate_and_reverse_producer.ash:15:32)
-    StoreLocal            Slot=1 Source=61   (accumulate_and_reverse_producer.ash:15:32)
-    LoadLocal             Target=214 Slot=6
-    JumpIfFalse           CondTemp=214 Target=rc_tco_drop_inactive_121
-    StoreLocal            Slot=55 Source=73
-  rcdrop_list_122:
-    LoadLocal             Target=215 Slot=55
-    LoadConstInt          Target=216 Value=0
-    CmpIntNe              Target=217 Left=215 Right=216
-    JumpIfFalse           CondTemp=217 Target=rcdrop_list_end_124
-    RcIsUnique            Target=218 SourceTemp=215
-    JumpIfFalse           CondTemp=218 Target=rcdrop_list_shared_123
-    LoadMemOffset         Target=219 BasePtr=215 OffsetBytes=0
-    LoadConstInt          Target=220 Value=0
-    CallKnown             Target=221 FuncLabel=__rcdrop_5 EnvTemp=220 ArgTemp=219
-    LoadMemOffset         Target=222 BasePtr=215 OffsetBytes=8
-    RcDrop                SourceTemp=215 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=55 Source=222
-    Jump                  Target=rcdrop_list_122
-  rcdrop_list_shared_123:
-    RcDrop                SourceTemp=215 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_124
-  rcdrop_list_end_124:
-  rc_tco_drop_inactive_121:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=54
-    StoreLocal            Slot=2 Source=62
-    LoadConstInt          Target=223 Value=1
-    StoreLocal            Slot=6 Source=223
-    StoreLocal            Slot=1 Source=61
-    LoadConstInt          Target=224 Value=1
-    StoreLocal            Slot=7 Source=224
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=54
+    SaveArenaState        CursorLocalSlot=27 EndLocalSlot=28
+    LoadConstInt          Target=49 Value=0   (accumulate_and_reverse_producer.ash:13:5)
+    CmpIntNe              Target=50 Left=2 Right=49   (accumulate_and_reverse_producer.ash:13:5)
+    JumpIfFalse           CondTemp=50 Target=match_arm_cleanup_31   (accumulate_and_reverse_producer.ash:13:5)
+    LoadMemOffset         Target=51 BasePtr=2 OffsetBytes=0   (accumulate_and_reverse_producer.ash:13:5)
+    LoadMemOffset         Target=52 BasePtr=2 OffsetBytes=8   (accumulate_and_reverse_producer.ash:13:5)
+    LoadConstInt          Target=53 Value=0   (accumulate_and_reverse_producer.ash:13:5)
+    CmpIntNe              Target=54 Left=51 Right=53   (accumulate_and_reverse_producer.ash:13:5)
+    JumpIfFalse           CondTemp=54 Target=match_arm_cleanup_31   (accumulate_and_reverse_producer.ash:13:5)
+    GetAdtTag             Target=55 Ptr=51   (accumulate_and_reverse_producer.ash:13:5)
+    LoadConstInt          Target=57 Value=0   (accumulate_and_reverse_producer.ash:13:5)
+    CmpIntEq              Target=56 Left=55 Right=57   (accumulate_and_reverse_producer.ash:13:5)
+    JumpIfFalse           CondTemp=56 Target=match_arm_cleanup_31   (accumulate_and_reverse_producer.ash:13:5)
+    GetAdtField           Target=58 Ptr=51 FieldIndex=0   (accumulate_and_reverse_producer.ash:13:5)
+    StoreLocal            Slot=29 Source=58   (accumulate_and_reverse_producer.ash:13:5)
+    GetAdtField           Target=59 Ptr=51 FieldIndex=1   (accumulate_and_reverse_producer.ash:13:5)
+    StoreLocal            Slot=30 Source=59   (accumulate_and_reverse_producer.ash:13:5)
+    StoreLocal            Slot=31 Source=52   (accumulate_and_reverse_producer.ash:13:5)
+    LoadLocal             Target=60 Slot=31   (accumulate_and_reverse_producer.ash:15:41)
+    Borrow                Target=61 SourceTemp=60
+    LoadLocal             Target=62 Slot=29   (accumulate_and_reverse_producer.ash:15:51)
+    LoadConstInt          Target=63 Value=1   (accumulate_and_reverse_producer.ash:15:55)
+    AddInt                Target=64 Left=62 Right=63   (accumulate_and_reverse_producer.ash:15:51)
+    LoadLocal             Target=65 Slot=30   (accumulate_and_reverse_producer.ash:15:58)
+    Borrow                Target=66 SourceTemp=65
+    RcDup                 Target=67 SourceTemp=66
+    RcDrop                SourceTemp=59 TypeName=PatternBinding OwnerSlot=30
+    AllocAdt              Target=68 Tag=0 FieldCount=2 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:15:47)
+    SetAdtField           Ptr=68 FieldIndex=0 Source=64   (accumulate_and_reverse_producer.ash:15:47)
+    SetAdtField           Ptr=68 FieldIndex=1 Source=67   (accumulate_and_reverse_producer.ash:15:47)
+    LoadLocal             Target=69 Slot=1   (accumulate_and_reverse_producer.ash:15:64)
+    IsReferenceCounted    Target=70 SourceTemp=69
+    StoreLocal            Slot=32 Source=69   (accumulate_and_reverse_producer.ash:15:47)
+    LoadConstInt          Target=71 Value=0   (accumulate_and_reverse_producer.ash:15:47)
+    CmpIntEq              Target=72 Left=69 Right=71   (accumulate_and_reverse_producer.ash:15:47)
+    OrInt                 Target=73 Left=70 Right=72   (accumulate_and_reverse_producer.ash:15:47)
+    JumpIfFalse           CondTemp=73 Target=rc_tail_copy_33   (accumulate_and_reverse_producer.ash:15:47)
+    Jump                  Target=rc_tail_done_32   (accumulate_and_reverse_producer.ash:15:47)
+  rc_tail_copy_33:
+    LoadConstInt          Target=75 Value=0   (accumulate_and_reverse_producer.ash:15:47)
+    StoreLocal            Slot=33 Source=69   (accumulate_and_reverse_producer.ash:15:47)
+    StoreLocal            Slot=34 Source=75   (accumulate_and_reverse_producer.ash:15:47)
+    StoreLocal            Slot=35 Source=75   (accumulate_and_reverse_producer.ash:15:47)
+  rc_normalize_list_34:
+    LoadLocal             Target=76 Slot=33   (accumulate_and_reverse_producer.ash:15:47)
+    CmpIntNe              Target=77 Left=76 Right=75   (accumulate_and_reverse_producer.ash:15:47)
+    JumpIfFalse           CondTemp=77 Target=rc_normalize_list_end_35   (accumulate_and_reverse_producer.ash:15:47)
+    LoadMemOffset         Target=78 BasePtr=76 OffsetBytes=0   (accumulate_and_reverse_producer.ash:15:47)
+    LoadMemOffset         Target=79 BasePtr=76 OffsetBytes=8   (accumulate_and_reverse_producer.ash:15:47)
+    IsReferenceCounted    Target=80 SourceTemp=78
+    JumpIfFalse           CondTemp=80 Target=rc_representation_copy_36   (accumulate_and_reverse_producer.ash:15:47)
+    RcDup                 Target=81 SourceTemp=78 RuntimeManaged=true
+    StoreLocal            Slot=36 Source=81   (accumulate_and_reverse_producer.ash:15:47)
+    Jump                  Target=rc_representation_done_37   (accumulate_and_reverse_producer.ash:15:47)
+  rc_representation_copy_36:
+    GetAdtTag             Target=83 Ptr=78   (accumulate_and_reverse_producer.ash:15:47)
+    SwitchTag             TagTemp=83 Cases=[2] DefaultLabel=rc_normalize_adt_38   (accumulate_and_reverse_producer.ash:15:47)
+  rc_normalize_adt_38:
+    CopyOutArena          DestTemp=84 SrcTemp=78 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=37 Source=84   (accumulate_and_reverse_producer.ash:15:47)
+    Jump                  Target=rc_normalize_adt_end_40   (accumulate_and_reverse_producer.ash:15:47)
+  rc_normalize_adt_39:
+    CopyOutArena          DestTemp=85 SrcTemp=78 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=86 Ptr=78 FieldIndex=0   (accumulate_and_reverse_producer.ash:15:47)
+    IsReferenceCounted    Target=87 SourceTemp=86
+    JumpIfFalse           CondTemp=87 Target=rc_representation_copy_41   (accumulate_and_reverse_producer.ash:15:47)
+    RcDup                 Target=88 SourceTemp=86 RuntimeManaged=true
+    StoreLocal            Slot=38 Source=88   (accumulate_and_reverse_producer.ash:15:47)
+    Jump                  Target=rc_representation_done_42   (accumulate_and_reverse_producer.ash:15:47)
+  rc_representation_copy_41:
+    CopyOutArena          DestTemp=89 SrcTemp=86 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=38 Source=89   (accumulate_and_reverse_producer.ash:15:47)
+  rc_representation_done_42:
+    LoadLocal             Target=90 Slot=38   (accumulate_and_reverse_producer.ash:15:47)
+    SetAdtField           Ptr=85 FieldIndex=0 Source=90   (accumulate_and_reverse_producer.ash:15:47)
+    StoreLocal            Slot=37 Source=85   (accumulate_and_reverse_producer.ash:15:47)
+    Jump                  Target=rc_normalize_adt_end_40   (accumulate_and_reverse_producer.ash:15:47)
+  rc_normalize_adt_end_40:
+    LoadLocal             Target=91 Slot=37   (accumulate_and_reverse_producer.ash:15:47)
+    StoreLocal            Slot=36 Source=91   (accumulate_and_reverse_producer.ash:15:47)
+  rc_representation_done_37:
+    LoadLocal             Target=92 Slot=36   (accumulate_and_reverse_producer.ash:15:47)
+    Alloc                 Target=93 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:15:47)
+    StoreMemOffset        BasePtr=93 OffsetBytes=0 Source=92   (accumulate_and_reverse_producer.ash:15:47)
+    StoreMemOffset        BasePtr=93 OffsetBytes=8 Source=75   (accumulate_and_reverse_producer.ash:15:47)
+    LoadLocal             Target=94 Slot=34   (accumulate_and_reverse_producer.ash:15:47)
+    CmpIntNe              Target=95 Left=94 Right=75   (accumulate_and_reverse_producer.ash:15:47)
+    JumpIfFalse           CondTemp=95 Target=rc_normalize_list_first_43   (accumulate_and_reverse_producer.ash:15:47)
+    LoadLocal             Target=96 Slot=35   (accumulate_and_reverse_producer.ash:15:47)
+    StoreMemOffset        BasePtr=96 OffsetBytes=8 Source=93   (accumulate_and_reverse_producer.ash:15:47)
+    Jump                  Target=rc_normalize_list_linked_44   (accumulate_and_reverse_producer.ash:15:47)
+  rc_normalize_list_first_43:
+    StoreLocal            Slot=34 Source=93   (accumulate_and_reverse_producer.ash:15:47)
+  rc_normalize_list_linked_44:
+    StoreLocal            Slot=35 Source=93   (accumulate_and_reverse_producer.ash:15:47)
+    StoreLocal            Slot=33 Source=79   (accumulate_and_reverse_producer.ash:15:47)
+    Jump                  Target=rc_normalize_list_34   (accumulate_and_reverse_producer.ash:15:47)
+  rc_normalize_list_end_35:
+    LoadLocal             Target=97 Slot=34   (accumulate_and_reverse_producer.ash:15:47)
+    StoreLocal            Slot=32 Source=97   (accumulate_and_reverse_producer.ash:15:47)
+  rc_tail_done_32:
+    LoadLocal             Target=98 Slot=32   (accumulate_and_reverse_producer.ash:15:47)
+    Alloc                 Target=99 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:15:47)
+    StoreMemOffset        BasePtr=99 OffsetBytes=0 Source=68   (accumulate_and_reverse_producer.ash:15:47)
+    StoreMemOffset        BasePtr=99 OffsetBytes=8 Source=98   (accumulate_and_reverse_producer.ash:15:47)
+    RcDup                 Target=100 SourceTemp=61 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=52 TypeName=List OwnerSlot=31
+    LoadLocal             Target=101 Slot=2   (accumulate_and_reverse_producer.ash:15:32)
+    StoreLocal            Slot=39 Source=101   (accumulate_and_reverse_producer.ash:15:32)
+  rcdrop_list_45:
+    LoadLocal             Target=102 Slot=39   (accumulate_and_reverse_producer.ash:15:32)
+    LoadConstInt          Target=103 Value=0   (accumulate_and_reverse_producer.ash:15:32)
+    CmpIntNe              Target=104 Left=102 Right=103   (accumulate_and_reverse_producer.ash:15:32)
+    JumpIfFalse           CondTemp=104 Target=rcdrop_list_end_47   (accumulate_and_reverse_producer.ash:15:32)
+    RcIsUnique            Target=105 SourceTemp=102
+    JumpIfFalse           CondTemp=105 Target=rcdrop_list_shared_46   (accumulate_and_reverse_producer.ash:15:32)
+    LoadMemOffset         Target=106 BasePtr=102 OffsetBytes=0   (accumulate_and_reverse_producer.ash:15:32)
+    LoadConstInt          Target=107 Value=0   (accumulate_and_reverse_producer.ash:15:32)
+    CallKnown             Target=108 FuncLabel=__rcdrop_5 EnvTemp=107 ArgTemp=106   (accumulate_and_reverse_producer.ash:15:32)
+    LoadMemOffset         Target=109 BasePtr=102 OffsetBytes=8   (accumulate_and_reverse_producer.ash:15:32)
+    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=39 Source=109   (accumulate_and_reverse_producer.ash:15:32)
+    Jump                  Target=rcdrop_list_45   (accumulate_and_reverse_producer.ash:15:32)
+  rcdrop_list_shared_46:
+    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_47   (accumulate_and_reverse_producer.ash:15:32)
+  rcdrop_list_end_47:
+    LoadConstInt          Target=110 Value=0   (accumulate_and_reverse_producer.ash:15:32)
+    StoreLocal            Slot=6 Source=110   (accumulate_and_reverse_producer.ash:15:32)
+    LoadLocal             Target=111 Slot=2   (accumulate_and_reverse_producer.ash:15:32)
+    LoadLocal             Target=112 Slot=1   (accumulate_and_reverse_producer.ash:15:32)
+    StoreLocal            Slot=2 Source=100   (accumulate_and_reverse_producer.ash:15:32)
+    StoreLocal            Slot=1 Source=99   (accumulate_and_reverse_producer.ash:15:32)
+    LoadLocal             Target=272 Slot=6
+    JumpIfFalse           CondTemp=272 Target=rc_tco_drop_inactive_160
+    StoreLocal            Slot=76 Source=111
+  rcdrop_list_161:
+    LoadLocal             Target=273 Slot=76
+    LoadConstInt          Target=274 Value=0
+    CmpIntNe              Target=275 Left=273 Right=274
+    JumpIfFalse           CondTemp=275 Target=rcdrop_list_end_163
+    RcIsUnique            Target=276 SourceTemp=273
+    JumpIfFalse           CondTemp=276 Target=rcdrop_list_shared_162
+    LoadMemOffset         Target=277 BasePtr=273 OffsetBytes=0
+    LoadConstInt          Target=278 Value=0
+    CallKnown             Target=279 FuncLabel=__rcdrop_5 EnvTemp=278 ArgTemp=277
+    LoadMemOffset         Target=280 BasePtr=273 OffsetBytes=8
+    RcDrop                SourceTemp=273 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=76 Source=280
+    Jump                  Target=rcdrop_list_161
+  rcdrop_list_shared_162:
+    RcDrop                SourceTemp=273 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_163
+  rcdrop_list_end_163:
+  rc_tco_drop_inactive_160:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=75
+    StoreLocal            Slot=2 Source=100
+    LoadConstInt          Target=281 Value=1
+    StoreLocal            Slot=6 Source=281
+    StoreLocal            Slot=1 Source=99
+    LoadConstInt          Target=282 Value=1
+    StoreLocal            Slot=7 Source=282
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=75
     RestoreStackPointer   Slot=10   (accumulate_and_reverse_producer.ash:15:32)
     Jump                  Target=lambda_4_body   (accumulate_and_reverse_producer.ash:15:32)
-    LoadConstInt          Target=75 Value=0   (accumulate_and_reverse_producer.ash:15:32)
-    StoreLocal            Slot=11 Source=75   (accumulate_and_reverse_producer.ash:13:5)
-    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=30
-    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=30
+    LoadConstInt          Target=113 Value=0   (accumulate_and_reverse_producer.ash:15:32)
+    StoreLocal            Slot=11 Source=113   (accumulate_and_reverse_producer.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=40
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=40
     Jump                  Target=match_end_5   (accumulate_and_reverse_producer.ash:13:5)
-  match_arm_cleanup_25:
-    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=31
-    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=31
-    Jump                  Target=match_next_24   (accumulate_and_reverse_producer.ash:13:5)
-  match_next_24:
-    SaveArenaState        CursorLocalSlot=32 EndLocalSlot=33
-    LoadConstInt          Target=78 Value=0   (accumulate_and_reverse_producer.ash:13:5)
-    CmpIntNe              Target=79 Left=2 Right=78   (accumulate_and_reverse_producer.ash:13:5)
-    JumpIfFalse           CondTemp=79 Target=match_arm_cleanup_29   (accumulate_and_reverse_producer.ash:13:5)
-    LoadMemOffset         Target=80 BasePtr=2 OffsetBytes=0   (accumulate_and_reverse_producer.ash:13:5)
-    LoadMemOffset         Target=81 BasePtr=2 OffsetBytes=8   (accumulate_and_reverse_producer.ash:13:5)
-    LoadConstInt          Target=82 Value=0   (accumulate_and_reverse_producer.ash:13:5)
-    CmpIntNe              Target=83 Left=80 Right=82   (accumulate_and_reverse_producer.ash:13:5)
-    JumpIfFalse           CondTemp=83 Target=match_arm_cleanup_29   (accumulate_and_reverse_producer.ash:13:5)
-    GetAdtTag             Target=84 Ptr=80   (accumulate_and_reverse_producer.ash:13:5)
-    LoadConstInt          Target=86 Value=1   (accumulate_and_reverse_producer.ash:13:5)
-    CmpIntEq              Target=85 Left=84 Right=86   (accumulate_and_reverse_producer.ash:13:5)
-    JumpIfFalse           CondTemp=85 Target=match_arm_cleanup_29   (accumulate_and_reverse_producer.ash:13:5)
-    GetAdtField           Target=87 Ptr=80 FieldIndex=0   (accumulate_and_reverse_producer.ash:13:5)
-    StoreLocal            Slot=34 Source=87   (accumulate_and_reverse_producer.ash:13:5)
-    GetAdtField           Target=88 Ptr=80 FieldIndex=1   (accumulate_and_reverse_producer.ash:13:5)
-    StoreLocal            Slot=35 Source=88   (accumulate_and_reverse_producer.ash:13:5)
-    StoreLocal            Slot=36 Source=81   (accumulate_and_reverse_producer.ash:13:5)
-    LoadLocal             Target=118 Slot=34   (accumulate_and_reverse_producer.ash:12:1)
-    RcDup                 Target=119 SourceTemp=118 RuntimeManaged=true
-    StoreLocal            Slot=34 Source=119   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=89 Slot=36   (accumulate_and_reverse_producer.ash:16:42)
-    Borrow                Target=90 SourceTemp=89
-    LoadLocal             Target=91 Slot=34   (accumulate_and_reverse_producer.ash:16:53)
-    Borrow                Target=92 SourceTemp=91
-    RcDup                 Target=93 SourceTemp=92 RuntimeManaged=true
-    RcDrop                SourceTemp=87 TypeName=String OwnerSlot=34 RuntimeManaged=true
-    LoadLocal             Target=94 Slot=35   (accumulate_and_reverse_producer.ash:16:56)
-    LoadConstInt          Target=95 Value=1   (accumulate_and_reverse_producer.ash:16:60)
-    AddInt                Target=96 Left=94 Right=95   (accumulate_and_reverse_producer.ash:16:56)
-    AllocAdt              Target=97 Tag=1 FieldCount=2 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:16:48)
-    SetAdtField           Ptr=97 FieldIndex=0 Source=93   (accumulate_and_reverse_producer.ash:16:48)
-    SetAdtField           Ptr=97 FieldIndex=1 Source=96   (accumulate_and_reverse_producer.ash:16:48)
-    LoadLocal             Target=98 Slot=1   (accumulate_and_reverse_producer.ash:16:66)
-    Alloc                 Target=99 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:16:48)
-    StoreMemOffset        BasePtr=99 OffsetBytes=0 Source=97   (accumulate_and_reverse_producer.ash:16:48)
-    StoreMemOffset        BasePtr=99 OffsetBytes=8 Source=98   (accumulate_and_reverse_producer.ash:16:48)
-    RcDup                 Target=100 SourceTemp=90 RuntimeManaged=true MayBeEmpty=true
-    RcDrop                SourceTemp=81 TypeName=List OwnerSlot=36
-    LoadLocal             Target=101 Slot=2   (accumulate_and_reverse_producer.ash:16:33)
-    StoreLocal            Slot=37 Source=101   (accumulate_and_reverse_producer.ash:16:33)
-  rcdrop_list_30:
-    LoadLocal             Target=102 Slot=37   (accumulate_and_reverse_producer.ash:16:33)
-    LoadConstInt          Target=103 Value=0   (accumulate_and_reverse_producer.ash:16:33)
-    CmpIntNe              Target=104 Left=102 Right=103   (accumulate_and_reverse_producer.ash:16:33)
-    JumpIfFalse           CondTemp=104 Target=rcdrop_list_end_32   (accumulate_and_reverse_producer.ash:16:33)
-    RcIsUnique            Target=105 SourceTemp=102
-    JumpIfFalse           CondTemp=105 Target=rcdrop_list_shared_31   (accumulate_and_reverse_producer.ash:16:33)
-    LoadMemOffset         Target=106 BasePtr=102 OffsetBytes=0   (accumulate_and_reverse_producer.ash:16:33)
-    LoadConstInt          Target=107 Value=0   (accumulate_and_reverse_producer.ash:16:33)
-    CallKnown             Target=108 FuncLabel=__rcdrop_5 EnvTemp=107 ArgTemp=106   (accumulate_and_reverse_producer.ash:16:33)
-    LoadMemOffset         Target=109 BasePtr=102 OffsetBytes=8   (accumulate_and_reverse_producer.ash:16:33)
-    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=37 Source=109   (accumulate_and_reverse_producer.ash:16:33)
-    Jump                  Target=rcdrop_list_30   (accumulate_and_reverse_producer.ash:16:33)
-  rcdrop_list_shared_31:
-    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_32   (accumulate_and_reverse_producer.ash:16:33)
-  rcdrop_list_end_32:
-    LoadConstInt          Target=110 Value=0   (accumulate_and_reverse_producer.ash:16:33)
-    StoreLocal            Slot=6 Source=110   (accumulate_and_reverse_producer.ash:16:33)
-    LoadLocal             Target=111 Slot=2   (accumulate_and_reverse_producer.ash:16:33)
-    LoadLocal             Target=112 Slot=1   (accumulate_and_reverse_producer.ash:16:33)
-    StoreLocal            Slot=2 Source=100   (accumulate_and_reverse_producer.ash:16:33)
-    StoreLocal            Slot=1 Source=99   (accumulate_and_reverse_producer.ash:16:33)
-    LoadLocal             Target=225 Slot=6
-    JumpIfFalse           CondTemp=225 Target=rc_tco_drop_inactive_125
-    StoreLocal            Slot=57 Source=111
-  rcdrop_list_126:
-    LoadLocal             Target=226 Slot=57
-    LoadConstInt          Target=227 Value=0
-    CmpIntNe              Target=228 Left=226 Right=227
-    JumpIfFalse           CondTemp=228 Target=rcdrop_list_end_128
-    RcIsUnique            Target=229 SourceTemp=226
-    JumpIfFalse           CondTemp=229 Target=rcdrop_list_shared_127
-    LoadMemOffset         Target=230 BasePtr=226 OffsetBytes=0
-    LoadConstInt          Target=231 Value=0
-    CallKnown             Target=232 FuncLabel=__rcdrop_5 EnvTemp=231 ArgTemp=230
-    LoadMemOffset         Target=233 BasePtr=226 OffsetBytes=8
-    RcDrop                SourceTemp=226 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=57 Source=233
-    Jump                  Target=rcdrop_list_126
-  rcdrop_list_shared_127:
-    RcDrop                SourceTemp=226 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_128
-  rcdrop_list_end_128:
-  rc_tco_drop_inactive_125:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=56
-    StoreLocal            Slot=2 Source=100
-    LoadConstInt          Target=234 Value=1
-    StoreLocal            Slot=6 Source=234
-    StoreLocal            Slot=1 Source=99
-    LoadConstInt          Target=235 Value=1
-    StoreLocal            Slot=7 Source=235
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=56
+  match_arm_cleanup_31:
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=41
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=41
+    Jump                  Target=match_next_30   (accumulate_and_reverse_producer.ash:13:5)
+  match_next_30:
+    SaveArenaState        CursorLocalSlot=42 EndLocalSlot=43
+    LoadConstInt          Target=116 Value=0   (accumulate_and_reverse_producer.ash:13:5)
+    CmpIntNe              Target=117 Left=2 Right=116   (accumulate_and_reverse_producer.ash:13:5)
+    JumpIfFalse           CondTemp=117 Target=match_arm_cleanup_48   (accumulate_and_reverse_producer.ash:13:5)
+    LoadMemOffset         Target=118 BasePtr=2 OffsetBytes=0   (accumulate_and_reverse_producer.ash:13:5)
+    LoadMemOffset         Target=119 BasePtr=2 OffsetBytes=8   (accumulate_and_reverse_producer.ash:13:5)
+    LoadConstInt          Target=120 Value=0   (accumulate_and_reverse_producer.ash:13:5)
+    CmpIntNe              Target=121 Left=118 Right=120   (accumulate_and_reverse_producer.ash:13:5)
+    JumpIfFalse           CondTemp=121 Target=match_arm_cleanup_48   (accumulate_and_reverse_producer.ash:13:5)
+    GetAdtTag             Target=122 Ptr=118   (accumulate_and_reverse_producer.ash:13:5)
+    LoadConstInt          Target=124 Value=1   (accumulate_and_reverse_producer.ash:13:5)
+    CmpIntEq              Target=123 Left=122 Right=124   (accumulate_and_reverse_producer.ash:13:5)
+    JumpIfFalse           CondTemp=123 Target=match_arm_cleanup_48   (accumulate_and_reverse_producer.ash:13:5)
+    GetAdtField           Target=125 Ptr=118 FieldIndex=0   (accumulate_and_reverse_producer.ash:13:5)
+    StoreLocal            Slot=44 Source=125   (accumulate_and_reverse_producer.ash:13:5)
+    GetAdtField           Target=126 Ptr=118 FieldIndex=1   (accumulate_and_reverse_producer.ash:13:5)
+    StoreLocal            Slot=45 Source=126   (accumulate_and_reverse_producer.ash:13:5)
+    StoreLocal            Slot=46 Source=119   (accumulate_and_reverse_producer.ash:13:5)
+    LoadLocal             Target=188 Slot=44   (accumulate_and_reverse_producer.ash:12:1)
+    RcDup                 Target=189 SourceTemp=188 RuntimeManaged=true
+    StoreLocal            Slot=44 Source=189   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=127 Slot=46   (accumulate_and_reverse_producer.ash:16:42)
+    Borrow                Target=128 SourceTemp=127
+    LoadLocal             Target=129 Slot=44   (accumulate_and_reverse_producer.ash:16:53)
+    Borrow                Target=130 SourceTemp=129
+    IsReferenceCounted    Target=131 SourceTemp=130
+    JumpIfFalse           CondTemp=131 Target=rc_representation_copy_49   (accumulate_and_reverse_producer.ash:16:48)
+    RcDup                 Target=132 SourceTemp=130 RuntimeManaged=true
+    RcDrop                SourceTemp=125 TypeName=String OwnerSlot=44 RuntimeManaged=true
+    StoreLocal            Slot=47 Source=132   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_representation_done_50   (accumulate_and_reverse_producer.ash:16:48)
+  rc_representation_copy_49:
+    CopyOutArena          DestTemp=133 SrcTemp=130 RuntimeManaged=true Purpose=RcNormalization
+    RcDrop                SourceTemp=125 TypeName=String OwnerSlot=44 RuntimeManaged=true
+    StoreLocal            Slot=47 Source=133   (accumulate_and_reverse_producer.ash:16:48)
+  rc_representation_done_50:
+    LoadLocal             Target=134 Slot=47   (accumulate_and_reverse_producer.ash:16:48)
+    LoadLocal             Target=135 Slot=45   (accumulate_and_reverse_producer.ash:16:56)
+    LoadConstInt          Target=136 Value=1   (accumulate_and_reverse_producer.ash:16:60)
+    AddInt                Target=137 Left=135 Right=136   (accumulate_and_reverse_producer.ash:16:56)
+    AllocAdt              Target=138 Tag=1 FieldCount=2 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:16:48)
+    SetAdtField           Ptr=138 FieldIndex=0 Source=134   (accumulate_and_reverse_producer.ash:16:48)
+    SetAdtField           Ptr=138 FieldIndex=1 Source=137   (accumulate_and_reverse_producer.ash:16:48)
+    LoadLocal             Target=139 Slot=1   (accumulate_and_reverse_producer.ash:16:66)
+    IsReferenceCounted    Target=140 SourceTemp=139
+    StoreLocal            Slot=48 Source=139   (accumulate_and_reverse_producer.ash:16:48)
+    LoadConstInt          Target=141 Value=0   (accumulate_and_reverse_producer.ash:16:48)
+    CmpIntEq              Target=142 Left=139 Right=141   (accumulate_and_reverse_producer.ash:16:48)
+    OrInt                 Target=143 Left=140 Right=142   (accumulate_and_reverse_producer.ash:16:48)
+    JumpIfFalse           CondTemp=143 Target=rc_tail_copy_52   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_tail_done_51   (accumulate_and_reverse_producer.ash:16:48)
+  rc_tail_copy_52:
+    LoadConstInt          Target=145 Value=0   (accumulate_and_reverse_producer.ash:16:48)
+    StoreLocal            Slot=49 Source=139   (accumulate_and_reverse_producer.ash:16:48)
+    StoreLocal            Slot=50 Source=145   (accumulate_and_reverse_producer.ash:16:48)
+    StoreLocal            Slot=51 Source=145   (accumulate_and_reverse_producer.ash:16:48)
+  rc_normalize_list_53:
+    LoadLocal             Target=146 Slot=49   (accumulate_and_reverse_producer.ash:16:48)
+    CmpIntNe              Target=147 Left=146 Right=145   (accumulate_and_reverse_producer.ash:16:48)
+    JumpIfFalse           CondTemp=147 Target=rc_normalize_list_end_54   (accumulate_and_reverse_producer.ash:16:48)
+    LoadMemOffset         Target=148 BasePtr=146 OffsetBytes=0   (accumulate_and_reverse_producer.ash:16:48)
+    LoadMemOffset         Target=149 BasePtr=146 OffsetBytes=8   (accumulate_and_reverse_producer.ash:16:48)
+    IsReferenceCounted    Target=150 SourceTemp=148
+    JumpIfFalse           CondTemp=150 Target=rc_representation_copy_55   (accumulate_and_reverse_producer.ash:16:48)
+    RcDup                 Target=151 SourceTemp=148 RuntimeManaged=true
+    StoreLocal            Slot=52 Source=151   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_representation_done_56   (accumulate_and_reverse_producer.ash:16:48)
+  rc_representation_copy_55:
+    GetAdtTag             Target=153 Ptr=148   (accumulate_and_reverse_producer.ash:16:48)
+    SwitchTag             TagTemp=153 Cases=[2] DefaultLabel=rc_normalize_adt_57   (accumulate_and_reverse_producer.ash:16:48)
+  rc_normalize_adt_57:
+    CopyOutArena          DestTemp=154 SrcTemp=148 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=53 Source=154   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_normalize_adt_end_59   (accumulate_and_reverse_producer.ash:16:48)
+  rc_normalize_adt_58:
+    CopyOutArena          DestTemp=155 SrcTemp=148 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=156 Ptr=148 FieldIndex=0   (accumulate_and_reverse_producer.ash:16:48)
+    IsReferenceCounted    Target=157 SourceTemp=156
+    JumpIfFalse           CondTemp=157 Target=rc_representation_copy_60   (accumulate_and_reverse_producer.ash:16:48)
+    RcDup                 Target=158 SourceTemp=156 RuntimeManaged=true
+    StoreLocal            Slot=54 Source=158   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_representation_done_61   (accumulate_and_reverse_producer.ash:16:48)
+  rc_representation_copy_60:
+    CopyOutArena          DestTemp=159 SrcTemp=156 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=54 Source=159   (accumulate_and_reverse_producer.ash:16:48)
+  rc_representation_done_61:
+    LoadLocal             Target=160 Slot=54   (accumulate_and_reverse_producer.ash:16:48)
+    SetAdtField           Ptr=155 FieldIndex=0 Source=160   (accumulate_and_reverse_producer.ash:16:48)
+    StoreLocal            Slot=53 Source=155   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_normalize_adt_end_59   (accumulate_and_reverse_producer.ash:16:48)
+  rc_normalize_adt_end_59:
+    LoadLocal             Target=161 Slot=53   (accumulate_and_reverse_producer.ash:16:48)
+    StoreLocal            Slot=52 Source=161   (accumulate_and_reverse_producer.ash:16:48)
+  rc_representation_done_56:
+    LoadLocal             Target=162 Slot=52   (accumulate_and_reverse_producer.ash:16:48)
+    Alloc                 Target=163 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:16:48)
+    StoreMemOffset        BasePtr=163 OffsetBytes=0 Source=162   (accumulate_and_reverse_producer.ash:16:48)
+    StoreMemOffset        BasePtr=163 OffsetBytes=8 Source=145   (accumulate_and_reverse_producer.ash:16:48)
+    LoadLocal             Target=164 Slot=50   (accumulate_and_reverse_producer.ash:16:48)
+    CmpIntNe              Target=165 Left=164 Right=145   (accumulate_and_reverse_producer.ash:16:48)
+    JumpIfFalse           CondTemp=165 Target=rc_normalize_list_first_62   (accumulate_and_reverse_producer.ash:16:48)
+    LoadLocal             Target=166 Slot=51   (accumulate_and_reverse_producer.ash:16:48)
+    StoreMemOffset        BasePtr=166 OffsetBytes=8 Source=163   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_normalize_list_linked_63   (accumulate_and_reverse_producer.ash:16:48)
+  rc_normalize_list_first_62:
+    StoreLocal            Slot=50 Source=163   (accumulate_and_reverse_producer.ash:16:48)
+  rc_normalize_list_linked_63:
+    StoreLocal            Slot=51 Source=163   (accumulate_and_reverse_producer.ash:16:48)
+    StoreLocal            Slot=49 Source=149   (accumulate_and_reverse_producer.ash:16:48)
+    Jump                  Target=rc_normalize_list_53   (accumulate_and_reverse_producer.ash:16:48)
+  rc_normalize_list_end_54:
+    LoadLocal             Target=167 Slot=50   (accumulate_and_reverse_producer.ash:16:48)
+    StoreLocal            Slot=48 Source=167   (accumulate_and_reverse_producer.ash:16:48)
+  rc_tail_done_51:
+    LoadLocal             Target=168 Slot=48   (accumulate_and_reverse_producer.ash:16:48)
+    Alloc                 Target=169 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:16:48)
+    StoreMemOffset        BasePtr=169 OffsetBytes=0 Source=138   (accumulate_and_reverse_producer.ash:16:48)
+    StoreMemOffset        BasePtr=169 OffsetBytes=8 Source=168   (accumulate_and_reverse_producer.ash:16:48)
+    RcDup                 Target=170 SourceTemp=128 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=119 TypeName=List OwnerSlot=46
+    LoadLocal             Target=171 Slot=2   (accumulate_and_reverse_producer.ash:16:33)
+    StoreLocal            Slot=55 Source=171   (accumulate_and_reverse_producer.ash:16:33)
+  rcdrop_list_64:
+    LoadLocal             Target=172 Slot=55   (accumulate_and_reverse_producer.ash:16:33)
+    LoadConstInt          Target=173 Value=0   (accumulate_and_reverse_producer.ash:16:33)
+    CmpIntNe              Target=174 Left=172 Right=173   (accumulate_and_reverse_producer.ash:16:33)
+    JumpIfFalse           CondTemp=174 Target=rcdrop_list_end_66   (accumulate_and_reverse_producer.ash:16:33)
+    RcIsUnique            Target=175 SourceTemp=172
+    JumpIfFalse           CondTemp=175 Target=rcdrop_list_shared_65   (accumulate_and_reverse_producer.ash:16:33)
+    LoadMemOffset         Target=176 BasePtr=172 OffsetBytes=0   (accumulate_and_reverse_producer.ash:16:33)
+    LoadConstInt          Target=177 Value=0   (accumulate_and_reverse_producer.ash:16:33)
+    CallKnown             Target=178 FuncLabel=__rcdrop_5 EnvTemp=177 ArgTemp=176   (accumulate_and_reverse_producer.ash:16:33)
+    LoadMemOffset         Target=179 BasePtr=172 OffsetBytes=8   (accumulate_and_reverse_producer.ash:16:33)
+    RcDrop                SourceTemp=172 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=55 Source=179   (accumulate_and_reverse_producer.ash:16:33)
+    Jump                  Target=rcdrop_list_64   (accumulate_and_reverse_producer.ash:16:33)
+  rcdrop_list_shared_65:
+    RcDrop                SourceTemp=172 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_66   (accumulate_and_reverse_producer.ash:16:33)
+  rcdrop_list_end_66:
+    LoadConstInt          Target=180 Value=0   (accumulate_and_reverse_producer.ash:16:33)
+    StoreLocal            Slot=6 Source=180   (accumulate_and_reverse_producer.ash:16:33)
+    LoadLocal             Target=181 Slot=2   (accumulate_and_reverse_producer.ash:16:33)
+    LoadLocal             Target=182 Slot=1   (accumulate_and_reverse_producer.ash:16:33)
+    StoreLocal            Slot=2 Source=170   (accumulate_and_reverse_producer.ash:16:33)
+    StoreLocal            Slot=1 Source=169   (accumulate_and_reverse_producer.ash:16:33)
+    LoadLocal             Target=283 Slot=6
+    JumpIfFalse           CondTemp=283 Target=rc_tco_drop_inactive_164
+    StoreLocal            Slot=78 Source=181
+  rcdrop_list_165:
+    LoadLocal             Target=284 Slot=78
+    LoadConstInt          Target=285 Value=0
+    CmpIntNe              Target=286 Left=284 Right=285
+    JumpIfFalse           CondTemp=286 Target=rcdrop_list_end_167
+    RcIsUnique            Target=287 SourceTemp=284
+    JumpIfFalse           CondTemp=287 Target=rcdrop_list_shared_166
+    LoadMemOffset         Target=288 BasePtr=284 OffsetBytes=0
+    LoadConstInt          Target=289 Value=0
+    CallKnown             Target=290 FuncLabel=__rcdrop_5 EnvTemp=289 ArgTemp=288
+    LoadMemOffset         Target=291 BasePtr=284 OffsetBytes=8
+    RcDrop                SourceTemp=284 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=78 Source=291
+    Jump                  Target=rcdrop_list_165
+  rcdrop_list_shared_166:
+    RcDrop                SourceTemp=284 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_167
+  rcdrop_list_end_167:
+  rc_tco_drop_inactive_164:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=77
+    StoreLocal            Slot=2 Source=170
+    LoadConstInt          Target=292 Value=1
+    StoreLocal            Slot=6 Source=292
+    StoreLocal            Slot=1 Source=169
+    LoadConstInt          Target=293 Value=1
+    StoreLocal            Slot=7 Source=293
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=77
     RestoreStackPointer   Slot=10   (accumulate_and_reverse_producer.ash:16:33)
     Jump                  Target=lambda_4_body   (accumulate_and_reverse_producer.ash:16:33)
-    LoadConstInt          Target=113 Value=0   (accumulate_and_reverse_producer.ash:16:33)
-    StoreLocal            Slot=11 Source=113   (accumulate_and_reverse_producer.ash:13:5)
-    RestoreArenaState     CursorLocalSlot=32 EndLocalSlot=33 PreRestoreEndSlot=38
-    ReclaimArenaChunks    SavedEndSlot=33 PreRestoreEndSlot=38
+    LoadConstInt          Target=183 Value=0   (accumulate_and_reverse_producer.ash:16:33)
+    StoreLocal            Slot=11 Source=183   (accumulate_and_reverse_producer.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=42 EndLocalSlot=43 PreRestoreEndSlot=56
+    ReclaimArenaChunks    SavedEndSlot=43 PreRestoreEndSlot=56
     Jump                  Target=match_end_5   (accumulate_and_reverse_producer.ash:13:5)
-  match_arm_cleanup_29:
-    RestoreArenaState     CursorLocalSlot=32 EndLocalSlot=33 PreRestoreEndSlot=39
-    ReclaimArenaChunks    SavedEndSlot=33 PreRestoreEndSlot=39
+  match_arm_cleanup_48:
+    RestoreArenaState     CursorLocalSlot=42 EndLocalSlot=43 PreRestoreEndSlot=57
+    ReclaimArenaChunks    SavedEndSlot=43 PreRestoreEndSlot=57
     Jump                  Target=match_none_6   (accumulate_and_reverse_producer.ash:13:5)
   match_none_6:
-    LoadConstInt          Target=116 Value=0   (accumulate_and_reverse_producer.ash:13:5)
-    StoreLocal            Slot=11 Source=116   (accumulate_and_reverse_producer.ash:13:5)
+    LoadConstInt          Target=186 Value=0   (accumulate_and_reverse_producer.ash:13:5)
+    StoreLocal            Slot=11 Source=186   (accumulate_and_reverse_producer.ash:13:5)
   match_end_5:
-    LoadLocal             Target=117 Slot=11   (accumulate_and_reverse_producer.ash:13:5)
-    LoadConstInt          Target=164 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=49 Source=164   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=165 Slot=2   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=166 Slot=6   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntEq              Target=167 Left=165 Right=117   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=168 Slot=49   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntEq              Target=169 Left=168 Right=164   (accumulate_and_reverse_producer.ash:12:1)
-    AndInt                Target=170 Left=166 Right=167   (accumulate_and_reverse_producer.ash:12:1)
-    AndInt                Target=171 Left=170 Right=169   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=171 Target=rc_tco_exit_transfer_not_selected_49   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=172 Value=1   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=49 Source=172   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_tco_exit_transfer_done_50   (accumulate_and_reverse_producer.ash:12:1)
-  rc_tco_exit_transfer_not_selected_49:
-    LoadLocal             Target=173 Slot=6   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=173 Target=rc_tco_exit_drop_inactive_51   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=50 Source=165   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_52:
-    LoadLocal             Target=174 Slot=50   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=175 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntNe              Target=176 Left=174 Right=175   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=176 Target=rcdrop_list_end_54   (accumulate_and_reverse_producer.ash:12:1)
-    RcIsUnique            Target=177 SourceTemp=174
-    JumpIfFalse           CondTemp=177 Target=rcdrop_list_shared_53   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=178 BasePtr=174 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=179 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    CallKnown             Target=180 FuncLabel=__rcdrop_5 EnvTemp=179 ArgTemp=178   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=181 BasePtr=174 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    RcDrop                SourceTemp=174 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=50 Source=181   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rcdrop_list_52   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_shared_53:
-    RcDrop                SourceTemp=174 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_54   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_end_54:
-  rc_tco_exit_drop_inactive_51:
-  rc_tco_exit_transfer_done_50:
-    LoadLocal             Target=182 Slot=1   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=183 Slot=7   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntEq              Target=184 Left=182 Right=117   (accumulate_and_reverse_producer.ash:12:1)
-    LoadLocal             Target=185 Slot=49   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntEq              Target=186 Left=185 Right=164   (accumulate_and_reverse_producer.ash:12:1)
-    AndInt                Target=187 Left=183 Right=184   (accumulate_and_reverse_producer.ash:12:1)
-    AndInt                Target=188 Left=187 Right=186   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=188 Target=rc_tco_exit_transfer_not_selected_55   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=189 Value=1   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=49 Source=189   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_tco_exit_transfer_done_56   (accumulate_and_reverse_producer.ash:12:1)
-  rc_tco_exit_transfer_not_selected_55:
-    LoadLocal             Target=190 Slot=7   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=190 Target=rc_tco_exit_drop_inactive_57   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=51 Source=182   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_58:
-    LoadLocal             Target=191 Slot=51   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=192 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntNe              Target=193 Left=191 Right=192   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=193 Target=rcdrop_list_end_60   (accumulate_and_reverse_producer.ash:12:1)
-    RcIsUnique            Target=194 SourceTemp=191
-    JumpIfFalse           CondTemp=194 Target=rcdrop_list_shared_59   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=195 BasePtr=191 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=196 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    CallKnown             Target=197 FuncLabel=__rcdrop_5 EnvTemp=196 ArgTemp=195   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=198 BasePtr=191 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    RcDrop                SourceTemp=191 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=51 Source=198   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rcdrop_list_58   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_shared_59:
-    RcDrop                SourceTemp=191 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_60   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_end_60:
-  rc_tco_exit_drop_inactive_57:
-  rc_tco_exit_transfer_done_56:
-    LoadArgumentOwnership Target=199   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=200 Value=1   (accumulate_and_reverse_producer.ash:12:1)
-    ShrInt                Target=201 Left=199 Right=200   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=201 Target=rc_result_owned_61   (accumulate_and_reverse_producer.ash:12:1)
-    Alloc                 Target=202 SizeBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    MakeClosure           Target=203 FuncLabel=__deepcopy_list_6 EnvPtrTemp=202 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    StoreMemOffset        BasePtr=202 OffsetBytes=0 Source=203   (accumulate_and_reverse_producer.ash:12:1)
-    CallClosure           Target=204 ClosureTemp=203 ArgTemp=117   (accumulate_and_reverse_producer.ash:12:1)
-    StoreLocal            Slot=53 Source=117   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_63:
-    LoadLocal             Target=205 Slot=53   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=206 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    CmpIntNe              Target=207 Left=205 Right=206   (accumulate_and_reverse_producer.ash:12:1)
-    JumpIfFalse           CondTemp=207 Target=rcdrop_list_end_65   (accumulate_and_reverse_producer.ash:12:1)
-    RcIsUnique            Target=208 SourceTemp=205
-    JumpIfFalse           CondTemp=208 Target=rcdrop_list_shared_64   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=209 BasePtr=205 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
-    LoadConstInt          Target=210 Value=0   (accumulate_and_reverse_producer.ash:12:1)
-    CallKnown             Target=211 FuncLabel=__rcdrop_5 EnvTemp=210 ArgTemp=209   (accumulate_and_reverse_producer.ash:12:1)
-    LoadMemOffset         Target=212 BasePtr=205 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
-    RcDrop                SourceTemp=205 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=53 Source=212   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rcdrop_list_63   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_shared_64:
-    RcDrop                SourceTemp=205 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_65   (accumulate_and_reverse_producer.ash:12:1)
-  rcdrop_list_end_65:
-    StoreLocal            Slot=52 Source=204   (accumulate_and_reverse_producer.ash:12:1)
-    Jump                  Target=rc_result_done_62   (accumulate_and_reverse_producer.ash:12:1)
-  rc_result_owned_61:
-    StoreLocal            Slot=52 Source=117   (accumulate_and_reverse_producer.ash:12:1)
-  rc_result_done_62:
-    LoadLocal             Target=213 Slot=52   (accumulate_and_reverse_producer.ash:12:1)
-    Return                Source=213   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=187 Slot=11   (accumulate_and_reverse_producer.ash:13:5)
+    LoadLocal             Target=252 Slot=2   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=253 Slot=6   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=253 Target=rc_tco_exit_drop_inactive_95   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=73 Source=252   (accumulate_and_reverse_producer.ash:12:1)
+  rcdrop_list_96:
+    LoadLocal             Target=254 Slot=73   (accumulate_and_reverse_producer.ash:12:1)
+    LoadConstInt          Target=255 Value=0   (accumulate_and_reverse_producer.ash:12:1)
+    CmpIntNe              Target=256 Left=254 Right=255   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=256 Target=rcdrop_list_end_98   (accumulate_and_reverse_producer.ash:12:1)
+    RcIsUnique            Target=257 SourceTemp=254
+    JumpIfFalse           CondTemp=257 Target=rcdrop_list_shared_97   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=258 BasePtr=254 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
+    LoadConstInt          Target=259 Value=0   (accumulate_and_reverse_producer.ash:12:1)
+    CallKnown             Target=260 FuncLabel=__rcdrop_5 EnvTemp=259 ArgTemp=258   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=261 BasePtr=254 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
+    RcDrop                SourceTemp=254 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=73 Source=261   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rcdrop_list_96   (accumulate_and_reverse_producer.ash:12:1)
+  rcdrop_list_shared_97:
+    RcDrop                SourceTemp=254 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_98   (accumulate_and_reverse_producer.ash:12:1)
+  rcdrop_list_end_98:
+  rc_tco_exit_drop_inactive_95:
+    LoadLocal             Target=262 Slot=1   (accumulate_and_reverse_producer.ash:12:1)
+    LoadLocal             Target=263 Slot=7   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=263 Target=rc_tco_exit_drop_inactive_99   (accumulate_and_reverse_producer.ash:12:1)
+    StoreLocal            Slot=74 Source=262   (accumulate_and_reverse_producer.ash:12:1)
+  rcdrop_list_100:
+    LoadLocal             Target=264 Slot=74   (accumulate_and_reverse_producer.ash:12:1)
+    LoadConstInt          Target=265 Value=0   (accumulate_and_reverse_producer.ash:12:1)
+    CmpIntNe              Target=266 Left=264 Right=265   (accumulate_and_reverse_producer.ash:12:1)
+    JumpIfFalse           CondTemp=266 Target=rcdrop_list_end_102   (accumulate_and_reverse_producer.ash:12:1)
+    RcIsUnique            Target=267 SourceTemp=264
+    JumpIfFalse           CondTemp=267 Target=rcdrop_list_shared_101   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=268 BasePtr=264 OffsetBytes=0   (accumulate_and_reverse_producer.ash:12:1)
+    LoadConstInt          Target=269 Value=0   (accumulate_and_reverse_producer.ash:12:1)
+    CallKnown             Target=270 FuncLabel=__rcdrop_5 EnvTemp=269 ArgTemp=268   (accumulate_and_reverse_producer.ash:12:1)
+    LoadMemOffset         Target=271 BasePtr=264 OffsetBytes=8   (accumulate_and_reverse_producer.ash:12:1)
+    RcDrop                SourceTemp=264 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=74 Source=271   (accumulate_and_reverse_producer.ash:12:1)
+    Jump                  Target=rcdrop_list_100   (accumulate_and_reverse_producer.ash:12:1)
+  rcdrop_list_shared_101:
+    RcDrop                SourceTemp=264 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_102   (accumulate_and_reverse_producer.ash:12:1)
+  rcdrop_list_end_102:
+  rc_tco_exit_drop_inactive_99:
+    Return                Source=187   (accumulate_and_reverse_producer.ash:12:1)
 
 function lambda_3  [SourceFunction from bumpInto]
   locals=2 temps=7
@@ -685,128 +811,166 @@ function lambda_3  [SourceFunction from bumpInto]
     LoadEnv               Target=2 Index=0   (accumulate_and_reverse_producer.ash:12:1)
     Borrow                Target=3 SourceTemp=2
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (accumulate_and_reverse_producer.ash:12:1)
-    MakeClosure           Target=6 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (accumulate_and_reverse_producer.ash:12:1)
+    MakeClosure           Target=6 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=16 AcceptsRuntimeManagedArgument=true   (accumulate_and_reverse_producer.ash:12:1)
     Return                Source=6   (accumulate_and_reverse_producer.ash:12:1)
 
-function lambda_8  [SourceFunction from bump]
-  locals=7 temps=20
+function lambda_6  [SourceFunction from bump]
+  locals=5 temps=5
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (accumulate_and_reverse_producer.ash:18:32)
     LoadLocal             Target=1 Slot=1   (accumulate_and_reverse_producer.ash:18:41)
     CallClosure           Target=2 ClosureTemp=0 ArgTemp=1   (accumulate_and_reverse_producer.ash:18:32)
     LoadConstInt          Target=3 Value=0   (accumulate_and_reverse_producer.ash:18:48)
     CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (accumulate_and_reverse_producer.ash:18:32)
-    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
-    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
-    LoadArgumentOwnership Target=5   (accumulate_and_reverse_producer.ash:18:1)
-    LoadConstInt          Target=6 Value=1   (accumulate_and_reverse_producer.ash:18:1)
-    ShrInt                Target=7 Left=5 Right=6   (accumulate_and_reverse_producer.ash:18:1)
-    JumpIfFalse           CondTemp=7 Target=rc_result_owned_66   (accumulate_and_reverse_producer.ash:18:1)
-    Alloc                 Target=8 SizeBytes=8   (accumulate_and_reverse_producer.ash:18:1)
-    MakeClosure           Target=9 FuncLabel=__deepcopy_list_6 EnvPtrTemp=8 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:18:1)
-    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=9   (accumulate_and_reverse_producer.ash:18:1)
-    CallClosure           Target=10 ClosureTemp=9 ArgTemp=4   (accumulate_and_reverse_producer.ash:18:1)
-    StoreLocal            Slot=6 Source=4   (accumulate_and_reverse_producer.ash:18:1)
-  rcdrop_list_68:
-    LoadLocal             Target=11 Slot=6   (accumulate_and_reverse_producer.ash:18:1)
-    LoadConstInt          Target=12 Value=0   (accumulate_and_reverse_producer.ash:18:1)
-    CmpIntNe              Target=13 Left=11 Right=12   (accumulate_and_reverse_producer.ash:18:1)
-    JumpIfFalse           CondTemp=13 Target=rcdrop_list_end_70   (accumulate_and_reverse_producer.ash:18:1)
-    RcIsUnique            Target=14 SourceTemp=11
-    JumpIfFalse           CondTemp=14 Target=rcdrop_list_shared_69   (accumulate_and_reverse_producer.ash:18:1)
-    LoadMemOffset         Target=15 BasePtr=11 OffsetBytes=0   (accumulate_and_reverse_producer.ash:18:1)
-    LoadConstInt          Target=16 Value=0   (accumulate_and_reverse_producer.ash:18:1)
-    CallKnown             Target=17 FuncLabel=__rcdrop_5 EnvTemp=16 ArgTemp=15   (accumulate_and_reverse_producer.ash:18:1)
-    LoadMemOffset         Target=18 BasePtr=11 OffsetBytes=8   (accumulate_and_reverse_producer.ash:18:1)
-    RcDrop                SourceTemp=11 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=6 Source=18   (accumulate_and_reverse_producer.ash:18:1)
-    Jump                  Target=rcdrop_list_68   (accumulate_and_reverse_producer.ash:18:1)
-  rcdrop_list_shared_69:
-    RcDrop                SourceTemp=11 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_70   (accumulate_and_reverse_producer.ash:18:1)
-  rcdrop_list_end_70:
-    StoreLocal            Slot=5 Source=10   (accumulate_and_reverse_producer.ash:18:1)
-    Jump                  Target=rc_result_done_67   (accumulate_and_reverse_producer.ash:18:1)
-  rc_result_owned_66:
-    StoreLocal            Slot=5 Source=4   (accumulate_and_reverse_producer.ash:18:1)
-  rc_result_done_67:
-    LoadLocal             Target=19 Slot=5   (accumulate_and_reverse_producer.ash:18:1)
-    Return                Source=19   (accumulate_and_reverse_producer.ash:18:1)
+    Return                Source=4   (accumulate_and_reverse_producer.ash:18:1)
 
-function lambda_10  [ClosureHelper from passes]
-  locals=26 temps=98
+function __deepcopy_10  [AdtDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (accumulate_and_reverse_producer.ash:20:1)
+    LoadEnv               Target=1 Index=0   (accumulate_and_reverse_producer.ash:20:1)
+    GetAdtTag             Target=2 Ptr=0   (accumulate_and_reverse_producer.ash:20:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_10_default   (accumulate_and_reverse_producer.ash:20:1)
+  __deepcopy_10_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=4   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=16   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=5   (accumulate_and_reverse_producer.ash:20:1)
+    Return                Source=3   (accumulate_and_reverse_producer.ash:20:1)
+  __deepcopy_10_c1:
+    AllocAdt              Target=6 Tag=1 FieldCount=2   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    CopyOutArena          DestTemp=8 SrcTemp=7 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=6 OffsetBytes=8 Source=8   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=9 BasePtr=0 OffsetBytes=16   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=6 OffsetBytes=16 Source=9   (accumulate_and_reverse_producer.ash:20:1)
+    Return                Source=6   (accumulate_and_reverse_producer.ash:20:1)
+  __deepcopy_10_default:
+    Return                Source=0   (accumulate_and_reverse_producer.ash:20:1)
+
+function __deepcopy_list_9  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (accumulate_and_reverse_producer.ash:20:1)
+    LoadEnv               Target=1 Index=0   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=2 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_9_copy   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=4 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    Return                Source=4   (accumulate_and_reverse_producer.ash:20:1)
+  __deepcopy_list_9_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    Alloc                 Target=7 SizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_10 EnvPtrTemp=7 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (accumulate_and_reverse_producer.ash:20:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (accumulate_and_reverse_producer.ash:20:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (accumulate_and_reverse_producer.ash:20:1)
+    Alloc                 Target=11 SizeBytes=16   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (accumulate_and_reverse_producer.ash:20:1)
+    Return                Source=11   (accumulate_and_reverse_producer.ash:20:1)
+
+function lambda_8  [ClosureHelper from passes]
+  locals=36 temps=129
     LoadEnv               Target=0 Index=0   (accumulate_and_reverse_producer.ash:20:1)
     StoreLocal            Slot=2 Source=0   (accumulate_and_reverse_producer.ash:20:1)
-    LoadLocal             Target=31 Slot=1   (accumulate_and_reverse_producer.ash:20:1)
-    LoadArgumentOwnership Target=32   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=33 Value=1   (accumulate_and_reverse_producer.ash:20:1)
-    AndInt                Target=34 Left=32 Right=33   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=34 Target=rc_arg_normalize_copy_78   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=15 Source=31   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rc_arg_normalize_done_79   (accumulate_and_reverse_producer.ash:20:1)
-  rc_arg_normalize_copy_78:
-    LoadConstInt          Target=36 Value=0   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=16 Source=31   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=17 Source=36   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=18 Source=36   (accumulate_and_reverse_producer.ash:20:1)
-  rc_normalize_list_80:
-    LoadLocal             Target=37 Slot=16   (accumulate_and_reverse_producer.ash:20:1)
-    CmpIntNe              Target=38 Left=37 Right=36   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_end_81   (accumulate_and_reverse_producer.ash:20:1)
-    LoadMemOffset         Target=39 BasePtr=37 OffsetBytes=0   (accumulate_and_reverse_producer.ash:20:1)
-    LoadMemOffset         Target=40 BasePtr=37 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
-    GetAdtTag             Target=42 Ptr=39   (accumulate_and_reverse_producer.ash:20:1)
-    SwitchTag             TagTemp=42 Cases=[2] DefaultLabel=rc_normalize_adt_82   (accumulate_and_reverse_producer.ash:20:1)
-  rc_normalize_adt_82:
-    CopyOutArena          DestTemp=43 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=19 Source=43   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rc_normalize_adt_end_84   (accumulate_and_reverse_producer.ash:20:1)
-  rc_normalize_adt_83:
-    CopyOutArena          DestTemp=44 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=45 Ptr=39 FieldIndex=0   (accumulate_and_reverse_producer.ash:20:1)
-    CopyOutArena          DestTemp=46 SrcTemp=45 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=44 FieldIndex=0 Source=46   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=19 Source=44   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rc_normalize_adt_end_84   (accumulate_and_reverse_producer.ash:20:1)
-  rc_normalize_adt_end_84:
+    LoadLocal             Target=23 Slot=1   (accumulate_and_reverse_producer.ash:20:1)
+    LoadArgumentOwnership Target=24   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=25 Value=1   (accumulate_and_reverse_producer.ash:20:1)
+    AndInt                Target=26 Left=24 Right=25   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=26 Target=rc_arg_normalize_copy_105   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=14 Source=23   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_arg_normalize_done_106   (accumulate_and_reverse_producer.ash:20:1)
+  rc_arg_normalize_copy_105:
+    IsReferenceCounted    Target=27 SourceTemp=23
+    JumpIfFalse           CondTemp=27 Target=rc_representation_copy_107   (accumulate_and_reverse_producer.ash:20:1)
+    RcDup                 Target=28 SourceTemp=23 RuntimeManaged=true
+    StoreLocal            Slot=15 Source=28   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_representation_done_108   (accumulate_and_reverse_producer.ash:20:1)
+  rc_representation_copy_107:
+    LoadConstInt          Target=30 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=16 Source=23   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=17 Source=30   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=18 Source=30   (accumulate_and_reverse_producer.ash:20:1)
+  rc_normalize_list_109:
+    LoadLocal             Target=31 Slot=16   (accumulate_and_reverse_producer.ash:20:1)
+    CmpIntNe              Target=32 Left=31 Right=30   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=32 Target=rc_normalize_list_end_110   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=33 BasePtr=31 OffsetBytes=0   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=34 BasePtr=31 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    IsReferenceCounted    Target=35 SourceTemp=33
+    JumpIfFalse           CondTemp=35 Target=rc_representation_copy_111   (accumulate_and_reverse_producer.ash:20:1)
+    RcDup                 Target=36 SourceTemp=33 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=36   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_representation_done_112   (accumulate_and_reverse_producer.ash:20:1)
+  rc_representation_copy_111:
+    GetAdtTag             Target=38 Ptr=33   (accumulate_and_reverse_producer.ash:20:1)
+    SwitchTag             TagTemp=38 Cases=[2] DefaultLabel=rc_normalize_adt_113   (accumulate_and_reverse_producer.ash:20:1)
+  rc_normalize_adt_113:
+    CopyOutArena          DestTemp=39 SrcTemp=33 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=20 Source=39   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_normalize_adt_end_115   (accumulate_and_reverse_producer.ash:20:1)
+  rc_normalize_adt_114:
+    CopyOutArena          DestTemp=40 SrcTemp=33 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=41 Ptr=33 FieldIndex=0   (accumulate_and_reverse_producer.ash:20:1)
+    IsReferenceCounted    Target=42 SourceTemp=41
+    JumpIfFalse           CondTemp=42 Target=rc_representation_copy_116   (accumulate_and_reverse_producer.ash:20:1)
+    RcDup                 Target=43 SourceTemp=41 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=43   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_representation_done_117   (accumulate_and_reverse_producer.ash:20:1)
+  rc_representation_copy_116:
+    CopyOutArena          DestTemp=44 SrcTemp=41 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=21 Source=44   (accumulate_and_reverse_producer.ash:20:1)
+  rc_representation_done_117:
+    LoadLocal             Target=45 Slot=21   (accumulate_and_reverse_producer.ash:20:1)
+    SetAdtField           Ptr=40 FieldIndex=0 Source=45   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=20 Source=40   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_normalize_adt_end_115   (accumulate_and_reverse_producer.ash:20:1)
+  rc_normalize_adt_end_115:
+    LoadLocal             Target=46 Slot=20   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=19 Source=46   (accumulate_and_reverse_producer.ash:20:1)
+  rc_representation_done_112:
     LoadLocal             Target=47 Slot=19   (accumulate_and_reverse_producer.ash:20:1)
     Alloc                 Target=48 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:20:1)
     StoreMemOffset        BasePtr=48 OffsetBytes=0 Source=47   (accumulate_and_reverse_producer.ash:20:1)
-    StoreMemOffset        BasePtr=48 OffsetBytes=8 Source=36   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=48 OffsetBytes=8 Source=30   (accumulate_and_reverse_producer.ash:20:1)
     LoadLocal             Target=49 Slot=17   (accumulate_and_reverse_producer.ash:20:1)
-    CmpIntNe              Target=50 Left=49 Right=36   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=50 Target=rc_normalize_list_first_85   (accumulate_and_reverse_producer.ash:20:1)
+    CmpIntNe              Target=50 Left=49 Right=30   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=50 Target=rc_normalize_list_first_118   (accumulate_and_reverse_producer.ash:20:1)
     LoadLocal             Target=51 Slot=18   (accumulate_and_reverse_producer.ash:20:1)
     StoreMemOffset        BasePtr=51 OffsetBytes=8 Source=48   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rc_normalize_list_linked_86   (accumulate_and_reverse_producer.ash:20:1)
-  rc_normalize_list_first_85:
+    Jump                  Target=rc_normalize_list_linked_119   (accumulate_and_reverse_producer.ash:20:1)
+  rc_normalize_list_first_118:
     StoreLocal            Slot=17 Source=48   (accumulate_and_reverse_producer.ash:20:1)
-  rc_normalize_list_linked_86:
+  rc_normalize_list_linked_119:
     StoreLocal            Slot=18 Source=48   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=16 Source=40   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rc_normalize_list_80   (accumulate_and_reverse_producer.ash:20:1)
-  rc_normalize_list_end_81:
+    StoreLocal            Slot=16 Source=34   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_normalize_list_109   (accumulate_and_reverse_producer.ash:20:1)
+  rc_normalize_list_end_110:
     LoadLocal             Target=52 Slot=17   (accumulate_and_reverse_producer.ash:20:1)
     StoreLocal            Slot=15 Source=52   (accumulate_and_reverse_producer.ash:20:1)
-  rc_arg_normalize_done_79:
+  rc_representation_done_108:
     LoadLocal             Target=53 Slot=15   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=1 Source=53   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=54 Value=1   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=6 Source=54   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=14 Source=53   (accumulate_and_reverse_producer.ash:20:1)
+  rc_arg_normalize_done_106:
+    LoadLocal             Target=54 Slot=14   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=1 Source=54   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=55 Value=1   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=6 Source=55   (accumulate_and_reverse_producer.ash:20:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (accumulate_and_reverse_producer.ash:20:1)
     StoreLocal            Slot=5 Source=1   (accumulate_and_reverse_producer.ash:20:1)
-  lambda_10_body:
+  lambda_8_body:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     SaveStackPointer      Slot=9   (accumulate_and_reverse_producer.ash:20:1)
     LoadLocal             Target=2 Slot=2   (accumulate_and_reverse_producer.ash:21:8)
     LoadConstInt          Target=3 Value=0   (accumulate_and_reverse_producer.ash:21:13)
     CmpIntEq              Target=4 Left=2 Right=3   (accumulate_and_reverse_producer.ash:21:8)
-    JumpIfFalse           CondTemp=4 Target=else_71   (accumulate_and_reverse_producer.ash:21:5)
+    JumpIfFalse           CondTemp=4 Target=else_103   (accumulate_and_reverse_producer.ash:21:5)
     LoadLocal             Target=5 Slot=1   (accumulate_and_reverse_producer.ash:22:10)
     StoreLocal            Slot=10 Source=5   (accumulate_and_reverse_producer.ash:21:5)
-    Jump                  Target=endif_72   (accumulate_and_reverse_producer.ash:21:5)
-  else_71:
+    Jump                  Target=endif_104   (accumulate_and_reverse_producer.ash:21:5)
+  else_103:
     LoadLocal             Target=6 Slot=2   (accumulate_and_reverse_producer.ash:23:17)
     LoadConstInt          Target=7 Value=1   (accumulate_and_reverse_producer.ash:23:21)
     SubInt                Target=8 Left=6 Right=7   (accumulate_and_reverse_producer.ash:23:17)
@@ -821,141 +985,194 @@ function lambda_10  [ClosureHelper from passes]
     AndInt                Target=16 Left=14 Right=15   (accumulate_and_reverse_producer.ash:23:24)
     RcDup                 Target=17 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
     CallClosure           Target=18 ClosureTemp=10 ArgTemp=17 RuntimeManagedArgumentFlagTemp=16   (accumulate_and_reverse_producer.ash:23:24)
-    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
-    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
-    JumpIfFalse           CondTemp=16 Target=rc_handed_over_not_adopted_73   (accumulate_and_reverse_producer.ash:23:24)
-    Jump                  Target=rc_handed_over_done_74   (accumulate_and_reverse_producer.ash:23:24)
-  rc_handed_over_not_adopted_73:
-    StoreLocal            Slot=14 Source=17   (accumulate_and_reverse_producer.ash:23:24)
-  rcdrop_list_75:
-    LoadLocal             Target=19 Slot=14   (accumulate_and_reverse_producer.ash:23:24)
-    LoadConstInt          Target=20 Value=0   (accumulate_and_reverse_producer.ash:23:24)
-    CmpIntNe              Target=21 Left=19 Right=20   (accumulate_and_reverse_producer.ash:23:24)
-    JumpIfFalse           CondTemp=21 Target=rcdrop_list_end_77   (accumulate_and_reverse_producer.ash:23:24)
-    RcIsUnique            Target=22 SourceTemp=19
-    JumpIfFalse           CondTemp=22 Target=rcdrop_list_shared_76   (accumulate_and_reverse_producer.ash:23:24)
-    LoadMemOffset         Target=23 BasePtr=19 OffsetBytes=0   (accumulate_and_reverse_producer.ash:23:24)
-    LoadConstInt          Target=24 Value=0   (accumulate_and_reverse_producer.ash:23:24)
-    CallKnown             Target=25 FuncLabel=__rcdrop_5 EnvTemp=24 ArgTemp=23   (accumulate_and_reverse_producer.ash:23:24)
-    LoadMemOffset         Target=26 BasePtr=19 OffsetBytes=8   (accumulate_and_reverse_producer.ash:23:24)
-    RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=14 Source=26   (accumulate_and_reverse_producer.ash:23:24)
-    Jump                  Target=rcdrop_list_75   (accumulate_and_reverse_producer.ash:23:24)
-  rcdrop_list_shared_76:
-    RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_77   (accumulate_and_reverse_producer.ash:23:24)
-  rcdrop_list_end_77:
-  rc_handed_over_done_74:
-    LoadLocal             Target=27 Slot=2   (accumulate_and_reverse_producer.ash:23:10)
-    LoadLocal             Target=28 Slot=1   (accumulate_and_reverse_producer.ash:23:10)
+    LoadLocal             Target=19 Slot=2   (accumulate_and_reverse_producer.ash:23:10)
+    LoadLocal             Target=20 Slot=1   (accumulate_and_reverse_producer.ash:23:10)
     StoreLocal            Slot=2 Source=8   (accumulate_and_reverse_producer.ash:23:10)
     StoreLocal            Slot=1 Source=18   (accumulate_and_reverse_producer.ash:23:10)
-    LoadLocal             Target=88 Slot=6
-    JumpIfFalse           CondTemp=88 Target=rc_tco_drop_inactive_129
-    StoreLocal            Slot=25 Source=28
-  rcdrop_list_130:
-    LoadLocal             Target=89 Slot=25
-    LoadConstInt          Target=90 Value=0
-    CmpIntNe              Target=91 Left=89 Right=90
-    JumpIfFalse           CondTemp=91 Target=rcdrop_list_end_132
-    RcIsUnique            Target=92 SourceTemp=89
-    JumpIfFalse           CondTemp=92 Target=rcdrop_list_shared_131
-    LoadMemOffset         Target=93 BasePtr=89 OffsetBytes=0
+    IsReferenceCounted    Target=89 SourceTemp=18
+    JumpIfFalse           CondTemp=89 Target=rc_representation_copy_168
+    RcDup                 Target=90 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=90
+    Jump                  Target=rc_representation_done_169
+  rc_representation_copy_168:
+    IsReferenceCounted    Target=92 SourceTemp=18
+    JumpIfFalse           CondTemp=92 Target=rc_representation_copy_170
+    RcDup                 Target=93 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=93
+    Jump                  Target=rc_representation_done_171
+  rc_representation_copy_170:
     LoadConstInt          Target=94 Value=0
-    CallKnown             Target=95 FuncLabel=__rcdrop_5 EnvTemp=94 ArgTemp=93
-    LoadMemOffset         Target=96 BasePtr=89 OffsetBytes=8
-    RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=25 Source=96
-    Jump                  Target=rcdrop_list_130
-  rcdrop_list_shared_131:
-    RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_132
-  rcdrop_list_end_132:
-  rc_tco_drop_inactive_129:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=24
-    StoreLocal            Slot=1 Source=18
-    LoadConstInt          Target=97 Value=1
-    StoreLocal            Slot=6 Source=97
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=24
+    StoreLocal            Slot=29 Source=18
+    StoreLocal            Slot=30 Source=94
+    StoreLocal            Slot=31 Source=94
+  rc_normalize_list_172:
+    LoadLocal             Target=95 Slot=29
+    CmpIntNe              Target=96 Left=95 Right=94
+    JumpIfFalse           CondTemp=96 Target=rc_normalize_list_end_173
+    LoadMemOffset         Target=97 BasePtr=95 OffsetBytes=0
+    LoadMemOffset         Target=98 BasePtr=95 OffsetBytes=8
+    IsReferenceCounted    Target=99 SourceTemp=97
+    JumpIfFalse           CondTemp=99 Target=rc_representation_copy_174
+    RcDup                 Target=100 SourceTemp=97 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=100
+    Jump                  Target=rc_representation_done_175
+  rc_representation_copy_174:
+    GetAdtTag             Target=102 Ptr=97
+    SwitchTag             TagTemp=102 Cases=[2] DefaultLabel=rc_normalize_adt_176
+  rc_normalize_adt_176:
+    CopyOutArena          DestTemp=103 SrcTemp=97 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=33 Source=103
+    Jump                  Target=rc_normalize_adt_end_178
+  rc_normalize_adt_177:
+    CopyOutArena          DestTemp=104 SrcTemp=97 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=105 Ptr=97 FieldIndex=0
+    IsReferenceCounted    Target=106 SourceTemp=105
+    JumpIfFalse           CondTemp=106 Target=rc_representation_copy_179
+    RcDup                 Target=107 SourceTemp=105 RuntimeManaged=true
+    StoreLocal            Slot=34 Source=107
+    Jump                  Target=rc_representation_done_180
+  rc_representation_copy_179:
+    CopyOutArena          DestTemp=108 SrcTemp=105 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=34 Source=108
+  rc_representation_done_180:
+    LoadLocal             Target=109 Slot=34
+    SetAdtField           Ptr=104 FieldIndex=0 Source=109
+    StoreLocal            Slot=33 Source=104
+    Jump                  Target=rc_normalize_adt_end_178
+  rc_normalize_adt_end_178:
+    LoadLocal             Target=110 Slot=33
+    StoreLocal            Slot=32 Source=110
+  rc_representation_done_175:
+    LoadLocal             Target=111 Slot=32
+    Alloc                 Target=112 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=112 OffsetBytes=0 Source=111
+    StoreMemOffset        BasePtr=112 OffsetBytes=8 Source=94
+    LoadLocal             Target=113 Slot=30
+    CmpIntNe              Target=114 Left=113 Right=94
+    JumpIfFalse           CondTemp=114 Target=rc_normalize_list_first_181
+    LoadLocal             Target=115 Slot=31
+    StoreMemOffset        BasePtr=115 OffsetBytes=8 Source=112
+    Jump                  Target=rc_normalize_list_linked_182
+  rc_normalize_list_first_181:
+    StoreLocal            Slot=30 Source=112
+  rc_normalize_list_linked_182:
+    StoreLocal            Slot=31 Source=112
+    StoreLocal            Slot=29 Source=98
+    Jump                  Target=rc_normalize_list_172
+  rc_normalize_list_end_173:
+    LoadLocal             Target=116 Slot=30
+    StoreLocal            Slot=28 Source=116
+  rc_representation_done_171:
+    LoadLocal             Target=117 Slot=28
+    StoreLocal            Slot=27 Source=117
+  rc_representation_done_169:
+    LoadLocal             Target=118 Slot=27
+    LoadLocal             Target=119 Slot=6
+    JumpIfFalse           CondTemp=119 Target=rc_tco_drop_inactive_183
+    StoreLocal            Slot=35 Source=20
+  rcdrop_list_184:
+    LoadLocal             Target=120 Slot=35
+    LoadConstInt          Target=121 Value=0
+    CmpIntNe              Target=122 Left=120 Right=121
+    JumpIfFalse           CondTemp=122 Target=rcdrop_list_end_186
+    RcIsUnique            Target=123 SourceTemp=120
+    JumpIfFalse           CondTemp=123 Target=rcdrop_list_shared_185
+    LoadMemOffset         Target=124 BasePtr=120 OffsetBytes=0
+    LoadConstInt          Target=125 Value=0
+    CallKnown             Target=126 FuncLabel=__rcdrop_5 EnvTemp=125 ArgTemp=124
+    LoadMemOffset         Target=127 BasePtr=120 OffsetBytes=8
+    RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=35 Source=127
+    Jump                  Target=rcdrop_list_184
+  rcdrop_list_shared_185:
+    RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_186
+  rcdrop_list_end_186:
+  rc_tco_drop_inactive_183:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=26
+    StoreLocal            Slot=1 Source=118
+    LoadConstInt          Target=128 Value=1
+    StoreLocal            Slot=6 Source=128
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=26
     RestoreStackPointer   Slot=9   (accumulate_and_reverse_producer.ash:23:10)
-    Jump                  Target=lambda_10_body   (accumulate_and_reverse_producer.ash:23:10)
-    LoadConstInt          Target=29 Value=0   (accumulate_and_reverse_producer.ash:23:10)
-    StoreLocal            Slot=10 Source=29   (accumulate_and_reverse_producer.ash:21:5)
-  endif_72:
-    LoadLocal             Target=30 Slot=10   (accumulate_and_reverse_producer.ash:21:5)
-    LoadConstInt          Target=55 Value=0   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=20 Source=55   (accumulate_and_reverse_producer.ash:20:1)
-    LoadLocal             Target=56 Slot=1   (accumulate_and_reverse_producer.ash:20:1)
-    LoadLocal             Target=57 Slot=6   (accumulate_and_reverse_producer.ash:20:1)
-    CmpIntEq              Target=58 Left=56 Right=30   (accumulate_and_reverse_producer.ash:20:1)
-    LoadLocal             Target=59 Slot=20   (accumulate_and_reverse_producer.ash:20:1)
-    CmpIntEq              Target=60 Left=59 Right=55   (accumulate_and_reverse_producer.ash:20:1)
-    AndInt                Target=61 Left=57 Right=58   (accumulate_and_reverse_producer.ash:20:1)
-    AndInt                Target=62 Left=61 Right=60   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=62 Target=rc_tco_exit_transfer_not_selected_87   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=63 Value=1   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=20 Source=63   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rc_tco_exit_transfer_done_88   (accumulate_and_reverse_producer.ash:20:1)
-  rc_tco_exit_transfer_not_selected_87:
-    LoadLocal             Target=64 Slot=6   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=64 Target=rc_tco_exit_drop_inactive_89   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=21 Source=56   (accumulate_and_reverse_producer.ash:20:1)
-  rcdrop_list_90:
-    LoadLocal             Target=65 Slot=21   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=66 Value=0   (accumulate_and_reverse_producer.ash:20:1)
-    CmpIntNe              Target=67 Left=65 Right=66   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_92   (accumulate_and_reverse_producer.ash:20:1)
-    RcIsUnique            Target=68 SourceTemp=65
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_91   (accumulate_and_reverse_producer.ash:20:1)
-    LoadMemOffset         Target=69 BasePtr=65 OffsetBytes=0   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=70 Value=0   (accumulate_and_reverse_producer.ash:20:1)
-    CallKnown             Target=71 FuncLabel=__rcdrop_5 EnvTemp=70 ArgTemp=69   (accumulate_and_reverse_producer.ash:20:1)
-    LoadMemOffset         Target=72 BasePtr=65 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
-    RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=21 Source=72   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rcdrop_list_90   (accumulate_and_reverse_producer.ash:20:1)
-  rcdrop_list_shared_91:
-    RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_92   (accumulate_and_reverse_producer.ash:20:1)
-  rcdrop_list_end_92:
-  rc_tco_exit_drop_inactive_89:
-  rc_tco_exit_transfer_done_88:
-    LoadArgumentOwnership Target=73   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=74 Value=1   (accumulate_and_reverse_producer.ash:20:1)
-    ShrInt                Target=75 Left=73 Right=74   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=75 Target=rc_result_owned_93   (accumulate_and_reverse_producer.ash:20:1)
-    Alloc                 Target=76 SizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
-    MakeClosure           Target=77 FuncLabel=__deepcopy_list_6 EnvPtrTemp=76 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
-    StoreMemOffset        BasePtr=76 OffsetBytes=0 Source=77   (accumulate_and_reverse_producer.ash:20:1)
-    CallClosure           Target=78 ClosureTemp=77 ArgTemp=30   (accumulate_and_reverse_producer.ash:20:1)
-    StoreLocal            Slot=23 Source=30   (accumulate_and_reverse_producer.ash:20:1)
-  rcdrop_list_95:
-    LoadLocal             Target=79 Slot=23   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=80 Value=0   (accumulate_and_reverse_producer.ash:20:1)
-    CmpIntNe              Target=81 Left=79 Right=80   (accumulate_and_reverse_producer.ash:20:1)
-    JumpIfFalse           CondTemp=81 Target=rcdrop_list_end_97   (accumulate_and_reverse_producer.ash:20:1)
-    RcIsUnique            Target=82 SourceTemp=79
-    JumpIfFalse           CondTemp=82 Target=rcdrop_list_shared_96   (accumulate_and_reverse_producer.ash:20:1)
-    LoadMemOffset         Target=83 BasePtr=79 OffsetBytes=0   (accumulate_and_reverse_producer.ash:20:1)
-    LoadConstInt          Target=84 Value=0   (accumulate_and_reverse_producer.ash:20:1)
-    CallKnown             Target=85 FuncLabel=__rcdrop_5 EnvTemp=84 ArgTemp=83   (accumulate_and_reverse_producer.ash:20:1)
-    LoadMemOffset         Target=86 BasePtr=79 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
-    RcDrop                SourceTemp=79 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=23 Source=86   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rcdrop_list_95   (accumulate_and_reverse_producer.ash:20:1)
-  rcdrop_list_shared_96:
-    RcDrop                SourceTemp=79 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_97   (accumulate_and_reverse_producer.ash:20:1)
-  rcdrop_list_end_97:
-    StoreLocal            Slot=22 Source=78   (accumulate_and_reverse_producer.ash:20:1)
-    Jump                  Target=rc_result_done_94   (accumulate_and_reverse_producer.ash:20:1)
-  rc_result_owned_93:
-    StoreLocal            Slot=22 Source=30   (accumulate_and_reverse_producer.ash:20:1)
-  rc_result_done_94:
-    LoadLocal             Target=87 Slot=22   (accumulate_and_reverse_producer.ash:20:1)
-    Return                Source=87   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=lambda_8_body   (accumulate_and_reverse_producer.ash:23:10)
+    LoadConstInt          Target=21 Value=0   (accumulate_and_reverse_producer.ash:23:10)
+    StoreLocal            Slot=10 Source=21   (accumulate_and_reverse_producer.ash:21:5)
+  endif_104:
+    LoadLocal             Target=22 Slot=10   (accumulate_and_reverse_producer.ash:21:5)
+    LoadConstInt          Target=56 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=22 Source=56   (accumulate_and_reverse_producer.ash:20:1)
+    LoadLocal             Target=57 Slot=1   (accumulate_and_reverse_producer.ash:20:1)
+    LoadLocal             Target=58 Slot=6   (accumulate_and_reverse_producer.ash:20:1)
+    CmpIntEq              Target=59 Left=57 Right=22   (accumulate_and_reverse_producer.ash:20:1)
+    LoadLocal             Target=60 Slot=22   (accumulate_and_reverse_producer.ash:20:1)
+    CmpIntEq              Target=61 Left=60 Right=56   (accumulate_and_reverse_producer.ash:20:1)
+    AndInt                Target=62 Left=58 Right=59   (accumulate_and_reverse_producer.ash:20:1)
+    AndInt                Target=63 Left=62 Right=61   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=63 Target=rc_tco_exit_transfer_not_selected_120   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=64 Value=1   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=22 Source=64   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_tco_exit_transfer_done_121   (accumulate_and_reverse_producer.ash:20:1)
+  rc_tco_exit_transfer_not_selected_120:
+    LoadLocal             Target=65 Slot=6   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=65 Target=rc_tco_exit_drop_inactive_122   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=23 Source=57   (accumulate_and_reverse_producer.ash:20:1)
+  rcdrop_list_123:
+    LoadLocal             Target=66 Slot=23   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=67 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    CmpIntNe              Target=68 Left=66 Right=67   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_125   (accumulate_and_reverse_producer.ash:20:1)
+    RcIsUnique            Target=69 SourceTemp=66
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_124   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=71 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    CallKnown             Target=72 FuncLabel=__rcdrop_5 EnvTemp=71 ArgTemp=70   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=73 BasePtr=66 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=23 Source=73   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rcdrop_list_123   (accumulate_and_reverse_producer.ash:20:1)
+  rcdrop_list_shared_124:
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_125   (accumulate_and_reverse_producer.ash:20:1)
+  rcdrop_list_end_125:
+  rc_tco_exit_drop_inactive_122:
+  rc_tco_exit_transfer_done_121:
+    LoadArgumentOwnership Target=74   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=75 Value=1   (accumulate_and_reverse_producer.ash:20:1)
+    ShrInt                Target=76 Left=74 Right=75   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=76 Target=rc_result_owned_126   (accumulate_and_reverse_producer.ash:20:1)
+    Alloc                 Target=77 SizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    MakeClosure           Target=78 FuncLabel=__deepcopy_list_9 EnvPtrTemp=77 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    StoreMemOffset        BasePtr=77 OffsetBytes=0 Source=78   (accumulate_and_reverse_producer.ash:20:1)
+    CallClosure           Target=79 ClosureTemp=78 ArgTemp=22   (accumulate_and_reverse_producer.ash:20:1)
+    StoreLocal            Slot=25 Source=22   (accumulate_and_reverse_producer.ash:20:1)
+  rcdrop_list_128:
+    LoadLocal             Target=80 Slot=25   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=81 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    CmpIntNe              Target=82 Left=80 Right=81   (accumulate_and_reverse_producer.ash:20:1)
+    JumpIfFalse           CondTemp=82 Target=rcdrop_list_end_130   (accumulate_and_reverse_producer.ash:20:1)
+    RcIsUnique            Target=83 SourceTemp=80
+    JumpIfFalse           CondTemp=83 Target=rcdrop_list_shared_129   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=84 BasePtr=80 OffsetBytes=0   (accumulate_and_reverse_producer.ash:20:1)
+    LoadConstInt          Target=85 Value=0   (accumulate_and_reverse_producer.ash:20:1)
+    CallKnown             Target=86 FuncLabel=__rcdrop_5 EnvTemp=85 ArgTemp=84   (accumulate_and_reverse_producer.ash:20:1)
+    LoadMemOffset         Target=87 BasePtr=80 OffsetBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    RcDrop                SourceTemp=80 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=87   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rcdrop_list_128   (accumulate_and_reverse_producer.ash:20:1)
+  rcdrop_list_shared_129:
+    RcDrop                SourceTemp=80 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_130   (accumulate_and_reverse_producer.ash:20:1)
+  rcdrop_list_end_130:
+    StoreLocal            Slot=24 Source=79   (accumulate_and_reverse_producer.ash:20:1)
+    Jump                  Target=rc_result_done_127   (accumulate_and_reverse_producer.ash:20:1)
+  rc_result_owned_126:
+    StoreLocal            Slot=24 Source=22   (accumulate_and_reverse_producer.ash:20:1)
+  rc_result_done_127:
+    LoadLocal             Target=88 Slot=24   (accumulate_and_reverse_producer.ash:20:1)
+    Return                Source=88   (accumulate_and_reverse_producer.ash:20:1)
 
-function lambda_9  [SourceFunction from passes]
+function lambda_7  [SourceFunction from passes]
   locals=2 temps=7
     Alloc                 Target=0 SizeBytes=16   (accumulate_and_reverse_producer.ash:20:1)
     LoadLocal             Target=1 Slot=1   (accumulate_and_reverse_producer.ash:20:1)
@@ -963,59 +1180,86 @@ function lambda_9  [SourceFunction from passes]
     LoadEnv               Target=4 Index=0   (accumulate_and_reverse_producer.ash:20:1)
     Borrow                Target=5 SourceTemp=4
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (accumulate_and_reverse_producer.ash:20:1)
-    MakeClosure           Target=6 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (accumulate_and_reverse_producer.ash:20:1)
+    MakeClosure           Target=6 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (accumulate_and_reverse_producer.ash:20:1)
     Return                Source=6   (accumulate_and_reverse_producer.ash:20:1)
 
 function lambda_12  [ClosureHelper from count]
-  locals=30 temps=73
+  locals=33 temps=82
     LoadEnv               Target=0 Index=0   (accumulate_and_reverse_producer.ash:25:1)
     StoreLocal            Slot=2 Source=0   (accumulate_and_reverse_producer.ash:25:1)
     LoadLocal             Target=32 Slot=2   (accumulate_and_reverse_producer.ash:25:1)
-    LoadConstInt          Target=34 Value=0   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=23 Source=32   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=24 Source=34   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=25 Source=34   (accumulate_and_reverse_producer.ash:25:1)
-  rc_normalize_list_106:
-    LoadLocal             Target=35 Slot=23   (accumulate_and_reverse_producer.ash:25:1)
-    CmpIntNe              Target=36 Left=35 Right=34   (accumulate_and_reverse_producer.ash:25:1)
-    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_end_107   (accumulate_and_reverse_producer.ash:25:1)
-    LoadMemOffset         Target=37 BasePtr=35 OffsetBytes=0   (accumulate_and_reverse_producer.ash:25:1)
-    LoadMemOffset         Target=38 BasePtr=35 OffsetBytes=8   (accumulate_and_reverse_producer.ash:25:1)
-    GetAdtTag             Target=40 Ptr=37   (accumulate_and_reverse_producer.ash:25:1)
-    SwitchTag             TagTemp=40 Cases=[2] DefaultLabel=rc_normalize_adt_108   (accumulate_and_reverse_producer.ash:25:1)
-  rc_normalize_adt_108:
-    CopyOutArena          DestTemp=41 SrcTemp=37 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=26 Source=41   (accumulate_and_reverse_producer.ash:25:1)
-    Jump                  Target=rc_normalize_adt_end_110   (accumulate_and_reverse_producer.ash:25:1)
-  rc_normalize_adt_109:
-    CopyOutArena          DestTemp=42 SrcTemp=37 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=43 Ptr=37 FieldIndex=0   (accumulate_and_reverse_producer.ash:25:1)
-    CopyOutArena          DestTemp=44 SrcTemp=43 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=42 FieldIndex=0 Source=44   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=26 Source=42   (accumulate_and_reverse_producer.ash:25:1)
-    Jump                  Target=rc_normalize_adt_end_110   (accumulate_and_reverse_producer.ash:25:1)
-  rc_normalize_adt_end_110:
-    LoadLocal             Target=45 Slot=26   (accumulate_and_reverse_producer.ash:25:1)
-    Alloc                 Target=46 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:25:1)
-    StoreMemOffset        BasePtr=46 OffsetBytes=0 Source=45   (accumulate_and_reverse_producer.ash:25:1)
-    StoreMemOffset        BasePtr=46 OffsetBytes=8 Source=34   (accumulate_and_reverse_producer.ash:25:1)
-    LoadLocal             Target=47 Slot=24   (accumulate_and_reverse_producer.ash:25:1)
-    CmpIntNe              Target=48 Left=47 Right=34   (accumulate_and_reverse_producer.ash:25:1)
-    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_111   (accumulate_and_reverse_producer.ash:25:1)
-    LoadLocal             Target=49 Slot=25   (accumulate_and_reverse_producer.ash:25:1)
-    StoreMemOffset        BasePtr=49 OffsetBytes=8 Source=46   (accumulate_and_reverse_producer.ash:25:1)
-    Jump                  Target=rc_normalize_list_linked_112   (accumulate_and_reverse_producer.ash:25:1)
-  rc_normalize_list_first_111:
-    StoreLocal            Slot=24 Source=46   (accumulate_and_reverse_producer.ash:25:1)
-  rc_normalize_list_linked_112:
-    StoreLocal            Slot=25 Source=46   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=23 Source=38   (accumulate_and_reverse_producer.ash:25:1)
-    Jump                  Target=rc_normalize_list_106   (accumulate_and_reverse_producer.ash:25:1)
-  rc_normalize_list_end_107:
-    LoadLocal             Target=50 Slot=24   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=2 Source=50   (accumulate_and_reverse_producer.ash:25:1)
-    LoadConstInt          Target=51 Value=1   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=8 Source=51   (accumulate_and_reverse_producer.ash:25:1)
+    IsReferenceCounted    Target=33 SourceTemp=32
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_139   (accumulate_and_reverse_producer.ash:25:1)
+    RcDup                 Target=34 SourceTemp=32 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=34   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rc_representation_done_140   (accumulate_and_reverse_producer.ash:25:1)
+  rc_representation_copy_139:
+    LoadConstInt          Target=36 Value=0   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=24 Source=32   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=25 Source=36   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=26 Source=36   (accumulate_and_reverse_producer.ash:25:1)
+  rc_normalize_list_141:
+    LoadLocal             Target=37 Slot=24   (accumulate_and_reverse_producer.ash:25:1)
+    CmpIntNe              Target=38 Left=37 Right=36   (accumulate_and_reverse_producer.ash:25:1)
+    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_end_142   (accumulate_and_reverse_producer.ash:25:1)
+    LoadMemOffset         Target=39 BasePtr=37 OffsetBytes=0   (accumulate_and_reverse_producer.ash:25:1)
+    LoadMemOffset         Target=40 BasePtr=37 OffsetBytes=8   (accumulate_and_reverse_producer.ash:25:1)
+    IsReferenceCounted    Target=41 SourceTemp=39
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_143   (accumulate_and_reverse_producer.ash:25:1)
+    RcDup                 Target=42 SourceTemp=39 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=42   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rc_representation_done_144   (accumulate_and_reverse_producer.ash:25:1)
+  rc_representation_copy_143:
+    GetAdtTag             Target=44 Ptr=39   (accumulate_and_reverse_producer.ash:25:1)
+    SwitchTag             TagTemp=44 Cases=[2] DefaultLabel=rc_normalize_adt_145   (accumulate_and_reverse_producer.ash:25:1)
+  rc_normalize_adt_145:
+    CopyOutArena          DestTemp=45 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=28 Source=45   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rc_normalize_adt_end_147   (accumulate_and_reverse_producer.ash:25:1)
+  rc_normalize_adt_146:
+    CopyOutArena          DestTemp=46 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=47 Ptr=39 FieldIndex=0   (accumulate_and_reverse_producer.ash:25:1)
+    IsReferenceCounted    Target=48 SourceTemp=47
+    JumpIfFalse           CondTemp=48 Target=rc_representation_copy_148   (accumulate_and_reverse_producer.ash:25:1)
+    RcDup                 Target=49 SourceTemp=47 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=49   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rc_representation_done_149   (accumulate_and_reverse_producer.ash:25:1)
+  rc_representation_copy_148:
+    CopyOutArena          DestTemp=50 SrcTemp=47 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=29 Source=50   (accumulate_and_reverse_producer.ash:25:1)
+  rc_representation_done_149:
+    LoadLocal             Target=51 Slot=29   (accumulate_and_reverse_producer.ash:25:1)
+    SetAdtField           Ptr=46 FieldIndex=0 Source=51   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=28 Source=46   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rc_normalize_adt_end_147   (accumulate_and_reverse_producer.ash:25:1)
+  rc_normalize_adt_end_147:
+    LoadLocal             Target=52 Slot=28   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=27 Source=52   (accumulate_and_reverse_producer.ash:25:1)
+  rc_representation_done_144:
+    LoadLocal             Target=53 Slot=27   (accumulate_and_reverse_producer.ash:25:1)
+    Alloc                 Target=54 SizeBytes=16 RuntimeManaged=true   (accumulate_and_reverse_producer.ash:25:1)
+    StoreMemOffset        BasePtr=54 OffsetBytes=0 Source=53   (accumulate_and_reverse_producer.ash:25:1)
+    StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=36   (accumulate_and_reverse_producer.ash:25:1)
+    LoadLocal             Target=55 Slot=25   (accumulate_and_reverse_producer.ash:25:1)
+    CmpIntNe              Target=56 Left=55 Right=36   (accumulate_and_reverse_producer.ash:25:1)
+    JumpIfFalse           CondTemp=56 Target=rc_normalize_list_first_150   (accumulate_and_reverse_producer.ash:25:1)
+    LoadLocal             Target=57 Slot=26   (accumulate_and_reverse_producer.ash:25:1)
+    StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=54   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_151   (accumulate_and_reverse_producer.ash:25:1)
+  rc_normalize_list_first_150:
+    StoreLocal            Slot=25 Source=54   (accumulate_and_reverse_producer.ash:25:1)
+  rc_normalize_list_linked_151:
+    StoreLocal            Slot=26 Source=54   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=24 Source=40   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rc_normalize_list_141   (accumulate_and_reverse_producer.ash:25:1)
+  rc_normalize_list_end_142:
+    LoadLocal             Target=58 Slot=25   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=23 Source=58   (accumulate_and_reverse_producer.ash:25:1)
+  rc_representation_done_140:
+    LoadLocal             Target=59 Slot=23   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=2 Source=59   (accumulate_and_reverse_producer.ash:25:1)
+    LoadConstInt          Target=60 Value=1   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=8 Source=60   (accumulate_and_reverse_producer.ash:25:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (accumulate_and_reverse_producer.ash:25:1)
     StoreLocal            Slot=5 Source=1   (accumulate_and_reverse_producer.ash:25:1)
@@ -1028,21 +1272,21 @@ function lambda_12  [ClosureHelper from count]
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (accumulate_and_reverse_producer.ash:26:5)
     CmpIntEq              Target=4 Left=2 Right=3   (accumulate_and_reverse_producer.ash:26:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_101   (accumulate_and_reverse_producer.ash:26:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_134   (accumulate_and_reverse_producer.ash:26:5)
     LoadLocal             Target=5 Slot=1   (accumulate_and_reverse_producer.ash:27:17)
     StoreLocal            Slot=12 Source=5   (accumulate_and_reverse_producer.ash:26:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_98   (accumulate_and_reverse_producer.ash:26:5)
-  match_arm_cleanup_101:
+    Jump                  Target=match_end_131   (accumulate_and_reverse_producer.ash:26:5)
+  match_arm_cleanup_134:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_100   (accumulate_and_reverse_producer.ash:26:5)
-  match_next_100:
+    Jump                  Target=match_next_133   (accumulate_and_reverse_producer.ash:26:5)
+  match_next_133:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (accumulate_and_reverse_producer.ash:26:5)
     CmpIntNe              Target=7 Left=2 Right=6   (accumulate_and_reverse_producer.ash:26:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_102   (accumulate_and_reverse_producer.ash:26:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_135   (accumulate_and_reverse_producer.ash:26:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (accumulate_and_reverse_producer.ash:26:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (accumulate_and_reverse_producer.ash:26:5)
     StoreLocal            Slot=19 Source=9   (accumulate_and_reverse_producer.ash:26:5)
@@ -1055,99 +1299,99 @@ function lambda_12  [ClosureHelper from count]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=16 Slot=2   (accumulate_and_reverse_producer.ash:28:24)
     StoreLocal            Slot=20 Source=16   (accumulate_and_reverse_producer.ash:28:24)
-  rcdrop_list_103:
+  rcdrop_list_136:
     LoadLocal             Target=17 Slot=20   (accumulate_and_reverse_producer.ash:28:24)
     LoadConstInt          Target=18 Value=0   (accumulate_and_reverse_producer.ash:28:24)
     CmpIntNe              Target=19 Left=17 Right=18   (accumulate_and_reverse_producer.ash:28:24)
-    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_105   (accumulate_and_reverse_producer.ash:28:24)
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_138   (accumulate_and_reverse_producer.ash:28:24)
     RcIsUnique            Target=20 SourceTemp=17
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_104   (accumulate_and_reverse_producer.ash:28:24)
+    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_137   (accumulate_and_reverse_producer.ash:28:24)
     LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (accumulate_and_reverse_producer.ash:28:24)
     LoadConstInt          Target=22 Value=0   (accumulate_and_reverse_producer.ash:28:24)
     CallKnown             Target=23 FuncLabel=__rcdrop_5 EnvTemp=22 ArgTemp=21   (accumulate_and_reverse_producer.ash:28:24)
     LoadMemOffset         Target=24 BasePtr=17 OffsetBytes=8   (accumulate_and_reverse_producer.ash:28:24)
     RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=20 Source=24   (accumulate_and_reverse_producer.ash:28:24)
-    Jump                  Target=rcdrop_list_103   (accumulate_and_reverse_producer.ash:28:24)
-  rcdrop_list_shared_104:
+    Jump                  Target=rcdrop_list_136   (accumulate_and_reverse_producer.ash:28:24)
+  rcdrop_list_shared_137:
     RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_105   (accumulate_and_reverse_producer.ash:28:24)
-  rcdrop_list_end_105:
+    Jump                  Target=rcdrop_list_end_138   (accumulate_and_reverse_producer.ash:28:24)
+  rcdrop_list_end_138:
     LoadConstInt          Target=25 Value=0   (accumulate_and_reverse_producer.ash:28:24)
     StoreLocal            Slot=8 Source=25   (accumulate_and_reverse_producer.ash:28:24)
     LoadLocal             Target=26 Slot=2   (accumulate_and_reverse_producer.ash:28:24)
     LoadLocal             Target=27 Slot=1   (accumulate_and_reverse_producer.ash:28:24)
     StoreLocal            Slot=2 Source=15   (accumulate_and_reverse_producer.ash:28:24)
     StoreLocal            Slot=1 Source=14   (accumulate_and_reverse_producer.ash:28:24)
-    LoadLocal             Target=62 Slot=8
-    JumpIfFalse           CondTemp=62 Target=rc_tco_drop_inactive_133
-    StoreLocal            Slot=29 Source=26
-  rcdrop_list_134:
-    LoadLocal             Target=63 Slot=29
-    LoadConstInt          Target=64 Value=0
-    CmpIntNe              Target=65 Left=63 Right=64
-    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_136
-    RcIsUnique            Target=66 SourceTemp=63
-    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_135
-    LoadMemOffset         Target=67 BasePtr=63 OffsetBytes=0
-    LoadConstInt          Target=68 Value=0
-    CallKnown             Target=69 FuncLabel=__rcdrop_5 EnvTemp=68 ArgTemp=67
-    LoadMemOffset         Target=70 BasePtr=63 OffsetBytes=8
-    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=29 Source=70
-    Jump                  Target=rcdrop_list_134
-  rcdrop_list_shared_135:
-    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_136
-  rcdrop_list_end_136:
-  rc_tco_drop_inactive_133:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=28
-    LoadConstInt          Target=71 Value=0
-    StoreLocal            Slot=6 Source=71
-    StoreLocal            Slot=7 Source=71
+    LoadLocal             Target=71 Slot=8
+    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_187
+    StoreLocal            Slot=32 Source=26
+  rcdrop_list_188:
+    LoadLocal             Target=72 Slot=32
+    LoadConstInt          Target=73 Value=0
+    CmpIntNe              Target=74 Left=72 Right=73
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_190
+    RcIsUnique            Target=75 SourceTemp=72
+    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_189
+    LoadMemOffset         Target=76 BasePtr=72 OffsetBytes=0
+    LoadConstInt          Target=77 Value=0
+    CallKnown             Target=78 FuncLabel=__rcdrop_5 EnvTemp=77 ArgTemp=76
+    LoadMemOffset         Target=79 BasePtr=72 OffsetBytes=8
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=79
+    Jump                  Target=rcdrop_list_188
+  rcdrop_list_shared_189:
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_190
+  rcdrop_list_end_190:
+  rc_tco_drop_inactive_187:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
+    LoadConstInt          Target=80 Value=0
+    StoreLocal            Slot=6 Source=80
+    StoreLocal            Slot=7 Source=80
     StoreLocal            Slot=2 Source=15
-    LoadConstInt          Target=72 Value=1
-    StoreLocal            Slot=8 Source=72
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=28
+    LoadConstInt          Target=81 Value=1
+    StoreLocal            Slot=8 Source=81
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
     RestoreStackPointer   Slot=11   (accumulate_and_reverse_producer.ash:28:24)
     Jump                  Target=lambda_12_body   (accumulate_and_reverse_producer.ash:28:24)
     LoadConstInt          Target=28 Value=0   (accumulate_and_reverse_producer.ash:28:24)
     StoreLocal            Slot=12 Source=28   (accumulate_and_reverse_producer.ash:26:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
-    Jump                  Target=match_end_98   (accumulate_and_reverse_producer.ash:26:5)
-  match_arm_cleanup_102:
+    Jump                  Target=match_end_131   (accumulate_and_reverse_producer.ash:26:5)
+  match_arm_cleanup_135:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_none_99   (accumulate_and_reverse_producer.ash:26:5)
-  match_none_99:
+    Jump                  Target=match_none_132   (accumulate_and_reverse_producer.ash:26:5)
+  match_none_132:
     LoadConstInt          Target=30 Value=0   (accumulate_and_reverse_producer.ash:26:5)
     StoreLocal            Slot=12 Source=30   (accumulate_and_reverse_producer.ash:26:5)
-  match_end_98:
+  match_end_131:
     LoadLocal             Target=31 Slot=12   (accumulate_and_reverse_producer.ash:26:5)
-    LoadLocal             Target=52 Slot=2   (accumulate_and_reverse_producer.ash:25:1)
-    LoadLocal             Target=53 Slot=8   (accumulate_and_reverse_producer.ash:25:1)
-    JumpIfFalse           CondTemp=53 Target=rc_tco_exit_drop_inactive_113   (accumulate_and_reverse_producer.ash:25:1)
-    StoreLocal            Slot=27 Source=52   (accumulate_and_reverse_producer.ash:25:1)
-  rcdrop_list_114:
-    LoadLocal             Target=54 Slot=27   (accumulate_and_reverse_producer.ash:25:1)
-    LoadConstInt          Target=55 Value=0   (accumulate_and_reverse_producer.ash:25:1)
-    CmpIntNe              Target=56 Left=54 Right=55   (accumulate_and_reverse_producer.ash:25:1)
-    JumpIfFalse           CondTemp=56 Target=rcdrop_list_end_116   (accumulate_and_reverse_producer.ash:25:1)
-    RcIsUnique            Target=57 SourceTemp=54
-    JumpIfFalse           CondTemp=57 Target=rcdrop_list_shared_115   (accumulate_and_reverse_producer.ash:25:1)
-    LoadMemOffset         Target=58 BasePtr=54 OffsetBytes=0   (accumulate_and_reverse_producer.ash:25:1)
-    LoadConstInt          Target=59 Value=0   (accumulate_and_reverse_producer.ash:25:1)
-    CallKnown             Target=60 FuncLabel=__rcdrop_5 EnvTemp=59 ArgTemp=58   (accumulate_and_reverse_producer.ash:25:1)
-    LoadMemOffset         Target=61 BasePtr=54 OffsetBytes=8   (accumulate_and_reverse_producer.ash:25:1)
-    RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=27 Source=61   (accumulate_and_reverse_producer.ash:25:1)
-    Jump                  Target=rcdrop_list_114   (accumulate_and_reverse_producer.ash:25:1)
-  rcdrop_list_shared_115:
-    RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_116   (accumulate_and_reverse_producer.ash:25:1)
-  rcdrop_list_end_116:
-  rc_tco_exit_drop_inactive_113:
+    LoadLocal             Target=61 Slot=2   (accumulate_and_reverse_producer.ash:25:1)
+    LoadLocal             Target=62 Slot=8   (accumulate_and_reverse_producer.ash:25:1)
+    JumpIfFalse           CondTemp=62 Target=rc_tco_exit_drop_inactive_152   (accumulate_and_reverse_producer.ash:25:1)
+    StoreLocal            Slot=30 Source=61   (accumulate_and_reverse_producer.ash:25:1)
+  rcdrop_list_153:
+    LoadLocal             Target=63 Slot=30   (accumulate_and_reverse_producer.ash:25:1)
+    LoadConstInt          Target=64 Value=0   (accumulate_and_reverse_producer.ash:25:1)
+    CmpIntNe              Target=65 Left=63 Right=64   (accumulate_and_reverse_producer.ash:25:1)
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_155   (accumulate_and_reverse_producer.ash:25:1)
+    RcIsUnique            Target=66 SourceTemp=63
+    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_154   (accumulate_and_reverse_producer.ash:25:1)
+    LoadMemOffset         Target=67 BasePtr=63 OffsetBytes=0   (accumulate_and_reverse_producer.ash:25:1)
+    LoadConstInt          Target=68 Value=0   (accumulate_and_reverse_producer.ash:25:1)
+    CallKnown             Target=69 FuncLabel=__rcdrop_5 EnvTemp=68 ArgTemp=67   (accumulate_and_reverse_producer.ash:25:1)
+    LoadMemOffset         Target=70 BasePtr=63 OffsetBytes=8   (accumulate_and_reverse_producer.ash:25:1)
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=70   (accumulate_and_reverse_producer.ash:25:1)
+    Jump                  Target=rcdrop_list_153   (accumulate_and_reverse_producer.ash:25:1)
+  rcdrop_list_shared_154:
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_155   (accumulate_and_reverse_producer.ash:25:1)
+  rcdrop_list_end_155:
+  rc_tco_exit_drop_inactive_152:
     Return                Source=31   (accumulate_and_reverse_producer.ash:25:1)
 
 function lambda_11  [SourceFunction from count]
@@ -1174,13 +1418,13 @@ function _start_main  [ProgramEntry]
     AllocStack            Target=6 SizeBytes=8   (accumulate_and_reverse_producer.ash:18:1)
     LoadLocal             Target=7 Slot=3   (accumulate_and_reverse_producer.ash:18:1)
     StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=7   (accumulate_and_reverse_producer.ash:18:1)
-    MakeClosureStack      Target=8 FuncLabel=lambda_8 EnvPtrTemp=6 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (accumulate_and_reverse_producer.ash:18:1)
+    MakeClosureStack      Target=8 FuncLabel=lambda_6 EnvPtrTemp=6 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:18:1)
     StoreLocal            Slot=6 Source=8   (accumulate_and_reverse_producer.ash:18:1)
     Alloc                 Target=9 SizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
     LoadLocal             Target=10 Slot=6   (accumulate_and_reverse_producer.ash:20:1)
     Borrow                Target=11 SourceTemp=10
     StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=11   (accumulate_and_reverse_producer.ash:20:1)
-    MakeClosure           Target=12 FuncLabel=lambda_9 EnvPtrTemp=9 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
+    MakeClosure           Target=12 FuncLabel=lambda_7 EnvPtrTemp=9 EnvSizeBytes=8   (accumulate_and_reverse_producer.ash:20:1)
     StoreLocal            Slot=7 Source=12   (accumulate_and_reverse_producer.ash:20:1)
     LoadConstInt          Target=13 Value=0   (accumulate_and_reverse_producer.ash:25:1)
     MakeClosure           Target=14 FuncLabel=lambda_11 EnvPtrTemp=13 EnvSizeBytes=0   (accumulate_and_reverse_producer.ash:25:1)
@@ -1225,10 +1469,10 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=36 Value=1   (accumulate_and_reverse_producer.ash:30:16)
     AndInt                Target=37 Left=35 Right=36   (accumulate_and_reverse_producer.ash:30:16)
     StoreLocal            Slot=14 Source=32   (accumulate_and_reverse_producer.ash:30:16)
-    JumpIfFalse           CondTemp=37 Target=rc_call_argument_not_retained_117   (accumulate_and_reverse_producer.ash:30:16)
+    JumpIfFalse           CondTemp=37 Target=rc_call_argument_not_retained_156   (accumulate_and_reverse_producer.ash:30:16)
     RcDup                 Target=38 SourceTemp=32 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=14 Source=38   (accumulate_and_reverse_producer.ash:30:16)
-  rc_call_argument_not_retained_117:
+  rc_call_argument_not_retained_156:
     LoadLocal             Target=39 Slot=14   (accumulate_and_reverse_producer.ash:30:16)
     CallClosure           Target=40 ClosureTemp=15 ArgTemp=39 RuntimeManagedArgumentFlagTemp=37   (accumulate_and_reverse_producer.ash:30:16)
     LoadConstInt          Target=41 Value=0   (accumulate_and_reverse_producer.ash:30:74)
@@ -1236,24 +1480,24 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=15
     StoreLocal            Slot=16 Source=32   (accumulate_and_reverse_producer.ash:30:16)
-  rcdrop_list_118:
+  rcdrop_list_157:
     LoadLocal             Target=43 Slot=16   (accumulate_and_reverse_producer.ash:30:16)
     LoadConstInt          Target=44 Value=0   (accumulate_and_reverse_producer.ash:30:16)
     CmpIntNe              Target=45 Left=43 Right=44   (accumulate_and_reverse_producer.ash:30:16)
-    JumpIfFalse           CondTemp=45 Target=rcdrop_list_end_120   (accumulate_and_reverse_producer.ash:30:16)
+    JumpIfFalse           CondTemp=45 Target=rcdrop_list_end_159   (accumulate_and_reverse_producer.ash:30:16)
     RcIsUnique            Target=46 SourceTemp=43
-    JumpIfFalse           CondTemp=46 Target=rcdrop_list_shared_119   (accumulate_and_reverse_producer.ash:30:16)
+    JumpIfFalse           CondTemp=46 Target=rcdrop_list_shared_158   (accumulate_and_reverse_producer.ash:30:16)
     LoadMemOffset         Target=47 BasePtr=43 OffsetBytes=0   (accumulate_and_reverse_producer.ash:30:16)
     LoadConstInt          Target=48 Value=0   (accumulate_and_reverse_producer.ash:30:16)
     CallKnown             Target=49 FuncLabel=__rcdrop_5 EnvTemp=48 ArgTemp=47   (accumulate_and_reverse_producer.ash:30:16)
     LoadMemOffset         Target=50 BasePtr=43 OffsetBytes=8   (accumulate_and_reverse_producer.ash:30:16)
     RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=16 Source=50   (accumulate_and_reverse_producer.ash:30:16)
-    Jump                  Target=rcdrop_list_118   (accumulate_and_reverse_producer.ash:30:16)
-  rcdrop_list_shared_119:
+    Jump                  Target=rcdrop_list_157   (accumulate_and_reverse_producer.ash:30:16)
+  rcdrop_list_shared_158:
     RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_120   (accumulate_and_reverse_producer.ash:30:16)
-  rcdrop_list_end_120:
+    Jump                  Target=rcdrop_list_end_159   (accumulate_and_reverse_producer.ash:30:16)
+  rcdrop_list_end_159:
     PrintInt              Source=42   (accumulate_and_reverse_producer.ash:30:1)
     AllocAdt              Target=51 Tag=0 FieldCount=0   (accumulate_and_reverse_producer.ash:30:1)
     StoreLocal            Slot=17 Source=51   (accumulate_and_reverse_producer.ash:18:1)

@@ -3,13 +3,13 @@ RC report
 
 Function: buildTexts [lambda_1]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               3
 
 Function: buildTexts
   Operations
@@ -23,7 +23,7 @@ Function: buildTexts
 
 Function: sumTextLengths [lambda_3]
   Operations
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
     allocations:          0
@@ -53,17 +53,17 @@ Function: countTexts
 
 Function: buildTexts [lambda_1__scalarenv0]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               3
 
 Function: sumTextLengths [lambda_3__scalarenv2]
   Operations
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
     allocations:          0

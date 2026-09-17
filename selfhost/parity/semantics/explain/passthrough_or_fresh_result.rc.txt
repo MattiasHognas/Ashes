@@ -34,16 +34,16 @@ Function: __rcdrop_3
 Function: bump
   Operations
     dup:                  2
-    drop:                 3
+    drop:                 4
     uniqueness checks:    1
     allocations:          5
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               1
 
 Function: bumpIf [lambda_5]
   Operations
-    dup:                  0
+    dup:                  3
     drop:                 2
     uniqueness checks:    1
     allocations:          2
@@ -63,7 +63,7 @@ Function: bumpIf
 
 Function: keepOrBump
   Operations
-    dup:                  0
+    dup:                  6
     drop:                 2
     uniqueness checks:    1
     allocations:          3
@@ -73,7 +73,7 @@ Function: keepOrBump
 
 Function: bumpTimes [lambda_8]
   Operations
-    dup:                  1
+    dup:                  4
     drop:                 4
     uniqueness checks:    2
     allocations:          2
@@ -93,7 +93,7 @@ Function: bumpTimes
 
 Function: count [lambda_10]
   Operations
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
     allocations:          1
@@ -123,7 +123,7 @@ Function: bumpIf
 
 Function: count [lambda_10__scalarenv1]
   Operations
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
     allocations:          1

@@ -23,7 +23,7 @@ Function: __deepcopy_2
 
 Function: walk [lambda_1]
   Operations
-    dup:                  2
+    dup:                  12
     drop:                 18
     uniqueness checks:    10
     allocations:          3
@@ -43,7 +43,7 @@ Function: walk
 
 Function: carry [lambda_6]
   Operations
-    dup:                  2
+    dup:                  16
     drop:                 24
     uniqueness checks:    13
     allocations:          3
@@ -63,7 +63,7 @@ Function: __rc_cdrop_7
 
 Function: carry [lambda_6$env_normalize]
   Operations
-    dup:                  0
+    dup:                  2
     drop:                 0
     uniqueness checks:    0
     allocations:          0
@@ -93,7 +93,7 @@ Function: carry
 
 Function: walk [lambda_1__scalarenv0]
   Operations
-    dup:                  2
+    dup:                  12
     drop:                 18
     uniqueness checks:    10
     allocations:          3

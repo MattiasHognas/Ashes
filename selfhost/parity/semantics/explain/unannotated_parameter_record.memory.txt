@@ -19,12 +19,12 @@ Function: toEntry
     n: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  0
+    dup:                  1
     drop:                 2
     uniqueness checks:    1
   representation [lambda_0]
     conservative unknown: 2
     region:               4
-    runtime rc:           2
+    runtime rc:           3
     copy value:           1
 

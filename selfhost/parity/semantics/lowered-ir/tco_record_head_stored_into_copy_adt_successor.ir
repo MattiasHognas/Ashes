@@ -41,54 +41,81 @@ function __deepcopy_list_2  [ListDeepCopier]
     Return                Source=11   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
 
 function lambda_1  [ClosureHelper from build]
-  locals=21 temps=77
+  locals=30 temps=112
     LoadEnv               Target=0 Index=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
     StoreLocal            Slot=2 Source=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadLocal             Target=22 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadArgumentOwnership Target=23   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadConstInt          Target=24 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    AndInt                Target=25 Left=23 Right=24   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=25 Target=rc_arg_normalize_copy_3   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=12 Source=22   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Jump                  Target=rc_arg_normalize_done_4   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_arg_normalize_copy_3:
-    LoadConstInt          Target=27 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=13 Source=22   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=14 Source=27   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=15 Source=27   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_normalize_list_5:
-    LoadLocal             Target=28 Slot=13   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CmpIntNe              Target=29 Left=28 Right=27   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=29 Target=rc_normalize_list_end_6   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadMemOffset         Target=30 BasePtr=28 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadMemOffset         Target=31 BasePtr=28 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CopyOutArena          DestTemp=33 SrcTemp=30 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=34 Ptr=30 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CopyOutArena          DestTemp=35 SrcTemp=34 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=33 FieldIndex=0 Source=35 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Alloc                 Target=36 SizeBytes=16 RuntimeManaged=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreMemOffset        BasePtr=36 OffsetBytes=0 Source=33   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreMemOffset        BasePtr=36 OffsetBytes=8 Source=27   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadLocal             Target=37 Slot=14   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CmpIntNe              Target=38 Left=37 Right=27   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_first_7   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadLocal             Target=39 Slot=15   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreMemOffset        BasePtr=39 OffsetBytes=8 Source=36   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Jump                  Target=rc_normalize_list_linked_8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_normalize_list_first_7:
-    StoreLocal            Slot=14 Source=36   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_normalize_list_linked_8:
-    StoreLocal            Slot=15 Source=36   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=13 Source=31   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Jump                  Target=rc_normalize_list_5   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_normalize_list_end_6:
-    LoadLocal             Target=40 Slot=14   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=12 Source=40   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_arg_normalize_done_4:
-    LoadLocal             Target=41 Slot=12   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=1 Source=41   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadConstInt          Target=42 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=6 Source=42   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadLocal             Target=48 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadArgumentOwnership Target=49   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadConstInt          Target=50 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    AndInt                Target=51 Left=49 Right=50   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=51 Target=rc_arg_normalize_copy_13   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=18 Source=48   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_arg_normalize_done_14   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_arg_normalize_copy_13:
+    IsReferenceCounted    Target=52 SourceTemp=48
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_15   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcDup                 Target=53 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=53   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_representation_done_16   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_representation_copy_15:
+    LoadConstInt          Target=55 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=20 Source=48   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=21 Source=55   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=22 Source=55   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_normalize_list_17:
+    LoadLocal             Target=56 Slot=20   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    CmpIntNe              Target=57 Left=56 Right=55   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=57 Target=rc_normalize_list_end_18   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadMemOffset         Target=58 BasePtr=56 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadMemOffset         Target=59 BasePtr=56 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    IsReferenceCounted    Target=60 SourceTemp=58
+    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_19   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcDup                 Target=61 SourceTemp=58 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=61   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_representation_done_20   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_representation_copy_19:
+    CopyOutArena          DestTemp=63 SrcTemp=58 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=64 Ptr=58 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    IsReferenceCounted    Target=65 SourceTemp=64
+    JumpIfFalse           CondTemp=65 Target=rc_representation_copy_21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcDup                 Target=66 SourceTemp=64 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=66   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_representation_done_22   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_representation_copy_21:
+    CopyOutArena          DestTemp=67 SrcTemp=64 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=24 Source=67   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_representation_done_22:
+    LoadLocal             Target=68 Slot=24   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    SetAdtField           Ptr=63 FieldIndex=0 Source=68 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=23 Source=63   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_representation_done_20:
+    LoadLocal             Target=69 Slot=23   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Alloc                 Target=70 SizeBytes=16 RuntimeManaged=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreMemOffset        BasePtr=70 OffsetBytes=0 Source=69   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreMemOffset        BasePtr=70 OffsetBytes=8 Source=55   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadLocal             Target=71 Slot=21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    CmpIntNe              Target=72 Left=71 Right=55   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=72 Target=rc_normalize_list_first_23   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadLocal             Target=73 Slot=22   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreMemOffset        BasePtr=73 OffsetBytes=8 Source=70   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_24   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_normalize_list_first_23:
+    StoreLocal            Slot=21 Source=70   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_normalize_list_linked_24:
+    StoreLocal            Slot=22 Source=70   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=20 Source=59   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_normalize_list_17   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_normalize_list_end_18:
+    LoadLocal             Target=74 Slot=21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=19 Source=74   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_representation_done_16:
+    LoadLocal             Target=75 Slot=19   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=18 Source=75   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_arg_normalize_done_14:
+    LoadLocal             Target=76 Slot=18   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=1 Source=76   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadConstInt          Target=77 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=6 Source=77   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
     StoreLocal            Slot=5 Source=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
@@ -120,103 +147,163 @@ function lambda_1  [ClosureHelper from build]
     SetAdtField           Ptr=15 FieldIndex=0 Source=10 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
     SetAdtField           Ptr=15 FieldIndex=1 Source=14 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
     LoadLocal             Target=16 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:18:73)
-    Alloc                 Target=17 SizeBytes=16 RuntimeManaged=true   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
-    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=15   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
-    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=16   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
-    LoadLocal             Target=18 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
-    LoadLocal             Target=19 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
+    IsReferenceCounted    Target=17 SourceTemp=16
+    StoreLocal            Slot=12 Source=16   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    LoadConstInt          Target=18 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    CmpIntEq              Target=19 Left=16 Right=18   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    OrInt                 Target=20 Left=17 Right=19   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    JumpIfFalse           CondTemp=20 Target=rc_tail_copy_4   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    Jump                  Target=rc_tail_done_3   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_tail_copy_4:
+    LoadConstInt          Target=22 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreLocal            Slot=13 Source=16   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreLocal            Slot=14 Source=22   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreLocal            Slot=15 Source=22   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_normalize_list_5:
+    LoadLocal             Target=23 Slot=13   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    CmpIntNe              Target=24 Left=23 Right=22   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    JumpIfFalse           CondTemp=24 Target=rc_normalize_list_end_6   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    LoadMemOffset         Target=25 BasePtr=23 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    LoadMemOffset         Target=26 BasePtr=23 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    IsReferenceCounted    Target=27 SourceTemp=25
+    JumpIfFalse           CondTemp=27 Target=rc_representation_copy_7   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    RcDup                 Target=28 SourceTemp=25 RuntimeManaged=true
+    StoreLocal            Slot=16 Source=28   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    Jump                  Target=rc_representation_done_8   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_representation_copy_7:
+    CopyOutArena          DestTemp=30 SrcTemp=25 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=31 Ptr=25 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    IsReferenceCounted    Target=32 SourceTemp=31
+    JumpIfFalse           CondTemp=32 Target=rc_representation_copy_9   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    RcDup                 Target=33 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=33   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    Jump                  Target=rc_representation_done_10   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_representation_copy_9:
+    CopyOutArena          DestTemp=34 SrcTemp=31 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=17 Source=34   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_representation_done_10:
+    LoadLocal             Target=35 Slot=17   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    SetAdtField           Ptr=30 FieldIndex=0 Source=35 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreLocal            Slot=16 Source=30   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_representation_done_8:
+    LoadLocal             Target=36 Slot=16   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    Alloc                 Target=37 SizeBytes=16 RuntimeManaged=true   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreMemOffset        BasePtr=37 OffsetBytes=0 Source=36   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreMemOffset        BasePtr=37 OffsetBytes=8 Source=22   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    LoadLocal             Target=38 Slot=14   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    CmpIntNe              Target=39 Left=38 Right=22   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    JumpIfFalse           CondTemp=39 Target=rc_normalize_list_first_11   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    LoadLocal             Target=40 Slot=15   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreMemOffset        BasePtr=40 OffsetBytes=8 Source=37   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    Jump                  Target=rc_normalize_list_linked_12   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_normalize_list_first_11:
+    StoreLocal            Slot=14 Source=37   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_normalize_list_linked_12:
+    StoreLocal            Slot=15 Source=37   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreLocal            Slot=13 Source=26   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    Jump                  Target=rc_normalize_list_5   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_normalize_list_end_6:
+    LoadLocal             Target=41 Slot=14   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreLocal            Slot=12 Source=41   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+  rc_tail_done_3:
+    LoadLocal             Target=42 Slot=12   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    Alloc                 Target=43 SizeBytes=16 RuntimeManaged=true   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreMemOffset        BasePtr=43 OffsetBytes=0 Source=15   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    StoreMemOffset        BasePtr=43 OffsetBytes=8 Source=42   (tco_record_head_stored_into_copy_adt_successor.ash:18:23)
+    LoadLocal             Target=44 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
+    LoadLocal             Target=45 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
     StoreLocal            Slot=2 Source=8   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
-    StoreLocal            Slot=1 Source=17   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=20
-    StoreLocal            Slot=1 Source=17
-    LoadConstInt          Target=76 Value=1
-    StoreLocal            Slot=6 Source=76
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=20
+    StoreLocal            Slot=1 Source=43   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
+    StoreLocal            Slot=1 Source=43
+    LoadConstInt          Target=111 Value=1
+    StoreLocal            Slot=6 Source=111
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=29
     RestoreStackPointer   Slot=9   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
     Jump                  Target=lambda_1_body   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
-    LoadConstInt          Target=20 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
-    StoreLocal            Slot=10 Source=20   (tco_record_head_stored_into_copy_adt_successor.ash:16:5)
+    LoadConstInt          Target=46 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:18:10)
+    StoreLocal            Slot=10 Source=46   (tco_record_head_stored_into_copy_adt_successor.ash:16:5)
   endif_1:
-    LoadLocal             Target=21 Slot=10   (tco_record_head_stored_into_copy_adt_successor.ash:16:5)
-    LoadConstInt          Target=43 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=16 Source=43   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadLocal             Target=44 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadLocal             Target=45 Slot=6   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CmpIntEq              Target=46 Left=44 Right=21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadLocal             Target=47 Slot=16   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CmpIntEq              Target=48 Left=47 Right=43   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    AndInt                Target=49 Left=45 Right=46   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    AndInt                Target=50 Left=49 Right=48   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=50 Target=rc_tco_exit_transfer_not_selected_9   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadConstInt          Target=51 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=16 Source=51   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Jump                  Target=rc_tco_exit_transfer_done_10   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_tco_exit_transfer_not_selected_9:
-    LoadLocal             Target=52 Slot=6   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=52 Target=rc_tco_exit_drop_inactive_11   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=17 Source=44   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rcdrop_list_12:
-    LoadLocal             Target=53 Slot=17   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadConstInt          Target=54 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CmpIntNe              Target=55 Left=53 Right=54   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=55 Target=rcdrop_list_end_14   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcIsUnique            Target=56 SourceTemp=53
-    JumpIfFalse           CondTemp=56 Target=rcdrop_list_shared_13   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadMemOffset         Target=57 BasePtr=53 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcIsUnique            Target=58 SourceTemp=57
-    JumpIfFalse           CondTemp=58 Target=rc_drop_shared_15   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    GetAdtField           Target=59 Ptr=57 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcDrop                SourceTemp=59 TypeName=String RuntimeManaged=true
-  rc_drop_shared_15:
-    RcDrop                SourceTemp=57 TypeName=Item RuntimeManaged=true
-    LoadMemOffset         Target=60 BasePtr=53 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcDrop                SourceTemp=53 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=17 Source=60   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Jump                  Target=rcdrop_list_12   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rcdrop_list_shared_13:
-    RcDrop                SourceTemp=53 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_14   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rcdrop_list_end_14:
-  rc_tco_exit_drop_inactive_11:
-  rc_tco_exit_transfer_done_10:
-    LoadArgumentOwnership Target=61   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadConstInt          Target=62 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    ShrInt                Target=63 Left=61 Right=62   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=63 Target=rc_result_owned_16   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Alloc                 Target=64 SizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    MakeClosure           Target=65 FuncLabel=__deepcopy_list_2 EnvPtrTemp=64 EnvSizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreMemOffset        BasePtr=64 OffsetBytes=0 Source=65   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CallClosure           Target=66 ClosureTemp=65 ArgTemp=21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    StoreLocal            Slot=19 Source=21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rcdrop_list_18:
-    LoadLocal             Target=67 Slot=19   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadConstInt          Target=68 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    CmpIntNe              Target=69 Left=67 Right=68   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    JumpIfFalse           CondTemp=69 Target=rcdrop_list_end_20   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcIsUnique            Target=70 SourceTemp=67
-    JumpIfFalse           CondTemp=70 Target=rcdrop_list_shared_19   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    LoadMemOffset         Target=71 BasePtr=67 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcIsUnique            Target=72 SourceTemp=71
-    JumpIfFalse           CondTemp=72 Target=rc_drop_shared_21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    GetAdtField           Target=73 Ptr=71 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcDrop                SourceTemp=73 TypeName=String RuntimeManaged=true
-  rc_drop_shared_21:
-    RcDrop                SourceTemp=71 TypeName=Item RuntimeManaged=true
-    LoadMemOffset         Target=74 BasePtr=67 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=19 Source=74   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Jump                  Target=rcdrop_list_18   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rcdrop_list_shared_19:
-    RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_20   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rcdrop_list_end_20:
-    StoreLocal            Slot=18 Source=66   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Jump                  Target=rc_result_done_17   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_result_owned_16:
-    StoreLocal            Slot=18 Source=21   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-  rc_result_done_17:
-    LoadLocal             Target=75 Slot=18   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
-    Return                Source=75   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadLocal             Target=47 Slot=10   (tco_record_head_stored_into_copy_adt_successor.ash:16:5)
+    LoadConstInt          Target=78 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=25 Source=78   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadLocal             Target=79 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadLocal             Target=80 Slot=6   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    CmpIntEq              Target=81 Left=79 Right=47   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadLocal             Target=82 Slot=25   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    CmpIntEq              Target=83 Left=82 Right=78   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    AndInt                Target=84 Left=80 Right=81   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    AndInt                Target=85 Left=84 Right=83   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=85 Target=rc_tco_exit_transfer_not_selected_25   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadConstInt          Target=86 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=25 Source=86   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_tco_exit_transfer_done_26   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_tco_exit_transfer_not_selected_25:
+    LoadLocal             Target=87 Slot=6   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=87 Target=rc_tco_exit_drop_inactive_27   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=26 Source=79   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rcdrop_list_28:
+    LoadLocal             Target=88 Slot=26   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadConstInt          Target=89 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    CmpIntNe              Target=90 Left=88 Right=89   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=90 Target=rcdrop_list_end_30   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcIsUnique            Target=91 SourceTemp=88
+    JumpIfFalse           CondTemp=91 Target=rcdrop_list_shared_29   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadMemOffset         Target=92 BasePtr=88 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcIsUnique            Target=93 SourceTemp=92
+    JumpIfFalse           CondTemp=93 Target=rc_drop_shared_31   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    GetAdtField           Target=94 Ptr=92 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcDrop                SourceTemp=94 TypeName=String RuntimeManaged=true
+  rc_drop_shared_31:
+    RcDrop                SourceTemp=92 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=95 BasePtr=88 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=26 Source=95   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rcdrop_list_28   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rcdrop_list_shared_29:
+    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_30   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rcdrop_list_end_30:
+  rc_tco_exit_drop_inactive_27:
+  rc_tco_exit_transfer_done_26:
+    LoadArgumentOwnership Target=96   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadConstInt          Target=97 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    ShrInt                Target=98 Left=96 Right=97   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=98 Target=rc_result_owned_32   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Alloc                 Target=99 SizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    MakeClosure           Target=100 FuncLabel=__deepcopy_list_2 EnvPtrTemp=99 EnvSizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreMemOffset        BasePtr=99 OffsetBytes=0 Source=100   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    CallClosure           Target=101 ClosureTemp=100 ArgTemp=47   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    StoreLocal            Slot=28 Source=47   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rcdrop_list_34:
+    LoadLocal             Target=102 Slot=28   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadConstInt          Target=103 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    CmpIntNe              Target=104 Left=102 Right=103   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    JumpIfFalse           CondTemp=104 Target=rcdrop_list_end_36   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcIsUnique            Target=105 SourceTemp=102
+    JumpIfFalse           CondTemp=105 Target=rcdrop_list_shared_35   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    LoadMemOffset         Target=106 BasePtr=102 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcIsUnique            Target=107 SourceTemp=106
+    JumpIfFalse           CondTemp=107 Target=rc_drop_shared_37   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    GetAdtField           Target=108 Ptr=106 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcDrop                SourceTemp=108 TypeName=String RuntimeManaged=true
+  rc_drop_shared_37:
+    RcDrop                SourceTemp=106 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=109 BasePtr=102 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=109   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rcdrop_list_34   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rcdrop_list_shared_35:
+    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_36   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rcdrop_list_end_36:
+    StoreLocal            Slot=27 Source=101   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Jump                  Target=rc_result_done_33   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_result_owned_32:
+    StoreLocal            Slot=27 Source=47   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+  rc_result_done_33:
+    LoadLocal             Target=110 Slot=27   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
+    Return                Source=110   (tco_record_head_stored_into_copy_adt_successor.ash:15:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from build]
   locals=2 temps=4
@@ -239,10 +326,10 @@ function __rcdrop_structural_6  [StructuralOwnerDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_37   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_53   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-  rc_drop_shared_37:
+  rc_drop_shared_53:
     RcDrop                SourceTemp=0 TypeName=Item RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     Return                Source=3   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
@@ -268,65 +355,119 @@ function __deepcopy_7  [AdtDeepCopier]
     Return                Source=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
 
 function lambda_5  [ClosureHelper from heaviest]
-  locals=38 temps=179
+  locals=47 temps=206
     LoadEnv               Target=0 Index=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     StoreLocal            Slot=2 Source=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     LoadLocal             Target=61 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=63 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=27 Source=61   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=28 Source=63   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=29 Source=63   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_normalize_list_38:
-    LoadLocal             Target=64 Slot=27   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CmpIntNe              Target=65 Left=64 Right=63   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=65 Target=rc_normalize_list_end_39   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadMemOffset         Target=66 BasePtr=64 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadMemOffset         Target=67 BasePtr=64 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CopyOutArena          DestTemp=69 SrcTemp=66 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=70 Ptr=66 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CopyOutArena          DestTemp=71 SrcTemp=70 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=69 FieldIndex=0 Source=71 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Alloc                 Target=72 SizeBytes=16 RuntimeManaged=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreMemOffset        BasePtr=72 OffsetBytes=0 Source=69   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreMemOffset        BasePtr=72 OffsetBytes=8 Source=63   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=73 Slot=28   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CmpIntNe              Target=74 Left=73 Right=63   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=74 Target=rc_normalize_list_first_40   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=75 Slot=29   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreMemOffset        BasePtr=75 OffsetBytes=8 Source=72   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Jump                  Target=rc_normalize_list_linked_41   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_normalize_list_first_40:
-    StoreLocal            Slot=28 Source=72   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_normalize_list_linked_41:
-    StoreLocal            Slot=29 Source=72   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=27 Source=67   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Jump                  Target=rc_normalize_list_38   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_normalize_list_end_39:
-    LoadLocal             Target=76 Slot=28   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=2 Source=76   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=77 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=8 Source=77   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=78 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadArgumentOwnership Target=79   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=80 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    AndInt                Target=81 Left=79 Right=80   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=81 Target=rc_arg_normalize_copy_42   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=30 Source=78   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Jump                  Target=rc_arg_normalize_done_43   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_arg_normalize_copy_42:
-    CopyOutArena          DestTemp=84 SrcTemp=78 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=85 Ptr=78 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CopyOutArena          DestTemp=87 SrcTemp=85 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=88 Ptr=85 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CopyOutArena          DestTemp=89 SrcTemp=88 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=87 FieldIndex=0 Source=89 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    SetAdtField           Ptr=84 FieldIndex=0 Source=87 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=30 Source=84   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_arg_normalize_done_43:
-    LoadLocal             Target=90 Slot=30   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=1 Source=90   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=91 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=9 Source=91   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    IsReferenceCounted    Target=62 SourceTemp=61
+    JumpIfFalse           CondTemp=62 Target=rc_representation_copy_54   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDup                 Target=63 SourceTemp=61 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=63   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_representation_done_55   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_copy_54:
+    LoadConstInt          Target=65 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=28 Source=61   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=29 Source=65   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=30 Source=65   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_normalize_list_56:
+    LoadLocal             Target=66 Slot=28   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CmpIntNe              Target=67 Left=66 Right=65   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=67 Target=rc_normalize_list_end_57   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadMemOffset         Target=68 BasePtr=66 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadMemOffset         Target=69 BasePtr=66 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    IsReferenceCounted    Target=70 SourceTemp=68
+    JumpIfFalse           CondTemp=70 Target=rc_representation_copy_58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDup                 Target=71 SourceTemp=68 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=71   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_representation_done_59   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_copy_58:
+    CopyOutArena          DestTemp=73 SrcTemp=68 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=74 Ptr=68 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    IsReferenceCounted    Target=75 SourceTemp=74
+    JumpIfFalse           CondTemp=75 Target=rc_representation_copy_60   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDup                 Target=76 SourceTemp=74 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=76   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_representation_done_61   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_copy_60:
+    CopyOutArena          DestTemp=77 SrcTemp=74 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=32 Source=77   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_done_61:
+    LoadLocal             Target=78 Slot=32   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    SetAdtField           Ptr=73 FieldIndex=0 Source=78 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=31 Source=73   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_done_59:
+    LoadLocal             Target=79 Slot=31   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Alloc                 Target=80 SizeBytes=16 RuntimeManaged=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreMemOffset        BasePtr=80 OffsetBytes=0 Source=79   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreMemOffset        BasePtr=80 OffsetBytes=8 Source=65   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=81 Slot=29   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CmpIntNe              Target=82 Left=81 Right=65   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=82 Target=rc_normalize_list_first_62   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=83 Slot=30   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreMemOffset        BasePtr=83 OffsetBytes=8 Source=80   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_normalize_list_linked_63   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_normalize_list_first_62:
+    StoreLocal            Slot=29 Source=80   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_normalize_list_linked_63:
+    StoreLocal            Slot=30 Source=80   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=28 Source=69   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_normalize_list_56   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_normalize_list_end_57:
+    LoadLocal             Target=84 Slot=29   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=27 Source=84   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_done_55:
+    LoadLocal             Target=85 Slot=27   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=2 Source=85   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadConstInt          Target=86 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=8 Source=86   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=87 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadArgumentOwnership Target=88   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadConstInt          Target=89 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    AndInt                Target=90 Left=88 Right=89   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=90 Target=rc_arg_normalize_copy_64   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=33 Source=87   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_arg_normalize_done_65   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_arg_normalize_copy_64:
+    IsReferenceCounted    Target=91 SourceTemp=87
+    JumpIfFalse           CondTemp=91 Target=rc_representation_copy_66   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDup                 Target=92 SourceTemp=87 RuntimeManaged=true
+    StoreLocal            Slot=34 Source=92   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_representation_done_67   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_copy_66:
+    CopyOutArena          DestTemp=95 SrcTemp=87 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=96 Ptr=87 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    IsReferenceCounted    Target=97 SourceTemp=96
+    JumpIfFalse           CondTemp=97 Target=rc_representation_copy_68   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDup                 Target=98 SourceTemp=96 RuntimeManaged=true
+    StoreLocal            Slot=35 Source=98   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_representation_done_69   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_copy_68:
+    CopyOutArena          DestTemp=100 SrcTemp=96 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=101 Ptr=96 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    IsReferenceCounted    Target=102 SourceTemp=101
+    JumpIfFalse           CondTemp=102 Target=rc_representation_copy_70   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDup                 Target=103 SourceTemp=101 RuntimeManaged=true
+    StoreLocal            Slot=36 Source=103   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_representation_done_71   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_copy_70:
+    CopyOutArena          DestTemp=104 SrcTemp=101 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=36 Source=104   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_done_71:
+    LoadLocal             Target=105 Slot=36   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    SetAdtField           Ptr=100 FieldIndex=0 Source=105 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=35 Source=100   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_done_69:
+    LoadLocal             Target=106 Slot=35   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    SetAdtField           Ptr=95 FieldIndex=0 Source=106 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=34 Source=95   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_representation_done_67:
+    LoadLocal             Target=107 Slot=34   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=33 Source=107   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_arg_normalize_done_65:
+    LoadLocal             Target=108 Slot=33   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=1 Source=108   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadConstInt          Target=109 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=9 Source=109   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
     StoreLocal            Slot=5 Source=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
@@ -339,21 +480,21 @@ function lambda_5  [ClosureHelper from heaviest]
     SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
     LoadConstInt          Target=3 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_25   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_41   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     LoadLocal             Target=5 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:22:17)
     StoreLocal            Slot=13 Source=5   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
-    Jump                  Target=match_end_22   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-  match_arm_cleanup_25:
+    Jump                  Target=match_end_38   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
+  match_arm_cleanup_41:
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=17
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=17
-    Jump                  Target=match_next_24   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-  match_next_24:
+    Jump                  Target=match_next_40   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
+  match_next_40:
     SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
     LoadConstInt          Target=6 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     CmpIntNe              Target=7 Left=2 Right=6   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_26   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_42   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     StoreLocal            Slot=20 Source=8   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
@@ -366,7 +507,7 @@ function lambda_5  [ClosureHelper from heaviest]
     LoadLocal             Target=12 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:24:30)
     GetAdtField           Target=13 Ptr=12 FieldIndex=1 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:24:30)
     CmpIntGt              Target=14 Left=11 Right=13   (tco_record_head_stored_into_copy_adt_successor.ash:24:16)
-    JumpIfFalse           CondTemp=14 Target=else_27   (tco_record_head_stored_into_copy_adt_successor.ash:24:13)
+    JumpIfFalse           CondTemp=14 Target=else_43   (tco_record_head_stored_into_copy_adt_successor.ash:24:13)
     LoadLocal             Target=15 Slot=21   (tco_record_head_stored_into_copy_adt_successor.ash:25:27)
     Borrow                Target=16 SourceTemp=15
     LoadLocal             Target=17 Slot=20   (tco_record_head_stored_into_copy_adt_successor.ash:25:45)
@@ -382,104 +523,131 @@ function lambda_5  [ClosureHelper from heaviest]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=21
     LoadLocal             Target=24 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     StoreLocal            Slot=23 Source=24   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
-  rcdrop_list_29:
+  rcdrop_list_45:
     LoadLocal             Target=25 Slot=23   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     LoadConstInt          Target=26 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     CmpIntNe              Target=27 Left=25 Right=26   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
-    JumpIfFalse           CondTemp=27 Target=rcdrop_list_end_31   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
+    JumpIfFalse           CondTemp=27 Target=rcdrop_list_end_47   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     RcIsUnique            Target=28 SourceTemp=25
-    JumpIfFalse           CondTemp=28 Target=rcdrop_list_shared_30   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_shared_46   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     LoadMemOffset         Target=29 BasePtr=25 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     RcIsUnique            Target=30 SourceTemp=29
-    JumpIfFalse           CondTemp=30 Target=rc_drop_shared_32   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
+    JumpIfFalse           CondTemp=30 Target=rc_drop_shared_48   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     GetAdtField           Target=31 Ptr=29 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     RcDrop                SourceTemp=31 TypeName=String RuntimeManaged=true
-  rc_drop_shared_32:
+  rc_drop_shared_48:
     RcDrop                SourceTemp=29 TypeName=Item RuntimeManaged=true
     LoadMemOffset         Target=32 BasePtr=25 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     RcDrop                SourceTemp=25 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=23 Source=32   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
-    Jump                  Target=rcdrop_list_29   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
-  rcdrop_list_shared_30:
+    Jump                  Target=rcdrop_list_45   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
+  rcdrop_list_shared_46:
     RcDrop                SourceTemp=25 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_31   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
-  rcdrop_list_end_31:
+    Jump                  Target=rcdrop_list_end_47   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
+  rcdrop_list_end_47:
     LoadConstInt          Target=33 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     StoreLocal            Slot=8 Source=33   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     LoadLocal             Target=34 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     LoadLocal             Target=35 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     StoreLocal            Slot=2 Source=23   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     StoreLocal            Slot=1 Source=22   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
-    CopyOutArena          DestTemp=136 SrcTemp=22 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=137 Ptr=22 FieldIndex=0 Tagless=true
-    CopyOutArena          DestTemp=139 SrcTemp=137 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=140 Ptr=137 FieldIndex=0 Tagless=true
-    CopyOutArena          DestTemp=141 SrcTemp=140 RuntimeManaged=true Purpose=RcNormalization
-    SetAdtField           Ptr=139 FieldIndex=0 Source=141 Tagless=true
-    SetAdtField           Ptr=136 FieldIndex=0 Source=139 Tagless=true
-    RcIsUnique            Target=142 SourceTemp=137
-    JumpIfFalse           CondTemp=142 Target=rc_drop_shared_75
-    GetAdtField           Target=143 Ptr=137 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=143 TypeName=String RuntimeManaged=true
-  rc_drop_shared_75:
-    RcDrop                SourceTemp=137 TypeName=Item RuntimeManaged=true
-    LoadLocal             Target=144 Slot=8
-    JumpIfFalse           CondTemp=144 Target=rc_tco_drop_inactive_76
-    StoreLocal            Slot=35 Source=34
-  rcdrop_list_77:
-    LoadLocal             Target=145 Slot=35
-    LoadConstInt          Target=146 Value=0
-    CmpIntNe              Target=147 Left=145 Right=146
-    JumpIfFalse           CondTemp=147 Target=rcdrop_list_end_79
-    RcIsUnique            Target=148 SourceTemp=145
-    JumpIfFalse           CondTemp=148 Target=rcdrop_list_shared_78
-    LoadMemOffset         Target=149 BasePtr=145 OffsetBytes=0
-    RcIsUnique            Target=150 SourceTemp=149
-    JumpIfFalse           CondTemp=150 Target=rc_drop_shared_80
-    GetAdtField           Target=151 Ptr=149 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=151 TypeName=String RuntimeManaged=true
-  rc_drop_shared_80:
-    RcDrop                SourceTemp=149 TypeName=Item RuntimeManaged=true
-    LoadMemOffset         Target=152 BasePtr=145 OffsetBytes=8
-    RcDrop                SourceTemp=145 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=35 Source=152
-    Jump                  Target=rcdrop_list_77
-  rcdrop_list_shared_78:
-    RcDrop                SourceTemp=145 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_79
-  rcdrop_list_end_79:
-  rc_tco_drop_inactive_76:
-    LoadLocal             Target=153 Slot=9
-    JumpIfFalse           CondTemp=153 Target=rc_tco_drop_inactive_81
-    RcIsUnique            Target=154 SourceTemp=35
-    JumpIfFalse           CondTemp=154 Target=rc_drop_shared_82
-    GetAdtField           Target=155 Ptr=35 FieldIndex=0 Tagless=true
-    RcIsUnique            Target=156 SourceTemp=155
-    JumpIfFalse           CondTemp=156 Target=rc_drop_shared_83
-    GetAdtField           Target=157 Ptr=155 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=157 TypeName=String RuntimeManaged=true
-  rc_drop_shared_83:
-    RcDrop                SourceTemp=155 TypeName=Item RuntimeManaged=true
-  rc_drop_shared_82:
+    IsReferenceCounted    Target=152 SourceTemp=22
+    JumpIfFalse           CondTemp=152 Target=rc_representation_copy_103
+    RcDup                 Target=153 SourceTemp=22 RuntimeManaged=true
+    StoreLocal            Slot=41 Source=153
+    Jump                  Target=rc_representation_done_104
+  rc_representation_copy_103:
+    CopyOutArena          DestTemp=156 SrcTemp=22 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=157 Ptr=22 FieldIndex=0 Tagless=true
+    IsReferenceCounted    Target=158 SourceTemp=157
+    JumpIfFalse           CondTemp=158 Target=rc_representation_copy_105
+    RcDup                 Target=159 SourceTemp=157 RuntimeManaged=true
+    StoreLocal            Slot=42 Source=159
+    Jump                  Target=rc_representation_done_106
+  rc_representation_copy_105:
+    CopyOutArena          DestTemp=161 SrcTemp=157 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=162 Ptr=157 FieldIndex=0 Tagless=true
+    IsReferenceCounted    Target=163 SourceTemp=162
+    JumpIfFalse           CondTemp=163 Target=rc_representation_copy_107
+    RcDup                 Target=164 SourceTemp=162 RuntimeManaged=true
+    StoreLocal            Slot=43 Source=164
+    Jump                  Target=rc_representation_done_108
+  rc_representation_copy_107:
+    CopyOutArena          DestTemp=165 SrcTemp=162 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=43 Source=165
+  rc_representation_done_108:
+    LoadLocal             Target=166 Slot=43
+    SetAdtField           Ptr=161 FieldIndex=0 Source=166 Tagless=true
+    StoreLocal            Slot=42 Source=161
+  rc_representation_done_106:
+    LoadLocal             Target=167 Slot=42
+    SetAdtField           Ptr=156 FieldIndex=0 Source=167 Tagless=true
+    RcIsUnique            Target=168 SourceTemp=157
+    JumpIfFalse           CondTemp=168 Target=rc_drop_shared_109
+    GetAdtField           Target=169 Ptr=157 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=169 TypeName=String RuntimeManaged=true
+  rc_drop_shared_109:
+    RcDrop                SourceTemp=157 TypeName=Item RuntimeManaged=true
+    StoreLocal            Slot=41 Source=156
+  rc_representation_done_104:
+    LoadLocal             Target=170 Slot=41
+    LoadLocal             Target=171 Slot=8
+    JumpIfFalse           CondTemp=171 Target=rc_tco_drop_inactive_110
+    StoreLocal            Slot=44 Source=34
+  rcdrop_list_111:
+    LoadLocal             Target=172 Slot=44
+    LoadConstInt          Target=173 Value=0
+    CmpIntNe              Target=174 Left=172 Right=173
+    JumpIfFalse           CondTemp=174 Target=rcdrop_list_end_113
+    RcIsUnique            Target=175 SourceTemp=172
+    JumpIfFalse           CondTemp=175 Target=rcdrop_list_shared_112
+    LoadMemOffset         Target=176 BasePtr=172 OffsetBytes=0
+    RcIsUnique            Target=177 SourceTemp=176
+    JumpIfFalse           CondTemp=177 Target=rc_drop_shared_114
+    GetAdtField           Target=178 Ptr=176 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=178 TypeName=String RuntimeManaged=true
+  rc_drop_shared_114:
+    RcDrop                SourceTemp=176 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=179 BasePtr=172 OffsetBytes=8
+    RcDrop                SourceTemp=172 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=44 Source=179
+    Jump                  Target=rcdrop_list_111
+  rcdrop_list_shared_112:
+    RcDrop                SourceTemp=172 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_113
+  rcdrop_list_end_113:
+  rc_tco_drop_inactive_110:
+    LoadLocal             Target=180 Slot=9
+    JumpIfFalse           CondTemp=180 Target=rc_tco_drop_inactive_115
+    RcIsUnique            Target=181 SourceTemp=35
+    JumpIfFalse           CondTemp=181 Target=rc_drop_shared_116
+    GetAdtField           Target=182 Ptr=35 FieldIndex=0 Tagless=true
+    RcIsUnique            Target=183 SourceTemp=182
+    JumpIfFalse           CondTemp=183 Target=rc_drop_shared_117
+    GetAdtField           Target=184 Ptr=182 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=184 TypeName=String RuntimeManaged=true
+  rc_drop_shared_117:
+    RcDrop                SourceTemp=182 TypeName=Item RuntimeManaged=true
+  rc_drop_shared_116:
     RcDrop                SourceTemp=35 TypeName=Best RuntimeManaged=true
-  rc_tco_drop_inactive_81:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=34
-    LoadConstInt          Target=158 Value=0
-    StoreLocal            Slot=6 Source=158
-    StoreLocal            Slot=7 Source=158
+  rc_tco_drop_inactive_115:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=40
+    LoadConstInt          Target=185 Value=0
+    StoreLocal            Slot=6 Source=185
+    StoreLocal            Slot=7 Source=185
     StoreLocal            Slot=2 Source=23
-    LoadConstInt          Target=159 Value=1
-    StoreLocal            Slot=8 Source=159
-    StoreLocal            Slot=1 Source=136
-    LoadConstInt          Target=160 Value=1
-    StoreLocal            Slot=9 Source=160
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=34
+    LoadConstInt          Target=186 Value=1
+    StoreLocal            Slot=8 Source=186
+    StoreLocal            Slot=1 Source=170
+    LoadConstInt          Target=187 Value=1
+    StoreLocal            Slot=9 Source=187
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=40
     RestoreStackPointer   Slot=12   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     Jump                  Target=lambda_5_body   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     LoadConstInt          Target=36 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:25:18)
     StoreLocal            Slot=22 Source=36   (tco_record_head_stored_into_copy_adt_successor.ash:24:13)
-    Jump                  Target=endif_28   (tco_record_head_stored_into_copy_adt_successor.ash:24:13)
-  else_27:
+    Jump                  Target=endif_44   (tco_record_head_stored_into_copy_adt_successor.ash:24:13)
+  else_43:
     RcDrop                SourceTemp=8 TypeName=Item OwnerSlot=20 RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_6
     LoadLocal             Target=37 Slot=21   (tco_record_head_stored_into_copy_adt_successor.ash:26:27)
     Borrow                Target=38 SourceTemp=37
@@ -488,197 +656,197 @@ function lambda_5  [ClosureHelper from heaviest]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=21
     LoadLocal             Target=41 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     StoreLocal            Slot=24 Source=41   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
-  rcdrop_list_33:
+  rcdrop_list_49:
     LoadLocal             Target=42 Slot=24   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     LoadConstInt          Target=43 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     CmpIntNe              Target=44 Left=42 Right=43   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
-    JumpIfFalse           CondTemp=44 Target=rcdrop_list_end_35   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
+    JumpIfFalse           CondTemp=44 Target=rcdrop_list_end_51   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     RcIsUnique            Target=45 SourceTemp=42
-    JumpIfFalse           CondTemp=45 Target=rcdrop_list_shared_34   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
+    JumpIfFalse           CondTemp=45 Target=rcdrop_list_shared_50   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     LoadMemOffset         Target=46 BasePtr=42 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     RcIsUnique            Target=47 SourceTemp=46
-    JumpIfFalse           CondTemp=47 Target=rc_drop_shared_36   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
+    JumpIfFalse           CondTemp=47 Target=rc_drop_shared_52   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     GetAdtField           Target=48 Ptr=46 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     RcDrop                SourceTemp=48 TypeName=String RuntimeManaged=true
-  rc_drop_shared_36:
+  rc_drop_shared_52:
     RcDrop                SourceTemp=46 TypeName=Item RuntimeManaged=true
     LoadMemOffset         Target=49 BasePtr=42 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=24 Source=49   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
-    Jump                  Target=rcdrop_list_33   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
-  rcdrop_list_shared_34:
+    Jump                  Target=rcdrop_list_49   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
+  rcdrop_list_shared_50:
     RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_35   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
-  rcdrop_list_end_35:
+    Jump                  Target=rcdrop_list_end_51   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
+  rcdrop_list_end_51:
     LoadConstInt          Target=50 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     StoreLocal            Slot=8 Source=50   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     LoadLocal             Target=51 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     LoadLocal             Target=52 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     StoreLocal            Slot=2 Source=40   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     StoreLocal            Slot=1 Source=39   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
-    RcDup                 Target=161 SourceTemp=39 RuntimeManaged=true
-    LoadLocal             Target=162 Slot=8
-    JumpIfFalse           CondTemp=162 Target=rc_tco_drop_inactive_84
-    StoreLocal            Slot=37 Source=51
-  rcdrop_list_85:
-    LoadLocal             Target=163 Slot=37
-    LoadConstInt          Target=164 Value=0
-    CmpIntNe              Target=165 Left=163 Right=164
-    JumpIfFalse           CondTemp=165 Target=rcdrop_list_end_87
-    RcIsUnique            Target=166 SourceTemp=163
-    JumpIfFalse           CondTemp=166 Target=rcdrop_list_shared_86
-    LoadMemOffset         Target=167 BasePtr=163 OffsetBytes=0
-    RcIsUnique            Target=168 SourceTemp=167
-    JumpIfFalse           CondTemp=168 Target=rc_drop_shared_88
-    GetAdtField           Target=169 Ptr=167 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=169 TypeName=String RuntimeManaged=true
-  rc_drop_shared_88:
-    RcDrop                SourceTemp=167 TypeName=Item RuntimeManaged=true
-    LoadMemOffset         Target=170 BasePtr=163 OffsetBytes=8
-    RcDrop                SourceTemp=163 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=37 Source=170
-    Jump                  Target=rcdrop_list_85
-  rcdrop_list_shared_86:
-    RcDrop                SourceTemp=163 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_87
-  rcdrop_list_end_87:
-  rc_tco_drop_inactive_84:
-    LoadLocal             Target=171 Slot=9
-    JumpIfFalse           CondTemp=171 Target=rc_tco_drop_inactive_89
-    RcIsUnique            Target=172 SourceTemp=52
-    JumpIfFalse           CondTemp=172 Target=rc_drop_shared_90
-    GetAdtField           Target=173 Ptr=52 FieldIndex=0 Tagless=true
-    RcIsUnique            Target=174 SourceTemp=173
-    JumpIfFalse           CondTemp=174 Target=rc_drop_shared_91
-    GetAdtField           Target=175 Ptr=173 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=175 TypeName=String RuntimeManaged=true
-  rc_drop_shared_91:
-    RcDrop                SourceTemp=173 TypeName=Item RuntimeManaged=true
-  rc_drop_shared_90:
+    RcDup                 Target=188 SourceTemp=39 RuntimeManaged=true
+    LoadLocal             Target=189 Slot=8
+    JumpIfFalse           CondTemp=189 Target=rc_tco_drop_inactive_118
+    StoreLocal            Slot=46 Source=51
+  rcdrop_list_119:
+    LoadLocal             Target=190 Slot=46
+    LoadConstInt          Target=191 Value=0
+    CmpIntNe              Target=192 Left=190 Right=191
+    JumpIfFalse           CondTemp=192 Target=rcdrop_list_end_121
+    RcIsUnique            Target=193 SourceTemp=190
+    JumpIfFalse           CondTemp=193 Target=rcdrop_list_shared_120
+    LoadMemOffset         Target=194 BasePtr=190 OffsetBytes=0
+    RcIsUnique            Target=195 SourceTemp=194
+    JumpIfFalse           CondTemp=195 Target=rc_drop_shared_122
+    GetAdtField           Target=196 Ptr=194 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=196 TypeName=String RuntimeManaged=true
+  rc_drop_shared_122:
+    RcDrop                SourceTemp=194 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=197 BasePtr=190 OffsetBytes=8
+    RcDrop                SourceTemp=190 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=46 Source=197
+    Jump                  Target=rcdrop_list_119
+  rcdrop_list_shared_120:
+    RcDrop                SourceTemp=190 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_121
+  rcdrop_list_end_121:
+  rc_tco_drop_inactive_118:
+    LoadLocal             Target=198 Slot=9
+    JumpIfFalse           CondTemp=198 Target=rc_tco_drop_inactive_123
+    RcIsUnique            Target=199 SourceTemp=52
+    JumpIfFalse           CondTemp=199 Target=rc_drop_shared_124
+    GetAdtField           Target=200 Ptr=52 FieldIndex=0 Tagless=true
+    RcIsUnique            Target=201 SourceTemp=200
+    JumpIfFalse           CondTemp=201 Target=rc_drop_shared_125
+    GetAdtField           Target=202 Ptr=200 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=202 TypeName=String RuntimeManaged=true
+  rc_drop_shared_125:
+    RcDrop                SourceTemp=200 TypeName=Item RuntimeManaged=true
+  rc_drop_shared_124:
     RcDrop                SourceTemp=52 TypeName=Best RuntimeManaged=true
-  rc_tco_drop_inactive_89:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=36
-    LoadConstInt          Target=176 Value=0
+  rc_tco_drop_inactive_123:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=45
+    LoadConstInt          Target=203 Value=0
     StoreLocal            Slot=2 Source=40
-    LoadConstInt          Target=177 Value=1
-    StoreLocal            Slot=8 Source=177
-    StoreLocal            Slot=1 Source=161
-    LoadConstInt          Target=178 Value=1
-    StoreLocal            Slot=9 Source=178
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=36
+    LoadConstInt          Target=204 Value=1
+    StoreLocal            Slot=8 Source=204
+    StoreLocal            Slot=1 Source=188
+    LoadConstInt          Target=205 Value=1
+    StoreLocal            Slot=9 Source=205
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=45
     RestoreStackPointer   Slot=12   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     Jump                  Target=lambda_5_body   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     LoadConstInt          Target=53 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:26:18)
     StoreLocal            Slot=22 Source=53   (tco_record_head_stored_into_copy_adt_successor.ash:24:13)
-  endif_28:
+  endif_44:
     LoadLocal             Target=54 Slot=22   (tco_record_head_stored_into_copy_adt_successor.ash:24:13)
     StoreLocal            Slot=13 Source=54   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=25
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=25
-    Jump                  Target=match_end_22   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-  match_arm_cleanup_26:
+    Jump                  Target=match_end_38   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
+  match_arm_cleanup_42:
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=26
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=26
-    Jump                  Target=match_none_23   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-  match_none_23:
+    Jump                  Target=match_none_39   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
+  match_none_39:
     LoadConstInt          Target=57 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
     StoreLocal            Slot=13 Source=57   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-  match_end_22:
+  match_end_38:
     LoadLocal             Target=58 Slot=13   (tco_record_head_stored_into_copy_adt_successor.ash:21:5)
-    LoadConstInt          Target=92 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=31 Source=92   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=93 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=94 Slot=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CmpIntEq              Target=95 Left=93 Right=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=96 Slot=31   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CmpIntEq              Target=97 Left=96 Right=92   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    AndInt                Target=98 Left=94 Right=95   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    AndInt                Target=99 Left=98 Right=97   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=99 Target=rc_tco_exit_transfer_not_selected_44   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=100 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=31 Source=100   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Jump                  Target=rc_tco_exit_transfer_done_45   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_tco_exit_transfer_not_selected_44:
-    LoadLocal             Target=101 Slot=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=101 Target=rc_tco_exit_drop_inactive_46   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=32 Source=93   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rcdrop_list_47:
-    LoadLocal             Target=102 Slot=32   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=103 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CmpIntNe              Target=104 Left=102 Right=103   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=104 Target=rcdrop_list_end_49   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcIsUnique            Target=105 SourceTemp=102
-    JumpIfFalse           CondTemp=105 Target=rcdrop_list_shared_48   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadMemOffset         Target=106 BasePtr=102 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcIsUnique            Target=107 SourceTemp=106
-    JumpIfFalse           CondTemp=107 Target=rc_drop_shared_50   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    GetAdtField           Target=108 Ptr=106 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcDrop                SourceTemp=108 TypeName=String RuntimeManaged=true
-  rc_drop_shared_50:
-    RcDrop                SourceTemp=106 TypeName=Item RuntimeManaged=true
-    LoadMemOffset         Target=109 BasePtr=102 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=32 Source=109   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Jump                  Target=rcdrop_list_47   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rcdrop_list_shared_48:
-    RcDrop                SourceTemp=102 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_49   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rcdrop_list_end_49:
-  rc_tco_exit_drop_inactive_46:
-  rc_tco_exit_transfer_done_45:
-    LoadLocal             Target=110 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=111 Slot=9   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CmpIntEq              Target=112 Left=110 Right=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadLocal             Target=113 Slot=31   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CmpIntEq              Target=114 Left=113 Right=92   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    AndInt                Target=115 Left=111 Right=112   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    AndInt                Target=116 Left=115 Right=114   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=116 Target=rc_tco_exit_transfer_not_selected_51   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=117 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreLocal            Slot=31 Source=117   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Jump                  Target=rc_tco_exit_transfer_done_52   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_tco_exit_transfer_not_selected_51:
-    LoadLocal             Target=118 Slot=9   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=118 Target=rc_tco_exit_drop_inactive_53   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcIsUnique            Target=119 SourceTemp=110
-    JumpIfFalse           CondTemp=119 Target=rc_drop_shared_54   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    GetAdtField           Target=120 Ptr=110 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcIsUnique            Target=121 SourceTemp=120
-    JumpIfFalse           CondTemp=121 Target=rc_drop_shared_55   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    GetAdtField           Target=122 Ptr=120 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcDrop                SourceTemp=122 TypeName=String RuntimeManaged=true
-  rc_drop_shared_55:
-    RcDrop                SourceTemp=120 TypeName=Item RuntimeManaged=true
-  rc_drop_shared_54:
-    RcDrop                SourceTemp=110 TypeName=Best RuntimeManaged=true
-  rc_tco_exit_drop_inactive_53:
-  rc_tco_exit_transfer_done_52:
-    LoadArgumentOwnership Target=123   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    LoadConstInt          Target=124 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    ShrInt                Target=125 Left=123 Right=124   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    JumpIfFalse           CondTemp=125 Target=rc_result_owned_56   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Alloc                 Target=126 SizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    MakeClosure           Target=127 FuncLabel=__deepcopy_7 EnvPtrTemp=126 EnvSizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    StoreMemOffset        BasePtr=126 OffsetBytes=0 Source=127   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    CallClosure           Target=128 ClosureTemp=127 ArgTemp=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcIsUnique            Target=129 SourceTemp=58
-    JumpIfFalse           CondTemp=129 Target=rc_drop_shared_58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    GetAdtField           Target=130 Ptr=58 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcIsUnique            Target=131 SourceTemp=130
-    JumpIfFalse           CondTemp=131 Target=rc_drop_shared_59   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    GetAdtField           Target=132 Ptr=130 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    RcDrop                SourceTemp=132 TypeName=String RuntimeManaged=true
-  rc_drop_shared_59:
-    RcDrop                SourceTemp=130 TypeName=Item RuntimeManaged=true
-  rc_drop_shared_58:
+    LoadConstInt          Target=110 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=37 Source=110   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=111 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=112 Slot=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CmpIntEq              Target=113 Left=111 Right=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=114 Slot=37   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CmpIntEq              Target=115 Left=114 Right=110   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    AndInt                Target=116 Left=112 Right=113   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    AndInt                Target=117 Left=116 Right=115   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=117 Target=rc_tco_exit_transfer_not_selected_72   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadConstInt          Target=118 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=37 Source=118   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_tco_exit_transfer_done_73   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_tco_exit_transfer_not_selected_72:
+    LoadLocal             Target=119 Slot=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=119 Target=rc_tco_exit_drop_inactive_74   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=38 Source=111   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rcdrop_list_75:
+    LoadLocal             Target=120 Slot=38   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadConstInt          Target=121 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CmpIntNe              Target=122 Left=120 Right=121   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=122 Target=rcdrop_list_end_77   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcIsUnique            Target=123 SourceTemp=120
+    JumpIfFalse           CondTemp=123 Target=rcdrop_list_shared_76   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadMemOffset         Target=124 BasePtr=120 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcIsUnique            Target=125 SourceTemp=124
+    JumpIfFalse           CondTemp=125 Target=rc_drop_shared_78   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    GetAdtField           Target=126 Ptr=124 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDrop                SourceTemp=126 TypeName=String RuntimeManaged=true
+  rc_drop_shared_78:
+    RcDrop                SourceTemp=124 TypeName=Item RuntimeManaged=true
+    LoadMemOffset         Target=127 BasePtr=120 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=38 Source=127   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rcdrop_list_75   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rcdrop_list_shared_76:
+    RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_77   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rcdrop_list_end_77:
+  rc_tco_exit_drop_inactive_74:
+  rc_tco_exit_transfer_done_73:
+    LoadLocal             Target=128 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=129 Slot=9   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CmpIntEq              Target=130 Left=128 Right=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadLocal             Target=131 Slot=37   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CmpIntEq              Target=132 Left=131 Right=110   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    AndInt                Target=133 Left=129 Right=130   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    AndInt                Target=134 Left=133 Right=132   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=134 Target=rc_tco_exit_transfer_not_selected_79   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadConstInt          Target=135 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=37 Source=135   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_tco_exit_transfer_done_80   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_tco_exit_transfer_not_selected_79:
+    LoadLocal             Target=136 Slot=9   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=136 Target=rc_tco_exit_drop_inactive_81   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcIsUnique            Target=137 SourceTemp=128
+    JumpIfFalse           CondTemp=137 Target=rc_drop_shared_82   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    GetAdtField           Target=138 Ptr=128 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcIsUnique            Target=139 SourceTemp=138
+    JumpIfFalse           CondTemp=139 Target=rc_drop_shared_83   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    GetAdtField           Target=140 Ptr=138 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDrop                SourceTemp=140 TypeName=String RuntimeManaged=true
+  rc_drop_shared_83:
+    RcDrop                SourceTemp=138 TypeName=Item RuntimeManaged=true
+  rc_drop_shared_82:
+    RcDrop                SourceTemp=128 TypeName=Best RuntimeManaged=true
+  rc_tco_exit_drop_inactive_81:
+  rc_tco_exit_transfer_done_80:
+    LoadArgumentOwnership Target=141   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    LoadConstInt          Target=142 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    ShrInt                Target=143 Left=141 Right=142   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    JumpIfFalse           CondTemp=143 Target=rc_result_owned_84   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Alloc                 Target=144 SizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    MakeClosure           Target=145 FuncLabel=__deepcopy_7 EnvPtrTemp=144 EnvSizeBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreMemOffset        BasePtr=144 OffsetBytes=0 Source=145   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    CallClosure           Target=146 ClosureTemp=145 ArgTemp=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcIsUnique            Target=147 SourceTemp=58
+    JumpIfFalse           CondTemp=147 Target=rc_drop_shared_86   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    GetAdtField           Target=148 Ptr=58 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcIsUnique            Target=149 SourceTemp=148
+    JumpIfFalse           CondTemp=149 Target=rc_drop_shared_87   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    GetAdtField           Target=150 Ptr=148 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    RcDrop                SourceTemp=150 TypeName=String RuntimeManaged=true
+  rc_drop_shared_87:
+    RcDrop                SourceTemp=148 TypeName=Item RuntimeManaged=true
+  rc_drop_shared_86:
     RcDrop                SourceTemp=58 TypeName=Best RuntimeManaged=true
-    StoreLocal            Slot=33 Source=128   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Jump                  Target=rc_result_done_57   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_result_owned_56:
-    StoreLocal            Slot=33 Source=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-  rc_result_done_57:
-    LoadLocal             Target=133 Slot=33   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
-    Return                Source=133   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    StoreLocal            Slot=39 Source=146   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Jump                  Target=rc_result_done_85   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_result_owned_84:
+    StoreLocal            Slot=39 Source=58   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+  rc_result_done_85:
+    LoadLocal             Target=151 Slot=39   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
+    Return                Source=151   (tco_record_head_stored_into_copy_adt_successor.ash:20:1)
 
 function lambda_4  [SourceFunction from heaviest]
   locals=2 temps=5
@@ -703,11 +871,11 @@ function lambda_9  [ClosureHelper from run]
     LoadLocal             Target=2 Slot=2   (tco_record_head_stored_into_copy_adt_successor.ash:29:8)
     LoadConstInt          Target=3 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:29:17)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_record_head_stored_into_copy_adt_successor.ash:29:8)
-    JumpIfFalse           CondTemp=4 Target=else_60   (tco_record_head_stored_into_copy_adt_successor.ash:29:5)
+    JumpIfFalse           CondTemp=4 Target=else_88   (tco_record_head_stored_into_copy_adt_successor.ash:29:5)
     LoadLocal             Target=5 Slot=1   (tco_record_head_stored_into_copy_adt_successor.ash:30:10)
     StoreLocal            Slot=11 Source=5   (tco_record_head_stored_into_copy_adt_successor.ash:29:5)
-    Jump                  Target=endif_61   (tco_record_head_stored_into_copy_adt_successor.ash:29:5)
-  else_60:
+    Jump                  Target=endif_89   (tco_record_head_stored_into_copy_adt_successor.ash:29:5)
+  else_88:
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadEnv               Target=6 Index=1   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
@@ -724,10 +892,10 @@ function lambda_9  [ClosureHelper from run]
     LoadConstInt          Target=15 Value=1   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     AndInt                Target=16 Left=14 Right=15   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     StoreLocal            Slot=17 Source=11   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
-    JumpIfFalse           CondTemp=16 Target=rc_call_argument_not_retained_62   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
+    JumpIfFalse           CondTemp=16 Target=rc_call_argument_not_retained_90   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     RcDup                 Target=17 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=17 Source=17   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
-  rc_call_argument_not_retained_62:
+  rc_call_argument_not_retained_90:
     LoadLocal             Target=18 Slot=17   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     CallClosure           Target=19 ClosureTemp=6 ArgTemp=18 RuntimeManagedArgumentFlagTemp=16   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     LoadConstStr          Target=20 StrLabel=str_0   (tco_record_head_stored_into_copy_adt_successor.ash:32:63)
@@ -743,28 +911,28 @@ function lambda_9  [ClosureHelper from run]
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=18
     StoreLocal            Slot=19 Source=11   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
-  rcdrop_list_63:
+  rcdrop_list_91:
     LoadLocal             Target=26 Slot=19   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     LoadConstInt          Target=27 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     CmpIntNe              Target=28 Left=26 Right=27   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
-    JumpIfFalse           CondTemp=28 Target=rcdrop_list_end_65   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_end_93   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     RcIsUnique            Target=29 SourceTemp=26
-    JumpIfFalse           CondTemp=29 Target=rcdrop_list_shared_64   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
+    JumpIfFalse           CondTemp=29 Target=rcdrop_list_shared_92   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     LoadMemOffset         Target=30 BasePtr=26 OffsetBytes=0   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     RcIsUnique            Target=31 SourceTemp=30
-    JumpIfFalse           CondTemp=31 Target=rc_drop_shared_66   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
+    JumpIfFalse           CondTemp=31 Target=rc_drop_shared_94   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     GetAdtField           Target=32 Ptr=30 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     RcDrop                SourceTemp=32 TypeName=String RuntimeManaged=true
-  rc_drop_shared_66:
+  rc_drop_shared_94:
     RcDrop                SourceTemp=30 TypeName=Item RuntimeManaged=true
     LoadMemOffset         Target=33 BasePtr=26 OffsetBytes=8   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
     RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=19 Source=33   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
-    Jump                  Target=rcdrop_list_63   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
-  rcdrop_list_shared_64:
+    Jump                  Target=rcdrop_list_91   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
+  rcdrop_list_shared_92:
     RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_65   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
-  rcdrop_list_end_65:
+    Jump                  Target=rcdrop_list_end_93   (tco_record_head_stored_into_copy_adt_successor.ash:32:15)
+  rcdrop_list_end_93:
     SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
     StoreLocal            Slot=23 Source=25   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     LoadLocal             Target=34 Slot=23   (tco_record_head_stored_into_copy_adt_successor.ash:34:23)
@@ -789,15 +957,15 @@ function lambda_9  [ClosureHelper from run]
     StoreLocal            Slot=1 Source=46   (tco_record_head_stored_into_copy_adt_successor.ash:35:31)
     LoadLocal             Target=61 Slot=23
     RcIsUnique            Target=62 SourceTemp=61
-    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_92
+    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_126
     GetAdtField           Target=63 Ptr=61 FieldIndex=0 Tagless=true
     RcIsUnique            Target=64 SourceTemp=63
-    JumpIfFalse           CondTemp=64 Target=rc_drop_shared_93
+    JumpIfFalse           CondTemp=64 Target=rc_drop_shared_127
     GetAdtField           Target=65 Ptr=63 FieldIndex=0 Tagless=true
     RcDrop                SourceTemp=65 TypeName=String RuntimeManaged=true
-  rc_drop_shared_93:
+  rc_drop_shared_127:
     RcDrop                SourceTemp=63 TypeName=Item RuntimeManaged=true
-  rc_drop_shared_92:
+  rc_drop_shared_126:
     RcDrop                SourceTemp=61 TypeName=Best RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=32
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=32
@@ -807,43 +975,43 @@ function lambda_9  [ClosureHelper from run]
     StoreLocal            Slot=24 Source=49   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
     RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=28
     ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=28
-    Jump                  Target=match_end_70   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
-  match_arm_cleanup_72:
+    Jump                  Target=match_end_98   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
+  match_arm_cleanup_100:
     RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=29
     ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=29
-    Jump                  Target=match_none_71   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
-  match_none_71:
+    Jump                  Target=match_none_99   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
+  match_none_99:
     LoadConstInt          Target=51 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
     StoreLocal            Slot=24 Source=51   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
-  match_end_70:
+  match_end_98:
     LoadLocal             Target=52 Slot=24   (tco_record_head_stored_into_copy_adt_successor.ash:34:17)
     StoreLocal            Slot=20 Source=52   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     LoadLocal             Target=53 Slot=23   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     RcIsUnique            Target=54 SourceTemp=53
-    JumpIfFalse           CondTemp=54 Target=rc_drop_shared_73   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
+    JumpIfFalse           CondTemp=54 Target=rc_drop_shared_101   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     GetAdtField           Target=55 Ptr=53 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     RcIsUnique            Target=56 SourceTemp=55
-    JumpIfFalse           CondTemp=56 Target=rc_drop_shared_74   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
+    JumpIfFalse           CondTemp=56 Target=rc_drop_shared_102   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     GetAdtField           Target=57 Ptr=55 FieldIndex=0 Tagless=true   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     RcDrop                SourceTemp=57 TypeName=String RuntimeManaged=true
-  rc_drop_shared_74:
+  rc_drop_shared_102:
     RcDrop                SourceTemp=55 TypeName=Item RuntimeManaged=true
-  rc_drop_shared_73:
+  rc_drop_shared_101:
     RcDrop                SourceTemp=53 TypeName=Best RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=30
     ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=30
-    Jump                  Target=match_end_67   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
-  match_arm_cleanup_69:
+    Jump                  Target=match_end_95   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
+  match_arm_cleanup_97:
     RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=31
     ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=31
-    Jump                  Target=match_none_68   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
-  match_none_68:
+    Jump                  Target=match_none_96   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
+  match_none_96:
     LoadConstInt          Target=58 Value=0   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     StoreLocal            Slot=20 Source=58   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
-  match_end_67:
+  match_end_95:
     LoadLocal             Target=59 Slot=20   (tco_record_head_stored_into_copy_adt_successor.ash:32:9)
     StoreLocal            Slot=11 Source=59   (tco_record_head_stored_into_copy_adt_successor.ash:29:5)
-  endif_61:
+  endif_89:
     LoadLocal             Target=60 Slot=11   (tco_record_head_stored_into_copy_adt_successor.ash:29:5)
     Return                Source=60   (tco_record_head_stored_into_copy_adt_successor.ash:28:1)
 

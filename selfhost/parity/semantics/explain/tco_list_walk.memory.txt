@@ -8,7 +8,7 @@ Function: walk
     total: consumed, move-safe yes
     result fresh: yes
   perceus [lambda_2$env_normalize]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1]
@@ -16,7 +16,7 @@ Function: walk
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1$env_normalize]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_0]
@@ -28,10 +28,10 @@ Function: walk
     copy value:           13
   representation [lambda_1]
     region:               2
-    runtime rc:           1
+    runtime rc:           2
     copy value:           1
   representation [lambda_0]
     conservative unknown: 1
     region:               3
-    runtime rc:           1
+    runtime rc:           2
 
