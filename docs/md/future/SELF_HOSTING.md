@@ -1755,6 +1755,33 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     temporary `Console.Error.WriteLine` in `EmitTcoBackEdgeArenaBlock` printing each argument's
     `Pretty` type beside `TcoBackEdgeArgCopyOutKind`; the argument type is what gives the genericity
     away.
+- [ ] **OPT-87** The call-boundary children transfer over-retains when the caller's own binding
+  outlives the call, and it is what makes
+  `Linux_backend_llvm_matched_head_stored_into_arena_state_for_normalizing_callee_memory_should_plateau`
+  fail about two runs in three (2026-09-17). The test is not flaky measurement: the workload leaks
+  linearly, about 250 bytes an iteration — 8,208 KB at 10k iterations, 12,304 at 20k, 20,496 at 50k,
+  32,784 at 100k, 57,356 at 200k, in 4 MB arena steps converging on a constant per-iteration cost.
+  Its three samples straddle the 8,192 KB `growthBudgetKb`, which is the only reason it sometimes
+  passes.
+
+  `git bisect` over the commits since the test was added lands on #1020, which introduced the retain
+  it was written to need: `CalleeResultMayReachArgument` gates the children transfer on
+  `ResultReaches`, so a call whose result may reach the argument retains the owned bindings the
+  argument aggregate stores. In the plateau workload `advance` matches its `State` apart and rebuilds
+  one from the fields, and the bindings it stores are loop-lived, so that reference is never
+  consumed.
+
+  **Do not fix it by narrowing the predicate to `ResultReachesWhole`.** That was tried and reverted
+  (#1083, #1093): it miscompiles the self-hosted formatter, whose `formatTypeExpression` over a
+  capability row (`a -> List(a) needs {ConsoleIO | e}`) formats wrongly, because a callee whose
+  result reaches the argument only through destructured components still holds those components
+  afterwards — the dangling child #1020 exists to prevent. A leak is the safe side of that trade, so
+  the retain stays and **the fix belongs on the release side**: balance the transfer where the
+  caller's binding outlives the call, rather than declining it.
+
+  Worth knowing for any future change here: the gate that missed the miscompile covered semantics, IR
+  parity and backend but not the formatter, frontend, projects or cli suites. A change to
+  call-boundary ownership needs all of them.
 - [ ] **OPT-82** The self-hosted lowering has no mirror for stage 0's
   `IsRuntimeManagedLoopParameterTerminal` (2026-09-15). Stage 0 now treats a match or `if` arm that
   is a bare read of a runtime-managed loop parameter as a fresh runtime-managed arm, so a string
