@@ -47,8 +47,8 @@ Function: heaviest
   representation [lambda_5]
     conservative unknown: 2
     region:               6
-    runtime rc:           28
-    copy value:           4
+    runtime rc:           30
+    copy value:           2
   representation [lambda_4]
     conservative unknown: 1
     region:               3

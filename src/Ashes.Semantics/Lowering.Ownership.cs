@@ -182,9 +182,17 @@ public sealed partial class Lowering
     {
         // A head the element lowering copied out of its pattern owner into an owned
         // reference-counted value carries its own reference; a marker on top of it would retain
-        // twice.
-        if (argument is not Expr.Var variable
-            || LookupOwnedValue(variable.Name) is not
+        // twice. A heap field read off the owner (`entry.name`) is a borrow of a child the owner
+        // releases with itself, so an aggregate storing it needs a reference exactly as one storing
+        // the owner does.
+        string? ownerName = argument switch
+        {
+            Expr.Var variable => variable.Name,
+            Expr.QualifiedVar qualified when IsHeapTemp(argumentTemp) => qualified.Module,
+            _ => null,
+        };
+        if (ownerName is null
+            || LookupOwnedValue(ownerName) is not
             { PerceusPatternOwner: true, IsDropped: false }
             || _patternOwnerNormalizedTemps.Contains(argumentTemp))
         {
@@ -194,9 +202,22 @@ public sealed partial class Lowering
         int duplicatedTemp = NewTemp();
         // The marker is upgraded to runtime RC by FinalizePerceusPatternBindingOwners when the
         // root parameter's final placement is runtime-managed; otherwise it remains an identity.
-        Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp));
+        bool fieldMayBeEmpty = argument is Expr.QualifiedVar && TempMayBeEmptyList(argumentTemp);
+        Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp, MayBeEmpty: fieldMayBeEmpty));
         return duplicatedTemp;
     }
+
+    private bool IsHeapTemp(int temp)
+        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Type is { } type
+            && Prune(type) is not TypeRef.TVar
+            && !CanArenaReset(Prune(type))
+            && Prune(type) is not TypeRef.TFun;
+
+    private bool TempMayBeEmptyList(int temp)
+        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Type is { } type
+            && MayUseEmptyListRepresentation(Prune(type));
 
     /// <summary>
     /// A transferred aggregate child or tail self-call argument receives a borrow when its source is
@@ -4338,21 +4359,39 @@ public sealed partial class Lowering
     }
 
     // Materializes the scope result's views against a backing that is still alive. Only the results
-    // the arena deep copy reproduces completely qualify; anything else keeps its original pointer,
-    // and a view inside it still dangles once the backing goes.
+    // the arena deep copy reproduces completely can be copied; for anything else (a result of a
+    // self-recursive type, a coroutine body) the backing is kept instead of released, because a
+    // view left pointing into freed memory is read as whatever the allocator puts there next. The
+    // backing then lives as long as the program: a leak is the safe side of a result this pass
+    // cannot copy.
     private int MaterializeScopeResultViews(TypeRef? resultType, int resultTemp)
     {
         if (resultType is null
             || resultTemp < 0
-            || _inCoroutineBody
             || !ScopeReleasesViewedValue()
-            || !TypeCarriesTextBytes(resultType, [])
-            || !CanNormalizeRuntimeManagedResultIntoArena(resultType))
+            || !TypeCarriesTextBytes(resultType, []))
         {
             return resultTemp;
         }
 
+        if (_inCoroutineBody || !CanNormalizeRuntimeManagedResultIntoArena(resultType))
+        {
+            KeepViewedBackingsAlive();
+            return resultTemp;
+        }
+
         return EmitDeepCopy(resultTemp, Prune(resultType), IrInst.CopyOutPurpose.ArenaResultBoundary);
+    }
+
+    private void KeepViewedBackingsAlive()
+    {
+        foreach (var (_, info) in _ownershipScopes.Peek())
+        {
+            if (info is { IsDropped: false, ResultMayViewValue: true })
+            {
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+            }
+        }
     }
 
     /// <summary>

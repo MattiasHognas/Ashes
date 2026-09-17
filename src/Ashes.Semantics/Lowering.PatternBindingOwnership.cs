@@ -106,9 +106,13 @@ public sealed partial class Lowering
         switch (expression)
         {
             case Expr.Var variable:
-                RecordPatternBindingUse(variable, lineages, context);
+                RecordPatternBindingUse(variable.Name, lineages, context);
                 return;
-            case Expr.QualifiedVar:
+            // A field read off a binding uses the binding: the field is a child the binding owns, so
+            // wherever the field goes the binding has gone as far as its protection is concerned.
+            case Expr.QualifiedVar qualified:
+                RecordPatternBindingUse(qualified.Module, lineages, context);
+                return;
             case Expr.IntLit:
             case Expr.BigIntLit:
             case Expr.UIntLit:
@@ -465,11 +469,11 @@ public sealed partial class Lowering
             : PatternBindingOwnershipUse.OrdinaryCallBorrow;
 
     private static void RecordPatternBindingUse(
-        Expr.Var variable,
+        string name,
         IReadOnlyDictionary<string, PatternBindingLineage> lineages,
         PatternBindingUseContext context)
     {
-        if (lineages.TryGetValue(variable.Name, out PatternBindingLineage lineage)
+        if (lineages.TryGetValue(name, out PatternBindingLineage lineage)
             && lineage.Binding is { } binding)
         {
             binding.Uses |= context switch
