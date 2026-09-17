@@ -12592,22 +12592,24 @@ public sealed partial class Lowering
     // `setTree`/`HashMap.set`): the parameter genuinely reaches such a function's result, but the
     // argument temp backing it can still be an arena pointer with no RC header at all, which forcing
     // an RcDup on would corrupt rather than protect.
-    // Whether the callee's result keeps this argument ITSELF, decided from the whole-program
+    // Whether the callee's result may reach this argument at all, decided from the whole-program
     // ownership summary alone, before the argument is lowered: an aggregate literal passed here is
-    // then lowered as one that escapes the caller's scopes, so the owned bindings it stores are
-    // retained into it.
+    // then lowered as one that escapes the caller's scopes.
     //
-    // The question is deliberately the whole-parameter one. A callee whose result merely reaches the
-    // argument through destructured components — an `advance` that rebuilds its own record from the
-    // fields it matched out, a `reverse` that re-conses head cells — hands back a value that
-    // references the children but not the aggregate, and the aggregate's own release already covers
-    // them. Retaining there adds a reference nothing consumes, which is a leak per call rather than
-    // a dangling child: it cost the arena-state plateau workload about 250 bytes an iteration.
+    // This asks the may-alias question deliberately, and narrowing it to `ResultReachesWhole` is a
+    // miscompilation, not an optimization. A callee whose result reaches the argument only through
+    // destructured components still holds those components afterwards, so the owned bindings the
+    // aggregate stores must be retained into it however the result reaches them; the self-hosted
+    // formatter's `formatTypeExpression` over a capability row (`a -> List(a) needs {ConsoleIO |
+    // e}`) is one such shape, and it formats wrongly when the retain is skipped. The over-retain
+    // this costs where the caller's own binding outlives the call is a leak, tracked as the
+    // arena-state plateau workload's ~250 bytes an iteration, and a leak is the safe side of this
+    // trade — see the plateau entry for why the fix belongs on the release side instead.
     private bool CalleeResultMayReachArgument(Expr rootExpr, int argumentIndex)
         => GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
             && argumentIndex >= 0
             && argumentIndex < summary.Parameters.Count
-            && summary.ResultReachesWhole(summary.Parameters[argumentIndex]);
+            && summary.ResultReaches(summary.Parameters[argumentIndex]);
 
     private bool CalleeResultMayReachParameter(Expr rootExpr, int argumentIndex, int argumentTemp)
         => IsRuntimeManagedResultTemp(argumentTemp)
