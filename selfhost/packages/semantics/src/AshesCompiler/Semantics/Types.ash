@@ -6,6 +6,7 @@
 // - Trait constraints have a deterministic canonical order with exact duplicates removed.
 
 import Ashes.Collection.List.sortBy
+import Ashes.Collection.Map.MapTree
 import Ashes.Text.compare as compareText
 export (
     type SemanticType(..),
@@ -18,6 +19,8 @@ export (
     value freshTypeVariable,
     value occursInType,
     value applySubstitution,
+    value applySubstitutionMap,
+    value extendSubstitutionMap,
     value formatSemanticType,
     value traitConstraintStableKey,
     value canonicalizeTraitConstraints,
@@ -135,64 +138,97 @@ let recursive lookupSubstitution : Int -> List((Int, SemanticType)) -> Maybe(Sem
                     then Some(replacement)
                     else lookupSubstitution(variableId)(tail)
 
-let recursive substituteTypes : List((Int, SemanticType)) -> List(SemanticType) -> List(SemanticType) =
-    given (substitution) ->
+// The substitution walk over a bare lookup, so one implementation serves both shapes a
+// substitution is kept in: the association list a unification builds and hands back, and the
+// variable-keyed map a whole program's grows into.
+let recursive substituteTypesIn : (Int -> Maybe(SemanticType)) -> List(SemanticType) -> List(SemanticType) =
+    given (lookup) ->
         given (values) ->
             match values with
                 | [] -> []
                 | head :: tail ->
-                    let substitutedHead = applySubstitution(substitution)(head)
+                    let substitutedHead = applySubstitutionIn(lookup)(head)
                     in
-                        let substitutedTail = substituteTypes(substitution)(tail)
+                        let substitutedTail = substituteTypesIn(lookup)(tail)
                         in substitutedHead :: substitutedTail
-and applySubstitution : List((Int, SemanticType)) -> SemanticType -> SemanticType =
-    given (substitution) ->
+and applySubstitutionIn : (Int -> Maybe(SemanticType)) -> SemanticType -> SemanticType =
+    given (lookup) ->
         given (semanticType) ->
             match semanticType with
                 | SemVariable(variableId) ->
-                    match lookupSubstitution(variableId)(substitution) with
+                    match lookup(variableId) with
                         | None -> semanticType
-                        | Some(replacement) -> applySubstitution(substitution)(replacement)
+                        | Some(replacement) -> applySubstitutionIn(lookup)(replacement)
                 | SemList(element) ->
-                    let substitutedElement = applySubstitution(substitution)(element)
+                    let substitutedElement = applySubstitutionIn(lookup)(element)
                     in SemList(substitutedElement)
                 | SemTuple(elements) ->
-                    let substitutedElements = substituteTypes(substitution)(elements)
+                    let substitutedElements = substituteTypesIn(lookup)(elements)
                     in SemTuple(substitutedElements)
                 | SemFunction(argument, result, capabilityRow) ->
-                    let substitutedArgument = applySubstitution(substitution)(argument)
+                    let substitutedArgument = applySubstitutionIn(lookup)(argument)
                     in
-                        let substitutedResult = applySubstitution(substitution)(result)
+                        let substitutedResult = applySubstitutionIn(lookup)(result)
                         in
                             let substitutedRow =
                                 match capabilityRow with
                                     | None -> None
                                     | Some(row) ->
                                         row
-                                        |> applySubstitution(substitution)
+                                        |> applySubstitutionIn(lookup)
                                         |> Some
                             in SemFunction(substitutedArgument)(substitutedResult)(substitutedRow)
                 | SemCapability(name, arguments) ->
-                    let substitutedArguments = substituteTypes(substitution)(arguments)
+                    let substitutedArguments = substituteTypesIn(lookup)(arguments)
                     in SemCapability(name)(substitutedArguments)
                 | SemRow(capabilities, tail) ->
-                    let substitutedCapabilities = substituteTypes(substitution)(capabilities)
+                    let substitutedCapabilities = substituteTypesIn(lookup)(capabilities)
                     in
                         let substitutedTail =
                             match tail with
                                 | None -> None
                                 | Some(tailType) ->
                                     tailType
-                                    |> applySubstitution(substitution)
+                                    |> applySubstitutionIn(lookup)
                                     |> Some
                         in SemRow(substitutedCapabilities)(substitutedTail)
                 | SemNamed(symbolId, name, arguments) ->
-                    let substitutedArguments = substituteTypes(substitution)(arguments)
+                    let substitutedArguments = substituteTypesIn(lookup)(arguments)
                     in SemNamed(symbolId)(name)(substitutedArguments)
                 | SemPointer(pointee) ->
-                    let substitutedPointee = applySubstitution(substitution)(pointee)
+                    let substitutedPointee = applySubstitutionIn(lookup)(pointee)
                     in SemPointer(substitutedPointee)
                 | _ -> semanticType
+
+let substituteTypes : List((Int, SemanticType)) -> List(SemanticType) -> List(SemanticType) =
+    given (substitution) ->
+        substituteTypesIn(given (variableId) -> lookupSubstitution(variableId)(substitution))
+
+let applySubstitution : List((Int, SemanticType)) -> SemanticType -> SemanticType =
+    given (substitution) ->
+        applySubstitutionIn(given (variableId) -> lookupSubstitution(variableId)(substitution))
+
+// The same walk over a substitution kept as a variable-keyed map. A whole program's substitution
+// reaches tens of thousands of entries and every type it resolves walks it once per variable, so
+// the association list a unification's own handful of bindings lives in is the wrong shape for it.
+// Writing the walk out again instead of reaching it through this lookup was measured and is worth
+// 0.5% of a 45 GB compile, which does not buy sixty duplicated lines.
+let applySubstitutionMap : MapTree(Int, SemanticType) -> SemanticType -> SemanticType =
+    given (substitution) ->
+        applySubstitutionIn(given (variableId) -> Ashes.Collection.Map.get(variableId)(substitution))
+
+// A unification's bindings added to a program's substitution, keeping the association list's own
+// rule that the first entry for a variable is the one that answers: the additions are written
+// youngest last, so the youngest is what a lookup finds.
+let recursive extendSubstitutionMap : List((Int, SemanticType)) -> MapTree(Int, SemanticType) -> MapTree(Int, SemanticType) =
+    given (added) ->
+        given (substitution) ->
+            match added with
+                | [] -> substitution
+                | (variableId, replacement) :: rest ->
+                    substitution
+                    |> extendSubstitutionMap(rest)
+                    |> Ashes.Collection.Map.set(variableId)(replacement)
 
 let recursive joinTypes : Str -> (SemanticType -> Str) -> List(SemanticType) -> Str =
     given (separator) ->
