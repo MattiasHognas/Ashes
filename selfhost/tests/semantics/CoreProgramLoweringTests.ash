@@ -85,6 +85,13 @@ let expectExternalFunctionDeclarationLowers unit =
     |> loweredProgramSource
     |> (given (_) -> Unit)
 
+// An annotation naming an external opaque type is the type the external signatures use: a handle
+// an external function answers passes to a parameter, and into a record field, annotated with it.
+let expectExternalOpaqueAnnotationIsTheExternalType unit =
+    "external type Handle\n\nexternal handleOf(Str) -> Handle = \"handle_of\"\n\ntype Holder =\n    | raw: Handle\n    | count: Int\n\nlet same (raw: Handle) = raw\n\nlet hold raw = Holder(raw = same(raw), count = 1)\n\nmatch hold(handleOf(\"x\")) with\n    | Holder { count = count } -> count"
+    |> loweredProgramSource
+    |> (given (_) -> Unit)
+
 let expectSelfRecursiveTopLevelLetLowers unit =
     "let recursive fact n = if n <= 1 then 1 else n * fact(n - 1)\nfact(5)"
     |> loweredProgramSource
@@ -781,6 +788,7 @@ let runCoreProgramLoweringTests unit =
     |> expectExternalOpaqueFieldKeepsArity
     |> expectTypeAliasAnnotationKeepsArguments
     |> expectExternalFunctionDeclarationLowers
+    |> expectExternalOpaqueAnnotationIsTheExternalType
     |> expectGenuinelyUnknownNameStillRejectedAsUnknown
     |> expectTraitConstrainedBindingLowersWithEnvironment
     |> expectTraitConstrainedBindingFailsWithoutEnvironment

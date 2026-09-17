@@ -6767,6 +6767,11 @@ let recursive bindTypeParameters (names: List(Str)) (arguments: List(TypeExpr)) 
         | (name :: restNames, argument :: restArguments) -> (name, argument) :: bindTypeParameters(restNames)(restArguments)
         | _ -> []
 
+// An `external type` has no type expression of its own, so its name stands for this applied form:
+// the space keeps it out of reach of any written type name. Alias expansion carries it to
+// `typeExprToSemanticType`, which reads it back as the opaque type the external signatures use.
+let externalTypeExpr (name: Str) = TypeApplied("external type")([TypeNamed(name)])
+
 let recursive expandTypeAliases (aliases: MapTree(Str, (List(Str), TypeExpr))) (fuel: Int) (typeExpr: TypeExpr) =
     if fuel <= 0
     then typeExpr
@@ -6780,6 +6785,7 @@ let recursive expandTypeAliases (aliases: MapTree(Str, (List(Str), TypeExpr))) (
                 match Ashes.Collection.Map.getStr(name)(aliases) with
                     | Some(([], target)) -> expandTypeAliases(aliases)(fuel - 1)(target)
                     | _ -> typeExpr
+            | TypeApplied("external type", _) -> typeExpr
             | TypeApplied(name, arguments) ->
                 let expandedArguments = expandTypeAliasesList(aliases)(fuel)(arguments)
                 in
@@ -6814,6 +6820,10 @@ let recursive typeAliasesOf (items: List(TopLevelItem)) (aliases: MapTree(Str, (
     match items with
         | [] -> aliases
         | TopLevelAt(_span, inner) :: rest -> typeAliasesOf(inner :: rest)(aliases)
+        | TopLevelExternal(ExternalOpaqueType(name, _destructor)) :: rest ->
+            aliases
+            |> Ashes.Collection.Map.setStr(name)(([], externalTypeExpr(name)))
+            |> typeAliasesOf(rest)
         | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = typeParameters, target = target }) :: rest ->
             aliases
             |> Ashes.Collection.Map.setStr(name)((typeParameterNames(typeParameters), target))
@@ -6841,6 +6851,7 @@ let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List(
                     []
                     |> SemNamed(0)(name)
                     |> Some
+        | TypeApplied("external type", TypeNamed(name) :: []) -> Some(SemOpaque(name))
         | TypeApplied("List", element :: []) ->
             match typeExprToSemanticType(element)(parameterTypes) with
                 | None -> None
