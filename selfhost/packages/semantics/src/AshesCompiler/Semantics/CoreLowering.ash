@@ -643,6 +643,17 @@ type CoreLoweringState =
     // result reach is unknown, such a list is left to that callee's arena result rather than
     // released after the call.
     | genericDeepCopiedListTemps: List(Int)
+    // Stage 0's `_pendingAmbiguousTraitGoals`: a trait goal whose operand type was still a type
+    // variable at the site dispatching on it, keyed by that site. Inference can learn the type
+    // AFTER the site — a top-level binding whose parameter only a later use pins — so a pass
+    // reaching the site cannot tell a genuinely ambiguous operand from one not determined yet.
+    | pendingTraitGoals: List((Str, SemanticType))
+    // Stage 0's `_provenAmbiguousTraitGoalTypes`: the operand types a first pass proved for those
+    // sites, read by the pass that lowers with them pinned.
+    | provenTraitGoals: MapTree(Str, SemanticType)
+    // Whether this pass lowers with a previous pass's proofs: a site the proofs do not answer is
+    // ambiguous to both passes, which is the only case that is genuinely ambiguous.
+    | traitGoalsPinned: Bool
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -998,7 +1009,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeOwnerAliases = [],
         pendingRuntimeArgumentFlags = [],
         closureDropperLabels = [],
-        genericDeepCopiedListTemps = []
+        genericDeepCopiedListTemps = [],
+        pendingTraitGoals = [],
+        provenTraitGoals = Ashes.Collection.Map.empty,
+        traitGoalsPinned = false
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -2589,13 +2603,23 @@ let recursive sealedOperatorTypes sealed acc =
         | [] -> acc
         | (_label, _target, semanticType) :: rest -> sealedOperatorTypes(rest)(semanticType :: acc)
 
+let recursive pendingTraitGoalTypes goals acc =
+    match goals with
+        | [] -> acc
+        | (_key, semanticType) :: rest -> pendingTraitGoalTypes(rest)(semanticType :: acc)
+
+// The types a generalization must hold back, in the environment position that keeps them out of
+// the quantifier: a deferred operator's operand, and the operand of a trait goal this pass could
+// not answer. Quantifying either would leave the binding polymorphic in exactly the variable a
+// later use is what settles, and the site that waits on it would never learn the type.
 let pendingOperatorScheme state =
     match state with
-        | CoreLoweringState { pendingOperatorDefaults = pending, sealedOperatorDefaults = sealed } ->
+        | CoreLoweringState { pendingOperatorDefaults = pending, sealedOperatorDefaults = sealed, pendingTraitGoals = goals } ->
             TypeScheme(
                 quantified = [],
                 body = []
                 |> resolvedPendingOperatorTypes(state)([]
+                |> pendingTraitGoalTypes(goals)
                 |> sealedOperatorTypes(sealed)
                 |> pendingOperatorTypes(pending))
                 |> SemTuple,
@@ -4256,6 +4280,9 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with routedSpecializationAccumulators = append(bodyState.routedSpecializationAccumulators)(outer.routedSpecializationAccumulators))
             |> (given (current: CoreLoweringState) -> current with closureDropperLabels = bodyState.closureDropperLabels, dropperLabels = bodyState.dropperLabels)
             |> (given (current: CoreLoweringState) -> current with traitMethodLabels = bodyState.traitMethodLabels)
+            // A goal deferred inside the body is the program's, not the frame's: the pass that
+            // proves it reads the record after the whole program is lowered.
+            |> (given (current: CoreLoweringState) -> current with pendingTraitGoals = bodyState.pendingTraitGoals)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -16477,20 +16504,79 @@ let emitTraitMethodCall (closureTemp: Int) (operandTemp: Int) (resultType: Seman
             |> emit(CallClosure(target)(closureTemp)(operandTemp)(-1))
             |> success(target)(resultType)
 
+// A trait goal's site, named the same way by every pass: the passes lower one source, so the
+// innermost enclosing span and what is asked for there identify the same site in all of them.
+// Runtime machinery carries no span and is never deferred.
+let traitGoalKey (traitName: Str) (methodName: Str) (state: CoreLoweringState) =
+    match state.currentSpan with
+        | Some(TextSpan { start = start, end = end }) -> Some(Ashes.Text.fromInt(start) + ":" + Ashes.Text.fromInt(end) + ":" + traitName + ":" + methodName)
+        | None -> None
+
+// The operand type a goal dispatches on, with an earlier pass's proof pinned when the type is
+// still open. Unifying rather than substituting for the evidence alone keeps the rest of inference
+// consistent with the choice.
+let pinProvenTraitGoal (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
+    match (freeTypeVariables(operandType), traitGoalKey(traitName)(methodName)(state)) with
+        | ([], _key) -> (state, operandType)
+        | (_variables, None) -> (state, operandType)
+        | (_variables, Some(key)) ->
+            match Ashes.Collection.Map.getStr(key)(state.provenTraitGoals) with
+                | None -> (state, operandType)
+                | Some(proven) ->
+                    match bindType(operandType)(proven)(state) with
+                        | (pinnedState, None) -> (pinnedState, resolveType(pinnedState)(operandType))
+                        | (_failedState, Some(_error)) -> (state, operandType)
+
+// Whether a plan's evidence is a hidden parameter of a generic body this body does not carry.
+// `resolveTraitEvidence` answers with that shape for an operand type inference has not settled
+// too, which at the site is indistinguishable from a real requirement's type argument.
+let traitPlanLacksActiveEvidence (plan: TraitEvidencePlan) (methodName: Str) (state: CoreLoweringState) =
+    match plan with
+        | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = typeArgument :: [] }) -> activeTraitMethod(traitName)(typeArgument)(methodName)(state)(state.activeTraitMethods) == None
+        | _plan -> false
+
+// The site to record when no evidence answers a goal. A pass lowering without proofs defers an
+// operand inference may still resolve; with proofs pinned, an operand still open is ambiguous to
+// every pass, which is the only case that is genuinely ambiguous.
+let unprovenTraitGoalKey (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
+    match (state.traitGoalsPinned, freeTypeVariables(operandType)) with
+        | (true, _variables) -> None
+        | (_pinned, []) -> None
+        | (_pinned, _variables) -> traitGoalKey(traitName)(methodName)(state)
+
+// The value lowered at a deferred site: the goal joins the pass's record, and the site gets a
+// constant of the method's own result type. A deferring pass exists to resolve types, and its
+// instructions are discarded, so the constant is never run.
+let deferTraitGoal (key: Str) (operandType: SemanticType) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let recorded = state with pendingTraitGoals = (key, operandType) :: state.pendingTraitGoals
+    in
+        match resultType with
+            | SemString -> lowerString("")(recorded)
+            | _ ->
+                lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(recorded))
+
 // `Ashes.Trait.Show.show(x)` and its unary siblings, the counterpart of the mapped binary operators:
 // resolve the trait's evidence for the operand's own type, build the method's closure for that plan,
 // and call it. A concrete operand resolves an instance directly; inside a generic body the operand's
 // type is the type argument of an active requirement and resolves to that parameter's evidence.
 let emitCoreTraitUnaryDispatch (traitName: Str) (methodName: Str) (resultType: SemanticType) lower (operandTemp: Int) (operandType: SemanticType) (state: CoreLoweringState) =
-    match resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [operandType]))(state.traitEnvironment) with
-        | TraitEvidenceResolution { plan = Some(plan) } ->
-            match buildTraitMethodClosure(plan)(methodName)(lower)(state) with
-                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(closureState)
-                | failed -> failed
-        | TraitEvidenceResolution { plan = None } ->
-            operandType
-            |> MissingCoreTraitEvidence(traitName)
-            |> failure(state)
+    match pinProvenTraitGoal(traitName)(methodName)(operandType)(state) with
+        | (pinnedState, pinnedType) ->
+            match resolveTraitEvidence(TraitConstraint(traitName = traitName, typeArguments = [pinnedType]))(pinnedState.traitEnvironment) with
+                | TraitEvidenceResolution { plan = Some(plan) } ->
+                    match (traitPlanLacksActiveEvidence(plan)(methodName)(pinnedState), unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState)) with
+                        | (true, Some(key)) -> deferTraitGoal(key)(pinnedType)(resultType)(pinnedState)
+                        | _resolvable ->
+                            match buildTraitMethodClosure(plan)(methodName)(lower)(pinnedState) with
+                                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCall(closureTemp)(operandTemp)(resultType)(closureState)
+                                | failed -> failed
+                | TraitEvidenceResolution { plan = None } ->
+                    match unprovenTraitGoalKey(traitName)(methodName)(pinnedType)(pinnedState) with
+                        | Some(key) -> deferTraitGoal(key)(pinnedType)(resultType)(pinnedState)
+                        | None ->
+                            pinnedType
+                            |> MissingCoreTraitEvidence(traitName)
+                            |> failure(pinnedState)
 
 let emitResolvedCoreBinary operator lower binary =
     match operator with
@@ -20303,6 +20389,42 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                                     |> ensureResultRcEligibility
                                     |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
+// The goals a pass recorded whose type its own substitution has since resolved to a concrete one.
+// A pass lowers the whole program, so by its end the substitution answers what the goal's own site
+// could not.
+let recursive resolvedTraitGoals (pending: List((Str, SemanticType))) (state: CoreLoweringState) (resolved: List((Str, SemanticType))) =
+    match pending with
+        | [] -> resolved
+        | (key, goalType) :: rest ->
+            let goalResolvedType = resolveType(state)(goalType)
+            in
+                match freeTypeVariables(goalResolvedType) with
+                    | [] -> resolvedTraitGoals(rest)(state)((key, goalResolvedType) :: resolved)
+                    | _variables -> resolvedTraitGoals(rest)(state)(resolved)
+
+let recursive traitGoalMap (entries: List((Str, SemanticType))) (proven: MapTree(Str, SemanticType)) =
+    match entries with
+        | [] -> proven
+        | (key, goalType) :: rest ->
+            proven
+            |> Ashes.Collection.Map.setStr(key)(goalType)
+            |> traitGoalMap(rest)
+
+// Stage 0's discovery pass, run only for a program that needs one: a pass that met a trait goal
+// its substitution could not yet answer lowers the program a second time with what that pass went
+// on to prove, so each such site chooses the evidence the rest of the program settled on. The
+// first pass's own state is a value, so the second starts from the same seed rather than from
+// anything the first left behind. Its result is never the program's: a deferred site holds a
+// constant standing in for a dispatch, so every pass that deferred one is followed by a pass that
+// either dispatches it or reports it.
+let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) =
+    match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
+        | LoweredCoreValue { state = firstState } as first ->
+            match firstState.pendingTraitGoals with
+                | [] -> first
+                | pending ->
+                    (seed with provenTraitGoals = traitGoalMap(resolvedTraitGoals(pending)(firstState)([]))(Ashes.Collection.Map.empty), traitGoalsPinned = true) |> lowerProgramWithCapabilities(items)(trailingBody)(environment)
+
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.
 type DeferredLabelNumbering =
@@ -20534,7 +20656,7 @@ let lowerCoreProgram (program: ProgramSyntax) =
                 |> initialState
                 |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
-                |> lowerProgramWithCapabilities(items)(trailingBody)(None)
+                |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
 
 // As lowerCoreProgramWithSource, but with caller-supplied `CoreConstructorLayout`/`CoreBuiltinLayout`
@@ -20561,7 +20683,7 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
-                |> lowerProgramWithCapabilities(items)(trailingBody)(None)
+                |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
 
 // As lowerCoreProgramWithSource, with stage 0's `LoweringConfiguration.EnableReuse` switch: with
@@ -20581,7 +20703,7 @@ let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (sou
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items), reuseEnabled = reuseEnabled)
                 |> withProgramParameterOwnership(program)
-                |> lowerProgramWithCapabilities(items)(trailingBody)(None)
+                |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
 
 // As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
@@ -20607,7 +20729,7 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
                 |> initialState
                 |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items)(Ashes.Collection.Map.empty), specializationCandidates = reuseSpecializationCandidates(items))
                 |> withProgramParameterOwnership(program)
-                |> lowerProgramWithCapabilities(items)(trailingBody)(Some(environment))
+                |> lowerProgramPasses(items)(trailingBody)(Some(environment))
                 |> buildProgram
 
 let lowerCoreExpression expression =
