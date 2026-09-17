@@ -1538,7 +1538,7 @@ public sealed partial class Lowering
                 && bindingOwner.PerceusPatternOwner;
             if (!CanArenaReset(Prune(bindingType)) && !hasIndependentPatternOwner)
             {
-                _ownershipAliases[bindingName] = ownerName;
+                SetScopedOwnershipAlias(bindingName, ownerName);
             }
         }
     }

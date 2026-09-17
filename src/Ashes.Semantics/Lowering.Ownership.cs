@@ -617,6 +617,11 @@ public sealed partial class Lowering
 
             scope[name] = info;
             AddOwnedValueToIndex(name, info);
+            // A binding with an owner of its own is that owner, whatever the name aliased before.
+            if (!perceusPatternOwner)
+            {
+                SetScopedOwnershipAlias(name, null);
+            }
         }
     }
 
@@ -2021,6 +2026,14 @@ public sealed partial class Lowering
         {
             RemoveOwnedValueFromIndex(name, info);
         }
+
+        if (_ownershipAliasChanges.Remove(scope, out List<(string Name, string? Previous)>? changes))
+        {
+            for (int i = changes.Count - 1; i >= 0; i--)
+            {
+                RestoreOwnershipAlias(changes[i].Name, changes[i].Previous);
+            }
+        }
     }
 
     private void ClearOwnershipScopes()
@@ -2029,10 +2042,52 @@ public sealed partial class Lowering
         _ownedValuesByName.Clear();
     }
 
+    // Points `name` at `target` for as long as the current ownership scope lasts; a null target
+    // makes the name stand for itself again, which is what a binding with its own owner needs.
+    private void SetScopedOwnershipAlias(string name, string? target)
+    {
+        _ownershipAliases.TryGetValue(name, out string? previous);
+        if (string.Equals(previous, target, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (_ownershipScopes.Count > 0)
+        {
+            Dictionary<string, OwnershipInfo> scope = _ownershipScopes.Peek();
+            if (!_ownershipAliasChanges.TryGetValue(scope, out List<(string Name, string? Previous)>? changes))
+            {
+                changes = [];
+                _ownershipAliasChanges.Add(scope, changes);
+            }
+
+            changes.Add((name, previous));
+        }
+
+        RestoreOwnershipAlias(name, target);
+    }
+
+    private void RestoreOwnershipAlias(string name, string? target)
+    {
+        if (target is null)
+        {
+            _ownershipAliases.Remove(name);
+        }
+        else
+        {
+            _ownershipAliases[name] = target;
+        }
+    }
+
     private void RestoreOwnershipScope(Dictionary<string, OwnershipInfo> savedScope)
     {
         var scope = new Dictionary<string, OwnershipInfo>(savedScope, StringComparer.Ordinal);
         _ownershipScopes.Push(scope);
+        if (_ownershipAliasChanges.Remove(savedScope, out List<(string Name, string? Previous)>? changes))
+        {
+            _ownershipAliasChanges.Add(scope, changes);
+        }
+
         foreach ((string name, OwnershipInfo info) in scope)
         {
             AddOwnedValueToIndex(name, info);
