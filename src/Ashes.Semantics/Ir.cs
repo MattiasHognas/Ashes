@@ -1300,6 +1300,24 @@ public abstract record IrInst
     ) : IrInst;
 
     /// <summary>
+    /// Tests whether a heap value of statically unknown representation is a block of the
+    /// reference-counted heap: <paramref name="Target"/> is 1 when <paramref name="SourceTemp"/>
+    /// addresses memory inside the region the runtime reserved for that heap, and 0 for an arena,
+    /// stack, static or empty value.
+    /// </summary>
+    /// <remarks>
+    /// The answer is about the address alone, so no header is read and any word is a valid source.
+    /// A reference-counted block never points at arena memory, which is what lets a consumer that
+    /// needs an owned reference take one to the whole graph when the root tests true, and copy the
+    /// graph only when it does not. A runtime that could not reserve the region answers 0 for
+    /// everything, which degrades to always copying.
+    /// </remarks>
+    public sealed record IsReferenceCounted(
+        int Target,
+        int SourceTemp
+    ) : IrInst;
+
+    /// <summary>
     /// Borrow instruction for compiler-inferred borrowing.
     /// Produces a non-owning reference to the owned value held in SourceTemp.
     /// The borrowed reference carries no drop responsibility — the owning scope

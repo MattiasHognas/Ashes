@@ -27,6 +27,7 @@ internal static partial class LlvmCodegen
     private const long SyscallMmap = 9;
     private const long SyscallMunmap = 11;
     private const long SyscallLseek = 8;
+    private const long SyscallPrlimit64 = 302;
     private const long SyscallSocket = 41;
     private const long SyscallConnect = 42;
     private const long SyscallBind = 49;
@@ -102,6 +103,7 @@ internal static partial class LlvmCodegen
     private const long Arm64SyscallClose = 57;
     private const long Arm64SyscallOpenat = 56;
     private const long Arm64SyscallLseek = 62;
+    private const long Arm64SyscallPrlimit64 = 261;
     private const long Arm64SyscallMmap = 222;
     private const long Arm64SyscallMunmap = 215;
     private const long Arm64SyscallRead = 63;
@@ -736,6 +738,14 @@ internal static partial class LlvmCodegen
     private static EmitProgramModuleArena EmitProgramModuleArenaGlobals(
         LlvmTargetContext target, IrProgram program, LlvmCodegenFlavor flavor, LlvmTypeHandle i64, bool arm64UsesTlsArena)
     {
+        // Process-wide on every flavor: the region is one reservation all threads allocate from.
+        AddReferenceCountedRegionGlobals(target, i64);
+        return EmitProgramModulePerThreadArenaGlobals(target, program, flavor, i64, arm64UsesTlsArena);
+    }
+
+    private static EmitProgramModuleArena EmitProgramModulePerThreadArenaGlobals(
+        LlvmTargetContext target, IrProgram program, LlvmCodegenFlavor flavor, LlvmTypeHandle i64, bool arm64UsesTlsArena)
+    {
         // Bump-arena cursor/end. On linux-x64 these live in a per-thread control block
         // reached through the GS segment base, so each worker thread gets its own arena with
         // no shared state and no atomics; the actual cursor/end pointers are built per
@@ -811,9 +821,11 @@ internal static partial class LlvmCodegen
     private static (LlvmValueHandle FreeList, LlvmValueHandle Cursor, LlvmValueHandle End) AddRuntimeRcGlobals(
         LlvmTargetContext target,
         LlvmTypeHandle i64)
-        => (AddZeroInitializedI64Global(target, i64, "__ashes_rc_free_list"),
+    {
+        return (AddZeroInitializedI64Global(target, i64, "__ashes_rc_free_list"),
             AddZeroInitializedI64Global(target, i64, "__ashes_rc_arena_cursor"),
             AddZeroInitializedI64Global(target, i64, "__ashes_rc_arena_end"));
+    }
 
     private static void EmitProgramModuleImportsStdio(
         LlvmTargetContext target, LlvmCodegenFlavor flavor, EmitProgramModuleFlags flags,
@@ -1619,6 +1631,7 @@ internal static partial class LlvmCodegen
         }
 
         EmitHeapChunkInit(state);
+        EmitReserveReferenceCountedRegion(state);
 
         if (usesProgramArgs)
         {
@@ -2218,6 +2231,8 @@ internal static partial class LlvmCodegen
                 EmitRuntimeManagedDupValue(state, dup)),
             // Erased Perceus marker: identity-preserving for arena-managed values.
             IrInst.RcDup dup => StoreTemp(state, dup.Target, LoadTemp(state, dup.SourceTemp)),
+            IrInst.IsReferenceCounted test => StoreTemp(state, test.Target,
+                EmitIsReferenceCounted(state, LoadTemp(state, test.SourceTemp), $"is_reference_counted_{test.Target}")),
             IrInst.RcIsUnique unique => StoreTemp(state, unique.Target,
                 EmitRuntimeManagedUniqueValue(state, unique)),
             // CreateTask: allocate task struct with coroutine function + captures.
@@ -3072,6 +3087,7 @@ internal static partial class LlvmCodegen
             SyscallMmap => Arm64SyscallMmap,
             SyscallMunmap => Arm64SyscallMunmap,
             SyscallLseek => Arm64SyscallLseek,
+            SyscallPrlimit64 => Arm64SyscallPrlimit64,
             SyscallSocket => Arm64SyscallSocket,
             SyscallConnect => Arm64SyscallConnect,
             SyscallBind => Arm64SyscallBind,

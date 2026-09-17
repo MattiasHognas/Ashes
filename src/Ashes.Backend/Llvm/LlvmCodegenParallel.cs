@@ -722,6 +722,9 @@ internal static partial class LlvmCodegen
 
     /// <summary>Atomic <c>old = *addr; *addr += delta; return old</c> via <c>lock xadd</c>.</summary>
     private static LlvmValueHandle EmitAtomicFetchAdd(LlvmCodegenState state, LlvmValueHandle addr, ulong delta, string name)
+        => EmitAtomicFetchAdd(state, addr, LlvmApi.ConstInt(state.I64, delta, 1), name);
+
+    private static LlvmValueHandle EmitAtomicFetchAdd(LlvmCodegenState state, LlvmValueHandle addr, LlvmValueHandle delta, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         if (IsArm64Flavor(state.Flavor))
@@ -733,7 +736,7 @@ internal static partial class LlvmCodegen
                 "1:\n\tldaxr $0, [$2]\n\tadd x9, $0, $1\n\tstlxr w10, x9, [$2]\n\tcbnz w10, 1b",
                 "=&r,r,r,~{x9},~{x10},~{memory},~{cc}", true, false);
             return LlvmApi.BuildCall2(builder, armFnType, armAsm,
-                [LlvmApi.ConstInt(state.I64, delta, 1), addr], name);
+                [delta, addr], name);
         }
 
         // x86-64: Early-clobber (&) on the result keeps the address operand in a different register;
@@ -742,7 +745,7 @@ internal static partial class LlvmCodegen
         // $0 = result reg, $1 = tied delta input (same reg as $0), $2 = address.
         LlvmValueHandle asm = LlvmApi.GetInlineAsm(fnType, "lock xaddq $0, ($2)", "=&r,0,r,~{memory}", true, false);
         return LlvmApi.BuildCall2(builder, fnType, asm,
-            [LlvmApi.ConstInt(state.I64, delta, 1), addr], name);
+            [delta, addr], name);
     }
 
     /// <summary>

@@ -6,15 +6,13 @@ namespace Ashes.Semantics;
 // might be an arena one. In a state-threading pass that is a copy of everything left in the list
 // at every step, for a value that was reference-counted all along.
 //
-// The backend asks for reference-counted blocks inside one address region, so the question has an
-// answer at run time, and it costs a shift and a compare: a value inside the region is
+// The runtime keeps reference-counted blocks inside one reserved address region, so the question has an
+// answer at run time, and it costs two compares: a value inside the region is
 // reference-counted and the consumer takes a reference; anything else is copied as before. A
 // reference-counted aggregate's children are reference-counted by construction, so the reference
 // is as good as the copy it replaces.
 public sealed partial class Lowering
 {
-    private const int ReferenceCountedRegionShift = 44;
-
     // The instruction lists (one per function being lowered) that hold a representation test. A
     // value built there may share a child instead of owning a copy of it.
     private readonly HashSet<List<IrInst>> _representationTestedBodies = new(ReferenceEqualityComparer.Instance);
@@ -60,14 +58,8 @@ public sealed partial class Lowering
     /// </summary>
     private int EmitReferenceOrCopy(int sourceTemp, Func<int> emitCopy)
     {
-        int shiftTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(shiftTemp, ReferenceCountedRegionShift));
-        int regionTemp = NewTemp();
-        Emit(new IrInst.ShrInt(regionTemp, sourceTemp, shiftTemp));
-        int oneTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(oneTemp, 1));
         int referenceCountedTemp = NewTemp();
-        Emit(new IrInst.CmpIntEq(referenceCountedTemp, regionTemp, oneTemp));
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, sourceTemp));
 
         int resultSlot = NewLocal();
         string copyLabel = NewLabel("rc_representation_copy");

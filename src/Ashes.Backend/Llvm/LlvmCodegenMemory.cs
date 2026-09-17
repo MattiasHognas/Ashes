@@ -292,7 +292,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, initializeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, freshLargeBlock);
-        LlvmValueHandle freshLarge = EmitAllocateOsMemory(state, allocationSize, name + "_os");
+        LlvmValueHandle freshLarge = EmitAllocateReferenceCountedOsMemory(state, allocationSize, name + "_os");
         LlvmApi.BuildStore(builder, freshLarge, resultSlot);
         LlvmApi.BuildBr(builder, initializeBlock);
 
@@ -1395,7 +1395,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle fitsStandard = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, fitSize, standard, "grow_heap_fits_standard");
         LlvmValueHandle chunkSize = LlvmApi.BuildSelect(builder, fitsStandard, standard, fitSize, "grow_heap_chunk_size");
         LlvmValueHandle chunkBase = referenceCounted
-            ? EmitAllocateReferenceCountedOsMemory(state, chunkSize, prevEnd, "grow_rc_heap")
+            ? EmitAllocateReferenceCountedOsMemory(state, chunkSize, "grow_rc_heap")
             : EmitAllocateOsMemory(state, chunkSize, "grow_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
         EmitHeapChunkSetup(state, chunkBase, chunkSize, prevEnd, cursorSlot, endSlot, "grow_heap");
@@ -2619,11 +2619,7 @@ internal static partial class LlvmCodegen
     {
         if (IsLinuxFlavor(state.Flavor))
         {
-            EmitLinuxSyscall(state, SyscallMunmap,
-                basePtr,
-                sizeBytes,
-                LlvmApi.ConstInt(state.I64, 0, 0), // unused third arg
-                prefix + "_munmap");
+            EmitReleaseLinuxMapping(state, basePtr, sizeBytes, prefix);
         }
         else
         {
