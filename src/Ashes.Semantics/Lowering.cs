@@ -1773,7 +1773,7 @@ public sealed partial class Lowering
         Expr? sourceExpression = null)
     {
         bool copies = !alreadyRuntimeManaged && !(consumedListTail && argType is TypeRef.TList);
-        if (!copies || !GuardSiteEnabled(8) || CanArenaReset(argType) || argType is TypeRef.TFun)
+        if (!copies || !CanTestRepresentation || CanArenaReset(argType) || argType is TypeRef.TFun)
         {
             return TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
                 sourceTemp, argType, alreadyRuntimeManaged, aliasesPredecessor, consumedListTail, sourceExpression);
@@ -1969,7 +1969,7 @@ public sealed partial class Lowering
     private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type, bool releaseAdtSourceChildren = false, Expr? sourceExpression = null)
     {
         // A copy that also releases the source's children is a move, which a reference cannot stand in for.
-        if (releaseAdtSourceChildren || !GuardSiteEnabled(1) || CanArenaReset(Prune(type)))
+        if (releaseAdtSourceChildren || !CanTestRepresentation || CanArenaReset(Prune(type)))
         {
             return EmitRuntimeManagedTcoDeepCopyByCopy(sourceTemp, type, releaseAdtSourceChildren, sourceExpression);
         }
@@ -2067,7 +2067,7 @@ public sealed partial class Lowering
         => EmitRuntimeManagedTcoListDeepCopyByCopy(sourceTemp, elementType);
 
     private int EmitRuntimeManagedTcoListDeepCopy(int sourceTemp, TypeRef elementType)
-        => GuardSiteEnabled(2)
+        => CanTestRepresentation
             ? EmitReferenceOrCopy(sourceTemp, () => EmitRuntimeManagedTcoListDeepCopyByCopy(sourceTemp, elementType))
             : EmitRuntimeManagedTcoListDeepCopyByCopy(sourceTemp, elementType);
 
@@ -9779,7 +9779,7 @@ public sealed partial class Lowering
     }
 
     private int EmitRuntimeManagedTcoParamCopy(int sourceTemp, TypeRef type)
-        => GuardSiteEnabled(4) && !CanArenaReset(Prune(type))
+        => CanTestRepresentation && !CanArenaReset(Prune(type))
             ? EmitReferenceOrCopy(sourceTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(sourceTemp, type))
             : EmitRuntimeManagedTcoParamCopyByCopy(sourceTemp, type);
 

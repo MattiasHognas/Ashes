@@ -438,7 +438,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, shouldCache, cacheBlock, freeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheBlock);
-        // TEMPORARY diagnostic: overwrite a freed block's payload, so a read after free shows.
+        // Debugging aid (compiling with ASHES_RC_POISON=1): overwrite a freed block's payload, so a
+        // read after free shows.
         if (string.Equals(Environment.GetEnvironmentVariable("ASHES_RC_POISON"), "1", StringComparison.Ordinal))
         {
             LlvmValueHandle payload = LlvmApi.BuildIntToPtr(builder,

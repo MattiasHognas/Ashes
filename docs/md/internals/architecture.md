@@ -1222,15 +1222,60 @@ The public value pointer still addresses the legacy payload, so field/tag
 offsets do not depend on whether a value is RC- or region-managed. New RC cells
 start at count 1. `RcDup` increments the count. `RcDrop` decrements a shared
 cell; on the last reference it first releases owned children through the
-type-directed drop path, then releases the cell. Known constructors and
-deep-unique roots use specialized drop paths that avoid unnecessary tag or
-uniqueness checks.
+type-directed drop path, then releases the cell. Known constructors use
+specialized drop paths that avoid unnecessary tag checks; each cell is still
+tested for another owner, since a copy may share part of its source (see the
+representation test below).
 
-Small allocations, including the RC header, of at most 4096 bytes come from a
-dense per-thread RC bump region. Released small cells join a per-thread free
-list; allocation scans it for an exact-size match before bump-allocating.
-Larger cells are allocated directly from the OS and returned directly on their
-last drop. Thread teardown releases its RC chunks and any cached cells.
+Every RC cell lives inside one address range the program reserves for the RC
+heap when it starts (asked for at `0x100000000000`, up to 4 TB; the reservation
+commits nothing, memory is committed inside it as cells are handed out). Small
+allocations, including the RC header, of at most 4096 bytes come from a dense
+per-thread RC bump region inside the range. Released small cells join a
+per-thread free list; allocation scans it for an exact-size match before
+bump-allocating. Larger cells get their own committed span and return it on
+their last drop. Thread teardown releases its RC chunks and any cached cells.
+Address space handed out is never handed out again. A program that cannot
+reserve the range, or runs through it, falls back to ordinary mappings, which
+the representation test below reports as not reference-counted.
+
+### The representation test
+
+Because nothing but RC cells lives in the reserved range, compiled code can tell
+an RC value from an arena, stack or static one by its address alone:
+`IsReferenceCounted` compares a value against the range's two bounds. A consumer
+that must own a value whose representation lowering cannot see (a parameter, a
+field of one, a pattern binding, a call result) tests it: an RC value is
+retained, anything else is copied, as it always was before the test existed. The
+guarded sites are the RC normalization copies (`CopyOutArena`, `CopyOutList` and
+the deep copies built from them), TCO loop entry, and the TCO back edge.
+
+This rests on one invariant: **an RC cell never points at arena memory.** Its
+children are RC cells, static data or inline values, so a reference to an RC
+root is a reference to a complete owned graph. Two consequences follow:
+
+- A list copy stops at the first RC cell and shares the rest of the list with
+  one retain, since everything from there on is already reference-counted. A
+  loop that conses onto such a list copies only the new cells.
+- A copy may share part of its source, so no value is assumed uniquely owned all
+  the way down: a release tests each cell for another owner before freeing it.
+
+The self-hosted backend follows the same model. Its allocator
+(`IrCodegen.RcRegion`) reserves the range lazily on the first allocation, keeps
+blocks up to 1 KB on per-size free lists and larger ones in whole pages it hands
+back to the kernel on release, and falls back to libc when the reservation is
+refused.
+
+Two debugging aids check the model; both are read by the compiler, so the
+program has to be recompiled with the variable set:
+
+| Variable | Effect on the compiled program |
+|---|---|
+| `ASHES_RC_POISON=1` | Every freed RC payload is overwritten with `0xDD`, so a read after free fails visibly instead of reading stale data. |
+| `ASHES_RC_VERIFY=1` | Every lowered store into an RC cell checks that the stored value does not point at arena or stack memory, raising `SIGABRT` at the first violating store (linux-x64). |
+
+Running the end-to-end suite with `ASHES_RC_POISON=1` set is the quickest way
+to surface a latent use-after-free.
 
 ### Complete graphs and copy boundaries
 

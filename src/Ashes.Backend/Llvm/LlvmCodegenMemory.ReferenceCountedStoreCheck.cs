@@ -2,9 +2,9 @@ using Ashes.Backend.Llvm.Interop;
 
 namespace Ashes.Backend.Llvm;
 
-// TEMPORARY diagnostic: a block in the reference-counted region must never come to point at arena
-// or stack memory. With ASHES_RC_VERIFY=1 every lowered store checks that and raises SIGABRT at the
-// offending store.
+// Debugging aid: a block in the reference-counted region must never come to point at arena or stack
+// memory. Compiling with ASHES_RC_VERIFY=1 makes every lowered store check that and raise SIGABRT at
+// the offending store.
 internal static partial class LlvmCodegen
 {
     private static readonly bool VerifyReferenceCountedStores =

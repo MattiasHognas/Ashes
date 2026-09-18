@@ -25,35 +25,6 @@ public sealed partial class Lowering
     // exits, so a value of its is copied out, never shared.
     private bool CanTestRepresentation => AllowsParallelWorkerIndependentRcPlacement;
 
-    // TEMPORARY bisect switch: a bitmask of guard sites to enable (1 deep copy, 2 list copy, 4 loop
-    // entry, 8 back edge).
-    private static readonly int GuardSites = int.TryParse(
-        Environment.GetEnvironmentVariable("ASHES_RC_GUARDS"), System.Globalization.NumberStyles.Integer,
-        System.Globalization.CultureInfo.InvariantCulture, out int sites) ? sites : 15;
-
-    // TEMPORARY bisect switch: only the first GuardLimit guards are emitted; the last one names itself.
-    private static readonly int GuardLimit = int.TryParse(
-        Environment.GetEnvironmentVariable("ASHES_RC_GUARD_LIMIT"), System.Globalization.NumberStyles.Integer,
-        System.Globalization.CultureInfo.InvariantCulture, out int limit) ? limit : int.MaxValue;
-
-    private int _guardsEmitted;
-
-    private bool GuardSiteEnabled(int site)
-    {
-        if (!CanTestRepresentation || (GuardSites & site) == 0 || _guardsEmitted >= GuardLimit)
-        {
-            return false;
-        }
-
-        _guardsEmitted++;
-        if (_guardsEmitted == GuardLimit)
-        {
-            Console.Error.WriteLine($"[rc-guard] #{_guardsEmitted} site={site} in {_activeFunctionOrigin}");
-        }
-
-        return true;
-    }
-
     /// <summary>
     /// An owned reference to <paramref name="sourceTemp"/>: a retain when the value lies in the
     /// reference-counted region, <paramref name="emitCopy"/> otherwise.
