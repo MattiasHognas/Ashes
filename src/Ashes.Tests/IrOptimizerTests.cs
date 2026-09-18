@@ -1092,26 +1092,29 @@ public sealed class IrOptimizerTests
         optimized.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { SourceTemp: 1, RuntimeManaged: true }).ShouldBe(2);
     }
 
+    // A copy under the representation test shares the reference-counted part of its source, so
+    // no value is known to be uniquely owned all the way down: even a fresh list or tree is
+    // released cell by cell, each cell tested for another owner first.
     [Test]
-    public void Unique_list_drop_uses_one_runtime_rc_operation()
+    public void Fresh_list_drop_tests_each_cell_for_another_owner()
     {
         IrProgram lowered = Lower("let values = [1, 2, 3] in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
 
         IrProgram optimized = IrOptimizer.Optimize(lowered);
 
-        CountRuntimeRcOperations(optimized).ShouldBe(1);
-        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+        CountRuntimeRcOperations(optimized).ShouldBe(3);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
     }
 
     [Test]
-    public void Unique_tree_root_drop_elides_uniqueness_operation()
+    public void Fresh_tree_root_drop_tests_the_root_for_another_owner()
     {
         IrProgram lowered = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
 
         IrProgram optimized = IrOptimizer.Optimize(lowered);
 
-        CountRuntimeRcOperations(optimized).ShouldBe(3);
-        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+        CountRuntimeRcOperations(optimized).ShouldBe(4);
+        optimized.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
     }
 
     [Test]

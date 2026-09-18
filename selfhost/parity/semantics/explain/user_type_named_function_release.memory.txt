@@ -20,7 +20,7 @@ Function: count
     uniqueness checks:    6
   representation [lambda_3]
     conservative unknown: 2
-    runtime rc:           18
+    runtime rc:           22
     copy value:           6
   representation [lambda_2]
     conservative unknown: 1
@@ -37,7 +37,7 @@ Function: makeFunction
   representation [lambda_0]
     conservative unknown: 1
     region:               2
-    runtime rc:           2
+    runtime rc:           3
 
 Function: mark
   ownership

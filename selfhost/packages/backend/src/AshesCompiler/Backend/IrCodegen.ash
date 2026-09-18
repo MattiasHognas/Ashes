@@ -111,6 +111,7 @@ import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Copy
 import AshesCompiler.Backend.IrCodegen.Rc
+import AshesCompiler.Backend.IrCodegen.RcRegion
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
@@ -142,8 +143,11 @@ type ExternalFunctions =
     | memcpyFn: LLVMValueRef
     | memcpyType: LLVMTypeRef
     | directoryExternals: DirectoryExternals
+    | rcRegion: RcRegionRuntime
 
-let declareExternalFunctions module_ context types =
+// Every allocation goes through the reference-counted region's allocator, which keeps libc's
+// `malloc` and `free` for what the region does not hold.
+let declareExternalFunctions module_ context builder types =
     (let mallocType = functionType(types.ptrType)([types.i64])(1u32)(false)
     in
         let freeType =
@@ -153,17 +157,21 @@ let declareExternalFunctions module_ context types =
             in
                 let memcpyType = functionType(types.ptrType)([types.ptrType, types.ptrType, types.i64])(3u32)(false)
                 in
-                    ExternalFunctions(
-                        mallocFn = addFunction(module_)("malloc")(mallocType),
-                        mallocType = mallocType,
-                        freeFn = addFunction(module_)("free")(freeType),
-                        freeType = freeType,
-                        memcmpFn = addFunction(module_)("memcmp")(memcmpType),
-                        memcmpType = memcmpType,
-                        memcpyFn = addFunction(module_)("memcpy")(memcpyType),
-                        memcpyType = memcpyType,
-                        directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types)
-                    ))
+                    let region =
+                        defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)
+                    in
+                        ExternalFunctions(
+                            mallocFn = region.allocFn,
+                            mallocType = mallocType,
+                            freeFn = region.freeFn,
+                            freeType = freeType,
+                            rcRegion = region,
+                            memcmpFn = addFunction(module_)("memcmp")(memcmpType),
+                            memcmpType = memcmpType,
+                            memcpyFn = addFunction(module_)("memcpy")(memcpyType),
+                            memcpyType = memcpyType,
+                            directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types)
+                        ))
 
 // Bundles everything that stays fixed for a whole function so it threads through as one value
 // instead of an ever-growing parameter list; only `tempEnv` (in `codegenInstructionKind`'s own
@@ -692,7 +700,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(sourceTemp)
                                             |> emitRuntimeRcIsUnique(builder)(i64)(i8)(ptrType)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                                        | IsReferenceCounted(target, _sourceTemp) -> ((target, emitIsReferenceCounted(i64)) :: tempEnv, terminated)
+                                        | IsReferenceCounted(target, sourceTemp) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(sourceTemp)
+                                            |> emitIsReferenceCountedIn(builder)(i64)(externals.rcRegion)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // A closure's `CleanupResource` is a no-op for a reference-counted one
                         // (its dropper runs on the last `RcDrop` instead); an arena closure may
                         // carry a dropper (closure+24) for a resource it captured-and-escaped,
@@ -1862,7 +1873,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                 in
                                     let builder = createBuilder(context)
                                     in
-                                        let externals = declareExternalFunctions(module_)(context)(types)
+                                        let externals = declareExternalFunctions(module_)(context)(builder)(types)
                                         in
                                             let usesCopy = functionsUseCopyOut(entryFunction :: functions)
                                             in

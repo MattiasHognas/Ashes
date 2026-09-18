@@ -106,6 +106,16 @@ let testLetBodyDoesNotReach unit =
     |> plainReaches("let t = s in t")
     |> test.assertEqual(false)
 
+let testLetBodyReachingTheVariableReaches unit =
+    "s"
+    |> plainReaches("let t = 1 in [s]")
+    |> test.assertEqual(true)
+
+let testLetShadowingDoesNotReach unit =
+    "s"
+    |> plainReaches("let s = 1 in s")
+    |> test.assertEqual(false)
+
 let testOperatorDoesNotReach unit =
     "s"
     |> plainReaches("s + \"x\"")
@@ -189,7 +199,7 @@ let stringParameterSource unit = "let wrap (s: Str) = [s]\n\nmatch wrap(Ashes.Te
 let stringParameterFunction unit =
     Ashes.Text.join("\n")([
         "function lambda_0  [SourceFunction from wrap]",
-        "  locals=3 temps=9",
+        "  locals=4 temps=12",
         "    LoadLocal             Target=3 Slot=1   (parameter_reaches_result_string.ash:1:1)",
         "    LoadArgumentOwnership Target=4   (parameter_reaches_result_string.ash:1:1)",
         "    LoadConstInt          Target=5 Value=1   (parameter_reaches_result_string.ash:1:1)",
@@ -198,11 +208,20 @@ let stringParameterFunction unit =
         "    StoreLocal            Slot=2 Source=3   (parameter_reaches_result_string.ash:1:1)",
         "    Jump                  Target=rc_arg_normalize_done_1   (parameter_reaches_result_string.ash:1:1)",
         "  rc_arg_normalize_copy_0:",
-        "    CopyOutArena          DestTemp=7 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization",
-        "    StoreLocal            Slot=2 Source=7   (parameter_reaches_result_string.ash:1:1)",
+        "    IsReferenceCounted    Target=7 SourceTemp=3",
+        "    JumpIfFalse           CondTemp=7 Target=rc_representation_copy_2   (parameter_reaches_result_string.ash:1:1)",
+        "    RcDup                 Target=8 SourceTemp=3 RuntimeManaged=true",
+        "    StoreLocal            Slot=3 Source=8   (parameter_reaches_result_string.ash:1:1)",
+        "    Jump                  Target=rc_representation_done_3   (parameter_reaches_result_string.ash:1:1)",
+        "  rc_representation_copy_2:",
+        "    CopyOutArena          DestTemp=9 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization",
+        "    StoreLocal            Slot=3 Source=9   (parameter_reaches_result_string.ash:1:1)",
+        "  rc_representation_done_3:",
+        "    LoadLocal             Target=10 Slot=3   (parameter_reaches_result_string.ash:1:1)",
+        "    StoreLocal            Slot=2 Source=10   (parameter_reaches_result_string.ash:1:1)",
         "  rc_arg_normalize_done_1:",
-        "    LoadLocal             Target=8 Slot=2   (parameter_reaches_result_string.ash:1:1)",
-        "    StoreLocal            Slot=1 Source=8   (parameter_reaches_result_string.ash:1:1)",
+        "    LoadLocal             Target=11 Slot=2   (parameter_reaches_result_string.ash:1:1)",
+        "    StoreLocal            Slot=1 Source=11   (parameter_reaches_result_string.ash:1:1)",
         "    LoadConstInt          Target=0 Value=0   (parameter_reaches_result_string.ash:1:21)",
         "    LoadLocal             Target=1 Slot=1   (parameter_reaches_result_string.ash:1:22)",
         "    Alloc                 Target=2 SizeBytes=16   (parameter_reaches_result_string.ash:1:21)",
@@ -234,7 +253,7 @@ let recordParameterSource unit = "type Pair =\n    | label: Str\n    | count: In
 let recordParameterFunction unit =
     Ashes.Text.join("\n")([
         "function lambda_0  [SourceFunction from wrap]",
-        "  locals=3 temps=13",
+        "  locals=5 temps=19",
         "    LoadLocal             Target=3 Slot=1   (parameter_reaches_result_record.ash:5:1)",
         "    LoadArgumentOwnership Target=4   (parameter_reaches_result_record.ash:5:1)",
         "    LoadConstInt          Target=5 Value=1   (parameter_reaches_result_record.ash:5:1)",
@@ -243,14 +262,32 @@ let recordParameterFunction unit =
         "    StoreLocal            Slot=2 Source=3   (parameter_reaches_result_record.ash:5:1)",
         "    Jump                  Target=rc_arg_normalize_done_1   (parameter_reaches_result_record.ash:5:1)",
         "  rc_arg_normalize_copy_0:",
-        "    CopyOutArena          DestTemp=9 SrcTemp=3 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization",
-        "    GetAdtField           Target=10 Ptr=3 FieldIndex=0 Tagless=true   (parameter_reaches_result_record.ash:5:1)",
-        "    CopyOutArena          DestTemp=11 SrcTemp=10 RuntimeManaged=true Purpose=RcNormalization",
-        "    SetAdtField           Ptr=9 FieldIndex=0 Source=11 Tagless=true   (parameter_reaches_result_record.ash:5:1)",
-        "    StoreLocal            Slot=2 Source=9   (parameter_reaches_result_record.ash:5:1)",
+        "    IsReferenceCounted    Target=7 SourceTemp=3",
+        "    JumpIfFalse           CondTemp=7 Target=rc_representation_copy_2   (parameter_reaches_result_record.ash:5:1)",
+        "    RcDup                 Target=8 SourceTemp=3 RuntimeManaged=true",
+        "    StoreLocal            Slot=3 Source=8   (parameter_reaches_result_record.ash:5:1)",
+        "    Jump                  Target=rc_representation_done_3   (parameter_reaches_result_record.ash:5:1)",
+        "  rc_representation_copy_2:",
+        "    CopyOutArena          DestTemp=11 SrcTemp=3 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization",
+        "    GetAdtField           Target=12 Ptr=3 FieldIndex=0 Tagless=true   (parameter_reaches_result_record.ash:5:1)",
+        "    IsReferenceCounted    Target=13 SourceTemp=12",
+        "    JumpIfFalse           CondTemp=13 Target=rc_representation_copy_4   (parameter_reaches_result_record.ash:5:1)",
+        "    RcDup                 Target=14 SourceTemp=12 RuntimeManaged=true",
+        "    StoreLocal            Slot=4 Source=14   (parameter_reaches_result_record.ash:5:1)",
+        "    Jump                  Target=rc_representation_done_5   (parameter_reaches_result_record.ash:5:1)",
+        "  rc_representation_copy_4:",
+        "    CopyOutArena          DestTemp=15 SrcTemp=12 RuntimeManaged=true Purpose=RcNormalization",
+        "    StoreLocal            Slot=4 Source=15   (parameter_reaches_result_record.ash:5:1)",
+        "  rc_representation_done_5:",
+        "    LoadLocal             Target=16 Slot=4   (parameter_reaches_result_record.ash:5:1)",
+        "    SetAdtField           Ptr=11 FieldIndex=0 Source=16 Tagless=true   (parameter_reaches_result_record.ash:5:1)",
+        "    StoreLocal            Slot=3 Source=11   (parameter_reaches_result_record.ash:5:1)",
+        "  rc_representation_done_3:",
+        "    LoadLocal             Target=17 Slot=3   (parameter_reaches_result_record.ash:5:1)",
+        "    StoreLocal            Slot=2 Source=17   (parameter_reaches_result_record.ash:5:1)",
         "  rc_arg_normalize_done_1:",
-        "    LoadLocal             Target=12 Slot=2   (parameter_reaches_result_record.ash:5:1)",
-        "    StoreLocal            Slot=1 Source=12   (parameter_reaches_result_record.ash:5:1)",
+        "    LoadLocal             Target=18 Slot=2   (parameter_reaches_result_record.ash:5:1)",
+        "    StoreLocal            Slot=1 Source=18   (parameter_reaches_result_record.ash:5:1)",
         "    LoadConstInt          Target=0 Value=0   (parameter_reaches_result_record.ash:5:25)",
         "    LoadLocal             Target=1 Slot=1   (parameter_reaches_result_record.ash:5:26)",
         "    Alloc                 Target=2 SizeBytes=16   (parameter_reaches_result_record.ash:5:25)",
@@ -335,6 +372,8 @@ let runResultReachTests unit =
     |> testLambdaBodyReaches
     |> testLambdaShadowingDoesNotReach
     |> testLetBodyDoesNotReach
+    |> testLetBodyReachingTheVariableReaches
+    |> testLetShadowingDoesNotReach
     |> testOperatorDoesNotReach
     |> testConstructorApplicationReaches
     |> testUnknownCalleeDoesNotReach

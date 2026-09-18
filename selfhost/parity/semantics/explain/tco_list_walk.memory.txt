@@ -28,10 +28,10 @@ Function: walk
     copy value:           13
   representation [lambda_1]
     region:               2
-    runtime rc:           2
+    runtime rc:           3
     copy value:           1
   representation [lambda_0]
     conservative unknown: 1
     region:               3
-    runtime rc:           2
+    runtime rc:           3
 

@@ -20,5 +20,5 @@ Function: makeItems
   representation [lambda_0]
     conservative unknown: 2
     region:               2
-    runtime rc:           2
+    runtime rc:           3
 

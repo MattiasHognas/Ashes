@@ -43,13 +43,13 @@ Function: extend
 
 Function: scan [lambda_4]
   Operations
-    dup:                  23
-    drop:                 59
-    uniqueness checks:    18
+    dup:                  24
+    drop:                 62
+    uniqueness checks:    19
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               13
+    copies:               14
 
 Function: scan
   Operations
@@ -99,5 +99,5 @@ Function: _start_main
     allocations:          20
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               1
 

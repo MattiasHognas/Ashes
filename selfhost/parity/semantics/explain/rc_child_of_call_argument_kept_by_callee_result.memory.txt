@@ -16,7 +16,7 @@ Function: addImpl
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_5]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   representation [lambda_7]
@@ -31,6 +31,7 @@ Function: addImpl
   representation [lambda_5]
     conservative unknown: 3
     region:               2
+    runtime rc:           3
 
 Function: addTraitImplementation
   ownership
@@ -67,7 +68,7 @@ Function: addTraitImplementation
   representation [lambda_1]
     conservative unknown: 1
     region:               2
-    runtime rc:           4
+    runtime rc:           6
 
 Function: buildEnv
   ownership
@@ -106,7 +107,7 @@ Function: churn
   representation [lambda_11]
     conservative unknown: 2
     region:               3
-    runtime rc:           10
+    runtime rc:           11
     copy value:           7
   representation [lambda_10]
     region:               3
@@ -147,7 +148,7 @@ Function: firstNames
   representation [lambda_14]
     conservative unknown: 10
     region:               5
-    runtime rc:           28
+    runtime rc:           36
 
 Function: methodNameOf
   ownership

@@ -25,7 +25,7 @@ Function: extend
   representation [lambda_0]
     conservative unknown: 1
     region:               2
-    runtime rc:           2
+    runtime rc:           3
 
 Function: joinAll
   ownership
@@ -47,7 +47,7 @@ Function: joinAll
   representation [lambda_6]
     conservative unknown: 3
     region:               1
-    runtime rc:           16
+    runtime rc:           17
   representation [lambda_5]
     conservative unknown: 1
     region:               3
@@ -58,17 +58,17 @@ Function: scan
     state: consumed, move-safe yes
     result fresh: no
   perceus [lambda_4]
-    dup:                  23
-    drop:                 59
-    uniqueness checks:    18
+    dup:                  24
+    drop:                 62
+    uniqueness checks:    19
   perceus [lambda_3]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   representation [lambda_4]
-    conservative unknown: 7
-    region:               2
-    runtime rc:           42
+    conservative unknown: 6
+    region:               3
+    runtime rc:           47
     copy value:           4
   representation [lambda_3]
     conservative unknown: 2

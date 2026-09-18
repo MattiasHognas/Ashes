@@ -1536,7 +1536,19 @@ let bindType left right state =
 // lowered without it and unified with it afterwards. The result state never carries one.
 let consumerRequestOf (state: CoreLoweringState) = state.consumerRequest
 
-let withConsumerRequest (request: ConsumerRequest) (state: CoreLoweringState) = state with consumerRequest = request
+// Whether a request asks for nothing at all, which is what most expressions are lowered under.
+let isEmptyConsumerRequest (request: ConsumerRequest) =
+    match request with
+        | ConsumerRequest { expectedType = None, argumentSite = None, runtimeString = false, runtimeAdt = false, runtimeRecord = false, runtimeList = false, runtimeTuple = false, transferSlot = None, tailPosition = false, transfersRuntimeManagedChildren = false, tailCall = false, consTailPosition = false, runtimeTcoListTailSlot = None } -> true
+        | _ -> false
+
+// Replacing a request that asks for nothing with another such request leaves the state as it is.
+// The state is a record of over a hundred fields, and this copy was the most frequent allocation
+// lowering made.
+let withConsumerRequest (request: ConsumerRequest) (state: CoreLoweringState) =
+    if isEmptyConsumerRequest(request) && isEmptyConsumerRequest(state.consumerRequest)
+    then state
+    else state with consumerRequest = request
 
 let clearConsumerRequest (state: CoreLoweringState) = withConsumerRequest(emptyConsumerRequest)(state)
 
@@ -1552,7 +1564,12 @@ let withOnlyExpectedType expected (state: CoreLoweringState) = withConsumerReque
 // straight `let` chain forwards.
 let branchRequest (request: ConsumerRequest) = request with transferSlot = None
 
-let withLoweredConsumerRequest (request: ConsumerRequest) (lowered: LoweredCoreValue) = lowered with state = withConsumerRequest(request)(lowered.state)
+let withLoweredConsumerRequest (request: ConsumerRequest) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = loweredState } ->
+            if isEmptyConsumerRequest(request) && isEmptyConsumerRequest(loweredState.consumerRequest)
+            then lowered
+            else lowered with state = withConsumerRequest(request)(loweredState)
 
 let runtimeStringRequested (state: CoreLoweringState) =
     match consumerRequestOf(state) with
@@ -1567,14 +1584,14 @@ let transfersChildrenRequested (state: CoreLoweringState) =
 let withArgumentRequest expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, argumentSite = site, transfersRuntimeManagedChildren = transfers))(state)
 
 // The reference-counted heap temps of the current function.
-let runtimeTempStateOf (temp: Int) (state: CoreLoweringState) = Ashes.Collection.Map.get(temp)(state.runtimeTemps)
+let runtimeTempStateOf (temp: Int) (state: CoreLoweringState) = Ashes.Collection.Map.getInt(temp)(state.runtimeTemps)
 
 let isRuntimeTemp (temp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(temp)(state) with
         | Some(_runtimeState) -> true
         | None -> false
 
-let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = Ashes.Collection.Map.set(temp)(runtimeState)(state.runtimeTemps)
+let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = Ashes.Collection.Map.setInt(temp)(runtimeState)(state.runtimeTemps)
 
 let markLoweredRuntimeTemp (lowered: LoweredCoreValue) =
     match lowered with
@@ -4452,7 +4469,13 @@ let unlocatedInstruction (kind: IrInstructionKind) (state: CoreLoweringState) = 
 // cannot see. A value the runtime answers `IsReferenceCounted` for is retained, because a
 // reference-counted block's children are reference-counted by construction and the reference is as
 // good as the copy it replaces; anything else takes the copy the site would have made anyway. Both
-// arms store into one slot, since this IR has no phi.
+// arms store into one slot, since this IR has no phi, and the joined value carries the copy's
+// reference-counted fact, since either arm leaves an owned reference-counted value when it does.
+let joinedCopyFact (copyTemp: Int) (resultTemp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(copyTemp)(state) with
+        | Some(runtimeState) -> markRuntimeTemp(resultTemp)(runtimeState)(state)
+        | None -> state
+
 let emitReferenceOrCopy (sourceTemp: Int) emitCopy (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = tested, temp = referenceCountedTemp } ->
@@ -4479,7 +4502,9 @@ let emitReferenceOrCopy (sourceTemp: Int) emitCopy (state: CoreLoweringState) =
                                                     |> emit(Label(doneLabel))
                                                     |> freshTemp with
                                                         | FreshTemp { state = resulted, temp = resultTemp } ->
-                                                            (emit(LoadLocal(resultTemp)(resultSlot))(resulted), resultTemp)
+                                                            (resulted
+                                                            |> emit(LoadLocal(resultTemp)(resultSlot))
+                                                            |> joinedCopyFact(copyTemp)(resultTemp), resultTemp)
 
 // Stage 0's guard on `TcoBackEdgeNormalizeRuntimeManagedArg`: the successor a back edge stores
 // into a runtime-managed slot is the value itself when the runtime answers that it is already
@@ -7974,17 +7999,17 @@ let recursive emitTcoExitDropsInOrder (bodyTemp: Int) (transfer: Maybe((Int, Int
                 | _ -> state)
 
 // Stage 0's `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops`: the exit releases of every
-// runtime-managed slot, right before the function's own `Return`. A reference-counted body
-// result may be one of the slots' own values, so every slot is transfer-checked against it
-// under one selection flag; any other result never carries a slot's value out, so every slot
-// releases under its active flag.
-let emitTcoExitDrops (bodyTemp: Int) (slots: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
+// runtime-managed slot, right before the function's own `Return`. A reference-counted or
+// heap-typed body result may be one of the slots' own values, so every slot is transfer-checked
+// against it under one selection flag; a copy-typed result never carries a slot's value out, so
+// every slot releases under its active flag.
+let emitTcoExitDrops (bodyTemp: Int) (resultType: SemanticType) (slots: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match (managedLists, managedAdts, managedStrs) with
         | ([], [], []) -> state
         | _entries ->
             ((given (prepared: (CoreLoweringState, Maybe((Int, Int)))) ->
                 match prepared with
-                    | (preparedState, transfer) -> emitTcoExitDropsInOrder(bodyTemp)(transfer)(slots)(managedLists)(managedAdts)(managedStrs)(preparedState)))(if isRuntimeTemp(bodyTemp)(state)
+                    | (preparedState, transfer) -> emitTcoExitDropsInOrder(bodyTemp)(transfer)(slots)(managedLists)(managedAdts)(managedStrs)(preparedState)))(if isRuntimeTemp(bodyTemp)(state) || isCopyTypeSemantic(resolveType(state)(resultType)) == false
             then
                 match freshLocal(state) with
                     | FreshLocal { state = slotState, local = transferSelectedSlot } ->
@@ -8005,7 +8030,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs)
             |> recordTcoNormalizedArgumentLabel(label)(entries)
             |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-            |> emitTcoExitDrops(bodyTemp)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
+            |> emitTcoExitDrops(bodyTemp)(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
             |> success(bodyTemp)(semanticType)
 
 // A parameter whose self-call shape, copy-ADT layout, or affine analysis could place it on the
@@ -10869,6 +10894,66 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             expectedResult = expected
         ))
 
+// The consumed arguments whose parts the callee's result may still name: released spine-only unless
+// the result is made to own what it keeps.
+let recursive hasPreservedHeapArgument (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+    match consumed with
+        | [] -> false
+        | CoreConsumedArgument { preserveEscapedChildren = true, adoptionFlagTemp = flagTemp, semanticType = semanticType } :: rest ->
+            flagTemp < 0 && isCopyTypeSemantic(resolveType(state)(semanticType)) == false || hasPreservedHeapArgument(rest)(state)
+        | _ :: rest -> hasPreservedHeapArgument(rest)(state)
+
+let recursive releaseWithAllParts (consumed: List(CoreConsumedArgument)) =
+    match consumed with
+        | [] -> []
+        | (CoreConsumedArgument { preserveEscapedChildren = true, adoptionFlagTemp = flagTemp } as argument) :: rest ->
+            (if flagTemp < 0
+            then argument with preserveEscapedChildren = false
+            else argument) :: releaseWithAllParts(rest)
+        | argument :: rest -> argument :: releaseWithAllParts(rest)
+
+// Stage 0's `CanNormalizeIntoOwnedRuntimeValue`: the result types the guarded copy turns into an
+// owned reference-counted value.
+let ownedResultPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> argumentCopyPlanOf(semanticType)(state)
+        | SemList(element) ->
+            match listHeadCopyKindOf(element)(state) with
+                | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
+                | None -> None
+        | SemNamed(_symbolId, _name, _arguments) -> argumentCopyPlanOf(semanticType)(state)
+        | _ -> None
+
+// Stage 0's `resultCopyCopiesElements`: a list copy-out whose heads are strings or lists copies
+// them, so its result shares nothing with the arguments already.
+let resultCopyCopiesElements (semanticType: SemanticType) (state: CoreLoweringState) =
+    match callCopyOutOf(semanticType)(state) with
+        | Some(ListCallCopyOut(InlineListHead)) -> false
+        | Some(ListCallCopyOut(_headCopy)) -> true
+        | _ -> false
+
+let resultAlreadySettled (context: CoreCallContext) (stage: CoreCallStage) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    isRuntimeTemp(temp)(state) || stage.resultNormalized || stage.resultDeepCopied || context.selfCallee && (match state.specializingReuseLabel with
+        | Some(_label) -> true
+        | None -> false) || callResultRuntimeManaged(context.facts)(semanticType)(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || resultCopyCopiesElements(semanticType)(state)
+
+// Stage 0's `OwnResultBeforeArgumentRelease`: a consumed argument whose parts the callee's arena
+// result may still name would be released spine-only, stranding every part the result did not
+// keep. The result is made an owned reference-counted value first, retained or copied with its
+// reference-counted parts retained, and the argument then goes with all its parts.
+let ownResultBeforeArgumentRelease (context: CoreCallContext) (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } as lowered, consumedArguments = consumed } ->
+            if resultAlreadySettled(context)(stage)(temp)(semanticType)(state) || hasPreservedHeapArgument(consumed)(state) == false
+            then stage
+            else
+                match ownedResultPlanOf(semanticType)(state) with
+                    | None -> stage
+                    | Some(plan) ->
+                        match emitArgumentCopy(temp)(plan)(state) with
+                            | (copied, ownedTemp) -> stage with lowered = (lowered with state = markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)(copied), temp = ownedTemp), consumedArguments = releaseWithAllParts(consumed)
+        | _ -> stage
+
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
 let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
@@ -10885,6 +10970,7 @@ let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(Cor
                     | stage ->
                         stage
                         |> closeCallWindow(context)(cursorSlot)(endSlot)
+                        |> ownResultBeforeArgumentRelease(context)
                         |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage)))
 
 let failedIfPlan state error =
@@ -19226,7 +19312,9 @@ let lowerCoreDispatch expression lowerCore state =
 let recursive lowerCore expression state =
     match consumerRequestOf(state) with
         | request ->
-            match dispatchRequest(expression)(request) with
+            match if isEmptyConsumerRequest(request)
+            then request
+            else dispatchRequest(expression)(request) with
                 | dispatched ->
                     state
                     |> withConsumerRequest(dispatched)

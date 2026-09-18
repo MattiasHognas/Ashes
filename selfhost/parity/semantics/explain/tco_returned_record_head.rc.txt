@@ -54,9 +54,9 @@ Function: __rcdrop_structural_6
 Function: findHeavy [lambda_5]
   Operations
     dup:                  8
-    drop:                 14
-    uniqueness checks:    6
-    allocations:          2
+    drop:                 16
+    uniqueness checks:    7
+    allocations:          3
     reused allocations:   0
     reuse tokens:         0
     copies:               4
@@ -74,8 +74,8 @@ Function: findHeavy
 Function: run [lambda_8]
   Operations
     dup:                  1
-    drop:                 2
-    uniqueness checks:    1
+    drop:                 6
+    uniqueness checks:    3
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
@@ -104,9 +104,9 @@ Function: build [lambda_1__scalarenv0]
 Function: findHeavy [lambda_5__scalarenv1]
   Operations
     dup:                  8
-    drop:                 14
-    uniqueness checks:    6
-    allocations:          2
+    drop:                 16
+    uniqueness checks:    7
+    allocations:          3
     reused allocations:   0
     reuse tokens:         0
     copies:               4

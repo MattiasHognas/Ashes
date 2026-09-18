@@ -76,6 +76,7 @@ let recursive reachesAt (constructors: List(Str)) (callees: List((Str, List(Str)
             | ExprAt(_span, inner) -> reachesAt(constructors)(callees)(depth)(inner)(variable)
             | ExprVar(name) -> name == variable
             | ExprLambda(parameter, body, _annotation) -> parameter != variable && reachesAt(constructors)(callees)(depth)(body)(variable)
+            | ExprLet(name, _value, body, _parameters, _annotation, _constraints) -> name != variable && reachesAt(constructors)(callees)(depth)(body)(variable)
             | ExprIf(_condition, thenBranch, elseBranch) -> reachesAt(constructors)(callees)(depth)(thenBranch)(variable) && reachesAt(constructors)(callees)(depth)(elseBranch)(variable)
             | ExprMatch(_scrutinee, [], _defaultArm) -> false
             | ExprMatch(_scrutinee, arms, _defaultArm) -> everyArmReaches(constructors)(callees)(depth)(arms)(variable)

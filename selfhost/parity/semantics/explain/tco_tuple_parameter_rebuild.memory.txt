@@ -20,7 +20,7 @@ Function: step
     uniqueness checks:    0
   representation [lambda_1]
     region:               1
-    runtime rc:           5
+    runtime rc:           6
     copy value:           18
   representation [lambda_0]
     region:               3

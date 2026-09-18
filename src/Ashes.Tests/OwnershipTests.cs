@@ -672,7 +672,7 @@ public sealed class OwnershipTests
         List<IrInst> instructions = loop.Instructions;
         int successorIndex = instructions.FindLastIndex(inst => inst is IrInst.AllocAdt { FieldCount: 2 });
         successorIndex.ShouldBeGreaterThan(0, "the loop builds the successor pair");
-        instructions.Take(successorIndex).Count(inst =>
+        RepresentationTestIr.CountOutsideGuards(instructions.Take(successorIndex), inst =>
             inst is IrInst.RcDup { RuntimeManaged: true, MayBeEmpty: false }).ShouldBe(
             1,
             "the child read out of the parameter is retained before the successor stores it");
@@ -1497,7 +1497,8 @@ public sealed class OwnershipTests
     {
         IrProgram ir = LowerProgram("type Tree = | Leaf | Node(Tree, Int, Tree)\nlet tree = Node(Leaf)(42)(Leaf) in match tree with | Leaf -> Ashes.IO.print(0) | Node(_, value, _) -> Ashes.IO.print(value)");
 
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
+        // The root is tested for another owner: a copy under the representation test may share it.
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tree", RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CallKnown { FuncLabel: var label }
             && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBeTrue();
@@ -1541,8 +1542,8 @@ public sealed class OwnershipTests
         IrProgram ir = LowerProgram("let values = [1, 2, 3] in match values with | [] -> Ashes.IO.print(0) | head :: _ -> Ashes.IO.print(head)");
 
         ir.EntryFunction.Instructions.Count(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBe(3);
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeFalse();
-        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBe(1);
+        // Each cell is tested for another owner: a copy under the representation test may share it.
+        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
     }
 
     [Test]

@@ -21,7 +21,7 @@ Function: build
   representation [lambda_1]
     conservative unknown: 3
     region:               7
-    runtime rc:           21
+    runtime rc:           26
     copy value:           9
   representation [lambda_0]
     region:               3
@@ -47,7 +47,7 @@ Function: heaviest
   representation [lambda_5]
     conservative unknown: 2
     region:               6
-    runtime rc:           37
+    runtime rc:           42
     copy value:           2
   representation [lambda_4]
     conservative unknown: 1

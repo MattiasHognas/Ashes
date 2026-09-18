@@ -86,6 +86,24 @@ let recursive withoutPendingRetainSkeletons (lines: List(Str)) (skipping: Bool) 
                 then withoutPendingRetainSkeletons(rest)(true)
                 else line :: withoutPendingRetainSkeletons(rest)(false)
 
+// The representation test gives every copy site a retain of a value that is already
+// reference-counted: the RcDup right after the jump on its IsReferenceCounted result, beside the
+// copy the site always had. The retains the ownership rules ask for are counted without it.
+let recursive withoutRepresentationRetains (lines: List(Str)) (previous: Str) (beforePrevious: Str) =
+    match lines with
+        | [] -> []
+        | line :: rest ->
+            if Ashes.Text.contains(line)("RcDup") && Ashes.Text.contains(previous)("JumpIfFalse") && Ashes.Text.contains(beforePrevious)("IsReferenceCounted")
+            then withoutRepresentationRetains(rest)(line)(previous)
+            else line :: withoutRepresentationRetains(rest)(line)(previous)
+
+let withoutGuards (lines: List(Str)) = withoutRepresentationRetains(lines)("")("")
+
+let loopLines (originText: Str) (source: Str) =
+    source
+    |> loopFunctionLines(originText)
+    |> withoutGuards
+
 // The lines after the last `else_N:` label: the else branch of the innermost `if`.
 let recursive afterLastElseLabel (lines: List(Str)) (tail: List(Str)) =
     match lines with
@@ -144,8 +162,11 @@ let ownedLetInTailArgumentRecordSource = "type Inst =\n    | Jump(Str)\n    | Ot
 // parameter `n` passed to `mk` takes the pending retain skeleton, dead in this arena frame.
 let expectTailSelfCallArgumentRetainsOwnedBinding unit =
     ownedLetInTailArgumentRecordSource
-    |> loopFunctionLines("[ClosureHelper from loop]")
-    |> (given (allLines) -> withoutPendingRetainSkeletons(allLines)(false))
+    |> loopLines("[ClosureHelper from loop]")
+    |> (given (allLines) ->
+        false
+        |> withoutPendingRetainSkeletons(allLines)
+        |> withoutGuards)
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("one RcDup in the loop body")(countContaining("RcDup")(lines) == 1))
@@ -174,8 +195,11 @@ let ownedLetInOperandSelfCallSource = "let mk n = Ashes.Text.fromInt(n)\n\nlet r
 // `s` for the next iteration.
 let expectOperandSelfCallIsNotATailCall unit =
     ownedLetInOperandSelfCallSource
-    |> loopFunctionLines("[ClosureHelper from count]")
-    |> (given (allLines) -> withoutPendingRetainSkeletons(allLines)(false))
+    |> loopLines("[ClosureHelper from count]")
+    |> (given (allLines) ->
+        false
+        |> withoutPendingRetainSkeletons(allLines)
+        |> withoutGuards)
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("one RcDup in the loop body")(countContaining("RcDup")(lines) == 1))
@@ -204,7 +228,8 @@ let letAliasOfParameterSource = "let recursive loop n acc =\n    (let r = acc\n 
 // body's `+` has it lowered against its closed type.
 let expectLetAliasOfParameterIsNotAnOwner unit =
     letAliasOfParameterSource
-    |> loopFunctionLines("[ClosureHelper from loop]")
+    |> loopLines("[ClosureHelper from loop]")
+    |> withoutGuards
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the back-edge predecessor release, the exit-guarded release, the arena-result boundary's release, and the alias's own unpromoted anchor, no more")(countContaining("RcDrop")(lines) == 4 && countContaining("OwnerSlot")(lines) == 1 && countContainingBoth("CopyOutArena")("ArenaResultBoundary")(lines) == 1))
@@ -218,7 +243,7 @@ let expectLetAliasOfParameterIsNotAnOwner unit =
 // the loop exit releases the accumulator under its active flag through the shared-cell walk.
 let expectGrownConsAccumulatorIsRuntimeManaged unit =
     ownedLetInOperandSelfCallSource
-    |> loopFunctionLines("[ClosureHelper from count]")
+    |> loopLines("[ClosureHelper from count]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the entry normalization reads the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
@@ -264,7 +289,7 @@ let consumedTailListSource = "let recursive total xs acc =\n    match xs with\n 
 // the slot still holds: three shared-cell walks in all, stage 0's shape.
 let expectConsumedTailListIsRuntimeManaged unit =
     consumedTailListSource
-    |> loopFunctionLines("[ClosureHelper from total]")
+    |> loopLines("[ClosureHelper from total]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("no ownership flag for a captured chain parameter")(countContaining("LoadArgumentOwnership")(lines) == 0))
@@ -289,7 +314,7 @@ let forwardedStrHeadSource = "let recursive last (n: Int) (xs: List(Str)) (keep:
 // keep.
 let expectForwardedStrHeadIsProtected unit =
     forwardedStrHeadSource
-    |> loopFunctionLines("[ClosureHelper from last]")
+    |> loopLines("[ClosureHelper from last]")
     |> (given (lines) ->
         Unit
         |> (given (_) ->
@@ -316,7 +341,7 @@ let forwardedInnerListHeadSource = "let recursive last (n: Int) (xs: List(List(I
 // placement does not name yet, so the cell walk that would free the forwarded head never runs.
 let expectForwardedInnerListHeadKeepsListInArena unit =
     forwardedInnerListHeadSource
-    |> loopFunctionLines("[ClosureHelper from last]")
+    |> loopLines("[ClosureHelper from last]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("no entry normalization of the list")(countContainingBoth("CopyOutList")("HeadCopy=InnerList")(lines) == 0))
@@ -331,7 +356,7 @@ let copyAdtLoopSource = "type Counter =\n    | count: Int\n    | total: Int\n\nl
 // the predecessor, and the exit transfers the parameter's own value to the caller or releases it.
 let expectCopyAdtLoopParameterIsRuntimeManaged unit =
     copyAdtLoopSource
-    |> loopFunctionLines("[ClosureHelper from bump]")
+    |> loopLines("[ClosureHelper from bump]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
@@ -348,7 +373,7 @@ let scalarTupleLoopSource = "let recursive step (n: Int) (s: (Int, Int)) =\n    
 // unconditional under the active flag.
 let expectScalarTupleLoopParameterIsRuntimeManaged unit =
     scalarTupleLoopSource
-    |> loopFunctionLines("[ClosureHelper from step]")
+    |> loopLines("[ClosureHelper from step]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
@@ -364,7 +389,7 @@ let ownedChildRecordLoopSource = "type State =\n    | label: Str\n    | count: I
 // cell's owned children under a uniqueness test before dropping the cell.
 let expectOwnedChildRecordLoopParameterIsRuntimeManaged unit =
     ownedChildRecordLoopSource
-    |> loopFunctionLines("[ClosureHelper from step]")
+    |> loopLines("[ClosureHelper from step]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
@@ -384,7 +409,7 @@ let stringFieldIntoSuccessorSource = "type State =\n    | label: Str\n    | coun
 // parameter's structural walk releases its own, so the stored borrow needs a reference of its own.
 let expectStringFieldReadIntoSuccessorIsRetained unit =
     stringFieldIntoSuccessorSource
-    |> loopFunctionLines("[ClosureHelper from step]")
+    |> loopLines("[ClosureHelper from step]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the field read is retained before the successor stores it")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
@@ -402,7 +427,7 @@ let nestedRecordLoopSource = "type State =\n    | label: Str\n    | count: Int\n
 // guarded duplicate stays behind a flag finalize zeroes for the unadmitted parameter.
 let expectNestedRecordLoopParameterIsRuntimeManaged unit =
     nestedRecordLoopSource
-    |> loopFunctionLines("[ClosureHelper from walk]")
+    |> loopLines("[ClosureHelper from walk]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
@@ -421,7 +446,7 @@ let recordListAccumulatorSource = "type State =\n    | label: Str\n    | count: 
 // list's exit release walks its cells.
 let expectRecordListAccumulatorIsRuntimeManaged unit =
     recordListAccumulatorSource
-    |> loopFunctionLines("[ClosureHelper from collect]")
+    |> loopLines("[ClosureHelper from collect]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the entry normalizes the borrowed list under the ownership flag")(countContaining("LoadArgumentOwnership")(lines) == 1))
@@ -440,7 +465,7 @@ let nonAffineStrParameterSource = "let recursive collect (n: Int) (text: Str) (a
 // accumulator is retained for the cell, and the back edge releases the parameter's old value.
 let expectNonAffineStrParameterIsRuntimeManaged unit =
     nonAffineStrParameterSource
-    |> loopFunctionLines("[ClosureHelper from collect]")
+    |> loopLines("[ClosureHelper from collect]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the successor concatenation lives on the reference-counted heap")(countContainingBoth("ConcatStr")("RuntimeManaged=true")(lines) == 1))
@@ -458,7 +483,7 @@ let freshListRebuildSource = "let recursive step (n: Int) (items: List(Str)) (to
 // by its pattern owner once the root parameter is placed.
 let expectFreshListRebuildParameterIsRuntimeManaged unit =
     freshListRebuildSource
-    |> loopFunctionLines("[ClosureHelper from step]")
+    |> loopLines("[ClosureHelper from step]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the list is a captured parameter, copied out unconditionally at entry")(countContaining("LoadArgumentOwnership")(lines) == 0))
@@ -476,7 +501,7 @@ let consumedRecordHeadsEscapeSource = "type Item =\n    | name: Str\n    | weigh
 // the record's string child.
 let expectConsumedRecordHeadsEscapeIntoAccumulator unit =
     consumedRecordHeadsEscapeSource
-    |> loopFunctionLines("[ClosureHelper from heaviest]")
+    |> loopLines("[ClosureHelper from heaviest]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the list is normalized at entry through the cell walk")(countContaining("rc_normalize_list")(lines) > 0))
@@ -493,7 +518,7 @@ let findStringHeadSource = "let recursive findLong (items: List(Str)) (limit: In
 // nothing, and the loop's closure advertises a runtime-managed result.
 let expectFindLoopReturningStringHeadNormalizesTheLiteralArm unit =
     findStringHeadSource
-    |> loopFunctionLines("[ClosureHelper from findLong]")
+    |> loopLines("[ClosureHelper from findLong]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the head's owner retains once, the branch retains once more, the tail is retained for the successor")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 3))
@@ -501,7 +526,7 @@ let expectFindLoopReturningStringHeadNormalizesTheLiteralArm unit =
         |> (given (_) -> check("the head's owner releases under the string name")(countContainingBoth("TypeName=String OwnerSlot=")("RuntimeManaged=true")(lines) == 2)))
     |> (given (_) ->
         findStringHeadSource
-        |> loopFunctionLines("[SourceFunction from findLong]")
+        |> loopLines("[SourceFunction from findLong]")
         |> (given (lines) -> check("the loop's closure returns a runtime-managed result")(countContaining("ReturnsRuntimeManaged=true")(lines) == 1)))
 
 let findRecordHeadSource = "type Item =\n    | name: Str\n    | weight: Int\n\nlet recursive findHeavy (items: List(Item)) (limit: Int) =\n    match items with\n        | [] -> Item(name = \"none\", weight = 0)\n        | head :: rest ->\n            if head.weight > limit\n            then head\n            else findHeavy(rest)(limit)\n\nlet found = findHeavy([Item(name = \"a\", weight = 3)])(1)\n\nAshes.IO.print(found.weight)"
@@ -512,7 +537,7 @@ let findRecordHeadSource = "type Item =\n    | name: Str\n    | weight: Int\n\nl
 // head, and the loop's closure advertises a runtime-managed result.
 let expectFindLoopReturningRecordHeadCopiesTheStaticArm unit =
     findRecordHeadSource
-    |> loopFunctionLines("[ClosureHelper from findHeavy]")
+    |> loopLines("[ClosureHelper from findHeavy]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the static record arm is deep-copied to the reference-counted heap")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization")(lines) >= 2))
@@ -520,7 +545,7 @@ let expectFindLoopReturningRecordHeadCopiesTheStaticArm unit =
         |> (given (_) -> check("the head's owner releases through the structural dropper")(countContainingBoth("TypeName=Item OwnerSlot=")("StructuralDropperLabel=__rcdrop_structural")(lines) == 2)))
     |> (given (_) ->
         findRecordHeadSource
-        |> loopFunctionLines("[SourceFunction from findHeavy]")
+        |> loopLines("[SourceFunction from findHeavy]")
         |> (given (lines) -> check("the loop's closure returns a runtime-managed result")(countContaining("ReturnsRuntimeManaged=true")(lines) == 1)))
 
 let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs with\n        | [] -> keep\n        | head :: rest -> last(n - 1)(rest)(head)\n\nAshes.IO.print(last(2)([\"a\", \"b\"])(\"z\"))"
@@ -529,7 +554,7 @@ let forwardedGenericHeadSource = "let recursive last n xs keep =\n    match xs w
 // duplicate and the owner's release name the binding, not a runtime-managed type.
 let expectForwardedGenericHeadKeepsIdentityMarkers unit =
     forwardedGenericHeadSource
-    |> loopFunctionLines("[ClosureHelper from last]")
+    |> loopLines("[ClosureHelper from last]")
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("one identity duplicate at the self-call argument")(countContaining("RcDup")(lines) == 1))
@@ -564,7 +589,7 @@ let readBuiltinLetScopeSource = widenPrelude + "let recursive loop (n: Int) (tot
 // unowned runtime-managed `RcDrop` of the string right after the read.
 let expectReadReleasesConsumedFreshResult (label: Str) (source: Str) =
     source
-    |> loopFunctionLines("[ClosureHelper from loop]")
+    |> loopLines("[ClosureHelper from loop]")
     |> lineAfter("TextByteLength")
     |> (given (line) ->
         Unit
@@ -591,12 +616,12 @@ let expectReadBuiltinKeepsOwnedResults unit =
     Unit
     |> (given (_) ->
         readBuiltinBorrowedJoinSource
-        |> loopFunctionLines("[ClosureHelper from loop]")
+        |> loopLines("[ClosureHelper from loop]")
         |> lineAfter("TextByteLength")
         |> (given (line) -> check("a borrowed branch keeps the join unreleased")(Ashes.Text.contains(line)("RcDrop") == false)))
     |> (given (_) ->
         readBuiltinLetScopeSource
-        |> loopFunctionLines("[ClosureHelper from loop]")
+        |> loopLines("[ClosureHelper from loop]")
         |> (given (lines) ->
             Unit
             |> (given (_) -> check("a let-bound result is not released by its reads")(countContaining("RcDrop")(lines) == countContainingBoth("RcDrop")("OwnerSlot=")(lines)))
@@ -615,7 +640,7 @@ let expectAffineStrAccumulatorGrowsInPlace unit =
     Unit
     |> (given (_) ->
         affineStrAccumulatorSource
-        |> loopFunctionLines("[ClosureHelper from accumulate]")
+        |> loopLines("[ClosureHelper from accumulate]")
         |> (given (lines) ->
             Unit
             |> (given (_) -> check("the append grows the reservation in place on the reference-counted heap")(countContainingBoth("ConcatStrTip")("RuntimeManaged=true")(lines) == 1))
@@ -626,7 +651,7 @@ let expectAffineStrAccumulatorGrowsInPlace unit =
             |> (given (_) -> check("the exit transfers the value to the caller when it is the result")(countContaining("rc_tco_exit_transfer_not_selected")(lines) > 0))))
     |> (given (_) ->
         affineStrAccumulatorSource
-        |> loopFunctionLines("[SourceFunction from accumulate]")
+        |> loopLines("[SourceFunction from accumulate]")
         |> (given (lines) -> check("the loop's closure advertises a runtime-managed result")(countContainingBoth("MakeClosure")("ReturnsRuntimeManaged=true")(lines) == 1)))
 
 let arenaVariantAccumulatorSource = "type Slot =\n    | Empty\n    | Filled(Int, Int)\n\nlet recursive step (n: Int) (s: Slot) =\n    if n == 0\n    then\n        match s with\n            | Empty -> 0\n            | Filled(a, b) -> a + b\n    else\n        step(n - 1)(match s with\n            | Empty -> Filled(n, 1)\n            | Filled(a, b) -> Filled(a + 1, b + n))\n\nAshes.IO.print(Ashes.Text.fromInt(step(10)(Empty)))"
@@ -642,7 +667,7 @@ let expectVariantParameterCompactsTheArena unit =
     Unit
     |> (given (_) ->
         arenaVariantAccumulatorSource
-        |> loopFunctionLines("[ClosureHelper from step]")
+        |> loopLines("[ClosureHelper from step]")
         |> (given (lines) ->
             Unit
             |> (given (_) -> check("the back edge tests the compaction threshold")(countContaining("tco_compact_skip")(lines) == 2 && countContaining("Value=4096")(lines) == 1))
@@ -651,7 +676,7 @@ let expectVariantParameterCompactsTheArena unit =
             |> (given (_) -> check("the live size is recorded or the watermark rebased")(countContaining("tco_compact_rebase")(lines) == 2 && countContaining("tco_compact_recorded")(lines) == 2))))
     |> (given (_) ->
         arenaVariantAccumulatorSource
-        |> loopFunctionLines("[AdtDeepCopier]")
+        |> loopLines("[AdtDeepCopier]")
         |> (given (lines) ->
             Unit
             |> (given (_) -> check("the copier switches on the constructor tag")(countContaining("SwitchTag")(lines) == 1 && countContaining("LoadEnv")(lines) == 1))

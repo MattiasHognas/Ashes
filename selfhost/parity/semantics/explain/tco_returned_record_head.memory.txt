@@ -21,7 +21,7 @@ Function: build
   representation [lambda_1]
     conservative unknown: 3
     region:               7
-    runtime rc:           21
+    runtime rc:           26
     copy value:           9
   representation [lambda_0]
     region:               3
@@ -34,20 +34,20 @@ Function: findHeavy
     result fresh: no
   perceus [lambda_5]
     dup:                  8
-    drop:                 14
-    uniqueness checks:    6
+    drop:                 16
+    uniqueness checks:    7
   perceus [lambda_4]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_5__scalarenv1]
     dup:                  8
-    drop:                 14
-    uniqueness checks:    6
+    drop:                 16
+    uniqueness checks:    7
   representation [lambda_5]
     conservative unknown: 2
-    region:               1
-    runtime rc:           25
+    region:               3
+    runtime rc:           30
     copy value:           4
   representation [lambda_4]
     conservative unknown: 1
@@ -60,15 +60,15 @@ Function: run
     result fresh: no
   perceus [lambda_8]
     dup:                  1
-    drop:                 2
-    uniqueness checks:    1
+    drop:                 6
+    uniqueness checks:    3
   perceus [lambda_7]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   representation [lambda_8]
-    conservative unknown: 8
-    runtime rc:           5
+    conservative unknown: 7
+    runtime rc:           6
     copy value:           20
   representation [lambda_7]
     region:               3

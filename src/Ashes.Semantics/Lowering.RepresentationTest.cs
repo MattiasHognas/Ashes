@@ -72,10 +72,18 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(resultSlot, retainedTemp));
         Emit(new IrInst.Jump(doneLabel));
         Emit(new IrInst.Label(copyLabel));
-        Emit(new IrInst.StoreLocal(resultSlot, emitCopy()));
+        int copiedTemp = emitCopy();
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+
+        // Either branch leaves an owned reference-counted value when the copy does, so the joined
+        // value carries the fact the copy alone used to.
+        if (IsRuntimeManagedResultTemp(copiedTemp))
+        {
+            MarkRuntimeManagedTemp(resultTemp);
+        }
 
         RecordPossiblySharedChild();
         return resultTemp;

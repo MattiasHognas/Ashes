@@ -31,12 +31,32 @@ Function: __rcdrop_5
     reuse tokens:         0
     copies:               0
 
+Function: __deepcopy_7
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_list_6
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
 Function: bumpInto [lambda_4]
   Operations
-    dup:                  18
-    drop:                 16
-    uniqueness checks:    7
-    allocations:          9
+    dup:                  17
+    drop:                 18
+    uniqueness checks:    8
+    allocations:          10
     reused allocations:   0
     reuse tokens:         0
     copies:               16
@@ -51,35 +71,25 @@ Function: bumpInto
     reuse tokens:         0
     copies:               0
 
-Function: __deepcopy_10
+Function: bump
   Operations
     dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          2
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               1
-
-Function: __deepcopy_list_9
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          2
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          1
     reused allocations:   0
     reuse tokens:         0
     copies:               0
 
-Function: passes [lambda_8]
+Function: passes [lambda_10]
   Operations
-    dup:                  8
-    drop:                 6
-    uniqueness checks:    3
-    allocations:          3
+    dup:                  4
+    drop:                 8
+    uniqueness checks:    4
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               6
+    copies:               3
 
 Function: passes
   Operations

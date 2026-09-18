@@ -21,7 +21,7 @@ Function: total
     uniqueness checks:    0
   representation [lambda_2]
     region:               1
-    runtime rc:           19
+    runtime rc:           21
     copy value:           10
   representation [lambda_1]
     region:               2

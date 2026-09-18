@@ -26,12 +26,12 @@ Function: carry
   representation [lambda_6]
     conservative unknown: 2
     region:               5
-    runtime rc:           22
+    runtime rc:           28
     copy value:           10
   representation [lambda_5]
     conservative unknown: 1
     region:               2
-    runtime rc:           4
+    runtime rc:           6
   representation [lambda_4]
     region:               3
     copy value:           1
@@ -56,7 +56,7 @@ Function: walk
   representation [lambda_1]
     conservative unknown: 4
     region:               12
-    runtime rc:           15
+    runtime rc:           20
     copy value:           9
   representation [lambda_0]
     region:               3

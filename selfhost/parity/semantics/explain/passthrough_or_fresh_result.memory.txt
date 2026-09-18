@@ -36,7 +36,7 @@ Function: bumpIf
   representation [lambda_5]
     conservative unknown: 5
     region:               2
-    runtime rc:           12
+    runtime rc:           14
     copy value:           3
   representation [lambda_4]
     region:               2
@@ -59,7 +59,7 @@ Function: bumpTimes
   representation [lambda_8]
     conservative unknown: 8
     region:               2
-    runtime rc:           15
+    runtime rc:           17
     copy value:           6
   representation [lambda_7]
     region:               3
@@ -84,7 +84,7 @@ Function: count
     uniqueness checks:    3
   representation [lambda_10]
     conservative unknown: 2
-    runtime rc:           14
+    runtime rc:           16
     copy value:           6
   representation [lambda_9]
     conservative unknown: 1
@@ -102,5 +102,5 @@ Function: keepOrBump
   representation [lambda_6]
     conservative unknown: 7
     region:               2
-    runtime rc:           22
+    runtime rc:           26
 

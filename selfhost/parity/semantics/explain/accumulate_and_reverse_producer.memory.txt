@@ -5,8 +5,14 @@ Function: bump
   ownership
     insts: consumed, move-safe yes
     result fresh: no
-  representation [lambda_6]
-    conservative unknown: 5
+  perceus [lambda_8]
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+  representation [lambda_8]
+    conservative unknown: 6
+    region:               2
+    runtime rc:           1
 
 Function: bumpInto
   ownership
@@ -14,16 +20,17 @@ Function: bumpInto
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_4]
-    dup:                  18
-    drop:                 16
-    uniqueness checks:    7
+    dup:                  17
+    drop:                 18
+    uniqueness checks:    8
   perceus [lambda_3]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   representation [lambda_4]
-    conservative unknown: 9
-    runtime rc:           69
+    conservative unknown: 11
+    region:               8
+    runtime rc:           80
     copy value:           9
   representation [lambda_3]
     conservative unknown: 2
@@ -48,7 +55,7 @@ Function: count
     uniqueness checks:    3
   representation [lambda_12]
     conservative unknown: 2
-    runtime rc:           14
+    runtime rc:           16
     copy value:           6
   representation [lambda_11]
     conservative unknown: 1
@@ -84,20 +91,20 @@ Function: passes
     k: consumed, move-safe yes
     insts: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_8]
-    dup:                  8
-    drop:                 6
-    uniqueness checks:    3
-  perceus [lambda_7]
+  perceus [lambda_10]
+    dup:                  4
+    drop:                 8
+    uniqueness checks:    4
+  perceus [lambda_9]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_8]
-    conservative unknown: 7
-    region:               8
-    runtime rc:           15
+  representation [lambda_10]
+    conservative unknown: 5
+    region:               2
+    runtime rc:           19
     copy value:           6
-  representation [lambda_7]
+  representation [lambda_9]
     conservative unknown: 1
     region:               3
     copy value:           1

@@ -4,12 +4,14 @@ export (
     value get,
     value getWith,
     value getStr,
+    value getInt,
     value contains,
     value containsWith,
     value set,
     value setWith,
     value setStr,
     value upsertStr,
+    value setInt,
     value insert,
     value insertWith,
     value size,
@@ -136,6 +138,19 @@ let get searchKey =
                     else go(right)
     in go)
 
+let getInt (searchKey: Int) =
+    (let recursive go map =
+        match map with
+            | Empty -> None
+            | Node(_height, left, key, value, right) ->
+                if searchKey == key
+                then Some(value)
+                else
+                    if searchKey < key
+                    then go(left)
+                    else go(right)
+    in go)
+
 let containsWith compare searchKey map =
     match getWith(compare)(searchKey)(map) with
         | None -> false
@@ -220,6 +235,26 @@ let upsertStr newKey missValue onHit =
     in go)
 
 let set newKey newValue =
+    (let recursive go map =
+        match map with
+            | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)
+            | Node(_height, left, key, value, right) ->
+                if newKey == key
+                then makeNode(left)(key)(newValue)(right)
+                else
+                    if newKey < key
+                    then
+                        right
+                        |> makeNode(go(left))(key)(value)
+                        |> balance
+                    else
+                        right
+                        |> go
+                        |> makeNode(left)(key)(value)
+                        |> balance
+    in go)
+
+let setInt (newKey: Int) newValue =
     (let recursive go map =
         match map with
             | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)

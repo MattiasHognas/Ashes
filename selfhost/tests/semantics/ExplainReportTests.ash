@@ -187,11 +187,12 @@ let scalarEnvSpecializationNotCorrelated = "the optimizer's scalar-environment s
 // borrow arm's, and every later read of that slot inherits runtime-rc — even ordinary reads that
 // never went through the copy. Stage 0 tags representation onto each value where it is produced
 // instead of re-deriving it from slot flow, so only the value that actually came from the copy
-// carries runtime rc.
+// carries runtime rc, and it also counts the value the representation test joins from its retain
+// and its copy, which the slot walk folds into the copy's own.
 let argNormalizePrologueMergesRcBranchLine (line: Str) =
     match line with
         | "    conservative unknown: 2" -> ["    conservative unknown: 1"]
-        | "    runtime rc:           1" -> ["    runtime rc:           2"]
+        | "    runtime rc:           3" -> ["    runtime rc:           2"]
         | _ -> [line]
 
 let argNormalizePrologueMergesRcBranch (targetNames: List(Str)) (text: Str) =

@@ -12,7 +12,7 @@ Function: build
   representation [lambda_10]
     conservative unknown: 5
     region:               10
-    runtime rc:           9
+    runtime rc:           10
     copy value:           2
 
 Function: collect
@@ -36,7 +36,7 @@ Function: collect
   representation [lambda_4]
     conservative unknown: 14
     region:               14
-    runtime rc:           63
+    runtime rc:           81
     copy value:           5
   representation [lambda_3]
     conservative unknown: 2
@@ -79,7 +79,7 @@ Function: joinAll
   representation [lambda_13]
     conservative unknown: 16
     region:               7
-    runtime rc:           32
+    runtime rc:           38
     copy value:           2
   representation [lambda_12]
     conservative unknown: 2

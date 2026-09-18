@@ -21,7 +21,7 @@ Function: buildTexts
   representation [lambda_1]
     conservative unknown: 2
     region:               1
-    runtime rc:           8
+    runtime rc:           9
     copy value:           7
   representation [lambda_0]
     region:               3
