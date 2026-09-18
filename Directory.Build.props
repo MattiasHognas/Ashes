@@ -35,8 +35,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Analyzers applied to every project (PrivateAssets=all: analyzer-only, not a runtime dep). -->
-    <PackageReference Include="Meziantou.Analyzer" Version="3.0.121" PrivateAssets="all" />
-    <PackageReference Include="SonarAnalyzer.CSharp" Version="10.*" PrivateAssets="all" />
+    <PackageReference Include="Meziantou.Analyzer" Version="3.0.200" PrivateAssets="all" />
+    <PackageReference Include="SonarAnalyzer.CSharp" Version="10.34.0.3385" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

@@ -35,6 +35,8 @@ dotnet_diagnostic.S6640.severity = none
 # Type name matching its namespace's last segment is idiomatic here
 # (namespace Ashes.Formatter + class Formatter); renaming is disruptive.
 dotnet_diagnostic.MA0049.severity = none
+# For now we allow default cutlure
+dotnet_diagnostic.MA0002.severity = none
 
 # Deferred (visible as suggestions; ratchet to warning over time)
 
