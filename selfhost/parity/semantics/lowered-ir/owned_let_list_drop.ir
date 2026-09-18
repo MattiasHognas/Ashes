@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function _start_main  [ProgramEntry]
-  locals=16 temps=31
+  locals=16 temps=32
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (owned_let_list_drop.ash:1:14)
     LoadConstInt          Target=1 Value=2   (owned_let_list_drop.ash:1:57)
@@ -62,20 +62,25 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=13 Source=23   (owned_let_list_drop.ash:1:1)
     LoadLocal             Target=24 Slot=2   (owned_let_list_drop.ash:1:1)
     StoreLocal            Slot=14 Source=24   (owned_let_list_drop.ash:1:1)
-  rcdrop_unique_list_5:
+  rcdrop_list_5:
     LoadLocal             Target=25 Slot=14   (owned_let_list_drop.ash:1:1)
     LoadConstInt          Target=26 Value=0   (owned_let_list_drop.ash:1:1)
     CmpIntNe              Target=27 Left=25 Right=26   (owned_let_list_drop.ash:1:1)
-    JumpIfFalse           CondTemp=27 Target=rcdrop_unique_list_end_6   (owned_let_list_drop.ash:1:1)
-    LoadMemOffset         Target=28 BasePtr=25 OffsetBytes=0   (owned_let_list_drop.ash:1:1)
-    RcDrop                SourceTemp=28 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=29 BasePtr=25 OffsetBytes=8   (owned_let_list_drop.ash:1:1)
+    JumpIfFalse           CondTemp=27 Target=rcdrop_list_end_7   (owned_let_list_drop.ash:1:1)
+    RcIsUnique            Target=28 SourceTemp=25
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_shared_6   (owned_let_list_drop.ash:1:1)
+    LoadMemOffset         Target=29 BasePtr=25 OffsetBytes=0   (owned_let_list_drop.ash:1:1)
+    RcDrop                SourceTemp=29 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=30 BasePtr=25 OffsetBytes=8   (owned_let_list_drop.ash:1:1)
     RcDrop                SourceTemp=25 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=14 Source=29   (owned_let_list_drop.ash:1:1)
-    Jump                  Target=rcdrop_unique_list_5   (owned_let_list_drop.ash:1:1)
-  rcdrop_unique_list_end_6:
+    StoreLocal            Slot=14 Source=30   (owned_let_list_drop.ash:1:1)
+    Jump                  Target=rcdrop_list_5   (owned_let_list_drop.ash:1:1)
+  rcdrop_list_shared_6:
+    RcDrop                SourceTemp=25 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_7   (owned_let_list_drop.ash:1:1)
+  rcdrop_list_end_7:
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=15
-    CopyOutArena          DestTemp=30 SrcTemp=23 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=31 SrcTemp=23 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=15
-    Return                Source=30
+    Return                Source=31
 

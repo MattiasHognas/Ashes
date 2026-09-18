@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from makeItems]
-  locals=3 temps=11
+  locals=4 temps=14
     LoadLocal             Target=5 Slot=1   (consumed_list_argument.ash:1:1)
     LoadArgumentOwnership Target=6   (consumed_list_argument.ash:1:1)
     LoadConstInt          Target=7 Value=1   (consumed_list_argument.ash:1:1)
@@ -11,11 +11,20 @@ function lambda_0  [SourceFunction from makeItems]
     StoreLocal            Slot=2 Source=5   (consumed_list_argument.ash:1:1)
     Jump                  Target=rc_arg_normalize_done_1   (consumed_list_argument.ash:1:1)
   rc_arg_normalize_copy_0:
-    CopyOutArena          DestTemp=9 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=2 Source=9   (consumed_list_argument.ash:1:1)
+    IsReferenceCounted    Target=9 SourceTemp=5
+    JumpIfFalse           CondTemp=9 Target=rc_representation_copy_2   (consumed_list_argument.ash:1:1)
+    RcDup                 Target=10 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=10   (consumed_list_argument.ash:1:1)
+    Jump                  Target=rc_representation_done_3   (consumed_list_argument.ash:1:1)
+  rc_representation_copy_2:
+    CopyOutArena          DestTemp=11 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=11   (consumed_list_argument.ash:1:1)
+  rc_representation_done_3:
+    LoadLocal             Target=12 Slot=3   (consumed_list_argument.ash:1:1)
+    StoreLocal            Slot=2 Source=12   (consumed_list_argument.ash:1:1)
   rc_arg_normalize_done_1:
-    LoadLocal             Target=10 Slot=2   (consumed_list_argument.ash:1:1)
-    StoreLocal            Slot=1 Source=10   (consumed_list_argument.ash:1:1)
+    LoadLocal             Target=13 Slot=2   (consumed_list_argument.ash:1:1)
+    StoreLocal            Slot=1 Source=13   (consumed_list_argument.ash:1:1)
     LoadConstInt          Target=0 Value=0   (consumed_list_argument.ash:1:29)
     LoadLocal             Target=1 Slot=1   (consumed_list_argument.ash:1:36)
     Alloc                 Target=2 SizeBytes=16   (consumed_list_argument.ash:1:29)
@@ -33,36 +42,36 @@ function lambda_1  [SourceFunction from count]
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (consumed_list_argument.ash:4:5)
     CmpIntEq              Target=2 Left=0 Right=1   (consumed_list_argument.ash:4:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_5   (consumed_list_argument.ash:4:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_7   (consumed_list_argument.ash:4:5)
     LoadConstInt          Target=3 Value=0   (consumed_list_argument.ash:5:17)
     StoreLocal            Slot=2 Source=3   (consumed_list_argument.ash:4:5)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Jump                  Target=match_end_2   (consumed_list_argument.ash:4:5)
-  match_arm_cleanup_5:
+    Jump                  Target=match_end_4   (consumed_list_argument.ash:4:5)
+  match_arm_cleanup_7:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
-    Jump                  Target=match_next_4   (consumed_list_argument.ash:4:5)
-  match_next_4:
+    Jump                  Target=match_next_6   (consumed_list_argument.ash:4:5)
+  match_next_6:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=4 Value=0   (consumed_list_argument.ash:4:5)
     CmpIntNe              Target=5 Left=0 Right=4   (consumed_list_argument.ash:4:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_6   (consumed_list_argument.ash:4:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_8   (consumed_list_argument.ash:4:5)
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (consumed_list_argument.ash:4:5)
     LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (consumed_list_argument.ash:4:5)
     LoadConstInt          Target=8 Value=1   (consumed_list_argument.ash:6:21)
     StoreLocal            Slot=2 Source=8   (consumed_list_argument.ash:4:5)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
-    Jump                  Target=match_end_2   (consumed_list_argument.ash:4:5)
-  match_arm_cleanup_6:
+    Jump                  Target=match_end_4   (consumed_list_argument.ash:4:5)
+  match_arm_cleanup_8:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
-    Jump                  Target=match_none_3   (consumed_list_argument.ash:4:5)
-  match_none_3:
+    Jump                  Target=match_none_5   (consumed_list_argument.ash:4:5)
+  match_none_5:
     LoadConstInt          Target=9 Value=0   (consumed_list_argument.ash:4:5)
     StoreLocal            Slot=2 Source=9   (consumed_list_argument.ash:4:5)
-  match_end_2:
+  match_end_4:
     LoadLocal             Target=10 Slot=2   (consumed_list_argument.ash:4:5)
     Return                Source=10   (consumed_list_argument.ash:3:1)
 
@@ -89,12 +98,12 @@ function _start_main  [ProgramEntry]
     CallClosure           Target=12 ClosureTemp=7 ArgTemp=8   (consumed_list_argument.ash:8:41)
     StoreLocal            Slot=11 Source=12   (consumed_list_argument.ash:8:41)
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
-    JumpIfFalse           CondTemp=11 Target=call_copy_arena_result_7   (consumed_list_argument.ash:8:41)
-    Jump                  Target=call_reclaim_owned_result_8   (consumed_list_argument.ash:8:41)
-  call_copy_arena_result_7:
+    JumpIfFalse           CondTemp=11 Target=call_copy_arena_result_9   (consumed_list_argument.ash:8:41)
+    Jump                  Target=call_reclaim_owned_result_10   (consumed_list_argument.ash:8:41)
+  call_copy_arena_result_9:
     CopyOutList           DestTemp=13 SrcTemp=12 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (consumed_list_argument.ash:8:41)
     StoreLocal            Slot=11 Source=13   (consumed_list_argument.ash:8:41)
-  call_reclaim_owned_result_8:
+  call_reclaim_owned_result_10:
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
     LoadLocal             Target=14 Slot=11   (consumed_list_argument.ash:8:41)
     LoadMemOffset         Target=15 BasePtr=5 OffsetBytes=16   (consumed_list_argument.ash:8:35)
@@ -103,32 +112,32 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=18 Value=1   (consumed_list_argument.ash:8:35)
     AndInt                Target=19 Left=17 Right=18   (consumed_list_argument.ash:8:35)
     StoreLocal            Slot=12 Source=14   (consumed_list_argument.ash:8:35)
-    JumpIfFalse           CondTemp=19 Target=rc_call_argument_not_retained_9   (consumed_list_argument.ash:8:35)
+    JumpIfFalse           CondTemp=19 Target=rc_call_argument_not_retained_11   (consumed_list_argument.ash:8:35)
     RcDup                 Target=20 SourceTemp=14 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=12 Source=20   (consumed_list_argument.ash:8:35)
-  rc_call_argument_not_retained_9:
+  rc_call_argument_not_retained_11:
     LoadLocal             Target=21 Slot=12   (consumed_list_argument.ash:8:35)
     CallClosure           Target=22 ClosureTemp=5 ArgTemp=21 RuntimeManagedArgumentFlagTemp=19   (consumed_list_argument.ash:8:35)
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=13
     StoreLocal            Slot=14 Source=14   (consumed_list_argument.ash:8:35)
-  rcdrop_list_10:
+  rcdrop_list_12:
     LoadLocal             Target=23 Slot=14   (consumed_list_argument.ash:8:35)
     LoadConstInt          Target=24 Value=0   (consumed_list_argument.ash:8:35)
     CmpIntNe              Target=25 Left=23 Right=24   (consumed_list_argument.ash:8:35)
-    JumpIfFalse           CondTemp=25 Target=rcdrop_list_end_12   (consumed_list_argument.ash:8:35)
+    JumpIfFalse           CondTemp=25 Target=rcdrop_list_end_14   (consumed_list_argument.ash:8:35)
     RcIsUnique            Target=26 SourceTemp=23
-    JumpIfFalse           CondTemp=26 Target=rcdrop_list_shared_11   (consumed_list_argument.ash:8:35)
+    JumpIfFalse           CondTemp=26 Target=rcdrop_list_shared_13   (consumed_list_argument.ash:8:35)
     LoadMemOffset         Target=27 BasePtr=23 OffsetBytes=0   (consumed_list_argument.ash:8:35)
     RcDrop                SourceTemp=27 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=28 BasePtr=23 OffsetBytes=8   (consumed_list_argument.ash:8:35)
     RcDrop                SourceTemp=23 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=14 Source=28   (consumed_list_argument.ash:8:35)
-    Jump                  Target=rcdrop_list_10   (consumed_list_argument.ash:8:35)
-  rcdrop_list_shared_11:
+    Jump                  Target=rcdrop_list_12   (consumed_list_argument.ash:8:35)
+  rcdrop_list_shared_13:
     RcDrop                SourceTemp=23 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_12   (consumed_list_argument.ash:8:35)
-  rcdrop_list_end_12:
+    Jump                  Target=rcdrop_list_end_14   (consumed_list_argument.ash:8:35)
+  rcdrop_list_end_14:
     TextFromInt           Target=29 ValueTemp=22   (consumed_list_argument.ash:8:16)
     PrintStr              Source=29   (consumed_list_argument.ash:8:1)
     AllocAdt              Target=30 Tag=0 FieldCount=0   (consumed_list_argument.ash:8:1)

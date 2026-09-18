@@ -16,7 +16,7 @@ Function: addImpl
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_5]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   representation [lambda_7]
@@ -31,6 +31,7 @@ Function: addImpl
   representation [lambda_5]
     conservative unknown: 3
     region:               2
+    runtime rc:           3
 
 Function: addTraitImplementation
   ownership
@@ -47,11 +48,11 @@ Function: addTraitImplementation
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_2$env_normalize]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_3__scalarenv3]
@@ -67,7 +68,7 @@ Function: addTraitImplementation
   representation [lambda_1]
     conservative unknown: 1
     region:               2
-    runtime rc:           2
+    runtime rc:           6
 
 Function: buildEnv
   ownership
@@ -92,7 +93,7 @@ Function: churn
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_11]
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
   perceus [lambda_10]
@@ -100,13 +101,13 @@ Function: churn
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_11__scalarenv1]
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
   representation [lambda_11]
     conservative unknown: 2
     region:               3
-    runtime rc:           8
+    runtime rc:           11
     copy value:           7
   representation [lambda_10]
     region:               3
@@ -118,7 +119,7 @@ Function: count
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_13]
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
   perceus [lambda_12]
@@ -126,11 +127,11 @@ Function: count
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_13__scalarenv2]
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
   representation [lambda_13]
-    runtime rc:           5
+    runtime rc:           7
     copy value:           6
   representation [lambda_12]
     conservative unknown: 1
@@ -141,13 +142,13 @@ Function: firstNames
     impls: consumed, move-safe yes
     result fresh: yes
   perceus [lambda_14]
-    dup:                  2
+    dup:                  10
     drop:                 28
     uniqueness checks:    12
   representation [lambda_14]
     conservative unknown: 10
     region:               5
-    runtime rc:           20
+    runtime rc:           36
 
 Function: methodNameOf
   ownership

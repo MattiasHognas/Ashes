@@ -3,13 +3,13 @@ RC report
 
 Function: build [lambda_1]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               3
 
 Function: build
   Operations
@@ -23,7 +23,7 @@ Function: build
 
 Function: findLong [lambda_3]
   Operations
-    dup:                  3
+    dup:                  4
     drop:                 12
     uniqueness checks:    3
     allocations:          0
@@ -63,17 +63,17 @@ Function: run
 
 Function: build [lambda_1__scalarenv0]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               3
 
 Function: findLong [lambda_3__scalarenv1]
   Operations
-    dup:                  3
+    dup:                  4
     drop:                 12
     uniqueness checks:    3
     allocations:          0

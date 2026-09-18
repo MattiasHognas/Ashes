@@ -292,7 +292,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, initializeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, freshLargeBlock);
-        LlvmValueHandle freshLarge = EmitAllocateOsMemory(state, allocationSize, name + "_os");
+        LlvmValueHandle freshLarge = EmitAllocateReferenceCountedOsMemory(state, allocationSize, name + "_os");
         LlvmApi.BuildStore(builder, freshLarge, resultSlot);
         LlvmApi.BuildBr(builder, initializeBlock);
 
@@ -438,6 +438,18 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, shouldCache, cacheBlock, freeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheBlock);
+        // Debugging aid (compiling with ASHES_RC_POISON=1): overwrite a freed block's payload, so a
+        // read after free shows.
+        if (string.Equals(Environment.GetEnvironmentVariable("ASHES_RC_POISON"), "1", StringComparison.Ordinal))
+        {
+            LlvmValueHandle payload = LlvmApi.BuildIntToPtr(builder,
+                LlvmApi.BuildAdd(builder, allocationBase, LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_poison_addr"),
+                state.I8Ptr, "rc_poison_ptr");
+            LlvmValueHandle payloadSize = LlvmApi.BuildSub(builder, allocationSize,
+                LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_poison_size");
+            LlvmApi.BuildMemSet(builder, payload, LlvmApi.ConstInt(state.I8, 0xDD, 0), payloadSize, 1);
+        }
+
         LlvmValueHandle freeListSlot = EmitRuntimeRcFreeListBinSlot(
             state, allocationSize, "rc_drop");
         LlvmValueHandle freeListHead = LlvmApi.BuildLoad2(builder, state.I64,
@@ -1287,7 +1299,8 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, overflow, growBlock, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, growBlock);
-        LlvmValueHandle helper = GetOrEmitHeapGrowHelper(state);
+        bool referenceCounted = cursorSlot.Ptr == state.RcArenaCursorSlot.Ptr;
+        LlvmValueHandle helper = GetOrEmitHeapGrowHelper(state, referenceCounted);
         LlvmApi.BuildCall2(
             builder,
             HeapGrowHelperType(state),
@@ -1306,9 +1319,10 @@ internal static partial class LlvmCodegen
             LlvmApi.VoidTypeInContext(state.Target.Context),
             [state.I64Ptr, state.I64Ptr, state.I64]);
 
-    private static LlvmValueHandle GetOrEmitHeapGrowHelper(LlvmCodegenState state)
+    private static LlvmValueHandle GetOrEmitHeapGrowHelper(LlvmCodegenState state, bool referenceCounted)
     {
-        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, HeapGrowHelperName);
+        string helperName = referenceCounted ? ReferenceCountedHeapGrowHelperName : HeapGrowHelperName;
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, helperName);
         if (existing.Ptr != 0)
         {
             return existing;
@@ -1316,7 +1330,7 @@ internal static partial class LlvmCodegen
 
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
-        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, HeapGrowHelperName, HeapGrowHelperType(state));
+        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, helperName, HeapGrowHelperType(state));
         LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
         LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
             LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
@@ -1338,7 +1352,8 @@ internal static partial class LlvmCodegen
             helperState,
             LlvmApi.GetParam(fn, 0),
             LlvmApi.GetParam(fn, 1),
-            LlvmApi.GetParam(fn, 2));
+            LlvmApi.GetParam(fn, 2),
+            referenceCounted);
         LlvmApi.BuildRetVoid(builder);
 
         LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
@@ -1354,7 +1369,7 @@ internal static partial class LlvmCodegen
     /// <see cref="EmitRestoreArenaState"/> can walk back and reclaim abandoned chunks.
     /// </summary>
     private static void EmitHeapGrow(LlvmCodegenState state)
-        => EmitHeapGrow(state, state.HeapCursorSlot, state.HeapEndSlot, LlvmApi.ConstInt(state.I64, 0, 0));
+        => EmitHeapGrow(state, state.HeapCursorSlot, state.HeapEndSlot, LlvmApi.ConstInt(state.I64, 0, 0), referenceCounted: false);
 
     /// <summary>
     /// Allocates a new heap chunk large enough to satisfy an allocation of <paramref name="neededBytes"/>
@@ -1363,7 +1378,7 @@ internal static partial class LlvmCodegen
     /// grows the chunk to <c>neededBytes + overhead</c> so the request fits — without this, the
     /// ensure-space loop would allocate one fixed chunk per iteration forever and exhaust memory.
     /// </summary>
-    private static void EmitHeapGrow(LlvmCodegenState state, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot, LlvmValueHandle neededBytes)
+    private static void EmitHeapGrow(LlvmCodegenState state, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot, LlvmValueHandle neededBytes, bool referenceCounted)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         // Header link = the current chunk's end (0 on the to-space's first grow — harmless, to-space is
@@ -1380,7 +1395,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle standard = LlvmApi.ConstInt(state.I64, HeapChunkBytes, 0);
         LlvmValueHandle fitsStandard = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, fitSize, standard, "grow_heap_fits_standard");
         LlvmValueHandle chunkSize = LlvmApi.BuildSelect(builder, fitsStandard, standard, fitSize, "grow_heap_chunk_size");
-        LlvmValueHandle chunkBase = EmitAllocateOsMemory(state, chunkSize, "grow_heap");
+        LlvmValueHandle chunkBase = referenceCounted
+            ? EmitAllocateReferenceCountedOsMemory(state, chunkSize, "grow_rc_heap")
+            : EmitAllocateOsMemory(state, chunkSize, "grow_heap");
         EmitHeapChunkInitCheck(state, chunkBase);
         EmitHeapChunkSetup(state, chunkBase, chunkSize, prevEnd, cursorSlot, endSlot, "grow_heap");
     }
@@ -2000,13 +2017,38 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, copyListStart);
 
-        LlvmValueHandle totalCells = EmitCopyOutListCoreCount(state, srcPtr, prefix);
+        // A reference-counted copy stops at the first reference-counted cell and shares the rest of
+        // the chain: a reference-counted cell never points into the arena, so everything from there
+        // on is already owned by reference counts, and copying it again would make a loop that
+        // conses onto such a list quadratic.
+        var (totalCells, sharedSuffix) = EmitCopyOutListCoreCount(state, srcPtr, runtimeManaged, prefix);
+        if (runtimeManaged)
+        {
+            var copyPrefix = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_copy_prefix");
+            var shareWhole = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_share_whole");
+            LlvmApi.BuildCondBr(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, totalCells, zero, prefix + "_nothing_to_copy"),
+                shareWhole,
+                copyPrefix);
+
+            LlvmApi.PositionBuilderAtEnd(builder, shareWhole);
+            LlvmApi.BuildStore(builder, EmitRuntimeRcDup(state, srcPtr), overallResultSlot);
+            LlvmApi.BuildBr(builder, copyListFinal);
+
+            LlvmApi.PositionBuilderAtEnd(builder, copyPrefix);
+        }
+
         var (headBufAddr, headBufBytes, headBufIsOsSlot, headBuf) =
-            EmitCopyOutListCoreCacheHeads(state, srcPtr, totalCells, headCopy, prefix);
-        LlvmValueHandle firstCell = EmitCopyOutListCoreBuild(state, headBuf, totalCells, headCopy, runtimeManaged, prefix);
+            EmitCopyOutListCoreCacheHeads(state, srcPtr, totalCells, headCopy, runtimeManaged, prefix);
+        var (firstCell, lastCell) = EmitCopyOutListCoreBuild(state, headBuf, totalCells, headCopy, runtimeManaged, prefix);
 
         // Done
         EmitListHeadCacheFree(state, headBufAddr, headBufBytes, headBufIsOsSlot, prefix + "_head_buf");
+        if (runtimeManaged)
+        {
+            EmitCopyOutListLinkSharedSuffix(state, lastCell, sharedSuffix, prefix);
+        }
+
         LlvmApi.BuildStore(builder, firstCell, overallResultSlot);
         LlvmApi.BuildBr(builder, copyListFinal);
 
@@ -2014,8 +2056,56 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, overallResultSlot, prefix + "_result_val");
     }
 
-    /// <summary>Count phase of <see cref="EmitCopyOutListCore"/>: walks the source chain and returns the cell count.</summary>
-    private static LlvmValueHandle EmitCopyOutListCoreCount(LlvmCodegenState state, LlvmValueHandle srcPtr, string prefix)
+    /// <summary>
+    /// Points the last copied cell at the shared reference-counted suffix, taking a reference to it,
+    /// when the source chain had one.
+    /// </summary>
+    private static void EmitCopyOutListLinkSharedSuffix(LlvmCodegenState state, LlvmValueHandle lastCell, LlvmValueHandle sharedSuffix, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var linkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_link_shared");
+        var linkedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_linked_shared");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, sharedSuffix, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_has_shared"),
+            linkBlock,
+            linkedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, linkBlock);
+        StoreListTail(state, lastCell, EmitRuntimeRcDup(state, sharedSuffix), prefix + "_store_shared_tail");
+        LlvmApi.BuildBr(builder, linkedBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, linkedBlock);
+    }
+
+    /// <summary>
+    /// Whether a walk over a source chain has reached its end: the empty list, or, for a
+    /// reference-counted copy, the first reference-counted cell.
+    /// </summary>
+    private static LlvmValueHandle EmitCopyOutListWalkEnd(LlvmCodegenState state, LlvmValueHandle current, bool stopAtReferenceCounted, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            current, LlvmApi.ConstInt(state.I64, 0, 0), name + "_nil");
+        if (!stopAtReferenceCounted)
+        {
+            return isNil;
+        }
+
+        LlvmValueHandle isReferenceCounted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            EmitIsReferenceCounted(state, current, name + "_rc"), LlvmApi.ConstInt(state.I64, 0, 0), name + "_rc_flag");
+        return LlvmApi.BuildOr(builder, isNil, isReferenceCounted, name + "_end");
+    }
+
+    /// <summary>
+    /// Count phase of <see cref="EmitCopyOutListCore"/>: walks the source chain and returns the cell
+    /// count, and the cell the walk stopped at (the empty list unless a reference-counted copy
+    /// reached a reference-counted cell).
+    /// </summary>
+    private static (LlvmValueHandle Count, LlvmValueHandle StopCell) EmitCopyOutListCoreCount(
+        LlvmCodegenState state,
+        LlvmValueHandle srcPtr,
+        bool stopAtReferenceCounted,
+        string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -2034,9 +2124,10 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, countHead);
         LlvmValueHandle countCur = LlvmApi.BuildLoad2(builder, state.I64, countCurSlot, prefix + "_count_cur_val");
-        LlvmValueHandle countIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            countCur, zero, prefix + "_count_nil");
-        LlvmApi.BuildCondBr(builder, countIsNil, countDone, countBody);
+        LlvmApi.BuildCondBr(builder,
+            EmitCopyOutListWalkEnd(state, countCur, stopAtReferenceCounted, prefix + "_count"),
+            countDone,
+            countBody);
 
         LlvmApi.PositionBuilderAtEnd(builder, countBody);
         LlvmValueHandle oldCount = LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_count_old");
@@ -2047,7 +2138,9 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, countHead);
 
         LlvmApi.PositionBuilderAtEnd(builder, countDone);
-        return LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_total_cells");
+        return (
+            LlvmApi.BuildLoad2(builder, state.I64, countSlot, prefix + "_total_cells"),
+            LlvmApi.BuildLoad2(builder, state.I64, countCurSlot, prefix + "_stop_cell"));
     }
 
     /// <summary>
@@ -2061,6 +2154,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle srcPtr,
         LlvmValueHandle totalCells,
         ListHeadCopyKind headCopy,
+        bool stopAtReferenceCounted,
         string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -2068,7 +2162,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
 
         LlvmValueHandle headWords =
-            EmitCopyOutListHeadCacheWords(state, srcPtr, totalCells, headCopy, prefix);
+            EmitCopyOutListHeadCacheWords(state, srcPtr, totalCells, headCopy, stopAtReferenceCounted, prefix);
 
         // Cache head values and, for strings, their complete objects into scratch memory (stack
         // when small, OS memory when large).
@@ -2091,9 +2185,10 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheHead);
         LlvmValueHandle cacheCur = LlvmApi.BuildLoad2(builder, state.I64, cacheCurSlot, prefix + "_cache_cur_val");
-        LlvmValueHandle cacheIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
-            cacheCur, zero, prefix + "_cache_nil");
-        LlvmApi.BuildCondBr(builder, cacheIsNil, cacheDone, cacheBody);
+        LlvmApi.BuildCondBr(builder,
+            EmitCopyOutListWalkEnd(state, cacheCur, stopAtReferenceCounted, prefix + "_cache"),
+            cacheDone,
+            cacheBody);
 
         LlvmApi.PositionBuilderAtEnd(builder, cacheBody);
         LlvmValueHandle headVal = LoadListHead(state, cacheCur, prefix + "_cache_head_val");
@@ -2123,6 +2218,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle srcPtr,
         LlvmValueHandle totalCells,
         ListHeadCopyKind headCopy,
+        bool stopAtReferenceCounted,
         string prefix)
     {
         if (headCopy != ListHeadCopyKind.String)
@@ -2131,7 +2227,7 @@ internal static partial class LlvmCodegen
         }
 
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle stringBytes = EmitCopyOutListStringCacheBytes(state, srcPtr, prefix);
+        LlvmValueHandle stringBytes = EmitCopyOutListStringCacheBytes(state, srcPtr, stopAtReferenceCounted, prefix);
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder,
             LlvmApi.BuildMul(builder, totalCells,
                 LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_head_slots_bytes"),
@@ -2181,6 +2277,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitCopyOutListStringCacheBytes(
         LlvmCodegenState state,
         LlvmValueHandle srcPtr,
+        bool stopAtReferenceCounted,
         string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -2202,7 +2299,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle current =
             LlvmApi.BuildLoad2(builder, state.I64, currentSlot, prefix + "_string_count_cur_val");
         LlvmApi.BuildCondBr(builder,
-            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, current, zero, prefix + "_string_count_nil"),
+            EmitCopyOutListWalkEnd(state, current, stopAtReferenceCounted, prefix + "_string_count"),
             doneBlock,
             bodyBlock);
 
@@ -2225,8 +2322,8 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, bytesSlot, prefix + "_string_bytes_total");
     }
 
-    /// <summary>Build phase of <see cref="EmitCopyOutListCore"/>: allocates and links the destination cells from the cached heads, returning the first cell.</summary>
-    private static LlvmValueHandle EmitCopyOutListCoreBuild(LlvmCodegenState state, LlvmValueHandle headBuf, LlvmValueHandle totalCells, ListHeadCopyKind headCopy, bool runtimeManaged, string prefix)
+    /// <summary>Build phase of <see cref="EmitCopyOutListCore"/>: allocates and links the destination cells from the cached heads, returning the first and last cells.</summary>
+    private static (LlvmValueHandle First, LlvmValueHandle Last) EmitCopyOutListCoreBuild(LlvmCodegenState state, LlvmValueHandle headBuf, LlvmValueHandle totalCells, ListHeadCopyKind headCopy, bool runtimeManaged, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -2284,7 +2381,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, buildHead);
 
         LlvmApi.PositionBuilderAtEnd(builder, buildDone);
-        return firstCell;
+        return (firstCell, LlvmApi.BuildLoad2(builder, state.I64, prevCellSlot, prefix + "_last_cell"));
     }
 
     /// <summary>
@@ -2603,11 +2700,7 @@ internal static partial class LlvmCodegen
     {
         if (IsLinuxFlavor(state.Flavor))
         {
-            EmitLinuxSyscall(state, SyscallMunmap,
-                basePtr,
-                sizeBytes,
-                LlvmApi.ConstInt(state.I64, 0, 0), // unused third arg
-                prefix + "_munmap");
+            EmitReleaseLinuxMapping(state, basePtr, sizeBytes, prefix);
         }
         else
         {

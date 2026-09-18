@@ -261,6 +261,10 @@ type ConsumerRequest =
     // the tail-modulo-constructor shape. Kept separate from `tailPosition` so recognizing that shape
     // cannot disturb the ownership and transfer decisions `tailPosition` drives.
     | consTailPosition: Bool
+    // Stage 0's `RuntimeTcoListTailSlot`: the loop parameter slot a tail self-call's cons argument
+    // extends. A cons whose tail reads that slot takes the parameter's own list over rather than
+    // copying it, once the runtime says the list is reference-counted.
+    | runtimeTcoListTailSlot: Maybe(Int)
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -281,7 +285,8 @@ let emptyConsumerRequest =
         tailPosition = false,
         transfersRuntimeManagedChildren = false,
         tailCall = false,
-        consTailPosition = false
+        consTailPosition = false,
+        runtimeTcoListTailSlot = None
     )
 
 // The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop
@@ -1219,6 +1224,14 @@ let sourceFunctionOriginFor (name: Str) (state: CoreLoweringState) =
         declarationOffset = spanStart(state.currentSpan)
     )
 
+// Stage 0's `CanTestRepresentation`. A consumer that must own a value it cannot see the
+// representation of asks the value at run time — `IsReferenceCounted` — and takes a reference
+// instead of a copy when the answer is yes. Stage 0 withholds that from a function that may run as
+// a structured-parallelism worker, whose arena another thread tears down independently of this
+// function's scope; this compiler lowers no structured parallelism, so no function it lowers is
+// one of those.
+let canTestRepresentation = true
+
 let recursive letValueIsLambda (value: Expr) =
     match value with
         | ExprAt(_span, inner) -> letValueIsLambda(inner)
@@ -1523,7 +1536,19 @@ let bindType left right state =
 // lowered without it and unified with it afterwards. The result state never carries one.
 let consumerRequestOf (state: CoreLoweringState) = state.consumerRequest
 
-let withConsumerRequest (request: ConsumerRequest) (state: CoreLoweringState) = state with consumerRequest = request
+// Whether a request asks for nothing at all, which is what most expressions are lowered under.
+let isEmptyConsumerRequest (request: ConsumerRequest) =
+    match request with
+        | ConsumerRequest { expectedType = None, argumentSite = None, runtimeString = false, runtimeAdt = false, runtimeRecord = false, runtimeList = false, runtimeTuple = false, transferSlot = None, tailPosition = false, transfersRuntimeManagedChildren = false, tailCall = false, consTailPosition = false, runtimeTcoListTailSlot = None } -> true
+        | _ -> false
+
+// Replacing a request that asks for nothing with another such request leaves the state as it is.
+// The state is a record of over a hundred fields, and this copy was the most frequent allocation
+// lowering made.
+let withConsumerRequest (request: ConsumerRequest) (state: CoreLoweringState) =
+    if isEmptyConsumerRequest(request) && isEmptyConsumerRequest(state.consumerRequest)
+    then state
+    else state with consumerRequest = request
 
 let clearConsumerRequest (state: CoreLoweringState) = withConsumerRequest(emptyConsumerRequest)(state)
 
@@ -1539,7 +1564,12 @@ let withOnlyExpectedType expected (state: CoreLoweringState) = withConsumerReque
 // straight `let` chain forwards.
 let branchRequest (request: ConsumerRequest) = request with transferSlot = None
 
-let withLoweredConsumerRequest (request: ConsumerRequest) (lowered: LoweredCoreValue) = lowered with state = withConsumerRequest(request)(lowered.state)
+let withLoweredConsumerRequest (request: ConsumerRequest) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = loweredState } ->
+            if isEmptyConsumerRequest(request) && isEmptyConsumerRequest(loweredState.consumerRequest)
+            then lowered
+            else lowered with state = withConsumerRequest(request)(loweredState)
 
 let runtimeStringRequested (state: CoreLoweringState) =
     match consumerRequestOf(state) with
@@ -1554,14 +1584,14 @@ let transfersChildrenRequested (state: CoreLoweringState) =
 let withArgumentRequest expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, argumentSite = site, transfersRuntimeManagedChildren = transfers))(state)
 
 // The reference-counted heap temps of the current function.
-let runtimeTempStateOf (temp: Int) (state: CoreLoweringState) = Ashes.Collection.Map.get(temp)(state.runtimeTemps)
+let runtimeTempStateOf (temp: Int) (state: CoreLoweringState) = Ashes.Collection.Map.getInt(temp)(state.runtimeTemps)
 
 let isRuntimeTemp (temp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(temp)(state) with
         | Some(_runtimeState) -> true
         | None -> false
 
-let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = Ashes.Collection.Map.set(temp)(runtimeState)(state.runtimeTemps)
+let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = Ashes.Collection.Map.setInt(temp)(runtimeState)(state.runtimeTemps)
 
 let markLoweredRuntimeTemp (lowered: LoweredCoreValue) =
     match lowered with
@@ -1792,7 +1822,10 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         tailPosition = tailPositionForwards(expression) && request.tailPosition,
         transfersRuntimeManagedChildren = transferRequestForwards(expression) && request.transfersRuntimeManagedChildren,
         tailCall = tailPositionForwards(expression) && request.tailCall,
-        consTailPosition = tailPositionOrConsForwards(expression) && request.consTailPosition
+        consTailPosition = tailPositionOrConsForwards(expression) && request.consTailPosition,
+        runtimeTcoListTailSlot = if aggregateRequestForwards(expression)
+        then request.runtimeTcoListTailSlot
+        else None
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (request: ConsumerRequest) (lowered: LoweredCoreValue) =
@@ -3874,15 +3907,19 @@ and anyProducesFreshTuple (arguments: List(Expr)) (state: CoreLoweringState) =
 // `RuntimeDeepUnique` and `RuntimeConstructor` owner facts: a fresh list literal or cons chain,
 // and a fresh constructor tree of a recursive-copy type, are the only references to their whole
 // graph; a direct constructor application names the constructor whose fields the release walks.
+//
+// A body that may share a child rather than copy it has no such fact to offer: the graph a fresh
+// literal built can be reached from whatever a representation test let a consumer keep, so the
+// release tests for sharing rather than assuming there is none.
 let armOwnerReleasePlan (value: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
             let deepUnique =
-                match resolveType(state)(semanticType) with
+                canTestRepresentation == false && (match resolveType(state)(semanticType) with
                     | SemList(_element) -> isFreshListConstruction(value)
                     | SemNamed(_symbolId, name, _arguments) as named -> canRuntimeManageRecursiveCopyAdt(named)(state) && isFreshConstructorTree(value)(name)(state)
-                    | _ -> false
+                    | _ -> false)
             in
                 let constructorName =
                     match constructorApplicationOf(value)([])(state) with
@@ -4428,6 +4465,58 @@ let locatedInstruction (location: Maybe(IrSourceLocation)) kind = IrInstruction(
 
 let unlocatedInstruction (kind: IrInstructionKind) (state: CoreLoweringState) = state with reversedInstructions = IrInstruction(instruction = kind, location = None) :: state.reversedInstructions
 
+// Stage 0's `EmitReferenceOrCopy`: an owned reference to a value whose representation this site
+// cannot see. A value the runtime answers `IsReferenceCounted` for is retained, because a
+// reference-counted block's children are reference-counted by construction and the reference is as
+// good as the copy it replaces; anything else takes the copy the site would have made anyway. Both
+// arms store into one slot, since this IR has no phi, and the joined value carries the copy's
+// reference-counted fact, since either arm leaves an owned reference-counted value when it does.
+let joinedCopyFact (copyTemp: Int) (resultTemp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(copyTemp)(state) with
+        | Some(runtimeState) -> markRuntimeTemp(resultTemp)(runtimeState)(state)
+        | None -> state
+
+let emitReferenceOrCopy (sourceTemp: Int) emitCopy (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+            match freshLocal(tested) with
+                | FreshLocal { state = slotted, local = resultSlot } ->
+                    match freshLabel("rc_representation_copy")(slotted) with
+                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                            match freshLabel("rc_representation_done")(copyLabelled) with
+                                | FreshLabel { state = doneLabelled, label = doneLabel } ->
+                                    match doneLabelled
+                                    |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
+                                    |> emit(JumpIfFalse(referenceCountedTemp)(copyLabel))
+                                    |> freshTemp with
+                                        | FreshTemp { state = retained, temp = retainedTemp } ->
+                                            match retained
+                                            |> emit(RcDup(retainedTemp)(sourceTemp)(true)(false))
+                                            |> emit(StoreLocal(resultSlot)(retainedTemp))
+                                            |> emit(Jump(doneLabel))
+                                            |> emit(Label(copyLabel))
+                                            |> emitCopy with
+                                                | (copied, copyTemp) ->
+                                                    match copied
+                                                    |> emit(StoreLocal(resultSlot)(copyTemp))
+                                                    |> emit(Label(doneLabel))
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = resulted, temp = resultTemp } ->
+                                                            (resulted
+                                                            |> emit(LoadLocal(resultTemp)(resultSlot))
+                                                            |> joinedCopyFact(copyTemp)(resultTemp), resultTemp)
+
+// Stage 0's guard on `TcoBackEdgeNormalizeRuntimeManagedArg`: the successor a back edge stores
+// into a runtime-managed slot is the value itself when the runtime answers that it is already
+// reference-counted, and the copy otherwise. A value that survives the reset needs neither. The
+// test carries no location, as the rest of the reset does.
+let emitBackEdgeReferenceOrCopy (sourceTemp: Int) (semanticType: SemanticType) emitCopy (state: CoreLoweringState) =
+    if canTestRepresentation == false || resultSurvivesReset(semanticType)(state)
+    then emitCopy(state)
+    else
+        match emitReferenceOrCopy(sourceTemp)(emitCopy)((state with currentSpan = None)) with
+            | (copied, copyTemp) -> ((copied with currentSpan = state.currentSpan), copyTemp)
+
 // The iteration-local owners released at a back edge, stage 0's `EmitOwnedValueDrop` for each:
 // an owner whose release plan reaches past its own cell walks its owned children inline, any
 // other owner releases as one drop naming its slot. The deferred reset carries no location, so
@@ -4626,7 +4715,7 @@ let firstSwitchLabel (cases: List(IrSwitchCase)) =
 let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match plan with
         | ScalarArgumentCopy -> (state, sourceTemp)
-        | ListDeepArgumentCopy(elementPlan) -> emitListDeepCopy(sourceTemp)(elementPlan)(state)
+        | ListDeepArgumentCopy(elementPlan) -> emitGuardedListDeepCopy(sourceTemp)(elementPlan)(state)
         | _ ->
             match freshTemp(state) with
                 | FreshTemp { state = allocated, temp = resultTemp } ->
@@ -4634,7 +4723,7 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
                         | LeafArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
                         | ShallowAdtArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
                         | ListHeadArgumentCopy(headCopy) -> (rcNormalizationListCopyOut(resultTemp)(sourceTemp)(headCopy)(allocated), resultTemp)
-                        | ListDeepArgumentCopy(elementPlan) -> emitListDeepCopy(sourceTemp)(elementPlan)(allocated)
+                        | ListDeepArgumentCopy(elementPlan) -> emitGuardedListDeepCopy(sourceTemp)(elementPlan)(allocated)
                         | TupleArgumentCopy(elements) ->
                             allocated
                             |> emit(Alloc(resultTemp)(8 * coreListLength(elements))(true))
@@ -4644,6 +4733,15 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
                         | ConstructorArgumentCopy(constructorPlan) -> emitConstructorDeepCopy(sourceTemp)(constructorPlan)(allocated)
                         | SwitchArgumentCopy(constructorPlans) -> emitAdtSwitchDeepCopy(sourceTemp)(constructorPlans)(allocated)
                         | ScalarArgumentCopy -> (allocated, sourceTemp)
+// Stage 0's guard on `EmitRuntimeManagedTcoListDeepCopy`: a list whose representation this site
+// cannot see is taken by reference when the runtime answers that it is already reference-counted,
+// and copied spine and heads otherwise. The entry copy reaches the walk below directly, since it
+// tests the whole argument itself.
+and emitGuardedListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    if canTestRepresentation
+    then
+        emitReferenceOrCopy(sourceTemp)(emitListDeepCopy(sourceTemp)(elementPlan))(state)
+    else emitListDeepCopy(sourceTemp)(elementPlan)(state)
 // Stage 0's `EmitRuntimeManagedTcoListDeepCopy`: a list whose heads have no spine copy is walked
 // cell by cell, each head deep-copied into a fresh reference-counted cons cell appended behind
 // the last one; the first cell is the copy.
@@ -4749,7 +4847,16 @@ and emitConstructorDeepCopy (sourceTemp: Int) (constructorPlan: (Int, Int, Bool,
             |> (given (copied) -> (copied, resultTemp))
 // Stage 0's `EmitRuntimeManagedTcoDeepCopy` reserves its result temp before a nested list's
 // walk takes over, so a list child costs one unused temp ahead of its copy.
+// The child a copied aggregate stores, stage 0's guard on `EmitRuntimeManagedTcoDeepCopy`: a
+// reference to the original child when the runtime answers that it is already reference-counted,
+// and the copy otherwise. A scalar child is its own word and has no representation to ask about.
 and emitChildDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (false, _plan) -> emitChildDeepCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, ScalarArgumentCopy) -> emitChildDeepCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, _plan) ->
+            emitReferenceOrCopy(sourceTemp)(emitChildDeepCopyByCopy(sourceTemp)(plan))(state)
+and emitChildDeepCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match plan with
         | ListDeepArgumentCopy(_elementPlan) ->
             match freshTemp(state) with
@@ -4817,13 +4924,14 @@ and emitSwitchBranches (sourceTemp: Int) (resultSlot: Int) (endLabel: Str) (case
 // Stage 0's `EmitRuntimeManagedTcoParamCopy`: the copy of a borrowed argument. A string, a
 // same-arity scalar-field ADT, and a list copy into the temp allocated here; a tuple and a
 // runtime-managed ADT walk their children through the deep copy on temps of its own.
-let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+let emitArgumentCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = allocated, temp = normalizedTemp } ->
             match plan with
                 | ListHeadArgumentCopy(headCopy) ->
                     (emit(CopyOutList(normalizedTemp)(sourceTemp)(headCopy)(true)(RcNormalization))(allocated), normalizedTemp)
-                | ListDeepArgumentCopy(_elementPlan) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
+                // The whole argument was already tested, so its spine walk is the plain one.
+                | ListDeepArgumentCopy(elementPlan) -> emitListDeepCopy(sourceTemp)(elementPlan)(allocated)
                 | TupleArgumentCopy(_elements) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
                 | ConstructorArgumentCopy(_constructorPlan) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
                 | SwitchArgumentCopy(_constructorPlans) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
@@ -4832,6 +4940,16 @@ let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLowe
                 | ShallowAdtArgumentCopy(sizeBytes) ->
                     (emit(CopyOutArena(normalizedTemp)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None))(allocated), normalizedTemp)
                 | ScalarArgumentCopy -> (allocated, sourceTemp)
+
+// The argument an entry normalization owns: the copy above, or a reference to the value the
+// caller handed over when the runtime answers that it is already reference-counted. A scalar is
+// the value itself and has no representation to ask about.
+let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (false, _plan) -> emitArgumentCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, ScalarArgumentCopy) -> emitArgumentCopyByCopy(sourceTemp)(plan)(state)
+        | (_tests, _plan) ->
+            emitReferenceOrCopy(sourceTemp)(emitArgumentCopyByCopy(sourceTemp)(plan))(state)
 
 // One argument position of a back edge as the runtime-managed reset sees it: the parameter it
 // feeds, the successor value and the parameter's old value, whether the successor was produced
@@ -5122,6 +5240,16 @@ let unlocatedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLow
     match emitArgumentDeepCopy(sourceTemp)(plan)((state with currentSpan = None)) with
         | (copied, copyTemp) -> ((copied with currentSpan = state.currentSpan), copyTemp)
 
+// The child a copied aggregate stores, stage 0's guard on `EmitRuntimeManagedTcoDeepCopy`: a
+// reference to the original child when the runtime answers that it is already reference-counted,
+// and the copy otherwise. A scalar child is its own word and has no representation to ask about.
+let emitChildReferenceOrCopy (childTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (false, _plan) -> unlocatedDeepCopy(childTemp)(plan)(state)
+        | (_tests, ScalarArgumentCopy) -> unlocatedDeepCopy(childTemp)(plan)(state)
+        | (_tests, _plan) ->
+            emitReferenceOrCopy(childTemp)(unlocatedDeepCopy(childTemp)(plan))(state)
+
 // How the runtime-managed copy of a closure environment re-establishes one capture (stage 0's
 // `EmitRuntimeManagedTcoDeepCopy` inside `SynthesizeRuntimeManagedClosureNormalizer`): a scalar
 // by its word, a string, bytes, or big integer by an owned copy-out, a list over scalars by its
@@ -5236,57 +5364,89 @@ let recursive captureOffsetsAndTexts (layout: List((Int, Str, CaptureCopy, Seman
 // every owned child is read, copied by its own kind, and stored into the copy. Answers the
 // instructions, the copy's temp, and the next free temp; every instruction is unlocated, as the
 // deep-copy emitter's are.
-let recursive adtCaptureCopyInstructions (sourceTemp: Int) (sizeBytes: Int) (tagless: Bool) (children: List((Int, CaptureCopy))) (temp: Int) (location: Maybe(IrSourceLocation)) =
-    match childCaptureCopyInstructions(sourceTemp)(temp + 1)(tagless)(children)(temp + 2)(location) with
-        | (childInstructions, nextTemp) ->
-            (locatedInstruction(None)(CopyOutArena(temp + 1)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None)) :: childInstructions, temp + 1, nextTemp)
-and childCaptureCopyInstructions (sourceTemp: Int) (copyTemp: Int) (tagless: Bool) (children: List((Int, CaptureCopy))) (temp: Int) (location: Maybe(IrSourceLocation)) =
+// `emitReferenceOrCopy` as instructions, for a synthesized function that numbers its own temps,
+// slots and labels rather than drawing them from the lowering state: the capture is taken by
+// reference when the runtime answers that it is already reference-counted, and copied otherwise.
+// The test and the retain carry no location, as they do everywhere else.
+let guardedCaptureCopy (sourceTemp: Int) (copyTemp: Int) (resultTemp: Int) (resultSlot: Int) (labelId: Int) (location: Maybe(IrSourceLocation)) (copyInstructions: List(IrInstruction)) =
+    (let copyLabel = "rc_representation_copy_" + Ashes.Text.fromInt(labelId)
+    in
+        let doneLabel = "rc_representation_done_" + Ashes.Text.fromInt(labelId + 1)
+        in
+            locatedInstruction(None)(IsReferenceCounted(sourceTemp + 1)(sourceTemp)) :: locatedInstruction(location)(JumpIfFalse(sourceTemp + 1)(copyLabel)) :: locatedInstruction(None)(RcDup(sourceTemp + 2)(sourceTemp)(true)(false)) :: locatedInstruction(location)(StoreLocal(resultSlot)(sourceTemp + 2)) :: locatedInstruction(location)(Jump(doneLabel)) :: locatedInstruction(location)(Label(copyLabel)) :: append(copyInstructions)([
+                copyTemp
+                |> StoreLocal(resultSlot)
+                |> locatedInstruction(location),
+                locatedInstruction(location)(Label(doneLabel)),
+                resultSlot
+                |> LoadLocal(resultTemp)
+                |> locatedInstruction(location)
+            ]))
+
+// The copy of one named capture read into `sourceTemp`, stage 0's constructor deep copy inside
+// its deep-copy emitter: the emitter's own result temp is burned, the cell is copied out, and
+// every owned child is read, copied by its own kind behind its own representation test, and
+// stored into the copy. Answers the instructions, the copy's temp, the next free temp, and the
+// next free slot and label id, since each guarded child takes a slot and two labels.
+let recursive adtCaptureCopyInstructions (sourceTemp: Int) (sizeBytes: Int) (tagless: Bool) (children: List((Int, CaptureCopy))) (temp: Int) (slot: Int) (labelId: Int) (location: Maybe(IrSourceLocation)) =
+    match childCaptureCopyInstructions(sourceTemp)(temp + 1)(tagless)(children)(temp + 2)(slot)(labelId)(location) with
+        | (childInstructions, nextTemp, nextSlot, nextLabelId) ->
+            (locatedInstruction(None)(CopyOutArena(temp + 1)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None)) :: childInstructions, temp + 1, nextTemp, nextSlot, nextLabelId)
+and childCaptureCopyInstructions (sourceTemp: Int) (copyTemp: Int) (tagless: Bool) (children: List((Int, CaptureCopy))) (temp: Int) (slot: Int) (labelId: Int) (location: Maybe(IrSourceLocation)) =
     match children with
-        | [] -> ([], temp)
+        | [] -> ([], temp, slot, labelId)
+        | (index, WordCaptureCopy) :: rest ->
+            match childCaptureCopyInstructions(sourceTemp)(copyTemp)(tagless)(rest)(temp + 1)(slot)(labelId)(location) with
+                | (restInstructions, nextTemp, nextSlot, nextLabelId) ->
+                    (locatedInstruction(location)(GetAdtField(temp)(sourceTemp)(index)(tagless)) :: locatedInstruction(location)(SetAdtField(copyTemp)(index)(temp)(tagless)) :: restInstructions, nextTemp, nextSlot, nextLabelId)
         | (index, copy) :: rest ->
-            match captureValueCopyInstructions(temp)(copy)(temp + 1)(location) with
-                | (copyInstructions, copiedTemp, afterCopy) ->
-                    match childCaptureCopyInstructions(sourceTemp)(copyTemp)(tagless)(rest)(afterCopy)(location) with
-                        | (restInstructions, nextTemp) ->
-                            (locatedInstruction(location)(GetAdtField(temp)(sourceTemp)(index)(tagless)) :: append(copyInstructions)(locatedInstruction(location)(SetAdtField(copyTemp)(index)(copiedTemp)(tagless)) :: restInstructions), nextTemp)
-and captureValueCopyInstructions (valueTemp: Int) (copy: CaptureCopy) (temp: Int) (location: Maybe(IrSourceLocation)) =
+            match captureValueCopyInstructions(temp)(copy)(temp + 3)(slot + 1)(labelId + 2)(location) with
+                | (copyInstructions, copiedTemp, afterCopy, afterSlot, afterLabelId) ->
+                    match childCaptureCopyInstructions(sourceTemp)(copyTemp)(tagless)(rest)(afterCopy + 1)(afterSlot)(afterLabelId)(location) with
+                        | (restInstructions, nextTemp, nextSlot, nextLabelId) ->
+                            (locatedInstruction(location)(GetAdtField(temp)(sourceTemp)(index)(tagless)) :: append(guardedCaptureCopy(temp)(copiedTemp)(afterCopy)(slot)(labelId)(location)(copyInstructions))(locatedInstruction(location)(SetAdtField(copyTemp)(index)(afterCopy)(tagless)) :: restInstructions), nextTemp, nextSlot, nextLabelId)
+and captureValueCopyInstructions (valueTemp: Int) (copy: CaptureCopy) (temp: Int) (slot: Int) (labelId: Int) (location: Maybe(IrSourceLocation)) =
     match copy with
-        | WordCaptureCopy -> ([], valueTemp, temp)
+        | WordCaptureCopy -> ([], valueTemp, temp, slot, labelId)
         | LeafCaptureCopy(sizeBytes) ->
             ([None
             |> CopyOutArena(temp)(valueTemp)(sizeBytes)(true)(RcNormalization)
-            |> locatedInstruction(None)], temp, temp + 1)
+            |> locatedInstruction(None)], temp, temp + 1, slot, labelId)
         | ListCaptureCopy(headCopy) ->
             ([RcNormalization
             |> CopyOutList(temp)(valueTemp)(headCopy)(true)
-            |> locatedInstruction(location)], temp, temp + 1)
-        | AdtCaptureCopy(sizeBytes, tagless, children) -> adtCaptureCopyInstructions(valueTemp)(sizeBytes)(tagless)(children)(temp)(location)
+            |> locatedInstruction(location)], temp, temp + 1, slot, labelId)
+        | AdtCaptureCopy(sizeBytes, tagless, children) -> adtCaptureCopyInstructions(valueTemp)(sizeBytes)(tagless)(children)(temp)(slot)(labelId)(location)
 
-let recursive normalizerCopies (layout: List((Int, Str, CaptureCopy, SemanticType))) (temp: Int) (location: Maybe(IrSourceLocation)) =
+let recursive normalizerCopies (layout: List((Int, Str, CaptureCopy, SemanticType))) (temp: Int) (slot: Int) (labelId: Int) (location: Maybe(IrSourceLocation)) =
     match layout with
-        | [] -> ([], temp)
+        | [] -> ([], temp, slot, labelId)
         | (offset, _text, copy, _resolved) :: rest ->
             match copy with
                 | WordCaptureCopy ->
-                    match normalizerCopies(rest)(temp + 1)(location) with
-                        | (instructions, nextTemp) ->
-                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: instructions, nextTemp)
+                    match normalizerCopies(rest)(temp + 1)(slot)(labelId)(location) with
+                        | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: instructions, nextTemp, nextSlot, nextLabelId)
                 | AdtCaptureCopy(sizeBytes, tagless, children) ->
-                    match adtCaptureCopyInstructions(temp)(sizeBytes)(tagless)(children)(temp + 1)(location) with
-                        | (copyInstructions, copyTemp, afterCopy) ->
-                            match normalizerCopies(rest)(afterCopy)(location) with
-                                | (instructions, nextTemp) ->
-                                    (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(copyInstructions)(locatedInstruction(location)(StoreMemOffset(1)(offset)(copyTemp)) :: instructions), nextTemp)
+                    match adtCaptureCopyInstructions(temp)(sizeBytes)(tagless)(children)(temp + 3)(slot + 1)(labelId + 2)(location) with
+                        | (copyInstructions, copyTemp, afterCopy, afterSlot, afterLabelId) ->
+                            match normalizerCopies(rest)(afterCopy + 1)(afterSlot)(afterLabelId)(location) with
+                                | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                                    (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(guardedCaptureCopy(temp)(copyTemp)(afterCopy)(slot)(labelId)(location)(copyInstructions))(locatedInstruction(location)(StoreMemOffset(1)(offset)(afterCopy)) :: instructions), nextTemp, nextSlot, nextLabelId)
                 // Stage 0 copies a leaf capture through its deep-copy emitter, whose `CopyOutArena`
                 // carries no location; the list copy-out is emitted in place and keeps it.
                 | LeafCaptureCopy(sizeBytes) ->
-                    match normalizerCopies(rest)(temp + 2)(location) with
-                        | (instructions, nextTemp) ->
-                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(None)(CopyOutArena(temp + 1)(temp)(sizeBytes)(true)(RcNormalization)(None)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
+                    match normalizerCopies(rest)(temp + 5)(slot + 1)(labelId + 2)(location) with
+                        | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(guardedCaptureCopy(temp)(temp + 3)(temp + 4)(slot)(labelId)(location)([None
+                            |> CopyOutArena(temp + 3)(temp)(sizeBytes)(true)(RcNormalization)
+                            |> locatedInstruction(None)]))(locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 4)) :: instructions), nextTemp, nextSlot, nextLabelId)
                 | ListCaptureCopy(headCopy) ->
-                    match normalizerCopies(rest)(temp + 2)(location) with
-                        | (instructions, nextTemp) ->
-                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(CopyOutList(temp + 1)(temp)(headCopy)(true)(RcNormalization)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 1)) :: instructions, nextTemp)
+                    match normalizerCopies(rest)(temp + 5)(slot + 1)(labelId + 2)(location) with
+                        | (instructions, nextTemp, nextSlot, nextLabelId) ->
+                            (locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: append(guardedCaptureCopy(temp)(temp + 3)(temp + 4)(slot)(labelId)(location)([RcNormalization
+                            |> CopyOutList(temp + 3)(temp)(headCopy)(true)
+                            |> locatedInstruction(location)]))(locatedInstruction(location)(StoreMemOffset(1)(offset)(temp + 4)) :: instructions), nextTemp, nextSlot, nextLabelId)
 
 let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layoutText: Str) =
     IrFunctionOrigin(
@@ -5301,16 +5461,18 @@ let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrF
 
 // Stage 0's `lambda$env_normalize` helper: called with the source environment in slot 0 and the
 // target environment in slot 1, it copies every capture across and returns the address of the
-// closure dropper that releases the owned copies, or 0 when the captures own nothing.
-let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str, CaptureCopy, SemanticType))) (location: Maybe(IrSourceLocation)) (dropperLabel: Maybe(Str)) =
-    match normalizerCopies(layout)(2)(location) with
-        | (copies, resultTemp) ->
-            IrFunction(
+// closure dropper that releases the owned copies, or 0 when the captures own nothing. A capture
+// copied under a representation test takes a slot and two labels of its own, so the helper is
+// handed the program's next label id and answers with the one after the ones it used.
+let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str, CaptureCopy, SemanticType))) (location: Maybe(IrSourceLocation)) (dropperLabel: Maybe(Str)) (labelId: Int) =
+    match normalizerCopies(layout)(2)(2)(labelId)(location) with
+        | (copies, resultTemp, slotCount, nextLabelId) ->
+            (IrFunction(
                 label = closureLabel + "$env_normalize",
                 instructions = append(locatedInstruction(location)(LoadLocal(0)(0)) :: locatedInstruction(location)(LoadLocal(1)(1)) :: copies)([locatedInstruction(location)(match dropperLabel with
                     | Some(label) -> LoadFuncAddr(resultTemp)(label)
                     | None -> LoadConstInt(resultTemp)(0)), locatedInstruction(location)(Return(resultTemp))]),
-                localCount = 2,
+                localCount = slotCount,
                 tempCount = resultTemp + 1,
                 hasEnvAndArgParams = true,
                 coroutine = None,
@@ -5322,7 +5484,7 @@ let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrig
                 |> closureNormalizerOrigin(closureLabel + "$env_normalize")(closureLabel)(closureOrigin)
                 |> Some,
                 lifetimesPlaced = false
-            )
+            ), nextLabelId)
 
 // The release of one owned capture inside the closure dropper, stage 0's
 // `EmitRuntimeManagedClosureCaptureDrop`: a list over scalars walks its spine through a cursor
@@ -5443,7 +5605,8 @@ let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (c
                             match synthesizeClosureDropper(owned)(state) with
                                 | (synthesized, label) -> (synthesized, Some(label)) with
                         | (dropped, dropperLabel) ->
-                            dropped with functions = closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(currentLocation(state))(dropperLabel) :: dropped.functions
+                            match closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(currentLocation(state))(dropperLabel)(dropped.nextLabelId) with
+                                | (normalizer, nextLabelId) -> dropped with functions = normalizer :: dropped.functions, nextLabelId = nextLabelId
                 | None -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: state.pendingClosureNormalizers
 
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
@@ -5463,9 +5626,13 @@ let recursive insertClosureNormalizers (pending: List((Str, IrFunctionOrigin, Li
         | (closureLabel, closureOrigin, types, location) :: rest ->
             match scalarCaptureLayout(types)(0)(defaulted)(state) with
                 | Some(layout) ->
-                    functions
-                    |> insertAfterLabel(closureLabel)(closureNormalizerFunction(closureLabel)(closureOrigin)(wordCaptureLayout(layout))(location)(None))
-                    |> insertClosureNormalizers(rest)(defaulted)(state)
+                    // Every capture here is a scalar word, so the helper copies nothing and needs
+                    // no label of its own.
+                    match closureNormalizerFunction(closureLabel)(closureOrigin)(wordCaptureLayout(layout))(location)(None)(state.nextLabelId) with
+                        | (normalizer, _nextLabelId) ->
+                            functions
+                            |> insertAfterLabel(closureLabel)(normalizer)
+                            |> insertClosureNormalizers(rest)(defaulted)(state)
                 | None -> insertClosureNormalizers(rest)(defaulted)(state)(functions)
 
 let finishClosureResult parameterType bodyType finishedBody closure =
@@ -5493,7 +5660,7 @@ let recursive emitBackEdgeChildCopies (sourceTemp: Int) (copyTemp: Int) (tagless
                 | FreshTemp { state = allocated, temp = childTemp } ->
                     match allocated
                     |> unlocatedInstruction(GetAdtField(childTemp)(sourceTemp)(index)(tagless))
-                    |> unlocatedDeepCopy(childTemp)(childCopyPlanOf(childType)(state)) with
+                    |> emitChildReferenceOrCopy(childTemp)(childCopyPlanOf(childType)(state)) with
                         | (copied, copiedChild) ->
                             copied
                             |> unlocatedInstruction(SetAdtField(copyTemp)(index)(copiedChild)(tagless))
@@ -5684,7 +5851,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                                 |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                                 |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
                     else
-                        match emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression)(state) with
+                        match emitBackEdgeReferenceOrCopy(temp)(semanticType)(emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression))(state) with
                             | (copied, copyTemp) -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)(copied)
         | TcoResetArgument { managedStr = Some(activeSlot), parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
             if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
@@ -5693,7 +5860,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                 if isRuntime
                 then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
                 else
-                    match unlocatedDeepCopy(temp)(LeafArgumentCopy(-1))(state) with
+                    match emitBackEdgeReferenceOrCopy(temp)(SemString)(unlocatedDeepCopy(temp)(LeafArgumentCopy(-1)))(state) with
                         | (copied, copyTemp) ->
                             copied
                             |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
@@ -6593,16 +6760,23 @@ let withPassthroughParameter (parameter: Str) (body: Expr) (parameterType: Seman
 // Stage 0's `EmitRuntimeManagedTcoParamCopy` reserves the copy's result temp before it walks a
 // list whose heads have no spine copy; the walk allocates its own, so the reserved temp stays
 // unused.
+let emitPassthroughCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match plan with
+        | ListDeepArgumentCopy(elementPlan) ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved, temp = _reservedTemp } -> emitListDeepCopy(sourceTemp)(elementPlan)(reserved)
+        | _ -> emitArgumentDeepCopy(sourceTemp)(plan)(state)
+
+// The branch takes a reference to the parameter's value when the runtime answers that it is
+// already reference-counted, and the copy otherwise.
 let emitOwnedPassthroughCopy (sourceTemp: Int) (parameterType: SemanticType) (state: CoreLoweringState) =
     match argumentCopyPlanOf(parameterType)(state) with
         | None -> (state, sourceTemp)
-        | Some(ListDeepArgumentCopy(elementPlan)) ->
-            match freshTemp(state) with
-                | FreshTemp { state = reserved, temp = _reservedTemp } ->
-                    match emitListDeepCopy(sourceTemp)(elementPlan)(reserved) with
-                        | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
         | Some(plan) ->
-            match emitArgumentDeepCopy(sourceTemp)(plan)(state) with
+            match if canTestRepresentation && resultSurvivesReset(parameterType)(state) == false
+            then
+                emitReferenceOrCopy(sourceTemp)(emitPassthroughCopyByCopy(sourceTemp)(plan))(state)
+            else emitPassthroughCopyByCopy(sourceTemp)(plan)(state) with
                 | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
 
 let bindingIsLocalSlot (name: Str) (slot: Int) (state: CoreLoweringState) =
@@ -7825,17 +7999,17 @@ let recursive emitTcoExitDropsInOrder (bodyTemp: Int) (transfer: Maybe((Int, Int
                 | _ -> state)
 
 // Stage 0's `LowerLambdaCoreEmitRuntimeManagedTcoExitDrops`: the exit releases of every
-// runtime-managed slot, right before the function's own `Return`. A reference-counted body
-// result may be one of the slots' own values, so every slot is transfer-checked against it
-// under one selection flag; any other result never carries a slot's value out, so every slot
-// releases under its active flag.
-let emitTcoExitDrops (bodyTemp: Int) (slots: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
+// runtime-managed slot, right before the function's own `Return`. A reference-counted or
+// heap-typed body result may be one of the slots' own values, so every slot is transfer-checked
+// against it under one selection flag; a copy-typed result never carries a slot's value out, so
+// every slot releases under its active flag.
+let emitTcoExitDrops (bodyTemp: Int) (resultType: SemanticType) (slots: List(Int)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match (managedLists, managedAdts, managedStrs) with
         | ([], [], []) -> state
         | _entries ->
             ((given (prepared: (CoreLoweringState, Maybe((Int, Int)))) ->
                 match prepared with
-                    | (preparedState, transfer) -> emitTcoExitDropsInOrder(bodyTemp)(transfer)(slots)(managedLists)(managedAdts)(managedStrs)(preparedState)))(if isRuntimeTemp(bodyTemp)(state)
+                    | (preparedState, transfer) -> emitTcoExitDropsInOrder(bodyTemp)(transfer)(slots)(managedLists)(managedAdts)(managedStrs)(preparedState)))(if isRuntimeTemp(bodyTemp)(state) || isCopyTypeSemantic(resolveType(state)(resultType)) == false
             then
                 match freshLocal(state) with
                     | FreshLocal { state = slotState, local = transferSelectedSlot } ->
@@ -7856,7 +8030,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs)
             |> recordTcoNormalizedArgumentLabel(label)(entries)
             |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-            |> emitTcoExitDrops(bodyTemp)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
+            |> emitTcoExitDrops(bodyTemp)(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
             |> success(bodyTemp)(semanticType)
 
 // A parameter whose self-call shape, copy-ADT layout, or affine analysis could place it on the
@@ -10720,6 +10894,66 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             expectedResult = expected
         ))
 
+// The consumed arguments whose parts the callee's result may still name: released spine-only unless
+// the result is made to own what it keeps.
+let recursive hasPreservedHeapArgument (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+    match consumed with
+        | [] -> false
+        | CoreConsumedArgument { preserveEscapedChildren = true, adoptionFlagTemp = flagTemp, semanticType = semanticType } :: rest ->
+            flagTemp < 0 && isCopyTypeSemantic(resolveType(state)(semanticType)) == false || hasPreservedHeapArgument(rest)(state)
+        | _ :: rest -> hasPreservedHeapArgument(rest)(state)
+
+let recursive releaseWithAllParts (consumed: List(CoreConsumedArgument)) =
+    match consumed with
+        | [] -> []
+        | (CoreConsumedArgument { preserveEscapedChildren = true, adoptionFlagTemp = flagTemp } as argument) :: rest ->
+            (if flagTemp < 0
+            then argument with preserveEscapedChildren = false
+            else argument) :: releaseWithAllParts(rest)
+        | argument :: rest -> argument :: releaseWithAllParts(rest)
+
+// Stage 0's `CanNormalizeIntoOwnedRuntimeValue`: the result types the guarded copy turns into an
+// owned reference-counted value.
+let ownedResultPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> argumentCopyPlanOf(semanticType)(state)
+        | SemList(element) ->
+            match listHeadCopyKindOf(element)(state) with
+                | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
+                | None -> None
+        | SemNamed(_symbolId, _name, _arguments) -> argumentCopyPlanOf(semanticType)(state)
+        | _ -> None
+
+// Stage 0's `resultCopyCopiesElements`: a list copy-out whose heads are strings or lists copies
+// them, so its result shares nothing with the arguments already.
+let resultCopyCopiesElements (semanticType: SemanticType) (state: CoreLoweringState) =
+    match callCopyOutOf(semanticType)(state) with
+        | Some(ListCallCopyOut(InlineListHead)) -> false
+        | Some(ListCallCopyOut(_headCopy)) -> true
+        | _ -> false
+
+let resultAlreadySettled (context: CoreCallContext) (stage: CoreCallStage) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    isRuntimeTemp(temp)(state) || stage.resultNormalized || stage.resultDeepCopied || context.selfCallee && (match state.specializingReuseLabel with
+        | Some(_label) -> true
+        | None -> false) || callResultRuntimeManaged(context.facts)(semanticType)(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || resultCopyCopiesElements(semanticType)(state)
+
+// Stage 0's `OwnResultBeforeArgumentRelease`: a consumed argument whose parts the callee's arena
+// result may still name would be released spine-only, stranding every part the result did not
+// keep. The result is made an owned reference-counted value first, retained or copied with its
+// reference-counted parts retained, and the argument then goes with all its parts.
+let ownResultBeforeArgumentRelease (context: CoreCallContext) (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } as lowered, consumedArguments = consumed } ->
+            if resultAlreadySettled(context)(stage)(temp)(semanticType)(state) || hasPreservedHeapArgument(consumed)(state) == false
+            then stage
+            else
+                match ownedResultPlanOf(semanticType)(state) with
+                    | None -> stage
+                    | Some(plan) ->
+                        match emitArgumentCopy(temp)(plan)(state) with
+                            | (copied, ownedTemp) -> stage with lowered = (lowered with state = markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)(copied), temp = ownedTemp), consumedArguments = releaseWithAllParts(consumed)
+        | _ -> stage
+
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
 let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
@@ -10736,6 +10970,7 @@ let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(Cor
                     | stage ->
                         stage
                         |> closeCallWindow(context)(cursorSlot)(endSlot)
+                        |> ownResultBeforeArgumentRelease(context)
                         |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage)))
 
 let failedIfPlan state error =
@@ -11852,11 +12087,20 @@ let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLowe
                 | (true, Some(plan)) ->
                     match lower(body)(state) with
                         | LoweredCoreValue { state = armState, temp = armTemp, semanticType = armType, error = None } ->
-                            match emitArgumentDeepCopy(armTemp)(plan)(armState) with
-                                | (copied, copyTemp) ->
-                                    copied
-                                    |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
-                                    |> success(copyTemp)(armType)
+                            if canTestRepresentation
+                            then
+                                // The copy marks its own temp. What the test answers with is the
+                                // arm's own value when the runtime says it is already
+                                // reference-counted, which this arm did not newly produce, so the
+                                // scope it leaves closes the way an unmarked heap result closes it.
+                                match emitReferenceOrCopy(armTemp)(emitArgumentDeepCopy(armTemp)(plan))(armState) with
+                                    | (copied, copyTemp) -> success(copyTemp)(armType)(copied)
+                            else
+                                match emitArgumentDeepCopy(armTemp)(plan)(armState) with
+                                    | (copied, copyTemp) ->
+                                        copied
+                                        |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                                        |> success(copyTemp)(armType)
                         | failed -> failed
                 | _ -> lower(body)(state)
 
@@ -14016,6 +14260,64 @@ let finishCons (request: ConsumerRequest) (headExpression: Expr) head tail =
                 | (typedState, None) ->
                     allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState))(typedState)
 
+// Stage 0's `EmitReferenceCountedListTail`: the tail a reference-counted cell takes over from the
+// accumulator parameter it extends. The parameter's first value is whatever the caller passed, so
+// a tail outside the reference-counted heap is copied into it; one inside is moved into the cell
+// exactly as it was, with no reference taken, because the cell replaces the parameter as its
+// holder. The empty list is the null pointer, which points nowhere and is kept as it is.
+let emitReferenceCountedListTail (tailTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+            match freshLocal(tested) with
+                | FreshLocal { state = slotted, local = resultSlot } ->
+                    match freshLabel("rc_tail_done")(slotted) with
+                        | FreshLabel { state = doneLabelled, label = doneLabel } ->
+                            match doneLabelled
+                            |> emit(IsReferenceCounted(referenceCountedTemp)(tailTemp))
+                            |> emit(StoreLocal(resultSlot)(tailTemp))
+                            |> freshTemp with
+                                | FreshTemp { state = zeroed, temp = zeroTemp } ->
+                                    match zeroed
+                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                    |> freshTemp with
+                                        | FreshTemp { state = compared, temp = emptyTemp } ->
+                                            match compared
+                                            |> emit(CmpIntEq(emptyTemp)(tailTemp)(zeroTemp))
+                                            |> freshTemp with
+                                                | FreshTemp { state = joined, temp = keepTemp } ->
+                                                    match joined
+                                                    |> emit(OrInt(keepTemp)(referenceCountedTemp)(emptyTemp))
+                                                    |> freshLabel("rc_tail_copy") with
+                                                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                                                            match copyLabelled
+                                                            |> emit(JumpIfFalse(keepTemp)(copyLabel))
+                                                            |> emit(Jump(doneLabel))
+                                                            |> emit(Label(copyLabel))
+                                                            |> emitArgumentCopyByCopy(tailTemp)(plan) with
+                                                                | (copied, copyTemp) ->
+                                                                    match copied
+                                                                    |> emit(StoreLocal(resultSlot)(copyTemp))
+                                                                    |> emit(Label(doneLabel))
+                                                                    |> freshTemp with
+                                                                        | FreshTemp { state = resulted, temp = resultTemp } ->
+                                                                            (emit(LoadLocal(resultTemp)(resultSlot))(resulted), resultTemp)
+
+// Stage 0's `PrepareRuntimeRcListTail`: the cons argument of a tail self-call whose tail reads the
+// loop's own list accumulator takes that list over rather than copying it.
+let prepareRuntimeRcListTail (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
+    match (canTestRepresentation, request.runtimeTcoListTailSlot, unspanArgument(tailExpression)) with
+        | (true, Some(tailSlot), ExprVar(name)) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { location = CoreLocal(boundSlot) }) ->
+                    if boundSlot == tailSlot
+                    then
+                        match argumentCopyPlanOf(tailType)(state) with
+                            | Some(plan) -> emitReferenceCountedListTail(tailTemp)(plan)(state)
+                            | None -> (state, tailTemp)
+                    else (state, tailTemp)
+                | _ -> (state, tailTemp)
+        | _ -> (state, tailTemp)
+
 // The tail of an escaping arena cell carries a runtime-managed owner out of the scope that owns
 // it exactly like an escaping tuple element, and is retained. A recursive producer result stored
 // in a runtime cell also needs its own reference when an existing local owns the tail.
@@ -14024,14 +14326,18 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
             let managed = cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(tailState)
             in
-                if transfers && managed == false || managed && recursiveProducerResult(tailExpression)(tailState)
-                then
-                    match retainAggregateChildTemp(tailExpression)(tailTemp)(tailType)(tailState) with
-                        | (retained, retainedTemp) ->
-                            retained
-                            |> success(retainedTemp)(tailType)
-                            |> retainLoopParameterChild(tailExpression)(tailTemp)
-                else tail
+                match if managed
+                then prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(tailState)
+                else (tailState, tailTemp) with
+                    | (preparedState, preparedTemp) ->
+                        if transfers && managed == false || managed && recursiveProducerResult(tailExpression)(preparedState)
+                        then
+                            match retainAggregateChildTemp(tailExpression)(preparedTemp)(tailType)(preparedState) with
+                                | (retained, retainedTemp) ->
+                                    retained
+                                    |> success(retainedTemp)(tailType)
+                                    |> retainLoopParameterChild(tailExpression)(preparedTemp)
+                        else tail with state = preparedState, temp = preparedTemp
         | _ -> tail
 
 // Stage 0's `LowerCons` order once both parts are lowered: the head's pattern-owner duplicate,
@@ -14082,7 +14388,7 @@ let recursive emitLocatedChildCopies (sourceTemp: Int) (copyTemp: Int) (tagless:
                 | FreshTemp { state = allocated, temp = childTemp } ->
                     match allocated
                     |> emit(GetAdtField(childTemp)(sourceTemp)(index)(tagless))
-                    |> unlocatedDeepCopy(childTemp)(childCopyPlanOf(childType)(state)) with
+                    |> emitChildReferenceOrCopy(childTemp)(childCopyPlanOf(childType)(state)) with
                         | (copied, copiedChild) ->
                             copied
                             |> emit(SetAdtField(copyTemp)(index)(copiedChild)(tagless))
@@ -14100,6 +14406,18 @@ let headReadsAdmittedLoopParameter (head: Expr) (state: CoreLoweringState) =
     match (state.tcoLoopFrame, state.tcoLoop, loopParameterReadSlot(head)(state)) with
         | (Some(frame), Some(loop), Some(slot)) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
         | _ -> false
+
+// The cell copy of an arena constructor head: the cell whole, then its owned children, with one
+// emitter's unused result temp burned ahead of it as stage 0 burns it.
+let emitConsHeadCopy (sourceTemp: Int) (sizeBytes: Int) (tagless: Bool) (children: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match freshTempRun(2)(state) with
+        | FreshTemp { state = allocated, temp = firstTemp } ->
+            let copyTemp = firstTemp + 1
+            in
+                allocated
+                |> unlocatedInstruction(CopyOutArena(copyTemp)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None))
+                |> emitLocatedChildCopies(sourceTemp)(copyTemp)(tagless)(children)
+                |> (given (copied: CoreLoweringState) -> (copied, copyTemp))
 
 let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
@@ -14129,15 +14447,18 @@ let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tai
                         then
                             match tcoAdtCopyPlanOf(resolved)(state) with
                                 | ConstructorArgumentCopy((_tag, sizeBytes, tagless, _childPlans)) ->
-                                    match freshTempRun(3)(state) with
-                                        | FreshTemp { state = allocated, temp = firstTemp } ->
-                                            let copyTemp = firstTemp + 2
-                                            in
-                                                allocated
-                                                |> unlocatedInstruction(CopyOutArena(copyTemp)(temp)(sizeBytes)(true)(RcNormalization)(None))
-                                                |> emitLocatedChildCopies(temp)(copyTemp)(tagless)(ownedChildrenOfNamed(resolved)(state))
-                                                |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
-                                                |> success(copyTemp)(semanticType)
+                                    // The head is taken by reference when the runtime answers that
+                                    // it is already reference-counted; one emitter's unused result
+                                    // temp is burned ahead of the test, as stage 0 burns it.
+                                    match freshTemp(state) with
+                                        | FreshTemp { state = burned, temp = _unused } ->
+                                            match emitReferenceOrCopy(temp)(state
+                                            |> ownedChildrenOfNamed(resolved)
+                                            |> emitConsHeadCopy(temp)(sizeBytes)(tagless))(burned) with
+                                                | (copied, copiedTemp) ->
+                                                    copied
+                                                    |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+                                                    |> success(copiedTemp)(semanticType)
                                 | _ -> lowered
                         else lowered
             else lowered
@@ -14632,7 +14953,10 @@ let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: Semanti
             then
                 match argumentCopyPlanOf(fieldType)(state) with
                     | Some(plan) ->
-                        match emitArgumentDeepCopy(temp)(plan)(state) with
+                        match if canTestRepresentation
+                        then
+                            emitReferenceOrCopy(temp)(emitArgumentDeepCopy(temp)(plan))(state)
+                        else emitArgumentDeepCopy(temp)(plan)(state) with
                             | (copied, copiedTemp) ->
                                 copied
                                 |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
@@ -14655,6 +14979,30 @@ let materializeStringChildArgument (runtimeManaged: Bool) (argument: Expr) (fiel
                         |> emit(CopyOutArena(copyTemp)(temp)(-1)(true)(RcNormalization)(None))
                         |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
                         |> success(copyTemp)(semanticType)
+            else lowered
+        | _ -> lowered
+
+let emitOwnedStringCopy (sourceTemp: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = copyTemp } ->
+            (emit(CopyOutArena(copyTemp)(sourceTemp)(-1)(true)(RcNormalization)(None))(allocated), copyTemp)
+
+// Stage 0's `TryOwnPatternBoundStringChild`: the `Str` a runtime cell stores when it was bound out
+// of a pattern is whatever the matched value's strings are, and retaining an arena one retains
+// nothing — the cell would keep a pointer into the arena. The cell takes a reference to a
+// reference-counted string and a copy of any other, which stands in for the pattern-owner
+// duplicate the argument would otherwise take.
+let ownPatternBoundStringChild (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if canTestRepresentation && runtimeManaged && resolveType(state)(fieldType) == SemString && isPatternOwnerRead(argument)(state) && containsInt(temp)(state.patternOwnerCopyTemps) == false
+            then
+                match emitReferenceOrCopy(temp)(emitOwnedStringCopy(temp))(state) with
+                    | (owned, ownedTemp) ->
+                        owned
+                        |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
+                        |> (given (marked: CoreLoweringState) -> marked with patternOwnerCopyTemps = ownedTemp :: marked.patternOwnerCopyTemps)
+                        |> success(ownedTemp)(semanticType)
             else lowered
         | _ -> lowered
 
@@ -14767,6 +15115,7 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
             |> withConsumerRequest(constructorArgumentRequest(request)(runtimeManaged)(argument)(fieldType)(state))
             |> lower(argument)
             |> materializeStringChildArgument(runtimeManaged)(argument)(fieldType)
+            |> ownPatternBoundStringChild(runtimeManaged)(argument)(fieldType)
             |> normalizeConstructorChildArgument(runtimeManaged)(fieldType)
             |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
@@ -17894,7 +18243,10 @@ let failedTailSelfCallArguments state error =
 // its runtime-managed parameter reaches, so the back edge stores it as the parameter's own value;
 // a fresh string that reads no parameter (`fromInt(n) + "-x"`) is built in the arena and copied
 // out by the back edge.
-let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString))(state)
+let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (state: CoreLoweringState) =
+    withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
+    then tailSlot
+    else None)))(state)
 
 // A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
 // A variable that is the parameter itself or a `let` bound to a plain read of it (the slot was
@@ -17963,7 +18315,7 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
             match ensureFunctionType(functionType)(state) with
                 | FunctionTypeResolution { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
                 | FunctionTypeResolution { state = functionState, argumentType = parameterType, resultType = resultType, error = None } ->
-                    match retainTransferredChild(argument)(true)(duplicatePatternOwnerChild(argument)(lower(argument)(tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))((functionState with backEdgeArgumentSlot = headSlotOf(slots), affineAppendContext = affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations)))))) with
+                    match retainTransferredChild(argument)(true)(duplicatePatternOwnerChild(argument)(lower(argument)(tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))((functionState with backEdgeArgumentSlot = headSlotOf(slots), affineAppendContext = affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations)))))) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedTailSelfCallArguments((failedState with backEdgeArgumentSlot = None, affineAppendContext = None))(error)
                         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
                             match locateArgumentMismatch(argumentSite(Some(loop.selfName))(ordinal + 1)(argumentState))(bindType(parameterType)(argumentType)((argumentState with backEdgeArgumentSlot = None, affineAppendContext = None))) with
@@ -18960,7 +19312,9 @@ let lowerCoreDispatch expression lowerCore state =
 let recursive lowerCore expression state =
     match consumerRequestOf(state) with
         | request ->
-            match dispatchRequest(expression)(request) with
+            match if isEmptyConsumerRequest(request)
+            then request
+            else dispatchRequest(expression)(request) with
                 | dispatched ->
                     state
                     |> withConsumerRequest(dispatched)

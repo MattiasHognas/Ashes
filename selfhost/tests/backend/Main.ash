@@ -4303,11 +4303,9 @@ let buildRcDupDropModule name context =
     |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
     |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "immortal")]))
 
-// `IsReferenceCounted` asks whether a value lies in the region a runtime reserves for its
-// reference-counted heap. This backend allocates reference-counted cells with libc `malloc` and
-// reserves no region, so every value answers `false` — a reference-counted cell, an arena cell,
-// and the empty list alike — and every consumer of the test copies, as it did before the test
-// existed. Prints `false`, `false`, `false`, `5`.
+// `IsReferenceCounted` asks whether a value lies in the region the runtime reserves for its
+// reference-counted heap: a reference-counted cell does, an arena cell and the empty list do not.
+// Prints `true`, `false`, `false`, `5`.
 let buildIsReferenceCountedModule name context =
     [
         1
@@ -4659,7 +4657,7 @@ let buildRcClosureDropModule name context =
 
 let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
 
-let testIsReferenceCounted unit = assertProgramPrintsLines(buildIsReferenceCountedModule)("selfhostBackendIsReferenceCounted")("selfhost_backend_is_reference_counted_e2e")(["false", "false", "false", "5"])
+let testIsReferenceCounted unit = assertProgramPrintsLines(buildIsReferenceCountedModule)("selfhostBackendIsReferenceCounted")("selfhost_backend_is_reference_counted_e2e")(["true", "false", "false", "5"])
 
 // `CopyFfiBytes` over the four ranges stage 0's `EmitCopyFfiBytes` distinguishes. A foreign
 // pointer is any `i64` address, so the copy path reads a string literal's own payload (its bytes

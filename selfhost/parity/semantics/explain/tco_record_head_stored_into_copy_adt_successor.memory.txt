@@ -7,7 +7,7 @@ Function: build
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  1
+    dup:                  6
     drop:                 8
     uniqueness checks:    4
   perceus [lambda_0]
@@ -15,13 +15,13 @@ Function: build
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
-    dup:                  1
+    dup:                  6
     drop:                 8
     uniqueness checks:    4
   representation [lambda_1]
     conservative unknown: 3
     region:               7
-    runtime rc:           12
+    runtime rc:           26
     copy value:           9
   representation [lambda_0]
     region:               3
@@ -33,7 +33,7 @@ Function: heaviest
     best: consumed, move-safe yes
     result fresh: no
   perceus [lambda_5]
-    dup:                  5
+    dup:                  14
     drop:                 36
     uniqueness checks:    19
   perceus [lambda_4]
@@ -41,13 +41,13 @@ Function: heaviest
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_5__scalarenv1]
-    dup:                  5
+    dup:                  14
     drop:                 36
     uniqueness checks:    19
   representation [lambda_5]
     conservative unknown: 2
     region:               6
-    runtime rc:           30
+    runtime rc:           42
     copy value:           2
   representation [lambda_4]
     conservative unknown: 1

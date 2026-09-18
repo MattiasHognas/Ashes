@@ -63,7 +63,7 @@ Function: __rcdrop_5
 
 Function: bump
   Operations
-    dup:                  0
+    dup:                  5
     drop:                 2
     uniqueness checks:    1
     allocations:          9
@@ -73,7 +73,7 @@ Function: bump
 
 Function: count [lambda_8]
   Operations
-    dup:                  1
+    dup:                  8
     drop:                 6
     uniqueness checks:    3
     allocations:          1
@@ -93,7 +93,7 @@ Function: count
 
 Function: count [lambda_8__scalarenv0]
   Operations
-    dup:                  1
+    dup:                  8
     drop:                 6
     uniqueness checks:    3
     allocations:          1

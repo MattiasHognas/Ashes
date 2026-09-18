@@ -5,9 +5,9 @@
 // immediately before its payload pointer — `LlvmCodegenMemory.cs`'s `EmitRuntimeRcDup`,
 // `EmitRuntimeRcIsUnique`, `EmitRuntimeRcDrop`, `EmitRuntimeDropReuse`, `EmitAllocReusing`,
 // `LlvmCodegenExpressions.cs`'s `EmitRuntimeRcClosureDrop`, and `LlvmCodegen.cs`'s
-// `EmitRuntimeManagedDupValue`/`EmitRuntimeManagedDropInstruction`, emitter for emitter. libc
-// `malloc`/`free` is the allocator: a cell whose count reaches zero goes straight back to `free`,
-// where stage 0's `EmitRuntimeRcRelease` first tries its size-binned free-list cache.
+// `EmitRuntimeManagedDupValue`/`EmitRuntimeManagedDropInstruction`, emitter for emitter. The
+// allocator is the reference-counted region's (`IrCodegen.RcRegion`): a cell whose count reaches
+// zero goes back to its size's free list there.
 //
 // An immortal value (a string literal's static header, or an arena-resident `Str`/`BigInt` copy)
 // carries `rcImmortalSentinel` in place of a count: a retain or release on it is a no-op and
@@ -24,7 +24,6 @@ export (
     value rcImmortalSentinel,
     value emitRuntimeRcDup,
     value emitRuntimeRcIsUnique,
-    value emitIsReferenceCounted,
     value emitRuntimeRcDrop,
     value emitClosureDropperCall,
     value emitRuntimeRcClosureDrop,
@@ -108,15 +107,6 @@ let emitRuntimeRcIsUnique builder i64 i8 ptrType resultName valueRef =
     |> (given (headerPtr) -> rcLoadCount(builder)(i64)(headerPtr)("rc_unique"))
     |> (given (count) -> rcIsCountOne(builder)(i64)(count)(resultName))
     |> (given (isUnique) -> buildZExt(builder)(isUnique)(i64)(resultName))
-
-// `IsReferenceCounted`: whether a value's address lies inside the region a runtime reserves for
-// its reference-counted heap, so a consumer handed a value of unknown representation can take a
-// reference to it rather than copy it. This backend's reference-counted cells come from libc
-// `malloc` and no region is reserved, so nothing can be inside one and the answer is always `0` —
-// the same answer stage 0's runtime gives when the reservation is refused, and the one every
-// consumer of the test is written against: a value that does not test reference-counted is copied
-// exactly as it was before the test existed.
-let emitIsReferenceCounted i64 = rcConst(i64)(0)
 
 // `RcDrop` on a value that is never the empty list and needs no structural dropper: an immortal
 // value is left alone, a count of `1` frees the header (and with it the payload), anything else

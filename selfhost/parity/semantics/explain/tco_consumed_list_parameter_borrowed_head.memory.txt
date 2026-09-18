@@ -7,7 +7,7 @@ Function: buildTexts
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
   perceus [lambda_0]
@@ -15,13 +15,13 @@ Function: buildTexts
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
   representation [lambda_1]
     conservative unknown: 2
     region:               1
-    runtime rc:           6
+    runtime rc:           9
     copy value:           7
   representation [lambda_0]
     region:               3
@@ -49,7 +49,7 @@ Function: sumTextLengths
     total: consumed, move-safe yes
     result fresh: no
   perceus [lambda_3]
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
   perceus [lambda_2]
@@ -57,12 +57,12 @@ Function: sumTextLengths
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_3__scalarenv2]
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
   representation [lambda_3]
     conservative unknown: 4
-    runtime rc:           2
+    runtime rc:           4
     copy value:           6
   representation [lambda_2]
     conservative unknown: 1

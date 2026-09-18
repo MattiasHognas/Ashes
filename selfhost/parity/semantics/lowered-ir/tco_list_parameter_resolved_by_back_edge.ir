@@ -2,24 +2,33 @@ IR (lowered)
 ============
 
 function lambda_1  [ClosureHelper from collect]
-  locals=27 temps=57
+  locals=29 temps=66
     LoadEnv               Target=0 Index=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     StoreLocal            Slot=2 Source=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadLocal             Target=22 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadArgumentOwnership Target=23   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadConstInt          Target=24 Value=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    AndInt                Target=25 Left=23 Right=24   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    JumpIfFalse           CondTemp=25 Target=rc_arg_normalize_copy_5   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=21 Source=22   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Jump                  Target=rc_arg_normalize_done_6   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rc_arg_normalize_copy_5:
-    CopyOutList           DestTemp=26 SrcTemp=22 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=21 Source=26   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rc_arg_normalize_done_6:
-    LoadLocal             Target=27 Slot=21   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=1 Source=27   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadConstInt          Target=28 Value=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=18 Source=28   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadLocal             Target=28 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadArgumentOwnership Target=29   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadConstInt          Target=30 Value=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    AndInt                Target=31 Left=29 Right=30   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=31 Target=rc_arg_normalize_copy_7   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=22 Source=28   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Jump                  Target=rc_arg_normalize_done_8   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_arg_normalize_copy_7:
+    IsReferenceCounted    Target=32 SourceTemp=28
+    JumpIfFalse           CondTemp=32 Target=rc_representation_copy_9   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcDup                 Target=33 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=33   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Jump                  Target=rc_representation_done_10   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_representation_copy_9:
+    CopyOutList           DestTemp=34 SrcTemp=28 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=23 Source=34   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_representation_done_10:
+    LoadLocal             Target=35 Slot=23   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=22 Source=35   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_arg_normalize_done_8:
+    LoadLocal             Target=36 Slot=22   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=1 Source=36   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadConstInt          Target=37 Value=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=19 Source=37   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     StoreLocal            Slot=5 Source=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
@@ -52,134 +61,155 @@ function lambda_1  [ClosureHelper from collect]
     LoadLocal             Target=12 Slot=16   (tco_list_parameter_resolved_by_back_edge.ash:9:57)
     TextFromInt           Target=13 ValueTemp=12 RuntimeManaged=true   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
     LoadLocal             Target=14 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:9:63)
-    Alloc                 Target=15 SizeBytes=16 RuntimeManaged=true   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
-    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=13   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
-    StoreMemOffset        BasePtr=15 OffsetBytes=8 Source=14   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
-    LoadLocal             Target=16 Slot=2   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
-    LoadLocal             Target=17 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
+    IsReferenceCounted    Target=15 SourceTemp=14
+    StoreLocal            Slot=18 Source=14   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    LoadConstInt          Target=16 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    CmpIntEq              Target=17 Left=14 Right=16   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    OrInt                 Target=18 Left=15 Right=17   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    JumpIfFalse           CondTemp=18 Target=rc_tail_copy_6   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    Jump                  Target=rc_tail_done_5   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+  rc_tail_copy_6:
+    CopyOutList           DestTemp=19 SrcTemp=14 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    StoreLocal            Slot=18 Source=19   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+  rc_tail_done_5:
+    LoadLocal             Target=20 Slot=18   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    Alloc                 Target=21 SizeBytes=16 RuntimeManaged=true   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=13   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=20   (tco_list_parameter_resolved_by_back_edge.ash:9:38)
+    LoadLocal             Target=22 Slot=2   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
+    LoadLocal             Target=23 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
     StoreLocal            Slot=2 Source=11   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=17
-    StoreLocal            Slot=1 Source=15   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=26
-    StoreLocal            Slot=1 Source=15
-    LoadConstInt          Target=56 Value=1
-    StoreLocal            Slot=18 Source=56
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=26
+    StoreLocal            Slot=1 Source=21   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=28
+    StoreLocal            Slot=1 Source=21
+    LoadConstInt          Target=65 Value=1
+    StoreLocal            Slot=19 Source=65
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=28
     RestoreStackPointer   Slot=8   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
     Jump                  Target=lambda_1_body   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
-    LoadConstInt          Target=18 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
-    StoreLocal            Slot=9 Source=18   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
-    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=19
-    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
-    Jump                  Target=match_end_0   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
-  match_arm_cleanup_4:
+    LoadConstInt          Target=24 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:9:24)
+    StoreLocal            Slot=9 Source=24   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=20
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=20
+    Jump                  Target=match_end_0   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=21
     Jump                  Target=match_none_1   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
   match_none_1:
-    LoadConstInt          Target=20 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
-    StoreLocal            Slot=9 Source=20   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
+    LoadConstInt          Target=26 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
+    StoreLocal            Slot=9 Source=26   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
   match_end_0:
-    LoadLocal             Target=21 Slot=9   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
-    LoadConstInt          Target=29 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=22 Source=29   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadLocal             Target=30 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadLocal             Target=31 Slot=18   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    CmpIntEq              Target=32 Left=30 Right=21   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadLocal             Target=33 Slot=22   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    CmpIntEq              Target=34 Left=33 Right=29   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    AndInt                Target=35 Left=31 Right=32   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    AndInt                Target=36 Left=35 Right=34   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    JumpIfFalse           CondTemp=36 Target=rc_tco_exit_transfer_not_selected_7   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadConstInt          Target=37 Value=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=22 Source=37   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Jump                  Target=rc_tco_exit_transfer_done_8   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rc_tco_exit_transfer_not_selected_7:
-    LoadLocal             Target=38 Slot=18   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    JumpIfFalse           CondTemp=38 Target=rc_tco_exit_drop_inactive_9   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=23 Source=30   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_10:
-    LoadLocal             Target=39 Slot=23   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadConstInt          Target=40 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    CmpIntNe              Target=41 Left=39 Right=40   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_12   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    RcIsUnique            Target=42 SourceTemp=39
-    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_11   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    RcDrop                SourceTemp=43 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=44 BasePtr=39 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=23 Source=44   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Jump                  Target=rcdrop_list_10   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_shared_11:
-    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_12   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_end_12:
-  rc_tco_exit_drop_inactive_9:
-  rc_tco_exit_transfer_done_8:
-    LoadArgumentOwnership Target=45   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadLocal             Target=27 Slot=9   (tco_list_parameter_resolved_by_back_edge.ash:7:5)
+    LoadConstInt          Target=38 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=24 Source=38   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadLocal             Target=39 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadLocal             Target=40 Slot=19   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    CmpIntEq              Target=41 Left=39 Right=27   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadLocal             Target=42 Slot=24   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    CmpIntEq              Target=43 Left=42 Right=38   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    AndInt                Target=44 Left=40 Right=41   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    AndInt                Target=45 Left=44 Right=43   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=45 Target=rc_tco_exit_transfer_not_selected_11   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     LoadConstInt          Target=46 Value=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    ShrInt                Target=47 Left=45 Right=46   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    JumpIfFalse           CondTemp=47 Target=rc_result_owned_13   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    CopyOutList           DestTemp=48 SrcTemp=21 HeadCopy=String Purpose=ArenaResultBoundary   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreLocal            Slot=25 Source=21   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_15:
-    LoadLocal             Target=49 Slot=25   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadConstInt          Target=50 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    CmpIntNe              Target=51 Left=49 Right=50   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    JumpIfFalse           CondTemp=51 Target=rcdrop_list_end_17   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    RcIsUnique            Target=52 SourceTemp=49
-    JumpIfFalse           CondTemp=52 Target=rcdrop_list_shared_16   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadMemOffset         Target=53 BasePtr=49 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    RcDrop                SourceTemp=53 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=54 BasePtr=49 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=25 Source=54   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Jump                  Target=rcdrop_list_15   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_shared_16:
-    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_17   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_end_17:
-    StoreLocal            Slot=24 Source=48   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Jump                  Target=rc_result_done_14   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rc_result_owned_13:
-    StoreLocal            Slot=24 Source=21   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rc_result_done_14:
-    LoadLocal             Target=55 Slot=24   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Return                Source=55   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=24 Source=46   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Jump                  Target=rc_tco_exit_transfer_done_12   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_tco_exit_transfer_not_selected_11:
+    LoadLocal             Target=47 Slot=19   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=47 Target=rc_tco_exit_drop_inactive_13   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=25 Source=39   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_14:
+    LoadLocal             Target=48 Slot=25   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadConstInt          Target=49 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    CmpIntNe              Target=50 Left=48 Right=49   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=50 Target=rcdrop_list_end_16   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcIsUnique            Target=51 SourceTemp=48
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_shared_15   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadMemOffset         Target=52 BasePtr=48 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcDrop                SourceTemp=52 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=53 BasePtr=48 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcDrop                SourceTemp=48 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=53   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Jump                  Target=rcdrop_list_14   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_shared_15:
+    RcDrop                SourceTemp=48 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_16   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_end_16:
+  rc_tco_exit_drop_inactive_13:
+  rc_tco_exit_transfer_done_12:
+    LoadArgumentOwnership Target=54   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadConstInt          Target=55 Value=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    ShrInt                Target=56 Left=54 Right=55   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=56 Target=rc_result_owned_17   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    CopyOutList           DestTemp=57 SrcTemp=27 HeadCopy=String Purpose=ArenaResultBoundary   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=27 Source=27   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_19:
+    LoadLocal             Target=58 Slot=27   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadConstInt          Target=59 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    CmpIntNe              Target=60 Left=58 Right=59   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_end_21   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcIsUnique            Target=61 SourceTemp=58
+    JumpIfFalse           CondTemp=61 Target=rcdrop_list_shared_20   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadMemOffset         Target=62 BasePtr=58 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcDrop                SourceTemp=62 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=63 BasePtr=58 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcDrop                SourceTemp=58 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=63   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Jump                  Target=rcdrop_list_19   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_shared_20:
+    RcDrop                SourceTemp=58 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_21   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_end_21:
+    StoreLocal            Slot=26 Source=57   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Jump                  Target=rc_result_done_18   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_result_owned_17:
+    StoreLocal            Slot=26 Source=27   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_result_done_18:
+    LoadLocal             Target=64 Slot=26   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Return                Source=64   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
 
 function __rc_cdrop_2  [RuntimeManagedClosureDropper]
   locals=3 temps=8
     LoadLocal             Target=0 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     StoreLocal            Slot=2 Source=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_18:
+  rcdrop_list_22:
     LoadLocal             Target=2 Slot=2   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     LoadConstInt          Target=3 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     CmpIntNe              Target=4 Left=2 Right=3   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_20   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_24   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     RcIsUnique            Target=5 SourceTemp=2
-    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_19   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_23   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     LoadMemOffset         Target=6 BasePtr=2 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=6   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Jump                  Target=rcdrop_list_18   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_shared_19:
+    Jump                  Target=rcdrop_list_22   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_shared_23:
     RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_20   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-  rcdrop_list_end_20:
+    Jump                  Target=rcdrop_list_end_24   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rcdrop_list_end_24:
     LoadConstInt          Target=7 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     Return                Source=7   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from collect]
-  locals=2 temps=5
+  locals=3 temps=8
     LoadLocal             Target=0 Slot=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     LoadLocal             Target=1 Slot=1   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    CopyOutList           DestTemp=3 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=3   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    LoadFuncAddr          Target=4 FuncLabel=__rc_cdrop_2   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
-    Return                Source=4   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_25   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Jump                  Target=rc_representation_done_26   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_representation_copy_25:
+    CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreLocal            Slot=2 Source=5   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+  rc_representation_done_26:
+    LoadLocal             Target=6 Slot=2   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_2   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
+    Return                Source=7   (tco_list_parameter_resolved_by_back_edge.ash:6:1)
 
 function lambda_0  [SourceFunction from collect]
   locals=2 temps=5
@@ -220,7 +250,7 @@ function _start_main  [ProgramEntry]
     SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
     LoadConstInt          Target=16 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     CmpIntNe              Target=17 Left=15 Right=16   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_24   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_30   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadMemOffset         Target=18 BasePtr=15 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadMemOffset         Target=19 BasePtr=15 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     StoreLocal            Slot=7 Source=18   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
@@ -233,37 +263,37 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=4 Source=22   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadLocal             Target=24 Slot=8   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     StoreLocal            Slot=9 Source=24   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  rcdrop_list_25:
+  rcdrop_list_31:
     LoadLocal             Target=25 Slot=9   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadConstInt          Target=26 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     CmpIntNe              Target=27 Left=25 Right=26   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    JumpIfFalse           CondTemp=27 Target=rcdrop_list_end_27   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+    JumpIfFalse           CondTemp=27 Target=rcdrop_list_end_33   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     RcIsUnique            Target=28 SourceTemp=25
-    JumpIfFalse           CondTemp=28 Target=rcdrop_list_shared_26   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_shared_32   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadMemOffset         Target=29 BasePtr=25 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     RcDrop                SourceTemp=29 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=30 BasePtr=25 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     RcDrop                SourceTemp=25 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=9 Source=30   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    Jump                  Target=rcdrop_list_25   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  rcdrop_list_shared_26:
+    Jump                  Target=rcdrop_list_31   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  rcdrop_list_shared_32:
     RcDrop                SourceTemp=25 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_27   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  rcdrop_list_end_27:
+    Jump                  Target=rcdrop_list_end_33   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  rcdrop_list_end_33:
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=10
     CopyOutArena          DestTemp=31 SrcTemp=22 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=10
     StoreLocal            Slot=4 Source=31   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    Jump                  Target=match_end_21   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  match_arm_cleanup_24:
+    Jump                  Target=match_end_27   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  match_arm_cleanup_30:
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=11
-    Jump                  Target=match_next_23   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  match_next_23:
+    Jump                  Target=match_next_29   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  match_next_29:
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=32 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     CmpIntEq              Target=33 Left=15 Right=32   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    JumpIfFalse           CondTemp=33 Target=match_arm_cleanup_28   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+    JumpIfFalse           CondTemp=33 Target=match_arm_cleanup_34   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     StoreLocal            Slot=14 Source=15   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadConstStr          Target=34 StrLabel=str_0   (tco_list_parameter_resolved_by_back_edge.ash:13:28)
     PrintStr              Source=34   (tco_list_parameter_resolved_by_back_edge.ash:13:13)
@@ -271,36 +301,36 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=4 Source=35   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadLocal             Target=36 Slot=14   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     StoreLocal            Slot=15 Source=36   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  rcdrop_list_29:
+  rcdrop_list_35:
     LoadLocal             Target=37 Slot=15   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadConstInt          Target=38 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     CmpIntNe              Target=39 Left=37 Right=38   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    JumpIfFalse           CondTemp=39 Target=rcdrop_list_end_31   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+    JumpIfFalse           CondTemp=39 Target=rcdrop_list_end_37   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     RcIsUnique            Target=40 SourceTemp=37
-    JumpIfFalse           CondTemp=40 Target=rcdrop_list_shared_30   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+    JumpIfFalse           CondTemp=40 Target=rcdrop_list_shared_36   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     LoadMemOffset         Target=41 BasePtr=37 OffsetBytes=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     RcDrop                SourceTemp=41 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=42 BasePtr=37 OffsetBytes=8   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     RcDrop                SourceTemp=37 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=15 Source=42   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    Jump                  Target=rcdrop_list_29   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  rcdrop_list_shared_30:
+    Jump                  Target=rcdrop_list_35   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  rcdrop_list_shared_36:
     RcDrop                SourceTemp=37 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_31   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  rcdrop_list_end_31:
+    Jump                  Target=rcdrop_list_end_37   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  rcdrop_list_end_37:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=16
     CopyOutArena          DestTemp=43 SrcTemp=35 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=16
     StoreLocal            Slot=4 Source=43   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-    Jump                  Target=match_end_21   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  match_arm_cleanup_28:
+    Jump                  Target=match_end_27   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  match_arm_cleanup_34:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=17
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=17
-    Jump                  Target=match_none_22   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  match_none_22:
+    Jump                  Target=match_none_28   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
+  match_none_28:
     LoadConstInt          Target=44 Value=0   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     StoreLocal            Slot=4 Source=44   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
-  match_end_21:
+  match_end_27:
     LoadLocal             Target=45 Slot=4   (tco_list_parameter_resolved_by_back_edge.ash:11:1)
     Return                Source=45
 

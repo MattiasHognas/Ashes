@@ -7,7 +7,7 @@ Function: build
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
   perceus [lambda_0]
@@ -15,12 +15,12 @@ Function: build
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
   representation [lambda_1]
     region:               1
-    runtime rc:           8
+    runtime rc:           11
     copy value:           7
   representation [lambda_0]
     region:               3
@@ -32,7 +32,7 @@ Function: findLong
     limit: consumed, move-safe yes
     result fresh: no
   perceus [lambda_3]
-    dup:                  3
+    dup:                  4
     drop:                 12
     uniqueness checks:    3
   perceus [lambda_2]
@@ -40,12 +40,12 @@ Function: findLong
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_3__scalarenv1]
-    dup:                  3
+    dup:                  4
     drop:                 12
     uniqueness checks:    3
   representation [lambda_3]
     region:               1
-    runtime rc:           16
+    runtime rc:           18
     copy value:           4
   representation [lambda_2]
     conservative unknown: 1

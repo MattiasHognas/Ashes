@@ -3,7 +3,7 @@ RC report
 
 Function: total [lambda_2]
   Operations
-    dup:                  2
+    dup:                  5
     drop:                 14
     uniqueness checks:    6
     allocations:          3

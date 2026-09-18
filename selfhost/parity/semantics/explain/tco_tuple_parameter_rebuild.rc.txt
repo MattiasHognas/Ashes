@@ -3,7 +3,7 @@ RC report
 
 Function: step [lambda_1]
   Operations
-    dup:                  0
+    dup:                  2
     drop:                 2
     uniqueness checks:    0
     allocations:          1
@@ -23,7 +23,7 @@ Function: step
 
 Function: step [lambda_1__scalarenv0]
   Operations
-    dup:                  0
+    dup:                  2
     drop:                 2
     uniqueness checks:    0
     allocations:          1

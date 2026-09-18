@@ -23,7 +23,7 @@ Function: __rc_cdrop_3
 
 Function: validateName [lambda_2$env_normalize]
   Operations
-    dup:                  0
+    dup:                  2
     drop:                 0
     uniqueness checks:    0
     allocations:          0
@@ -53,7 +53,7 @@ Function: __rc_cdrop_4
 
 Function: validateName [lambda_1$env_normalize]
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0
@@ -73,7 +73,7 @@ Function: validateName
 
 Function: validateAll [lambda_7]
   Operations
-    dup:                  4
+    dup:                  7
     drop:                 11
     uniqueness checks:    3
     allocations:          3

@@ -3,13 +3,13 @@ RC report
 
 Function: collect [lambda_2]
   Operations
-    dup:                  4
+    dup:                  13
     drop:                 9
     uniqueness checks:    4
-    allocations:          4
+    allocations:          5
     reused allocations:   0
     reuse tokens:         0
-    copies:               6
+    copies:               8
 
 Function: __rc_cdrop_3
   Operations
@@ -23,7 +23,7 @@ Function: __rc_cdrop_3
 
 Function: collect [lambda_2$env_normalize]
   Operations
-    dup:                  0
+    dup:                  2
     drop:                 0
     uniqueness checks:    0
     allocations:          0
@@ -53,7 +53,7 @@ Function: collect
 
 Function: total [lambda_6]
   Operations
-    dup:                  2
+    dup:                  5
     drop:                 14
     uniqueness checks:    6
     allocations:          3
@@ -133,13 +133,13 @@ Function: __deepcopy_list_12
 
 Function: reversed [lambda_10]
   Operations
-    dup:                  2
-    drop:                 21
+    dup:                  12
+    drop:                 22
     uniqueness checks:    10
-    allocations:          4
+    allocations:          5
     reused allocations:   0
     reuse tokens:         0
-    copies:               6
+    copies:               8
 
 Function: reversed
   Operations
@@ -153,13 +153,13 @@ Function: reversed
 
 Function: reversed [lambda_10__scalarenv0]
   Operations
-    dup:                  2
-    drop:                 21
+    dup:                  12
+    drop:                 22
     uniqueness checks:    10
-    allocations:          4
+    allocations:          5
     reused allocations:   0
     reuse tokens:         0
-    copies:               6
+    copies:               8
 
 Function: _start_main
   Operations

@@ -6,13 +6,13 @@ Function: build
     n: consumed, move-safe yes
     result fresh: yes
   perceus [lambda_10]
-    dup:                  0
+    dup:                  2
     drop:                 2
     uniqueness checks:    1
   representation [lambda_10]
     conservative unknown: 5
     region:               10
-    runtime rc:           6
+    runtime rc:           10
     copy value:           2
 
 Function: collect
@@ -22,7 +22,7 @@ Function: collect
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_4]
-    dup:                  1
+    dup:                  21
     drop:                 12
     uniqueness checks:    7
   perceus [lambda_3]
@@ -36,7 +36,7 @@ Function: collect
   representation [lambda_4]
     conservative unknown: 14
     region:               14
-    runtime rc:           32
+    runtime rc:           81
     copy value:           5
   representation [lambda_3]
     conservative unknown: 2
@@ -65,7 +65,7 @@ Function: joinAll
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_13]
-    dup:                  1
+    dup:                  8
     drop:                 17
     uniqueness checks:    9
   perceus [lambda_12]
@@ -73,13 +73,13 @@ Function: joinAll
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_13__scalarenv0]
-    dup:                  1
+    dup:                  8
     drop:                 17
     uniqueness checks:    9
   representation [lambda_13]
     conservative unknown: 16
     region:               7
-    runtime rc:           24
+    runtime rc:           38
     copy value:           2
   representation [lambda_12]
     conservative unknown: 2

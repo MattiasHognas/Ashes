@@ -20,7 +20,7 @@ Function: countLists
     n: consumed, move-safe yes
     result fresh: no
   perceus [lambda_5]
-    dup:                  1
+    dup:                  2
     drop:                 12
     uniqueness checks:    6
   perceus [lambda_4]
@@ -28,11 +28,11 @@ Function: countLists
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_5__scalarenv1]
-    dup:                  1
+    dup:                  2
     drop:                 12
     uniqueness checks:    6
   representation [lambda_5]
-    runtime rc:           5
+    runtime rc:           7
     copy value:           6
   representation [lambda_4]
     conservative unknown: 1
@@ -44,7 +44,7 @@ Function: countNames
     n: consumed, move-safe yes
     result fresh: no
   perceus [lambda_3]
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
   perceus [lambda_2]
@@ -52,11 +52,11 @@ Function: countNames
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_3__scalarenv0]
-    dup:                  1
+    dup:                  2
     drop:                 9
     uniqueness checks:    3
   representation [lambda_3]
-    runtime rc:           5
+    runtime rc:           7
     copy value:           6
   representation [lambda_2]
     conservative unknown: 1

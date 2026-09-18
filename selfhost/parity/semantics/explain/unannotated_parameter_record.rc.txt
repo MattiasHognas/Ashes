@@ -13,7 +13,7 @@ Function: __deepcopy_1
 
 Function: toEntry
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 2
     uniqueness checks:    1
     allocations:          2

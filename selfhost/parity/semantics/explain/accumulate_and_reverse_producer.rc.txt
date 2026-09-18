@@ -53,13 +53,13 @@ Function: __deepcopy_list_6
 
 Function: bumpInto [lambda_4]
   Operations
-    dup:                  5
-    drop:                 17
+    dup:                  17
+    drop:                 18
     uniqueness checks:    8
-    allocations:          8
+    allocations:          10
     reused allocations:   0
     reuse tokens:         0
-    copies:               9
+    copies:               16
 
 Function: bumpInto
   Operations
@@ -83,7 +83,7 @@ Function: bump
 
 Function: passes [lambda_10]
   Operations
-    dup:                  1
+    dup:                  4
     drop:                 8
     uniqueness checks:    4
     allocations:          2
@@ -103,7 +103,7 @@ Function: passes
 
 Function: count [lambda_12]
   Operations
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
     allocations:          1
@@ -123,7 +123,7 @@ Function: count
 
 Function: count [lambda_12__scalarenv0]
   Operations
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
     allocations:          1

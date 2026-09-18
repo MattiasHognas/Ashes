@@ -20,8 +20,8 @@ Function: bumpInto
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_4]
-    dup:                  5
-    drop:                 17
+    dup:                  17
+    drop:                 18
     uniqueness checks:    8
   perceus [lambda_3]
     dup:                  0
@@ -30,7 +30,7 @@ Function: bumpInto
   representation [lambda_4]
     conservative unknown: 11
     region:               8
-    runtime rc:           42
+    runtime rc:           80
     copy value:           9
   representation [lambda_3]
     conservative unknown: 2
@@ -42,7 +42,7 @@ Function: count
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_12]
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
   perceus [lambda_11]
@@ -50,12 +50,12 @@ Function: count
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_12__scalarenv0]
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
   representation [lambda_12]
     conservative unknown: 2
-    runtime rc:           10
+    runtime rc:           16
     copy value:           6
   representation [lambda_11]
     conservative unknown: 1
@@ -92,7 +92,7 @@ Function: passes
     insts: consumed, move-safe yes
     result fresh: no
   perceus [lambda_10]
-    dup:                  1
+    dup:                  4
     drop:                 8
     uniqueness checks:    4
   perceus [lambda_9]
@@ -102,7 +102,7 @@ Function: passes
   representation [lambda_10]
     conservative unknown: 5
     region:               2
-    runtime rc:           13
+    runtime rc:           19
     copy value:           6
   representation [lambda_9]
     conservative unknown: 1

@@ -194,6 +194,7 @@ public sealed partial class Lowering
             or IrInst.RcDrop
             or IrInst.RcDup
             or IrInst.RcIsUnique
+            or IrInst.IsReferenceCounted
             or IrInst.Borrow;
     }
 

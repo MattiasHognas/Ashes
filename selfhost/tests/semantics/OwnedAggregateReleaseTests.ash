@@ -82,8 +82,9 @@ let recursive lineAfter (fragment: Str) (lines: List(Str)) =
 let ownedListSource = "let describe n =\n    let labels = [Ashes.Text.fromInt(n), Ashes.Text.fromInt(7)]\n    in\n        match labels with\n            | first :: _ -> Ashes.Text.byteLength(first)\n            | [] -> 0\n\nAshes.IO.print(Ashes.Text.fromInt(describe(1)))"
 
 // A `let` list of fresh strings matched immediately: the strings and both cells are allocated
-// runtime-managed, the scope exit walks the spine as unique cells releasing each string head,
-// and no placeable list drop names the owner slot.
+// runtime-managed, the scope exit walks the spine releasing each string head, testing each cell
+// for another owner first since a copy under the representation test may share it, and no
+// placeable list drop names the owner slot.
 let testOwnedListLetWalksSpineInline unit =
     ownedListSource
     |> loweredLines
@@ -100,8 +101,8 @@ let testOwnedListLetWalksSpineInline unit =
             |> test.assertEqual(2))
         |> (given (_) ->
             lines
-            |> countContaining("Target=rcdrop_unique_list_end_")
-            |> test.assertEqual(1))
+            |> countContaining("Target=rcdrop_list_end_")
+            |> test.assertEqual(2))
         |> (given (_) ->
             lines
             |> countContaining("TypeName=String RuntimeManaged=true")
@@ -109,7 +110,7 @@ let testOwnedListLetWalksSpineInline unit =
         |> (given (_) ->
             lines
             |> countContaining("TypeName=List RuntimeManaged=true")
-            |> test.assertEqual(1))
+            |> test.assertEqual(2))
         |> (given (_) ->
             lines
             |> countContaining("TypeName=List OwnerSlot=")

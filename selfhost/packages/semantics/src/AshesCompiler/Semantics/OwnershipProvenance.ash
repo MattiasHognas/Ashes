@@ -329,7 +329,7 @@ let recursive buildComponentsFrom (sccs: List(List(Str))) (adj: Adjacency) (ids:
 let buildComponents (sccs: List(List(Str))) (adj: Adjacency) (ids: MapTree(Str, Int)) (facts: MapTree(Str, NodeFacts)) = buildComponentsFrom(sccs)(adj)(ids)(facts)(0)
 
 let isEligible (compId: Int) (eligible: MapTree(Int, Bool)) =
-    match Ashes.Collection.Map.get(compId)(eligible) with
+    match Ashes.Collection.Map.getInt(compId)(eligible) with
         | Some(_present) -> true
         | None -> false
 
@@ -358,7 +358,7 @@ let recursive solveRcEligibilityStep (comps: List(ProvenanceComponent)) (eligibl
             else
                 if (hasDirect || anyDependencyEligible(deps)(eligible)) && allDependenciesEligible(deps)(eligible)
                 then
-                    solveRcEligibilityStep(rest)(Ashes.Collection.Map.set(compId)(true)(eligible))(true)
+                    solveRcEligibilityStep(rest)(Ashes.Collection.Map.setInt(compId)(true)(eligible))(true)
                 else solveRcEligibilityStep(rest)(eligible)(changed)
 
 let recursive solveRcEligibilityFixpoint (comps: List(ProvenanceComponent)) (eligible: MapTree(Int, Bool)) =

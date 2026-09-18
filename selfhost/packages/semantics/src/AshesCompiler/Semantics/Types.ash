@@ -200,13 +200,64 @@ and applySubstitutionIn : (Int -> Maybe(SemanticType)) -> SemanticType -> Semant
                     in SemPointer(substitutedPointee)
                 | _ -> semanticType
 
+let recursive anyBoundIn : (Int -> Maybe(SemanticType)) -> List(SemanticType) -> Bool =
+    given (lookup) ->
+        given (values) ->
+            match values with
+                | [] -> false
+                | head :: tail ->
+                    if hasBoundVariable(lookup)(head)
+                    then true
+                    else anyBoundIn(lookup)(tail)
+and hasBoundVariable : (Int -> Maybe(SemanticType)) -> SemanticType -> Bool =
+    given (lookup) ->
+        given (semanticType) ->
+            match semanticType with
+                | SemVariable(variableId) ->
+                    match lookup(variableId) with
+                        | None -> false
+                        | Some(_replacement) -> true
+                | SemList(element) -> hasBoundVariable(lookup)(element)
+                | SemTuple(elements) -> anyBoundIn(lookup)(elements)
+                | SemFunction(argument, result, capabilityRow) ->
+                    if hasBoundVariable(lookup)(argument)
+                    then true
+                    else
+                        if hasBoundVariable(lookup)(result)
+                        then true
+                        else
+                            match capabilityRow with
+                                | None -> false
+                                | Some(row) -> hasBoundVariable(lookup)(row)
+                | SemCapability(_name, arguments) -> anyBoundIn(lookup)(arguments)
+                | SemRow(capabilities, tail) ->
+                    if anyBoundIn(lookup)(capabilities)
+                    then true
+                    else
+                        match tail with
+                            | None -> false
+                            | Some(tailType) -> hasBoundVariable(lookup)(tailType)
+                | SemNamed(_symbolId, _name, arguments) -> anyBoundIn(lookup)(arguments)
+                | SemPointer(pointee) -> hasBoundVariable(lookup)(pointee)
+                | _ -> false
+
+// The walk above rebuilds every node it passes, so a type the substitution binds nothing in is
+// answered as it is: most types resolved during lowering already are, and rebuilding them was the
+// largest share of what resolving allocated.
+let resolveIn : (Int -> Maybe(SemanticType)) -> SemanticType -> SemanticType =
+    given (lookup) ->
+        given (semanticType) ->
+            if hasBoundVariable(lookup)(semanticType)
+            then applySubstitutionIn(lookup)(semanticType)
+            else semanticType
+
 let substituteTypes : List((Int, SemanticType)) -> List(SemanticType) -> List(SemanticType) =
     given (substitution) ->
         substituteTypesIn(given (variableId) -> lookupSubstitution(variableId)(substitution))
 
 let applySubstitution : List((Int, SemanticType)) -> SemanticType -> SemanticType =
     given (substitution) ->
-        applySubstitutionIn(given (variableId) -> lookupSubstitution(variableId)(substitution))
+        resolveIn(given (variableId) -> lookupSubstitution(variableId)(substitution))
 
 // The same walk over a substitution kept as a variable-keyed map. A whole program's substitution
 // reaches tens of thousands of entries and every type it resolves walks it once per variable, so
@@ -215,7 +266,7 @@ let applySubstitution : List((Int, SemanticType)) -> SemanticType -> SemanticTyp
 // 0.5% of a 45 GB compile, which does not buy sixty duplicated lines.
 let applySubstitutionMap : MapTree(Int, SemanticType) -> SemanticType -> SemanticType =
     given (substitution) ->
-        applySubstitutionIn(given (variableId) -> Ashes.Collection.Map.get(variableId)(substitution))
+        resolveIn(given (variableId) -> Ashes.Collection.Map.getInt(variableId)(substitution))
 
 // A unification's bindings added to a program's substitution, keeping the association list's own
 // rule that the first entry for a variable is the one that answers: the additions are written
@@ -228,7 +279,7 @@ let recursive extendSubstitutionMap : List((Int, SemanticType)) -> MapTree(Int, 
                 | (variableId, replacement) :: rest ->
                     substitution
                     |> extendSubstitutionMap(rest)
-                    |> Ashes.Collection.Map.set(variableId)(replacement)
+                    |> Ashes.Collection.Map.setInt(variableId)(replacement)
 
 let recursive joinTypes : Str -> (SemanticType -> Str) -> List(SemanticType) -> Str =
     given (separator) ->

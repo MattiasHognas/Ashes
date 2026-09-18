@@ -1321,7 +1321,7 @@ public sealed class ArenaDeallocationTests
 
         instructions.Any(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
-        instructions.Count(instruction => instruction is IrInst.RcDup
+        RepresentationTestIr.CountOutsideGuards(instructions, instruction => instruction is IrInst.RcDup
         {
             RuntimeManaged: true,
         }).ShouldBe(1,

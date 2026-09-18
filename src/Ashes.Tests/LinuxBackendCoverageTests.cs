@@ -3964,16 +3964,16 @@ public sealed class LinuxBackendCoverageTests
             }).ShouldBeTrue(
                 "Rebuilt-list replacement must recursively release fixed back-edge RC cells.");
         IrProgram sharedSpineProbe = LowerProgram(BuildRuntimeRcSharedSpineListTcoMemoryProgram(1));
-        AllInstructions(sharedSpineProbe).Count(instruction =>
-            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBe(1,
-                "A cons-growing accumulator should normalize only its loop-entry spine, not clone replacements.");
+        RepresentationTestIr.CountOutsideGuards(AllInstructions(sharedSpineProbe), instruction =>
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBe(0,
+                "A cons-growing accumulator copies its loop-entry spine or replacement tail only when it is not reference-counted already.");
         AllInstructions(sharedSpineProbe).Any(instruction =>
             instruction is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
                 "A cons-growing accumulator should allocate its replacement cell through runtime RC.");
         AllInstructions(sharedSpineProbe).Any(instruction =>
             instruction is IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse(
                 "The migrated shared-spine TCO path must not relocate through an arena allocation.");
-        AllInstructions(sharedSpineProbe).Count(instruction =>
+        RepresentationTestIr.CountOutsideGuards(AllInstructions(sharedSpineProbe), instruction =>
             instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
                 "An affine cons replacement should move its tail ownership without duplicating it.");
 
@@ -7596,7 +7596,7 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.CopyOutArena { RuntimeManaged: false }).ShouldBeFalse(
                 "The migrated String TCO path must not relocate through an arena allocation.");
-        AllInstructions(probe).Count(instruction =>
+        RepresentationTestIr.CountOutsideGuards(AllInstructions(probe), instruction =>
             instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBe(0,
                 "An affine TCO accumulator should move into its replacement without an extra reference.");
     }

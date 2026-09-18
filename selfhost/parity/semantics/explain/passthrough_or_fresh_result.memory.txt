@@ -7,12 +7,12 @@ Function: bump
     result fresh: no
   perceus [lambda_0]
     dup:                  2
-    drop:                 3
+    drop:                 4
     uniqueness checks:    1
   representation [lambda_0]
     conservative unknown: 10
     region:               8
-    runtime rc:           13
+    runtime rc:           15
     copy value:           9
 
 Function: bumpIf
@@ -21,7 +21,7 @@ Function: bumpIf
     insts: consumed, move-safe yes
     result fresh: no
   perceus [lambda_5]
-    dup:                  0
+    dup:                  3
     drop:                 2
     uniqueness checks:    1
   perceus [lambda_4]
@@ -36,7 +36,7 @@ Function: bumpIf
   representation [lambda_5]
     conservative unknown: 5
     region:               2
-    runtime rc:           8
+    runtime rc:           14
     copy value:           3
   representation [lambda_4]
     region:               2
@@ -48,7 +48,7 @@ Function: bumpTimes
     insts: consumed, move-safe yes
     result fresh: no
   perceus [lambda_8]
-    dup:                  1
+    dup:                  4
     drop:                 4
     uniqueness checks:    2
   perceus [lambda_7]
@@ -59,7 +59,7 @@ Function: bumpTimes
   representation [lambda_8]
     conservative unknown: 8
     region:               2
-    runtime rc:           11
+    runtime rc:           17
     copy value:           6
   representation [lambda_7]
     region:               3
@@ -71,7 +71,7 @@ Function: count
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_10]
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
   perceus [lambda_9]
@@ -79,12 +79,12 @@ Function: count
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_10__scalarenv1]
-    dup:                  1
+    dup:                  4
     drop:                 6
     uniqueness checks:    3
   representation [lambda_10]
     conservative unknown: 2
-    runtime rc:           10
+    runtime rc:           16
     copy value:           6
   representation [lambda_9]
     conservative unknown: 1
@@ -95,12 +95,12 @@ Function: keepOrBump
     insts: consumed, move-safe yes
     result fresh: no
   perceus [lambda_6]
-    dup:                  0
+    dup:                  6
     drop:                 2
     uniqueness checks:    1
   reuse: specialization candidate qualification rejected
   representation [lambda_6]
     conservative unknown: 7
     region:               2
-    runtime rc:           14
+    runtime rc:           26
 

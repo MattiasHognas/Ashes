@@ -14,11 +14,11 @@ Function: makeItems
     text: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   representation [lambda_0]
     conservative unknown: 2
     region:               2
-    runtime rc:           1
+    runtime rc:           3
 

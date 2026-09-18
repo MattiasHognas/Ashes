@@ -557,6 +557,8 @@ Immutable indexed array backed by a persistent balanced tree.
 - `getStr(key)(map)` returning `Maybe(V)` — `Str`-keyed lookup ordered by UTF-8 byte order
   (`Ashes.Byte.compare` inline; no comparator closure, so it is markedly faster than
   `getWith(Ashes.Text.compare)`)
+- `getInt(key)(map)` returning `Maybe(V)` — `Int`-keyed lookup comparing keys directly, with no
+  trait dictionary or comparator closure per comparison
 - `contains(key)(map)` returning `Bool` — uses `Ord(K)`
 - `containsWith(compare)(key)(map)` returning `Bool`
 - `set(key)(value)(map)` returning a new map value — uses `Ord(K)`
@@ -566,6 +568,8 @@ Immutable indexed array backed by a persistent balanced tree.
 - `upsertStr(key)(missValue)(onHit)(map)` returning a new map value — single-traversal
   insert-or-update: inserts `missValue` when `key` is absent, else replaces the stored value with
   `onHit(oldValue)`. Halves the tree work of a `getStr`-then-`setStr` pair in accumulation loops.
+- `setInt(key)(value)(map)` returning a new map value — `Int`-keyed `set`, same rationale as
+  `getInt`
 - `insert` — alias for `set`
 - `insertWith` — alias for `setWith`
 - `size(map)` returning `Int`
