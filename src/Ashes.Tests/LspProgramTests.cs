@@ -490,7 +490,7 @@ public sealed class LspProgramTests
 
             if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
             {
-                int.TryParse(line["Content-Length:".Length..].Trim(), System.Globalization.CultureInfo.InvariantCulture, out contentLength);
+                _ = int.TryParse(line["Content-Length:".Length..].Trim(), System.Globalization.CultureInfo.InvariantCulture, out contentLength);
             }
         }
 

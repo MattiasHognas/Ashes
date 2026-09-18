@@ -21,37 +21,35 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.9">
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Scalar.AspNetCore" Version="2.16.10" />
-
+    <PackageReference Include="Scalar.AspNetCore" Version="2.17.4" />
     <!-- Pin patched versions of vulnerable transitive dependencies (NU1903 gate).
          Microsoft.OpenApi 2.0.0 (via AspNetCore.OpenApi) is patched at 2.7.5 (GHSA-v5pm-xwqc-g5wc);
          SQLitePCLRaw (via EF Core Sqlite) is only fixed in the 3.x line (GHSA-2m69-gcr7-jv3q). -->
-    <PackageReference Include="Microsoft.OpenApi" Version="2.10.0" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageReference Include="Microsoft.OpenApi" Version="2.12.2" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
   </ItemGroup>
 
   <ItemGroup>
-    <RegistryWebSource Include="$(RegistryWebRoot)/src/**/*;$(RegistryWebRoot)/index.html;$(RegistryWebRoot)/package.json;$(RegistryWebRoot)/pnpm-lock.yaml;$(RegistryWebRoot)/pnpm-workspace.yaml;$(RegistryWebRoot)/tsconfig.json;$(RegistryWebRoot)/vite.config.ts" />
+    <RegistryWebSource
+      Include="$(RegistryWebRoot)/src/**/*;$(RegistryWebRoot)/index.html;$(RegistryWebRoot)/package.json;$(RegistryWebRoot)/pnpm-lock.yaml;$(RegistryWebRoot)/pnpm-workspace.yaml;$(RegistryWebRoot)/tsconfig.json;$(RegistryWebRoot)/vite.config.ts" />
   </ItemGroup>
 
-  <Target Name="BuildRegistryWeb"
-          BeforeTargets="Build"
-          Condition="'$(BuildRegistryWeb)' == 'true' and '$(DesignTimeBuild)' != 'true'"
-          Inputs="@(RegistryWebSource)"
-          Outputs="$(RegistryWebRoot)/dist/index.html">
-    <Exec WorkingDirectory="$(RegistryWebRoot)" Command="pnpm install --frozen-lockfile --prefer-offline" />
+  <Target Name="BuildRegistryWeb" BeforeTargets="Build"
+    Condition="'$(BuildRegistryWeb)' == 'true' and '$(DesignTimeBuild)' != 'true'"
+    Inputs="@(RegistryWebSource)" Outputs="$(RegistryWebRoot)/dist/index.html">
+    <Exec WorkingDirectory="$(RegistryWebRoot)"
+      Command="pnpm install --frozen-lockfile --prefer-offline" />
     <Exec WorkingDirectory="$(RegistryWebRoot)" Command="pnpm run build" />
   </Target>
 
-  <Target Name="PublishRegistryWeb"
-          AfterTargets="ComputeFilesToPublish"
-          Condition="'$(BuildRegistryWeb)' == 'true'">
+  <Target Name="PublishRegistryWeb" AfterTargets="ComputeFilesToPublish"
+    Condition="'$(BuildRegistryWeb)' == 'true'">
     <ItemGroup>
       <RegistryWebDist Include="$(RegistryWebRoot)/dist/**/*" />
       <ResolvedFileToPublish Include="@(RegistryWebDist->'%(FullPath)')">

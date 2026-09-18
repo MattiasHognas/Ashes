@@ -10,6 +10,11 @@
     <EnableTestingPlatform>true</EnableTestingPlatform>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <Verify_SponsorshipExemption>OpenSource</Verify_SponsorshipExemption>
+    <Verify_SponsorshipExemptionUntil>2027-09</Verify_SponsorshipExemptionUntil>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Ashes.Frontend\Ashes.Frontend.csproj" />
     <ProjectReference Include="..\Ashes.Backend\Ashes.Backend.csproj" />
@@ -20,10 +25,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="TUnit" Version="1.58.0" />
+    <PackageReference Include="TUnit" Version="1.68.4" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
-    <PackageReference Include="Microsoft.Testing.Platform" Version="2.2.3" />
-    <PackageReference Include="Verify.TUnit" Version="31.20.0" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="2.4.1" />
+    <PackageReference Include="Verify.TUnit" Version="33.0.2" />
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="5.6.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
@@ -37,11 +42,21 @@
     <Content Include="Fixtures/ffi_foreign_buffer.c" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures/ffi_out.c" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures/ffi_string.c" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../../selfhost/parity/frontend/tokens/*" Link="Fixtures/SelfhostTokenParity/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../../selfhost/parity/frontend/diagnostics/*" Link="Fixtures/SelfhostDiagnosticParity/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../../selfhost/parity/semantics/lowered-ir/*" Link="Fixtures/SelfhostIrParity/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../../selfhost/parity/semantics/explain/*" Link="Fixtures/SelfhostExplainParity/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../../selfhost/parity/semantics/diagnostics/*" Link="Fixtures/SelfhostSemanticDiagnosticParity/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../selfhost/parity/frontend/tokens/*"
+      Link="Fixtures/SelfhostTokenParity/%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../selfhost/parity/frontend/diagnostics/*"
+      Link="Fixtures/SelfhostDiagnosticParity/%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../selfhost/parity/semantics/lowered-ir/*"
+      Link="Fixtures/SelfhostIrParity/%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../selfhost/parity/semantics/explain/*"
+      Link="Fixtures/SelfhostExplainParity/%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../selfhost/parity/semantics/diagnostics/*"
+      Link="Fixtures/SelfhostSemanticDiagnosticParity/%(Filename)%(Extension)"
+      CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
