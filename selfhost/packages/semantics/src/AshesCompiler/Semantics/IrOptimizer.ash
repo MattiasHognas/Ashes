@@ -179,6 +179,16 @@ let recursive lookupAssociation key entries =
             then Some(v)
             else lookupAssociation(key)(tail)
 
+// lookupAssociation for the temp-keyed analysis tables. The Int key compares directly instead of
+// through an `Eq` dictionary, whose curried `equal` allocates a closure per comparison.
+let recursive lookupTempAssociation (key: Int) entries =
+    match entries with
+        | [] -> None
+        | (k, v) :: tail ->
+            if k == key
+            then Some(v)
+            else lookupTempAssociation(key)(tail)
+
 let recursive setAssociation key value entries =
     match entries with
         | [] -> [(key, value)]
@@ -283,7 +293,7 @@ let elideTrivialOwnershipCopies instructions =
                                     let isCopy = listContains(resolvedSrc)(copyTypes)
                                     in
                                         let isSingleUse =
-                                            match lookupAssociation(dest)(useCounts) with
+                                            match lookupTempAssociation(dest)(useCounts) with
                                                 | Some(c) -> c <= 1
                                                 | None -> true
                                         in
@@ -308,11 +318,11 @@ let elideTrivialOwnershipCopies instructions =
                             | (IrInstruction { instruction = inst, location = loc } as irInst) :: tail ->
                                 match inst with
                                     | RcDup(dest, _, false, _) ->
-                                        if lookupAssociation(dest)(remap) != None
+                                        if lookupTempAssociation(dest)(remap) != None
                                         then applyRemap(tail)(acc)
                                         else applyRemap(tail)(irInst :: acc)
                                     | Borrow(dest, _) ->
-                                        if lookupAssociation(dest)(remap) != None
+                                        if lookupTempAssociation(dest)(remap) != None
                                         then applyRemap(tail)(acc)
                                         else applyRemap(tail)(irInst :: acc)
                                     | _ ->
@@ -386,7 +396,7 @@ let recursive countDefinitions instructions acc =
                         | [] -> entries
                         | d :: dTail ->
                             let count =
-                                match lookupAssociation(d)(entries) with
+                                match lookupTempAssociation(d)(entries) with
                                     | Some(c) -> c + 1
                                     | None -> 1
                             in
@@ -407,7 +417,7 @@ let recursive collectSingleDefiningInstructions instructions defCounts acc =
                 match ds with
                     | [] -> entries
                     | d :: dTail ->
-                        if lookupAssociation(d)(defCounts) == Some(1)
+                        if lookupTempAssociation(d)(defCounts) == Some(1)
                         then
                             entries
                             |> pushAssociation(d)(inst)
@@ -427,7 +437,7 @@ let recursive countUses instructions acc =
                     | [] -> entries
                     | u :: uTail ->
                         let count =
-                            match lookupAssociation(u)(entries) with
+                            match lookupTempAssociation(u)(entries) with
                                 | Some(c) -> c + 1
                                 | None -> 1
                         in
