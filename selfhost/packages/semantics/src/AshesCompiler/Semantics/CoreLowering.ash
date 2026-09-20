@@ -5700,12 +5700,16 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
 and emitGuardedListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
     if canTestRepresentation
     then
-        emitReferenceOrCopy(sourceTemp)(emitListDeepCopy(sourceTemp)(elementPlan))(state)
+        emitReferenceOrCopy(sourceTemp)(emitListDeepCopyWith(true)(sourceTemp)(elementPlan))(state)
     else emitListDeepCopy(sourceTemp)(elementPlan)(state)
 // Stage 0's `EmitRuntimeManagedTcoListDeepCopy`: a list whose heads have no spine copy is walked
 // cell by cell, each head deep-copied into a fresh reference-counted cons cell appended behind
 // the last one; the first cell is the copy.
-and emitListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
+and emitListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) = emitListDeepCopyWith(false)(sourceTemp)(elementPlan)(state)
+// With `shareSuffix` the copy stops at the first reference-counted cell and links it, retained, as
+// the tail: a reference-counted cell's tail is reference-counted, so everything from there on is
+// already owned whole.
+and emitListDeepCopyWith (shareSuffix: Bool) (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = currentState, local = currentSlot } ->
             match freshLocal(currentState) with
@@ -5724,7 +5728,7 @@ and emitListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: C
                                                     |> emit(StoreLocal(firstSlot)(zeroTemp))
                                                     |> emit(StoreLocal(lastSlot)(zeroTemp))
                                                     |> emit(Label(loopLabel))
-                                                    |> emitListDeepCopyCell(currentSlot)(firstSlot)(lastSlot)(zeroTemp)(loopLabel)(endLabel)(elementPlan)
+                                                    |> emitListDeepCopyCell(shareSuffix)(currentSlot)(firstSlot)(lastSlot)(zeroTemp)(loopLabel)(endLabel)(elementPlan)
                                                     |> emit(Label(endLabel))
                                                     |> freshTemp with
                                                         | FreshTemp { state = resultState, temp = resultTemp } ->
@@ -5732,19 +5736,21 @@ and emitListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: C
                                                             |> emit(LoadLocal(resultTemp)(firstSlot))
                                                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
                                                             |> (given (copied) -> (copied, resultTemp))
-and emitListDeepCopyCell (currentSlot: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (loopLabel: Str) (endLabel: Str) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
+and emitListDeepCopyCell (shareSuffix: Bool) (currentSlot: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (loopLabel: Str) (endLabel: Str) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = currentState, temp = currentTemp } ->
             match freshTemp(currentState) with
                 | FreshTemp { state = nonEmptyState, temp = nonEmptyTemp } ->
-                    match freshTemp(nonEmptyState) with
+                    match nonEmptyState
+                    |> emit(LoadLocal(currentTemp)(currentSlot))
+                    |> emit(CmpIntNe(nonEmptyTemp)(currentTemp)(zeroTemp))
+                    |> emit(JumpIfFalse(nonEmptyTemp)(endLabel))
+                    |> emitListDeepCopyShareSuffix(shareSuffix)(currentTemp)(firstSlot)(lastSlot)(zeroTemp)(endLabel)
+                    |> freshTemp with
                         | FreshTemp { state = headState, temp = headTemp } ->
                             match freshTemp(headState) with
                                 | FreshTemp { state = tailState, temp = tailTemp } ->
                                     match tailState
-                                    |> emit(LoadLocal(currentTemp)(currentSlot))
-                                    |> emit(CmpIntNe(nonEmptyTemp)(currentTemp)(zeroTemp))
-                                    |> emit(JumpIfFalse(nonEmptyTemp)(endLabel))
                                     |> emit(LoadMemOffset(headTemp)(currentTemp)(0))
                                     |> emit(LoadMemOffset(tailTemp)(currentTemp)(8))
                                     |> emitChildDeepCopy(headTemp)(elementPlan) with
@@ -5758,6 +5764,27 @@ and emitListDeepCopyCell (currentSlot: Int) (firstSlot: Int) (lastSlot: Int) (ze
                                                     |> emitListDeepCopyAppend(firstSlot)(lastSlot)(zeroTemp)(cellTemp)
                                                     |> emit(StoreLocal(currentSlot)(tailTemp))
                                                     |> emit(Jump(loopLabel))
+// Stage 0's `EmitRuntimeManagedTcoListShareSuffix`: a reference-counted cell ends the copy. It is
+// retained and appended behind the cells copied so far, and the walk jumps to its end.
+and emitListDeepCopyShareSuffix (shareSuffix: Bool) (currentTemp: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (endLabel: Str) (state: CoreLoweringState) =
+    if shareSuffix == false
+    then state
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = testedState, temp = referenceCountedTemp } ->
+                match testedState
+                |> emit(IsReferenceCounted(referenceCountedTemp)(currentTemp))
+                |> freshLabel("rc_normalize_list_cell") with
+                    | FreshLabel { state = labelledState, label = copyCellLabel } ->
+                        match labelledState
+                        |> emit(JumpIfFalse(referenceCountedTemp)(copyCellLabel))
+                        |> freshTemp with
+                            | FreshTemp { state = retainedState, temp = retainedTemp } ->
+                                retainedState
+                                |> emit(RcDup(retainedTemp)(currentTemp)(true)(false))
+                                |> emitListDeepCopyAppend(firstSlot)(lastSlot)(zeroTemp)(retainedTemp)
+                                |> emit(Jump(endLabel))
+                                |> emit(Label(copyCellLabel))
 // Stage 0's `EmitRuntimeManagedTcoListAppendCell`: the fresh cell becomes the first cell of the
 // copy or the tail of the last one, and is the last one from then on.
 and emitListDeepCopyAppend (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (cellTemp: Int) (state: CoreLoweringState) =
