@@ -105,11 +105,36 @@ public sealed partial class Lowering
         IReadOnlyList<MatchArmResultOwnership>? runtimeManagedResultArms,
         IReadOnlyList<MatchCase> cases)
     {
-        bool runtimeManaged = runtimeManagedResultArms is not null
+        bool uniform = runtimeManagedResultArms is not null
             && runtimeManagedResultArms.Count == cases.Count
             && runtimeManagedResultArms.Select((arm, index) =>
                 arm.RuntimeManaged || BranchJoinsRuntimeManagedResult(cases[index].Body, resultType))
                 .All(value => value);
+        List<JoinArm>? joinArms = runtimeManagedResultArms is not null && runtimeManagedResultArms.Count == cases.Count
+            ? runtimeManagedResultArms.Select((arm, index) => new JoinArm(
+                arm.Store,
+                arm.Type ?? resultType,
+                arm.RuntimeManaged,
+                BranchJoinsRuntimeManagedResult(cases[index].Body, resultType),
+                cases[index].Body)).ToList()
+            : null;
+        if (joinArms is not null)
+        {
+            RecordNeutralJoin(resultTemp, joinArms);
+            uniform |= ReachingArmsAllReferenceCounted(joinArms);
+        }
+
+        bool normalized = !uniform && joinArms is not null && NormalizeMixedJoinArms(joinArms, resultType);
+        if (normalized)
+        {
+            RecordNormalizedJoinTemp(resultTemp);
+        }
+        else if (joinArms is not null && GeneralRcEnabled)
+        {
+            RecordOwnedUniformJoin(resultTemp, joinArms);
+        }
+
+        bool runtimeManaged = uniform || normalized;
         // An arm returning a runtime-managed TCO parameter is RC but OWNED (the parameter's own drop
         // machinery releases it), so it must not count toward the all-fresh join property.
         bool allNewlyProduced = runtimeManagedResultArms is not null
@@ -885,18 +910,22 @@ public sealed partial class Lowering
         bodyTemp = NormalizeParameterPassthroughBranch(cases[i].Body, bodyTemp);
         bodyTemp = TransferDirectRuntimeManagedBranchResult(cases[i].Body, bodyTemp, savedTailPos);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        IrInst.StoreLocal armStore = (IrInst.StoreLocal)_inst[^1];
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
         if (armFinalTemp != bodyTemp)
         {
             // Copy-out occurred: update the result slot with the freshly allocated copy.
             Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
+            armStore = (IrInst.StoreLocal)_inst[^1];
         }
         if (_runtimeManagedMatchResultArms.TryPeek(out List<MatchArmResultOwnership>? runtimeManagedArms)
             && runtimeManagedArms is not null)
         {
             runtimeManagedArms.Add(new MatchArmResultOwnership(
                 IsRuntimeManagedResultTemp(armFinalTemp),
-                IsNewlyProducedRcTemp(armFinalTemp)));
+                IsNewlyProducedRcTemp(armFinalTemp),
+                armStore,
+                bodyType));
         }
         Emit(new IrInst.Jump(endLabel));
     }
@@ -2496,6 +2525,7 @@ public sealed partial class Lowering
         }
 
         Emit(new IrInst.StoreLocal(slot, valueTemp));
+        RecordLoopParameterPartSlot(slot, valueTemp);
         RecordLocalBytesProvenance(slot, valueTemp);
         RecordLocalDebugInfo(slot, name, bindingTypes[name]);
         SetCurrentScopeBinding(name, new Binding.Local(slot, Prune(bindingTypes[name])));

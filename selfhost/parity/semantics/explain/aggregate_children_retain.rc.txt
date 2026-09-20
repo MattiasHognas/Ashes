@@ -53,7 +53,7 @@ Function: pair
 
 Function: _start_main
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 6
     uniqueness checks:    2
     allocations:          3

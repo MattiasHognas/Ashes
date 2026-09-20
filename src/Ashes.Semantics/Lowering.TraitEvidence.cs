@@ -366,6 +366,8 @@ public sealed partial class Lowering
             _provenAmbiguousTraitGoalTypes[key] = constraint;
         }
 
+        CopyProvenCallSiteTypes(discovery);
+
         if (discovery._inferredTraitBindingElaborations.Count == 0
             && discovery._inferredTraitBindingTypeHints.Count == 0)
         {

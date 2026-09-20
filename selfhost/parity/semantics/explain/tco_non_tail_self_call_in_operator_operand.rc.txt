@@ -11,26 +11,6 @@ Function: countEvens
     reuse tokens:         0
     copies:               0
 
-Function: countFields
-  Operations
-    dup:                  1
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          0
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
-Function: countNegated
-  Operations
-    dup:                  1
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          0
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
 Function: _start_main
   Operations
     dup:                  0

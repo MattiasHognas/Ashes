@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function _start_main  [ProgramEntry]
-  locals=21 temps=39
+  locals=22 temps=43
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=1   (match_arm_copy_out.ash:10:27)
     LoadConstInt          Target=1 Value=2   (match_arm_copy_out.ash:10:38)
@@ -53,7 +53,17 @@ function _start_main  [ProgramEntry]
     AllocAdt              Target=24 Tag=0 FieldCount=2 Tagless=true   (match_arm_copy_out.ash:12:18)
     SetAdtField           Ptr=24 FieldIndex=0 Source=22 Tagless=true   (match_arm_copy_out.ash:12:18)
     SetAdtField           Ptr=24 FieldIndex=1 Source=23 Tagless=true   (match_arm_copy_out.ash:12:18)
-    StoreLocal            Slot=2 Source=24   (match_arm_copy_out.ash:10:5)
+    IsReferenceCounted    Target=27 SourceTemp=24
+    JumpIfFalse           CondTemp=27 Target=rc_representation_copy_5   (match_arm_copy_out.ash:10:5)
+    RcDup                 Target=28 SourceTemp=24 RuntimeManaged=true
+    StoreLocal            Slot=12 Source=28   (match_arm_copy_out.ash:10:5)
+    Jump                  Target=rc_representation_done_6   (match_arm_copy_out.ash:10:5)
+  rc_representation_copy_5:
+    CopyOutArena          DestTemp=29 SrcTemp=24 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=12 Source=29   (match_arm_copy_out.ash:10:5)
+  rc_representation_done_6:
+    LoadLocal             Target=30 Slot=12   (match_arm_copy_out.ash:10:5)
+    StoreLocal            Slot=2 Source=30   (match_arm_copy_out.ash:10:5)
     Jump                  Target=match_end_0   (match_arm_copy_out.ash:10:5)
   match_arm_cleanup_4:
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11
@@ -64,35 +74,35 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=2 Source=25   (match_arm_copy_out.ash:10:5)
   match_end_0:
     LoadLocal             Target=26 Slot=2   (match_arm_copy_out.ash:10:5)
-    StoreLocal            Slot=12 Source=26   (match_arm_copy_out.ash:9:1)
-    LoadLocal             Target=27 Slot=12   (match_arm_copy_out.ash:14:7)
-    Borrow                Target=28 SourceTemp=27
-    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
-    LoadConstInt          Target=29 Value=0   (match_arm_copy_out.ash:14:1)
-    CmpIntNe              Target=30 Left=28 Right=29   (match_arm_copy_out.ash:14:1)
-    JumpIfFalse           CondTemp=30 Target=match_arm_cleanup_7   (match_arm_copy_out.ash:14:1)
-    GetAdtField           Target=31 Ptr=28 FieldIndex=0 Tagless=true   (match_arm_copy_out.ash:14:1)
-    RcDrop                SourceTemp=26 TypeName=Pair OwnerSlot=12
-    StoreLocal            Slot=16 Source=31   (match_arm_copy_out.ash:14:1)
-    LoadLocal             Target=32 Slot=16   (match_arm_copy_out.ash:15:65)
-    TextFromInt           Target=33 ValueTemp=32   (match_arm_copy_out.ash:15:46)
-    PrintStr              Source=33   (match_arm_copy_out.ash:15:31)
-    AllocAdt              Target=34 Tag=0 FieldCount=0   (match_arm_copy_out.ash:15:31)
-    StoreLocal            Slot=13 Source=34   (match_arm_copy_out.ash:14:1)
-    Jump                  Target=match_end_5   (match_arm_copy_out.ash:14:1)
-  match_arm_cleanup_7:
-    RcDrop                SourceTemp=26 TypeName=Pair OwnerSlot=12
-    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=18
-    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=18
-    Jump                  Target=match_none_6   (match_arm_copy_out.ash:14:1)
-  match_none_6:
-    LoadConstInt          Target=35 Value=0   (match_arm_copy_out.ash:14:1)
-    StoreLocal            Slot=13 Source=35   (match_arm_copy_out.ash:14:1)
-  match_end_5:
-    LoadLocal             Target=36 Slot=13   (match_arm_copy_out.ash:14:1)
-    StoreLocal            Slot=19 Source=36   (match_arm_copy_out.ash:9:1)
-    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=20
-    CopyOutArena          DestTemp=38 SrcTemp=36 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=20
-    Return                Source=38
+    StoreLocal            Slot=13 Source=26   (match_arm_copy_out.ash:9:1)
+    LoadLocal             Target=31 Slot=13   (match_arm_copy_out.ash:14:7)
+    Borrow                Target=32 SourceTemp=31
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=33 Value=0   (match_arm_copy_out.ash:14:1)
+    CmpIntNe              Target=34 Left=32 Right=33   (match_arm_copy_out.ash:14:1)
+    JumpIfFalse           CondTemp=34 Target=match_arm_cleanup_9   (match_arm_copy_out.ash:14:1)
+    GetAdtField           Target=35 Ptr=32 FieldIndex=0 Tagless=true   (match_arm_copy_out.ash:14:1)
+    RcDrop                SourceTemp=26 TypeName=Pair OwnerSlot=13 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=35   (match_arm_copy_out.ash:14:1)
+    LoadLocal             Target=36 Slot=17   (match_arm_copy_out.ash:15:65)
+    TextFromInt           Target=37 ValueTemp=36   (match_arm_copy_out.ash:15:46)
+    PrintStr              Source=37   (match_arm_copy_out.ash:15:31)
+    AllocAdt              Target=38 Tag=0 FieldCount=0   (match_arm_copy_out.ash:15:31)
+    StoreLocal            Slot=14 Source=38   (match_arm_copy_out.ash:14:1)
+    Jump                  Target=match_end_7   (match_arm_copy_out.ash:14:1)
+  match_arm_cleanup_9:
+    RcDrop                SourceTemp=26 TypeName=Pair OwnerSlot=13 RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=19
+    Jump                  Target=match_none_8   (match_arm_copy_out.ash:14:1)
+  match_none_8:
+    LoadConstInt          Target=39 Value=0   (match_arm_copy_out.ash:14:1)
+    StoreLocal            Slot=14 Source=39   (match_arm_copy_out.ash:14:1)
+  match_end_7:
+    LoadLocal             Target=40 Slot=14   (match_arm_copy_out.ash:14:1)
+    StoreLocal            Slot=20 Source=40   (match_arm_copy_out.ash:9:1)
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=21
+    CopyOutArena          DestTemp=42 SrcTemp=40 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=21
+    Return                Source=42
 

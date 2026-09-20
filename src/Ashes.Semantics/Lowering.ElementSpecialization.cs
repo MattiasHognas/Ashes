@@ -148,7 +148,8 @@ public sealed partial class Lowering
         if (_elementSpecializationCandidates.Count == 0
             || _elementSpecializationDepth >= ElementSpecializationDepthLimit
             || ResolveSpecializableCalleeName(rootExpression) is not { } name
-            || !_elementSpecializationCandidates.TryGetValue(name, out ElementSpecializationCandidate? candidate)
+            || (!_elementSpecializationCandidates.TryGetValue(name, out ElementSpecializationCandidate? candidate)
+                && !TryResolveImportedCandidate(rootExpression, out name, out candidate))
             || argumentCount < candidate.ChainArity
             || !TryResolveKnownFunctionLabel(name, out string label)
             || !string.Equals(label, candidate.GenericLabel, StringComparison.Ordinal))
@@ -157,6 +158,30 @@ public sealed partial class Lowering
         }
 
         return candidate;
+    }
+
+    // A selector import (`import M.f`) brings the function in under its short name; the candidate is
+    // registered under its stitched one, and the call's root resolves to the same label.
+    private bool TryResolveImportedCandidate(Expr rootExpression, out string name, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ElementSpecializationCandidate? candidate)
+    {
+        name = "";
+        candidate = null;
+        if (!TryResolveKnownFunctionLabel(rootExpression, out string label))
+        {
+            return false;
+        }
+
+        foreach (ElementSpecializationCandidate registered in _elementSpecializationCandidates.Values)
+        {
+            if (string.Equals(registered.GenericLabel, label, StringComparison.Ordinal))
+            {
+                name = registered.Name;
+                candidate = registered;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -174,6 +199,7 @@ public sealed partial class Lowering
         ref int calleeTemp)
     {
         List<TypeRef> parameterTypes = CollectAppliedParameterTypes(calleeType, candidate.ChainArity);
+        RecordOrPinSpecializationTypes(rootExpression, parameterTypes);
         if (parameterTypes.Count != candidate.ChainArity
             || parameterTypes.Any(ValueTypeRemainsAbstract))
         {

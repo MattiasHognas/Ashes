@@ -191,36 +191,35 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
     // `append`'s own result reach is unknown (its summary is poisoned), so the map result handed to
     // it is handed over under the callee's adoption flag rather than released outright: releasing a
     // value such a callee may have stored frees memory its result still points at. The release that
-    // remains is the one the flags prove safe — nothing where the callee adopted the reference, and,
-    // where it did not adopt and the caller copied its result out, the consumed list released with
-    // its strings, since the copy kept nothing of it. Releasing the strings on both branches leaked
-    // one string per element.
+    // remains is the one the flags prove safe: nothing where the callee adopted the reference, and,
+    // where it did not, the consumed list released with its strings. The caller's result is
+    // normalized into a value that holds its own references, so it keeps nothing of the list
+    // whether or not it was copied, and that release needs no second flag.
     [Test]
-    public void Consumed_string_map_result_is_released_with_its_strings_on_the_copied_branch()
+    public void Consumed_string_map_result_is_released_with_its_strings_where_the_callee_did_not_adopt_it()
     {
         IrProgram ir = LowerProgramWithImports(GenericAppendOfGenericStringMapResultsSource);
 
         IReadOnlyList<string> lines = IrTextFormatter.Format(ir, IrDumpStage.Lowered, filter: null);
         string dump = string.Join('\n', lines);
 
-        int handedOver = dump.IndexOf("rc_handed_over_not_adopted_", StringComparison.Ordinal);
-        handedOver.ShouldBeGreaterThanOrEqualTo(
+        int notAdopted = dump.IndexOf("  rc_handed_over_not_adopted_", StringComparison.Ordinal);
+        notAdopted.ShouldBeGreaterThanOrEqualTo(
             0, $"the consumed first argument should be handed over under the callee's adoption flag; dump:\n{dump}");
-        string branches = dump[handedOver..];
-
-        int copiedLabel = branches.IndexOf("rc_handed_over_copied_", StringComparison.Ordinal);
-        copiedLabel.ShouldBeGreaterThanOrEqualTo(0, $"expected the copied branch's label; dump:\n{dump}");
-        branches[..copiedLabel].ShouldNotContain(
-            "rcdrop_list_",
+        string adoptedPath = dump[..notAdopted].TrimEnd().Split('\n')[^1];
+        adoptedPath.ShouldContain(
+            "Target=rc_handed_over_done_",
             Case.Sensitive,
-            $"an adopting callee owns the reference, so that branch releases nothing; dump:\n{dump}");
+            $"an adopting callee owns the reference, so that path jumps past the release; dump:\n{dump}");
 
-        string copiedBranch = branches[copiedLabel..];
-        int deepRelease = copiedBranch.IndexOf("rcdrop_list_", StringComparison.Ordinal);
+        string release = dump[notAdopted..];
+        release = release[..release.IndexOf("  rc_handed_over_done_", StringComparison.Ordinal)];
+        release.ShouldNotContain("rc_handed_over_copied_", Case.Sensitive, $"dump:\n{dump}");
+        int deepRelease = release.IndexOf("rcdrop_list_", StringComparison.Ordinal);
         deepRelease.ShouldBeGreaterThanOrEqualTo(
-            0, $"the copied branch should release the consumed list with its elements; dump:\n{dump}");
-        copiedBranch.IndexOf("TypeName=String RuntimeManaged=true", deepRelease, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(
-            0, $"the copied branch should drop the consumed list's strings; dump:\n{dump}");
+            0, $"the not-adopted path should release the consumed list with its elements; dump:\n{dump}");
+        release.IndexOf("TypeName=String RuntimeManaged=true", deepRelease, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(
+            0, $"the not-adopted path should drop the consumed list's strings; dump:\n{dump}");
     }
 
     // The same deep-copied generic result consumed by a callee whose result stays in its own region

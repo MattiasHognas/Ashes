@@ -143,8 +143,8 @@ Function: count
 
 Function: firstNames
   Operations
-    dup:                  10
-    drop:                 28
+    dup:                  11
+    drop:                 29
     uniqueness checks:    12
     allocations:          2
     reused allocations:   0

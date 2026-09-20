@@ -43,16 +43,16 @@ Function: firstLabels
     result fresh: yes
   perceus [lambda_8]
     dup:                  0
-    drop:                 1
+    drop:                 2
     uniqueness checks:    0
   perceus [lambda_7]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   representation [lambda_8]
-    conservative unknown: 10
+    conservative unknown: 9
     region:               2
-    runtime rc:           5
+    runtime rc:           6
     copy value:           6
   representation [lambda_7]
     conservative unknown: 1

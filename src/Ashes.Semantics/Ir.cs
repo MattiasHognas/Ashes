@@ -189,6 +189,8 @@ public enum IrFunctionOriginKind
     StructuralOwnerDropper,
     /// <summary>A copy of a generic source function lowered at one call site's concrete element types.</summary>
     ElementSpecialization,
+    /// <summary>A recursive or generic ADT's reference-counted normalization helper.</summary>
+    RuntimeManagedAdtNormalizer,
 }
 
 /// <summary>The non-source namespace that owns a shared generated function.</summary>

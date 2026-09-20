@@ -23,7 +23,7 @@ Function: shout
 
 Function: _start_main
   Operations
-    dup:                  1
+    dup:                  0
     drop:                 1
     uniqueness checks:    0
     allocations:          0
