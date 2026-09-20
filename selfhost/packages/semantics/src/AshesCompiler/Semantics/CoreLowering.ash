@@ -12099,10 +12099,14 @@ let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: Co
     MatchArmResult(
         armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
         armNewlyProduced = tempIsNewlyProduced(finalTemp)(state),
-        armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state)
+        armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
+        armOwned = isRuntimeTemp(finalTemp)(state),
+        armStoreTemp = if isSelfFunnelArm(body)(state)
+        then -1
+        else finalTemp
     )
 
-let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false)
+let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1)
 
 // Stage 0's `TransferDirectRuntimeManagedBranchResult`: an `if` branch that returns a pattern
 // owner takes a duplicate of its read, an identity marker until the loop's finalize places the
@@ -12134,6 +12138,72 @@ let recordJoinRepresentation (resultTemp: Int) (arms: List(MatchArmResult)) (sta
     if joinIsRuntimeManaged(arms)
     then recordDecidedRepresentation(resultTemp)(false)(true)(state)
     else state
+
+// The instructions with the arm's store of `source` into the join slot replaced by `replacement`.
+// Both lists run most recent first, as the function's own instructions do.
+let recursive replaceJoinArmStore (slot: Int) (source: Int) (replacement: List(IrInstruction)) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } as instruction) :: rest ->
+            if storeSlot == slot && storeSource == source
+            then append(replacement)(rest)
+            else instruction :: replaceJoinArmStore(slot)(source)(replacement)(rest)
+        | instruction :: rest -> instruction :: replaceJoinArmStore(slot)(source)(replacement)(rest)
+
+// Stage 0's `NormalizeJoinArmStore`: the arm's store becomes a normalization of its value (a
+// reference when it is reference-counted, a copy otherwise) followed by the store of the
+// normalized value, emitted into a buffer and spliced where the store was.
+let normalizeJoinArmStore (slot: Int) (plan: ArgumentCopyPlan) (arm: MatchArmResult) (state: CoreLoweringState) =
+    (let emptied = state with reversedInstructions = []
+    in
+        match emitArgumentCopy(arm.armStoreTemp)(plan)(emptied) with
+            | (copied, normalizedTemp) ->
+                let buffered =
+                    emit(StoreLocal(slot)(normalizedTemp))(copied)
+                in (buffered with reversedInstructions = replaceJoinArmStore(slot)(arm.armStoreTemp)(buffered.reversedInstructions)(state.reversedInstructions)) |> markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced))
+
+let recursive normalizeUnownedJoinArms (slot: Int) (plan: ArgumentCopyPlan) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match arms with
+        | [] -> (state, [])
+        | arm :: rest ->
+            if arm.armStoreTemp < 0 || arm.armOwned
+            then
+                match normalizeUnownedJoinArms(slot)(plan)(rest)(state) with
+                    | (normalized, restArms) -> (normalized, arm :: restArms)
+            else
+                match state
+                |> normalizeJoinArmStore(slot)(plan)(arm)
+                |> normalizeUnownedJoinArms(slot)(plan)(rest) with
+                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp) :: restArms)
+
+// The arms that reach the join, and how many of them hand it a reference-counted value of their own.
+let recursive joinArmTally (arms: List(MatchArmResult)) (reaching: Int) (owned: Int) =
+    match arms with
+        | [] -> (reaching, owned)
+        | arm :: rest ->
+            if arm.armStoreTemp < 0
+            then joinArmTally(rest)(reaching)(owned)
+            else
+                if arm.armOwned
+                then joinArmTally(rest)(reaching + 1)(owned + 1)
+                else joinArmTally(rest)(reaching + 1)(owned)
+
+// Stage 0's `NormalizeMixedJoinArms`. A join whose arms mix an owned reference-counted value with
+// one it does not own is not owned as a whole, so the owned arm's reference is never released: the
+// consumer retains or copies the join's value again. Such arms are normalized in place instead,
+// right before their store, so every arm hands the join a reference of its own. A reuse
+// specialization keeps its values in the persistent region and takes no part in this.
+let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match (joinArmTally(arms)(0)(0), stateSpecializationFreshInputs(state)) with
+        | ((reaching, owned), None) ->
+            if reaching < 2 || owned == 0 || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+            then (state, arms)
+            else
+                match argumentCopyPlanOf(resolveType(state)(resultType))(state) with
+                    | None -> (state, arms)
+                    | Some(ScalarArgumentCopy) -> (state, arms)
+                    | Some(plan) -> normalizeUnownedJoinArms(resultSlot)(plan)(arms)(state)
+        | _ -> (state, arms)
 
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     ((given (marked: CoreLoweringState) ->
@@ -13101,7 +13171,7 @@ let closeArmScope body owners bracket resultSlot resultTemp resultType (state: C
 let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
     LoweredMatchArm(
         lowered = failure(failedState)(error),
-        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false)
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1)
     )
 
 // A constructor application whose every argument is a literal or another such application, with
@@ -14100,14 +14170,17 @@ let finishMatchPlan plan =
                 | FreshTemp { state = defaultState, temp = defaultTemp } ->
                     match freshTemp(defaultState) with
                         | FreshTemp { state = resultState, temp = resultTemp } ->
-                            resultState
+                            match resultState
                             |> emit(Label(noMatchLabel))
                             |> emit(LoadConstInt(defaultTemp)(0))
                             |> emit(StoreLocal(resultSlot)(defaultTemp))
                             |> emit(Label(endLabel))
                             |> emit(LoadLocal(resultTemp)(resultSlot))
-                            |> markControlFlowJoin(resultTemp)(armResults)
-                            |> success(resultTemp)(resolveType(resultState)(resultType))
+                            |> normalizeMixedJoinArms(resultSlot)(resultType)(armResults) with
+                                | (normalized, joinedArms) ->
+                                    normalized
+                                    |> markControlFlowJoin(resultTemp)(joinedArms)
+                                    |> success(resultTemp)(resolveType(resultState)(resultType))
 
 // Tag-group match dispatch. Arms whose patterns are constructors of one ADT are grouped by their
 // outer constructor tag; one GetAdtTag/SwitchTag then dispatches to the group, a trivial single
