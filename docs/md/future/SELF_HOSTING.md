@@ -92,7 +92,8 @@ flowchart TD
     B --> C[C. Port the ownership changes into stage 1, group by group]
     C --> D[D. Keep the tools, clean the workspace]
     D --> E[E. Finish the leak work under the mirror rule]
-    E --> F[F. Continue with step 1 below]
+    E --> F[F. Split the oversized self-hosted source files]
+    F --> G[G. Continue with step 1 below]
 ```
 
 **What was found.** Four things, all measured.
@@ -178,7 +179,19 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    releasing a fresh argument handed to a callee whose result reach is unknown when the result's type
    cannot contain it, and deferring ownership of a closure result whose type is still unresolved.
    Done is the definition above.
-F. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
+F. **Split the oversized self-hosted source files.** `CoreLowering.ash` is about 22,500 lines, five
+   times the next largest file (`TypeInference.ash` at 4,400, `Parser.ash` at 3,700, `IrOptimizer.ash`
+   at 3,000). Split it into `Lowering.<Concern>.ash` modules, the way the backend's code generator is
+   already split into `IrCodegen.<Concern>.ash`, and name each module after the stage-0
+   `Lowering.<Concern>.cs` partial it mirrors wherever one exists, so the mirror rule's "where does
+   this go in stage 1" has one obvious answer. Scoping is sequential and module imports are acyclic,
+   so the cut follows the dependency order the file already has: the state record and its accessors
+   first, then the emitters, then the concerns that use them. This is a move and nothing else: every
+   shared fixture and the whole-program parity suite stay byte-identical, and stage 1's compile time
+   and peak memory do not regress. It comes after the leak work rather than during it, because a
+   file this size that is also open on a long-lived branch turns every move into a merge conflict.
+   Once the pattern is settled, apply it to any other self-hosted file of several thousand lines.
+G. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
    first, prefer splitting `lookupIndexed` into a `Str`-keyed and an `Int`-keyed version over waiting
    for trait dictionary passing; it keeps the diagnostic and unblocks the sweep. The rest of this
    document follows once the fixpoint holds.
