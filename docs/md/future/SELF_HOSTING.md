@@ -15,27 +15,37 @@ The goal right now is a **fixpoint**: the compiler built by the self-hosted comp
 sources to a byte-identical copy of itself. Not feature parity with the .NET compiler, and not
 matching its output instruction for instruction.
 
-**The next task** is OPT-85, the memory task. The semantics package was swept module by module again
-after that first half landed (2026-09-17, 86 modules, the probe below, each run capped at 24 GB of
-address space so an over-budget module fails fast instead of thrashing): **33** compile and link to a
-working executable, **51** exhaust the cap, and **2** stop with a diagnostic. The 2026-09-15 sweep,
-before OPT-85's first half and the CG/MOD fixes, read 28 / 54 / 4. Memory is what gates the package,
-and by a wide margin: three in five modules cannot be compiled at any budget this machine has, while
-the defect queue is down to one entry. That one is SEM-22, an `==` generalization gap that also
-blocks `sort` — `HoverTypeInfo` is the module it stops, and it unblocks nothing else. Everything else
-that sweep found is closed: MOD-20, MOD-21 and MOD-17c's dispatch half; the miscompiles CG-20 and
-CG-21, CG-21 having turned out to be CG-20 seen from another shape; and the builtin layout table's
-52-member gap behind `QualifiedShippedReferences`, which had a kind for every `Ashes.Number.Math`,
-`Ashes.Internal.Regex`, `Ashes.Net.*` and `Ashes.Rune` member and a scheme for none of them.
+**Where things stand (2026-09-20).** Memory no longer has to be what stops the whole-tree build. The
+wall this document used to describe was mostly repeated work rather than retained memory: stage 1
+lowered the body of a function nested *k* lambdas deep 2^k times, and a curried function of *k*
+parameters is *k* nested lambdas. With that fixed, stage 1 compiling the whole self-hosted tree goes
+from being killed at a 40 GB cap after 23 minutes to finishing its lowering in 82 seconds at a
+14.7 GB peak, and what stops it is a stage-1 semantic defect. Two things keep that from being the
+state of `main`. The fix, and the stage-0 leak fixes measured alongside it, sit on the branch
+`stage0-rc-general-results`. And that branch changed how stage 0 lowers ownership without the
+matching change to stage 1, so the shared parity fixtures fail on it and it cannot be merged as it
+is.
 
-OPT-85 now carries its measurement, and as of 2026-09-17 a **profiling recipe that supersedes the
-reasoning before it**: read the block headed "Profile it; do not reason about it" first. It found
-that the wall is a cliff at the 229-constructor instruction type rather than a per-instruction
-slope, closed five sites that paid for the whole program at every query or release, and names what
-is left: stage 0 copies a whole list whenever a function returns or loops over a list parameter it
-cannot prove is owned. The older material below it — what the arena holds, **four approaches already
-refuted by measurement**, the genericity finding, and the first half's quadratic analysis tables
-(7,313 MB to 3,761 MB) — still stands as a record of what not to retry.
+**The next task** is step A of "First: land the memory work and restore stage parity" under the work
+order. Read that section before anything else: it holds what was measured, the order to land it in,
+the rule it establishes (a stage-0 ownership change ships with its stage-1 mirror), and the
+definition of leak-free that ends the memory work. Stage 1 still leaks after everything measured so
+far, and leak-free is the priority once parity is restored.
+
+The defect queue behind that is short. Three stops are known on the whole-tree build, listed in that
+section in the order the build reaches them. SEM-22, an `==` generalization gap that also blocks
+`sort`, is confined to `HoverTypeInfo` and unblocks nothing else. Everything else the 2026-09-17
+sweep of the semantics package found is closed: MOD-20, MOD-21 and MOD-17c's dispatch half; the miscompiles
+CG-20 and CG-21, CG-21 having turned out to be CG-20 seen from another shape; and the builtin layout
+table's 52-member gap behind `QualifiedShippedReferences`. That sweep read 33 modules compiling, 51
+exhausting a 24 GB cap and 2 stopping with a diagnostic; repeat it once step A has landed, because
+most of those 51 were the repeated work and not their own memory.
+
+OPT-85 keeps the record of the memory work before this: the profiling recipe headed "Profile it; do
+not reason about it", the five sites that paid for the whole program at every query or release, the
+whole-list copy stage 0 makes when a function returns or loops over a list parameter it cannot prove
+is owned, **four approaches already refuted by measurement**, the genericity finding, and the
+quadratic analysis tables (7,313 MB to 3,761 MB). It still stands as what not to retry.
 
 **The probe** is how you learn where the self-hosted compiler currently stops. It is a small program
 that imports one compiler module and calls the pipeline stages in turn, printing a marker after each,
@@ -52,13 +62,16 @@ or project loading fails with a null reference (SEM-20). Point it at one module 
 whole package before fixing anything, so what remains is a list you can order rather than a queue you
 discover one failure at a time.
 
-**Expect it to be slow and hungry.** The probe's own module (`TypeResolution`) costs 3,776 MB and
-2.56 s through the whole pipeline, down from the 7,313 MB the OPT-85 entry records. That figure
-includes a real +92 MB against the 3,684 MB measured just before the builtin layout table was
-completed: 52 more statically embedded schemes are seeded into the inference environment, and 2.5%
-is what they cost. A compiler module in the middle of the package still exceeds 24 GB, and compiling
-the semantics package whole peaked at 51.6 GB after 10m40s before it had to be killed. That is
-OPT-85, the memory task behind step 2.
+A module imported on its own is a good measure of time and memory and a poor end-to-end test: a
+generic helper whose trait goal only its call sites settle is reported as missing evidence when
+those call sites are not in the program. `IrCodegen.Support` imported alone stops that way in one
+second on any stage 1. The end-to-end measure is stage 1 compiling the whole tree.
+
+**Expect `main` to be slow and hungry until step A lands.** There the probe's own module
+(`TypeResolution`) costs 3,776 MB and 2.56 s through the whole pipeline, a compiler module in the
+middle of the package exceeds 24 GB, and compiling the semantics package whole peaked at 51.6 GB
+after 10m40s before it had to be killed. Those figures are the repeated lowering: the `IrCodegen`
+probe run to completion went from 782 seconds and 31.2 GB to 32 seconds and 2.7 GB with the fix.
 
 **When you finish something**, move its entry to the [self-hosting log](SELF_HOSTING_LOG.md) rather
 than marking it done here. Read "How to work on this" below before your first change.
@@ -66,6 +79,109 @@ than marking it done here. Read "How to work on this" below before your first ch
 ## Work order
 
 Every step names the checklist identifiers that gate it. Work them in this order.
+
+### First: land the memory work and restore stage parity
+
+These steps come before everything below. They exist because the memory work of 2026-09-20 sits on a
+branch, `stage0-rc-general-results`, that cannot be merged as it is: it changes how stage 0 lowers
+programs without the matching change to stage 1, and the shared parity fixtures say so.
+
+```mermaid
+flowchart TD
+    A[A. Land the self-hosted-only fixes] --> B[B. Vet the ownership branch]
+    B --> C[C. Port the ownership changes into stage 1, group by group]
+    C --> D[D. Keep the tools, clean the workspace]
+    D --> E[E. Finish the leak work under the mirror rule]
+    E --> F[F. Continue with step 1 below]
+```
+
+**What was found.** Four things, all measured.
+
+- *Stage 1 repeated its own work exponentially.* `lowerFunctionBodyResolvingCalls` lowers a lambda
+  body and, when a call result resolved or a requirement closed the scope, lowers it again, and it
+  did so at every nesting level. One function of 18 curried parameters cost stage 1 37 seconds and
+  2.7 GB; stage 0 compiles the same program in 0.4 seconds. Lowering the closures nested in a body
+  once while that body is lowered again brings it to 0.08 seconds and 122 MB. The single-module
+  probe run to completion went from 782 seconds and 31.2 GB to 32 seconds and 2.7 GB. It was found by
+  listing the leaked lowering states in a heap snapshot: 2,631 of them were 17 distinct states, one
+  leaked 2,048 times. Identical leaked objects in power-of-two multiplicities mean repeated work, not
+  a missing release.
+- *Stage 0 leaks under its new ownership contract, and four of those leaks are fixed.* A record
+  update that stored a fresh call result; loop bindings matched out of a `match (a, b) with` tuple,
+  and an arena tuple whose retained child the result's normalization orphaned; list accumulators
+  whose self-calls disagree in shape; and variant-typed loop parameters, which could never be placed
+  and therefore blocked every sibling that might hold them. Together they took the probe from
+  10,638 MB to 6,367 MB at two minutes and removed 90% of the leaked lowering states. Each has a
+  plateau test that fails when its own toggle is set. Stage 1 still leaks after them.
+- *The ownership contract was never mirrored into stage 1.* `CoreLowering.ash` has no owned slots at
+  all; the last ownership work ported was the representation test. That is why 18 lowered-IR and 20
+  explain fixtures under `selfhost/parity/semantics/` fail against stage 0 on that branch while stage
+  1 still matches them: the fixtures are the alarm for exactly this, and they are not stale.
+  Regenerating them would only move the failure to the stage-1 side.
+- *The stage-2 build now stops on stage-1 defects, in this order.* A `show(key)` inside
+  `IrCodegen.Support.lookupIndexedIn`, which is called with both `Str` and `Int` keys while stage 1's
+  deferred trait goal can pin only one type; then `ASH002 Type mismatch: u64 vs u64` in a call to
+  `IrCodegen.FloatText.floatTextConst`; then, past lowering, the list-marshalling slice of CG-11. The
+  first predates this work: the unmodified stage 1 lowers the same function correctly once it has a
+  single concrete call site.
+
+**The rule from here on.** A change to how stage 0 lowers ownership ships with its stage-1 mirror
+and regenerated fixtures in the same pull request. The branch above broke that rule, and the port in
+step C is the cost of it. The note under "Now" that leaves other self-hosted mirrors filed and
+untouched still holds for fixes the compiler's own sources never depend on; the ownership contract
+is not one of those, because a stage 2 built by an unported stage 1 contains none of it.
+
+**What "leak-free" means**, so the work has an end: compiling one more function with stage 1 adds no
+reference-counted cell that is still live when the process exits, and resident memory plateaus over
+a long compile. Both are measurable today, in seconds, with the tools kept in step D.
+
+A. **Land the self-hosted-only fixes on their own.** Two commits touch only `CoreLowering.ash`: the
+   repeated-lowering fix and the type annotations on `lowerFunctionBodyResolvingCalls`' callbacks
+   (an unannotated callback's result type is unresolved where the call is lowered, so the contract's
+   typed ownership step skips it and the owned value it returns is never released). Cut a branch from
+   `main`, cherry-pick those two, gate them against `main`'s stage 0, and open the pull request. The
+   annotation may measure as neutral there, since its gain depends on the contract; the
+   repeated-lowering fix does not depend on anything. Add a regression test that compiles a function
+   of about 16 curried parameters within a time bound, because a regression here brings the 40 GB
+   wall back without any visible error.
+B. **Vet the ownership branch before porting any of it.** Three checks, about a day. Run the
+   `challenges/` benchmarks on `main` and on the branch, one at a time, and compare time and memory:
+   the branch places more values on the reference-counted heap, and anything that regresses is fixed
+   or dropped rather than mirrored. Sort the seven failing tests that are not parity fixtures into
+   tests that expect the old IR shape and real regressions
+   (`persistent_map_reuse_memory_should_plateau` looks like the second kind). Bisect the fixture
+   failures to the commits that cause them, which both sizes the port and gives the groups to port
+   in.
+C. **Port the ownership changes into stage 1, group by group.** For each group from step B: cut a
+   branch from `main`, cherry-pick the stage-0 commits of that group, write the stage-1 mirror,
+   regenerate the fixtures (`ASHES_UPDATE_PARITY_FIXTURES=1`), and open one pull request. Both parity
+   tests are green at the end of every group, so the alarm stays meaningful throughout. Take the
+   groups one after another, each branch cut after the previous one merged, rather than stacking open
+   pull requests: later contract commits build on earlier ones, and each gate should run against
+   what `main` will actually contain. `stage0-rc-general-results` is never merged; it stays as the
+   archive to pick from and the reference for what the ported result must reproduce, and is deleted
+   once everything from it has landed. Every one of these is an ownership change, so the six
+   self-hosted suites are the gate that counts: a change on that branch once passed the whole
+   end-to-end suite, plain and under `ASHES_RC_POISON=1`, while miscompiling the derived `Ord` body,
+   and only the self-hosted semantics suite saw it.
+D. **Keep the tools, then clean up.** Move the scripts the remaining work depends on into the
+   repository (the whole-tree stage-2 build with its memory samples, the curried-parameter scaling
+   check, the exit-census and leaked-state tools, the reference-count watchpoint scripts), since they
+   are what makes each step above a minutes-long loop rather than a day. Then delete the scratch
+   directories, the old stage-1 binaries and heap dumps, and the stray outputs in the worktree.
+E. **Finish the leak work under the mirror rule**, in a fresh worktree and branch. The method that
+   found every fix above: compile a tiny input with stage 1, take a census of what is still live at
+   exit, add one construct and diff the census, then put a hardware watchpoint on one leaked cell's
+   reference count and read which retain has no matching release. Pricing constructs this way says
+   where to look first: a `match` in a recursive loop leaks the most per function. Two patches are
+   shelved with their measurements, neither with a gain beyond noise or a standalone regression test:
+   releasing a fresh argument handed to a callee whose result reach is unknown when the result's type
+   cannot contain it, and deferring ownership of a closure result whose type is still unresolved.
+   Done is the definition above.
+F. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
+   first, prefer splitting `lookupIndexed` into a `Str`-keyed and an `Int`-keyed version over waiting
+   for trait dictionary passing; it keeps the diagnostic and unblocks the sweep. The rest of this
+   document follows once the fixpoint holds.
 
 ### Now: make the compiler compile itself
 
@@ -76,16 +192,23 @@ instruction is a debugging aid, not a requirement.
 
 1. **Clear the blockers the probe reports.** Run the bootstrap probe over every module of a package
    before fixing the next failure it names, so what remains is a list ordered by how often a shape
-   recurs rather than a queue discovered one failure at a time. The semantics package is swept
-   (2026-09-15): what remains there is SEM-22, confined to its own module, with memory gating the
-   other 54. Gates: BOOT-2.
-2. **Compile the whole self-hosted tree with stage 1.** This is the first real attempt at stage 2
-   and the step most likely to turn into memory work rather than a single run: one module currently
-   costs roughly 9 GB, and the tree is about 92,000 lines. The memory task is OPT-85, and it carries a
-   refuted approach not to repeat. Gates: BOOT-2, OPT-85.
+   recurs rather than a queue discovered one failure at a time. The semantics package was last swept
+   on 2026-09-17 and is due again once step A has landed: what remained there was SEM-22, confined to
+   its own module, and a memory cap that was mostly repeated lowering. Gates: BOOT-2.
+2. **Compile the whole self-hosted tree with stage 1.** With step A landed this is a loop of about
+   two and a half minutes, a stage-1 build and a run, rather than a run that dies of memory: read the
+   first diagnostic, find where it was raised, fix it, repeat. Three stops are already known and
+   listed under "First". Prefer a small change to the self-hosted sources over a new stage-1 feature
+   wherever both would work, since a source change reaches every stage at once. Expect more stops
+   behind the known ones, and keep them as a list. Gates: BOOT-2, OPT-85.
 3. **Make stage 2 run.** A stage-2 binary that faults on its own sources is a different class of
    defect from a stage-1 miscompile, because stage 1 is what compiled it, and the reduction
-   technique that works for one does not transfer to the other. Gates: BOOT-2.
+   technique that works for one does not transfer to the other. Do not trust the binary because it
+   linked: compile the small programs with it and compare against stage 0, then build the six
+   self-hosted suites with stage 1 instead of stage 0 and run them, which exercises stage 1's code
+   generator far harder than anything has so far. Then measure stage 2 building stage 3. If it does
+   not fit in memory, count what it allocates before assuming a missing release: identical objects
+   in power-of-two multiplicities are repeated work. Gates: BOOT-2.
 4. **Remove the sources of nondeterminism.** Hash-ordered iteration, address-derived values,
    traversal-seeded counters, timestamps and absolute paths baked into artifacts. Each produces a
    difference that looks like a miscompile and is not, so audit the emitters before comparing
@@ -94,8 +217,11 @@ instruction is a debugging aid, not a requirement.
    stage 2. Gates: BOOT-3.
 
 Deliberately **not** on this path, however real: the self-hosted mirrors of stage-0 lowering fixes
-(OPT-82, OPT-84), stage-0 defects the compiler's own sources never reach (OPT-83 and the JSON view
-path), and exact-IR parity work. File them, leave them.
+the compiler's own sources never depend on (OPT-82, OPT-84), stage-0 defects those sources never
+reach (OPT-83 and the JSON view path), and exact-IR parity work for its own sake. File them, leave
+them. The ownership contract is the exception, and is on the path as step C above: it decides
+whether each later stage leaks, a stage 2 built by an unported stage 1 contains none of it, and
+leaving it unmirrored is what turned the shared parity fixtures red.
 
 ### Next: make it a compiler anyone would use
 
