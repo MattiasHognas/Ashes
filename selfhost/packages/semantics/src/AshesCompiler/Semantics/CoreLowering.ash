@@ -12176,7 +12176,8 @@ let recursive normalizeUnownedJoinArms (slot: Int) (plan: ArgumentCopyPlan) (arm
                 |> normalizeUnownedJoinArms(slot)(plan)(rest) with
                     | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp) :: restArms)
 
-// The arms that reach the join, and how many of them hand it a reference-counted value of their own.
+// The arms that reach the join, and how many of them hand it a reference-counted value: one of
+// their own, or a reference a pattern owner retained (stage 0's `IsReferenceCountedJoinArm`).
 let recursive joinArmTally (arms: List(MatchArmResult)) (reaching: Int) (owned: Int) =
     match arms with
         | [] -> (reaching, owned)
@@ -12184,7 +12185,7 @@ let recursive joinArmTally (arms: List(MatchArmResult)) (reaching: Int) (owned: 
             if arm.armStoreTemp < 0
             then joinArmTally(rest)(reaching)(owned)
             else
-                if arm.armOwned
+                if arm.armOwned || arm.armRetainedOwner
                 then joinArmTally(rest)(reaching + 1)(owned + 1)
                 else joinArmTally(rest)(reaching + 1)(owned)
 
