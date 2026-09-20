@@ -10954,7 +10954,7 @@ let prepareCopyTypeArgument (handOff: CoreArgumentHandOff) functionTemp argument
                         | (registered, flagTemp) -> (registered, argumentTemp, flagTemp, None)
                 | None -> (flagged, argumentTemp, acceptsFlagTemp, None)
 
-let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp argumentTemp state =
+let prepareCallArgument (handOff: CoreArgumentHandOff) (handsFreshOver: Bool) argumentType functionTemp argumentTemp state =
     match handOff with
         | CoreArgumentHandOff { borrowsOnly = true, fresh = false, borrowedReach = true, pendingRootSlot = pendingRootSlot } ->
             if isBorrowedRetainableParameterType(argumentType)(state)
@@ -10985,8 +10985,13 @@ let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp
         | _ ->
             match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
                 | (flagged, flagTemp) ->
-                    match retainCallArgument(handOff)(argumentType)(argumentTemp)(flagTemp)(flagged) with
-                        | (retained, passedTemp) -> (retained, passedTemp, flagTemp, None)
+                    // The caller's own reference is the one an adopting callee takes, so an argument
+                    // handed over under the adoption bit is not retained a second time.
+                    if handsFreshOver
+                    then (flagged, argumentTemp, flagTemp, None)
+                    else
+                        match retainCallArgument(handOff)(argumentType)(argumentTemp)(flagTemp)(flagged) with
+                            | (retained, passedTemp) -> (retained, passedTemp, flagTemp, None)
 
 // Stage 0 hands a fresh argument over under the callee's adoption bit when the callee's result reach is
 // unknown, so the result may be keeping it: releasing it here would free what such a callee stored.
@@ -10998,6 +11003,10 @@ let handedOverAdoptionFlag (context: CoreCallContext) (flagTemp: Int) =
         | Some(CoreCalleeFacts { reach = ResultReachState { isPoisoned = true } }) -> flagTemp
         | Some(_facts) -> -1
         | None -> flagTemp
+
+// Stage 0's `HandsFreshArgumentOverUnderAdoption`: a fresh argument that is not transferred, handed
+// to a callee of unknown result reach, travels under the callee's adoption bit.
+let handsFreshArgumentOverUnderAdoption (context: CoreCallContext) (handOff: CoreArgumentHandOff) = handOff.fresh && handOff.transfers == false && handedOverAdoptionFlag(context)(0) >= 0
 
 // The fresh arguments the callee does not take, in argument order. A fresh argument transferred
 // to a callee whose result keeps it whole, but which does not normalize it on entry, travels
@@ -11119,7 +11128,7 @@ let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int
     else (state, argumentFlagTemp)
 
 let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) unifiedState =
-    match prepareCallArgument(handOff)(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
+    match prepareCallArgument(handOff)(handsFreshArgumentOverUnderAdoption(context)(handOff))(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
         | (preparedState, passedTemp, argumentFlagTemp, handedOver) ->
             match emitResultOwnershipFlag(context)(arity)(resultType)(functionTemp)(preparedState) with
                 | (flaggedState, resultFlagTemp) ->
