@@ -535,16 +535,55 @@ internal static partial class LlvmCodegen
         bool listCell,
         bool tagless = false)
     {
-        if (!runtimeManaged)
-        {
-            if (!listCell)
-            {
-                StoreAdtTag(state, tokenPtr, tag, tagless, $"adt_reuse_tag_{tag}");
-            }
-            return tokenPtr;
-        }
+        return runtimeManaged
+            ? EmitRuntimeAllocReusing(state, tokenPtr, tag, fieldCount, listCell, tagless)
+            : EmitArenaAllocReusing(state, tokenPtr, tag, fieldCount, listCell, tagless);
+    }
 
-        return EmitRuntimeAllocReusing(state, tokenPtr, tag, fieldCount, listCell, tagless);
+    // An arena token is a cell lowering proved dead and unshared, but a value it could not see (a
+    // parameter, a call result) may turn out reference-counted, and another owner may still hold
+    // it: such a cell is left alone and a fresh cell is allocated in its place. The fresh cell goes
+    // to the persistent region: the scope around a reuse result may reset the arena under it, since
+    // a reused cell sits below that scope's watermark, and the new cell's borrowed children rule
+    // out the reference-counted heap.
+    private static LlvmValueHandle EmitArenaAllocReusing(
+        LlvmCodegenState state,
+        LlvmValueHandle tokenPtr,
+        int tag,
+        int fieldCount,
+        bool listCell,
+        bool tagless)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "arena_reuse_result_slot");
+        LlvmValueHandle referenceCounted = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            EmitIsReferenceCounted(state, tokenPtr, "arena_reuse_token_rc"),
+            LlvmApi.ConstInt(state.I64, 0, 0), "arena_reuse_token_is_rc");
+        LlvmBasicBlockHandle reuseBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "arena_reuse_take");
+        LlvmBasicBlockHandle freshBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "arena_reuse_fresh");
+        LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "arena_reuse_continue");
+        LlvmApi.BuildCondBr(builder, referenceCounted, freshBlock, reuseBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, reuseBlock);
+        if (!listCell)
+        {
+            StoreAdtTag(state, tokenPtr, tag, tagless, $"adt_reuse_tag_{tag}");
+        }
+        LlvmApi.BuildStore(builder, tokenPtr, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
+        LlvmValueHandle fresh = listCell
+            ? EmitAllocAdtToSpace(state, 0, 2, tagless: true)
+            : EmitAllocAdtToSpace(state, tag, fieldCount, tagless);
+        LlvmApi.BuildStore(builder, fresh, resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "arena_reuse_result");
     }
 
     private static LlvmValueHandle EmitRuntimeAllocReusing(

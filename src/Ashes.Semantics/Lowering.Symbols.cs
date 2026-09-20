@@ -2206,6 +2206,25 @@ public sealed partial class Lowering
         return fieldTemp;
     }
 
+    /// <summary>
+    /// The cell an update reads its dead old value from. A reused arena cell is its token, but the
+    /// backend leaves a token that turns out reference counted alone and returns a fresh cell, whose
+    /// fields hold nothing yet; the token's fields are valid either way. A runtime-managed reuse
+    /// may have no token at all, and keeps reading the cell it produced.
+    /// </summary>
+    private int ReusedCellOldFieldSource(int cellTemp)
+    {
+        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 256; i--)
+        {
+            if (_inst[i] is IrInst.AllocReusing reuse && reuse.Target == cellTemp)
+            {
+                return reuse.RuntimeManaged ? cellTemp : reuse.TokenTemp;
+            }
+        }
+
+        return cellTemp;
+    }
+
     private int MaterializeSpecializationStringField(int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless)
     {
         if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
@@ -2216,7 +2235,7 @@ public sealed partial class Lowering
             // leaking one blob per update. The variable-size analogue of the tuple CopyFixedInto
             // path below.
             int oldValueTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
+            Emit(new IrInst.GetAdtField(oldValueTemp, ReusedCellOldFieldSource(ptrTemp), fieldIndex, tagless));
             int persistentField = NewTemp();
             Emit(new IrInst.CopyStringIntoOrFresh(persistentField, oldValueTemp, fieldTemp));
             return persistentField;
@@ -2236,7 +2255,7 @@ public sealed partial class Lowering
             // else materialize fresh — so value storage is reused and the blob stays bounded by
             // distinct keys, without overwriting reclaimable main-arena memory in place.
             int oldValueTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
+            Emit(new IrInst.GetAdtField(oldValueTemp, ReusedCellOldFieldSource(ptrTemp), fieldIndex, tagless));
             int persistentField = NewTemp();
             Emit(new IrInst.CopyFixedIntoOrFresh(persistentField, oldValueTemp, fieldTemp, sizeBytes));
             return persistentField;

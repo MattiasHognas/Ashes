@@ -302,17 +302,45 @@ let emitRuntimeAllocReusing context function_ i64 i8 ptrType builder mallocFn ma
                     |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(resultName)))
 
+// The arena form of `AllocReusing`. Its token is a cell lowering proved dead and unshared, but a
+// value it could not see (a parameter, a call result) may turn out reference-counted, and another
+// owner may still hold it: such a cell is left alone and `allocateFresh` supplies a cell of the
+// same layout in its place. `isReferenceCounted` yields the token's `IsReferenceCounted` word.
+let emitArenaAllocReusing context function_ i64 ptrType builder tag listCell tagless resultName isReferenceCounted allocateFresh tokenRef =
+    (let resultSlot = buildEntryAlloca(builder)(i64)("arena_reuse_result_slot")
+    in
+        let tokenIsCounted =
+            rcIsPresent(builder)(i64)(isReferenceCounted(tokenRef))("arena_reuse_token_is_rc")
+        in
+            let takeBlock = appendBasicBlock(context)(function_)("arena_reuse_take")
+            in
+                let freshBlock = appendBasicBlock(context)(function_)("arena_reuse_fresh")
+                in
+                    let continueBlock = appendBasicBlock(context)(function_)("arena_reuse_continue")
+                    in
+                        takeBlock
+                        |> buildCondBr(builder)(tokenIsCounted)(freshBlock)
+                        |> (given (_) ->
+                            emitRcArm(builder)(takeBlock)(continueBlock)(given (_) ->
+                                tagless
+                                |> emitReuseTagStore(builder)(i64)(ptrType)(tokenRef)(tag)(listCell)
+                                |> (given (_) -> buildStore(builder)(tokenRef)(resultSlot))))
+                        |> (given (_) ->
+                            emitRcArm(builder)(freshBlock)(continueBlock)(given (_) ->
+                                Unit
+                                |> allocateFresh
+                                |> (given (fresh) -> buildStore(builder)(fresh)(resultSlot))))
+                        |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
+                        |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(resultName)))
+
 // `AllocReusing`: yields the cell at the token's address as the new value instead of allocating,
-// with the tag written for an ADT cell. An arena token is statically a dead, uniquely-owned cell
-// of the compatible layout, so that form is the tag store alone; a runtime-managed token is null
-// when `DropReuse` found the cell shared, in which case a fresh RC cell of the same layout is
-// allocated instead.
-let emitAllocReusing context function_ i64 i8 ptrType builder mallocFn mallocType tag fieldCount runtimeManaged listCell tagless resultName tokenRef =
+// with the tag written for an ADT cell. A runtime-managed token is null when `DropReuse` found the
+// cell shared, in which case a fresh RC cell of the same layout is allocated instead; an arena
+// token is declined when it turns out reference-counted (`emitArenaAllocReusing`).
+let emitAllocReusing context function_ i64 i8 ptrType builder mallocFn mallocType tag fieldCount runtimeManaged listCell tagless resultName isReferenceCounted allocateFresh tokenRef =
     if runtimeManaged
     then emitRuntimeAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(listCell)(tagless)(resultName)(tokenRef)
-    else
-        let _ = emitReuseTagStore(builder)(i64)(ptrType)(tokenRef)(tag)(listCell)(tagless)
-        in tokenRef
+    else emitArenaAllocReusing(context)(function_)(i64)(ptrType)(builder)(tag)(listCell)(tagless)(resultName)(isReferenceCounted)(allocateFresh)(tokenRef)
 
 // The runtime-managed `RcDup` instruction: a value that may be the empty list (the null pointer,
 // with no header) is retained only when present. The result is the same pointer either way.
