@@ -12196,10 +12196,10 @@ let recursive joinArmTally (arms: List(MatchArmResult)) (reaching: Int) (owned: 
 let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     match (joinArmTally(arms)(0)(0), stateSpecializationFreshInputs(state)) with
         | ((reaching, owned), None) ->
-            if reaching < 2 || owned == 0 || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+            if joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
             then (state, arms)
             else
-                match argumentCopyPlanOf(resolveType(state)(resultType))(state) with
+                match ownedResultPlanOf(resultType)(state) with
                     | None -> (state, arms)
                     | Some(ScalarArgumentCopy) -> (state, arms)
                     | Some(plan) -> normalizeUnownedJoinArms(resultSlot)(plan)(arms)(state)
