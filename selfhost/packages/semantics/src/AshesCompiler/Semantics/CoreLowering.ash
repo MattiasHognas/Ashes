@@ -524,6 +524,11 @@ type CoreOwnerState =
     // the whole program before lowering, so such a call never sees a variable a later expression
     // of the same body resolves; the body is lowered again once those types are known.
     | unresolvedCallResults: List(SemanticType)
+    // Set while a function body is being lowered again with its call results resolved. Every
+    // closure nested in that body starts from the same resolved substitution, so it is lowered
+    // once: lowering each of them twice as well makes a body nested k lambdas deep cost 2^k
+    // lowerings, and a curried function of k parameters is k nested lambdas.
+    | resolvingCallsAgain: Bool
     // Stage 0's `_ownershipAliases` for a match arm: each heap-typed binding an arm's pattern
     // bound out of a fresh reference-counted scrutinee, by its slot, and the slot of the owner
     // whose release covers it. A read of the binding counts as a read of the owner: an aggregate
@@ -1128,6 +1133,14 @@ let stateUnresolvedCallResults (state: CoreLoweringState) =
 let withStateUnresolvedCallResults value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with unresolvedCallResults = value))
+
+let stateResolvingCallsAgain (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.resolvingCallsAgain)
+
+let withStateResolvingCallsAgain (value: Bool) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with resolvingCallsAgain = value))
 
 let stateRuntimeOwnerAliases (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -1784,6 +1797,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             ownerReleasePlans = [],
             pendingOwnerPlan = None,
             unresolvedCallResults = [],
+            resolvingCallsAgain = false,
             runtimeOwnerAliases = [],
             pendingRuntimeArgumentFlags = [],
             genericDeepCopiedListTemps = []
@@ -10200,26 +10214,33 @@ let bodyEncounteredRequirementClosedScope (body: Expr) (entered: CoreLoweringSta
 // closed, and the second lowering starts from that substitution. A body lowered again only
 // because a call result resolved keeps the first substitution, where the binding's result is
 // still the lowering-local variable its self calls defer to.
-let lowerFunctionBodyResolvingCalls (body: Expr) prepare close lower (entered: CoreLoweringState) =
+// The second lowering of a body, from a state whose substitution already resolves its calls. The
+// closures nested in it are lowered once (see `resolvingCallsAgain`); the flag is put back to what
+// the enclosing lowering had before the result is handed on.
+let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (outer: Bool) (restarted: CoreLoweringState) =
+    match restarted
+    |> withStateResolvingCallsAgain(true)
+    |> prepare
+    |> lower(body) with
+        | LoweredCoreValue { state = againState, temp = temp, semanticType = semanticType, error = error } -> LoweredCoreValue(state = withStateResolvingCallsAgain(outer)(againState), temp = temp, semanticType = semanticType, error = error)
+
+let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
     match entered
     |> prepare
     |> lower(body) with
         | LoweredCoreValue { error = Some(_error) } as failed -> failed
         | LoweredCoreValue { state = firstState } as first ->
-            match close(first) with
-                | LoweredCoreValue { state = closedState } ->
-                    if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                    then
-                        (entered with substitution = closedState.substitution, typeSupply = closedState.typeSupply)
-                        |> prepare
-                        |> lower(body)
-                    else
-                        if anyCallResultResolved(stateUnresolvedCallResults(firstState))(firstState)
-                        then
-                            (entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply)
-                            |> prepare
-                            |> lower(body)
-                        else first
+            if stateResolvingCallsAgain(entered)
+            then first
+            else
+                match close(first) with
+                    | LoweredCoreValue { state = closedState } ->
+                        if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
+                        then lowerFunctionBodyAgain(body)(prepare)(lower)(false)((entered with substitution = closedState.substitution, typeSupply = closedState.typeSupply))
+                        else
+                            if anyCallResultResolved(stateUnresolvedCallResults(firstState))(firstState)
+                            then lowerFunctionBodyAgain(body)(prepare)(lower)(false)((entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply))
+                            else first
 
 // A lambda lowered against an expected function type hands the expected result type on to its
 // body, as a recursive member does: a nested lambda of a curried chain then pins its own
