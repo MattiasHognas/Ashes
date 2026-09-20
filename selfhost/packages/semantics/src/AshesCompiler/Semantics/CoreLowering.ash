@@ -15615,7 +15615,38 @@ let emptyList state =
         | FreshType { state = typedState, semanticType = elementType } ->
             lowerConstant(given (target) -> LoadConstInt(target)(0))(SemList(elementType))(typedState)
 
-let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp lower state =
+// Stage 0's `IsFreshReferenceCountedCell`: whether the list cell just emitted into `cellTemp` was
+// allocated in the reference-counted region. A cell that reused a token, or whose head kept it in
+// the arena, was not, and the cell that takes it as a tail has to test it.
+let recursive freshReferenceCountedCellIn (cellTemp: Int) (remaining: Int) (instructions: List(IrInstruction)) =
+    if remaining == 0
+    then false
+    else
+        match instructions with
+            | [] -> false
+            | IrInstruction { instruction = Alloc(target, _sizeBytes, runtimeManaged) } :: rest ->
+                if target == cellTemp
+                then runtimeManaged
+                else freshReferenceCountedCellIn(cellTemp)(remaining - 1)(rest)
+            | _ :: rest -> freshReferenceCountedCellIn(cellTemp)(remaining - 1)(rest)
+
+let isFreshReferenceCountedCell (cellTemp: Int) (state: CoreLoweringState) = freshReferenceCountedCellIn(cellTemp)(4)(state.reversedInstructions)
+
+// Stage 0's `ownTail` half of `LowerConsCell`. A reference-counted cell never points at arena
+// memory: a literal's later cells are placed by their own heads, so a tail left in the arena (a
+// static string's cell) is copied in. The literal's own tail is the empty list, then the cell
+// before it, so only a cell that was left in the arena needs its representation tested.
+let ownedLiteralTail (runtimeManaged: Bool) (tailIsReferenceCounted: Bool) (tailTemp: Int) elementType (state: CoreLoweringState) =
+    if canTestRepresentation && runtimeManaged && tailIsReferenceCounted == false
+    then
+        match argumentCopyPlanOf(elementType
+        |> resolveType(state)
+        |> SemList)(state) with
+            | Some(plan) -> emitReferenceCountedListTail(tailTemp)(plan)(state)
+            | None -> (state, tailTemp)
+    else (state, tailTemp)
+
+let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp (tailIsReferenceCounted: Bool) lower state =
     match elements with
         | [] ->
             success(tailTemp)(elementType
@@ -15632,24 +15663,29 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
                     match bindType(elementType)(headType)(valueState) with
                         | (failedState, Some(error)) -> failure(failedState)(error)
                         | (typedState, None) ->
-                            match allocateListCell(headTemp)(tailTemp)(elementType)(cellIsRuntimeManaged(request)(expression)(headTemp)(headType)(typedState))(typedState) with
-                                | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
-                                    lowerListElements(
-                                        request,
-                                        transfers,
-                                        rest,
-                                        elementType,
-                                        cellTemp,
-                                        lower,
-                                        cellState
-                                    )
-                                | failed -> failed
+                            let runtimeManaged = cellIsRuntimeManaged(request)(expression)(headTemp)(headType)(typedState)
+                            in
+                                match ownedLiteralTail(runtimeManaged)(tailIsReferenceCounted)(tailTemp)(elementType)(typedState) with
+                                    | (tailState, ownedTailTemp) ->
+                                        match allocateListCell(headTemp)(ownedTailTemp)(elementType)(runtimeManaged)(tailState) with
+                                            | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
+                                                lowerListElements(
+                                                    request,
+                                                    transfers,
+                                                    rest,
+                                                    elementType,
+                                                    cellTemp,
+                                                    isFreshReferenceCountedCell(cellTemp)(cellState),
+                                                    lower,
+                                                    cellState
+                                                )
+                                            | failed -> failed
 
 let finishListLiteral (request: ConsumerRequest) (transfers: Bool) elements lower empty =
     match empty with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = emptyState, temp = emptyTemp, semanticType = SemList(elementType), error = None } ->
-            lowerListElements(request)(transfers)(reverse(elements))(elementType)(emptyTemp)(lower)(emptyState)
+            lowerListElements(request)(transfers)(reverse(elements))(elementType)(emptyTemp)(true)(lower)(emptyState)
         | LoweredCoreValue { state = failedState } ->
             failure(
                 failedState,

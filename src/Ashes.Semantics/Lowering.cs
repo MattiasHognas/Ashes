@@ -14863,6 +14863,9 @@ public sealed partial class Lowering
             ? request with { TransfersRuntimeManagedChildren = true }
             : request;
 
+        // The literal's own tail is the empty list, then the cell before it: only a cell that was
+        // left in the arena needs its representation tested by the cell that takes it as a tail.
+        bool tailIsReferenceCounted = true;
         for (int i = list.Elements.Count - 1; i >= 0; i--)
         {
             LoweredValue head = LowerRuntimeManagedListElement(
@@ -14879,7 +14882,9 @@ public sealed partial class Lowering
                 elemType,
                 tailType,
                 ResolveSourceLocation(AstSpans.GetOrDefault(list)),
-                request);
+                request,
+                ownTail: !tailIsReferenceCounted);
+            tailIsReferenceCounted = IsFreshReferenceCountedCell(tailTemp);
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;

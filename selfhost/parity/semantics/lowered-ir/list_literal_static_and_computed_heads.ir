@@ -1,0 +1,155 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from labels]
+  locals=3 temps=17
+    LoadConstInt          Target=0 Value=0   (list_literal_static_and_computed_heads.ash:1:23)
+    LoadLocal             Target=1 Slot=1   (list_literal_static_and_computed_heads.ash:1:85)
+    TextFromInt           Target=2 ValueTemp=1 RuntimeManaged=true   (list_literal_static_and_computed_heads.ash:1:66)
+    Alloc                 Target=3 SizeBytes=16 RuntimeManaged=true   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=2   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=0   (list_literal_static_and_computed_heads.ash:1:23)
+    LoadConstStr          Target=4 StrLabel=str_0   (list_literal_static_and_computed_heads.ash:1:57)
+    Alloc                 Target=5 SizeBytes=16   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=4   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=3   (list_literal_static_and_computed_heads.ash:1:23)
+    LoadLocal             Target=6 Slot=1   (list_literal_static_and_computed_heads.ash:1:53)
+    TextFromInt           Target=7 ValueTemp=6 RuntimeManaged=true   (list_literal_static_and_computed_heads.ash:1:34)
+    IsReferenceCounted    Target=8 SourceTemp=5
+    StoreLocal            Slot=2 Source=5   (list_literal_static_and_computed_heads.ash:1:23)
+    LoadConstInt          Target=9 Value=0   (list_literal_static_and_computed_heads.ash:1:23)
+    CmpIntEq              Target=10 Left=5 Right=9   (list_literal_static_and_computed_heads.ash:1:23)
+    OrInt                 Target=11 Left=8 Right=10   (list_literal_static_and_computed_heads.ash:1:23)
+    JumpIfFalse           CondTemp=11 Target=rc_tail_copy_1   (list_literal_static_and_computed_heads.ash:1:23)
+    Jump                  Target=rc_tail_done_0   (list_literal_static_and_computed_heads.ash:1:23)
+  rc_tail_copy_1:
+    CopyOutList           DestTemp=12 SrcTemp=5 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreLocal            Slot=2 Source=12   (list_literal_static_and_computed_heads.ash:1:23)
+  rc_tail_done_0:
+    LoadLocal             Target=13 Slot=2   (list_literal_static_and_computed_heads.ash:1:23)
+    Alloc                 Target=14 SizeBytes=16 RuntimeManaged=true   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=7   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=13   (list_literal_static_and_computed_heads.ash:1:23)
+    LoadConstStr          Target=15 StrLabel=str_1   (list_literal_static_and_computed_heads.ash:1:24)
+    Alloc                 Target=16 SizeBytes=16   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=15   (list_literal_static_and_computed_heads.ash:1:23)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=14   (list_literal_static_and_computed_heads.ash:1:23)
+    Return                Source=16   (list_literal_static_and_computed_heads.ash:1:1)
+
+function _start_main  [ProgramEntry]
+  locals=23 temps=43
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (list_literal_static_and_computed_heads.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (list_literal_static_and_computed_heads.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (list_literal_static_and_computed_heads.ash:1:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=2 Slot=2   (list_literal_static_and_computed_heads.ash:3:7)
+    Borrow                Target=3 SourceTemp=2
+    LoadConstInt          Target=4 Value=1   (list_literal_static_and_computed_heads.ash:3:14)
+    LoadMemOffset         Target=5 BasePtr=3 OffsetBytes=16   (list_literal_static_and_computed_heads.ash:3:7)
+    LoadConstInt          Target=6 Value=63   (list_literal_static_and_computed_heads.ash:3:7)
+    ShrInt                Target=7 Left=5 Right=6   (list_literal_static_and_computed_heads.ash:3:7)
+    CallClosure           Target=8 ClosureTemp=3 ArgTemp=4   (list_literal_static_and_computed_heads.ash:3:7)
+    StoreLocal            Slot=6 Source=8   (list_literal_static_and_computed_heads.ash:3:7)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    JumpIfFalse           CondTemp=7 Target=call_copy_arena_result_2   (list_literal_static_and_computed_heads.ash:3:7)
+    Jump                  Target=call_reclaim_owned_result_3   (list_literal_static_and_computed_heads.ash:3:7)
+  call_copy_arena_result_2:
+    CopyOutList           DestTemp=9 SrcTemp=8 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (list_literal_static_and_computed_heads.ash:3:7)
+    StoreLocal            Slot=6 Source=9   (list_literal_static_and_computed_heads.ash:3:7)
+  call_reclaim_owned_result_3:
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    LoadLocal             Target=10 Slot=6   (list_literal_static_and_computed_heads.ash:3:7)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadConstInt          Target=11 Value=0   (list_literal_static_and_computed_heads.ash:3:1)
+    CmpIntEq              Target=12 Left=10 Right=11   (list_literal_static_and_computed_heads.ash:3:1)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_7   (list_literal_static_and_computed_heads.ash:3:1)
+    StoreLocal            Slot=10 Source=10   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadConstStr          Target=13 StrLabel=str_2   (list_literal_static_and_computed_heads.ash:4:28)
+    PrintStr              Source=13   (list_literal_static_and_computed_heads.ash:4:13)
+    AllocAdt              Target=14 Tag=0 FieldCount=0   (list_literal_static_and_computed_heads.ash:4:13)
+    StoreLocal            Slot=7 Source=14   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadLocal             Target=15 Slot=10   (list_literal_static_and_computed_heads.ash:3:1)
+    StoreLocal            Slot=11 Source=15   (list_literal_static_and_computed_heads.ash:3:1)
+  rcdrop_list_8:
+    LoadLocal             Target=16 Slot=11   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadConstInt          Target=17 Value=0   (list_literal_static_and_computed_heads.ash:3:1)
+    CmpIntNe              Target=18 Left=16 Right=17   (list_literal_static_and_computed_heads.ash:3:1)
+    JumpIfFalse           CondTemp=18 Target=rcdrop_list_end_10   (list_literal_static_and_computed_heads.ash:3:1)
+    RcIsUnique            Target=19 SourceTemp=16
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_shared_9   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadMemOffset         Target=20 BasePtr=16 OffsetBytes=0   (list_literal_static_and_computed_heads.ash:3:1)
+    RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=21 BasePtr=16 OffsetBytes=8   (list_literal_static_and_computed_heads.ash:3:1)
+    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=11 Source=21   (list_literal_static_and_computed_heads.ash:3:1)
+    Jump                  Target=rcdrop_list_8   (list_literal_static_and_computed_heads.ash:3:1)
+  rcdrop_list_shared_9:
+    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_10   (list_literal_static_and_computed_heads.ash:3:1)
+  rcdrop_list_end_10:
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=12
+    CopyOutArena          DestTemp=22 SrcTemp=14 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=12
+    StoreLocal            Slot=7 Source=22   (list_literal_static_and_computed_heads.ash:3:1)
+    Jump                  Target=match_end_4   (list_literal_static_and_computed_heads.ash:3:1)
+  match_arm_cleanup_7:
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=13
+    Jump                  Target=match_next_6   (list_literal_static_and_computed_heads.ash:3:1)
+  match_next_6:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=23 Value=0   (list_literal_static_and_computed_heads.ash:3:1)
+    CmpIntNe              Target=24 Left=10 Right=23   (list_literal_static_and_computed_heads.ash:3:1)
+    JumpIfFalse           CondTemp=24 Target=match_arm_cleanup_11   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadMemOffset         Target=25 BasePtr=10 OffsetBytes=0   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadMemOffset         Target=26 BasePtr=10 OffsetBytes=8   (list_literal_static_and_computed_heads.ash:3:1)
+    StoreLocal            Slot=16 Source=25   (list_literal_static_and_computed_heads.ash:3:1)
+    StoreLocal            Slot=17 Source=10   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadLocal             Target=27 Slot=16   (list_literal_static_and_computed_heads.ash:5:35)
+    Borrow                Target=28 SourceTemp=27
+    PrintStr              Source=28   (list_literal_static_and_computed_heads.ash:5:20)
+    RcDrop                SourceTemp=25 TypeName=String OwnerSlot=16
+    AllocAdt              Target=29 Tag=0 FieldCount=0   (list_literal_static_and_computed_heads.ash:5:20)
+    StoreLocal            Slot=7 Source=29   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadLocal             Target=31 Slot=17   (list_literal_static_and_computed_heads.ash:3:1)
+    StoreLocal            Slot=18 Source=31   (list_literal_static_and_computed_heads.ash:3:1)
+  rcdrop_list_12:
+    LoadLocal             Target=32 Slot=18   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadConstInt          Target=33 Value=0   (list_literal_static_and_computed_heads.ash:3:1)
+    CmpIntNe              Target=34 Left=32 Right=33   (list_literal_static_and_computed_heads.ash:3:1)
+    JumpIfFalse           CondTemp=34 Target=rcdrop_list_end_14   (list_literal_static_and_computed_heads.ash:3:1)
+    RcIsUnique            Target=35 SourceTemp=32
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_shared_13   (list_literal_static_and_computed_heads.ash:3:1)
+    LoadMemOffset         Target=36 BasePtr=32 OffsetBytes=0   (list_literal_static_and_computed_heads.ash:3:1)
+    RcDrop                SourceTemp=36 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=37 BasePtr=32 OffsetBytes=8   (list_literal_static_and_computed_heads.ash:3:1)
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=18 Source=37   (list_literal_static_and_computed_heads.ash:3:1)
+    Jump                  Target=rcdrop_list_12   (list_literal_static_and_computed_heads.ash:3:1)
+  rcdrop_list_shared_13:
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_14   (list_literal_static_and_computed_heads.ash:3:1)
+  rcdrop_list_end_14:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=19
+    CopyOutArena          DestTemp=38 SrcTemp=29 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
+    StoreLocal            Slot=7 Source=38   (list_literal_static_and_computed_heads.ash:3:1)
+    Jump                  Target=match_end_4   (list_literal_static_and_computed_heads.ash:3:1)
+  match_arm_cleanup_11:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=20
+    Jump                  Target=match_none_5   (list_literal_static_and_computed_heads.ash:3:1)
+  match_none_5:
+    LoadConstInt          Target=39 Value=0   (list_literal_static_and_computed_heads.ash:3:1)
+    StoreLocal            Slot=7 Source=39   (list_literal_static_and_computed_heads.ash:3:1)
+  match_end_4:
+    LoadLocal             Target=40 Slot=7   (list_literal_static_and_computed_heads.ash:3:1)
+    StoreLocal            Slot=21 Source=40   (list_literal_static_and_computed_heads.ash:1:1)
+    LoadLocal             Target=41 Slot=2   (list_literal_static_and_computed_heads.ash:1:1)
+    CleanupResource       SourceTemp=41 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=22
+    LoadLocal             Target=42 Slot=21   (list_literal_static_and_computed_heads.ash:1:1)
+    Return                Source=42
+

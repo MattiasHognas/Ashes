@@ -2013,15 +2013,23 @@ public sealed partial class Lowering
         TypeRef headType,
         TypeRef tailType,
         SourceLocation? location,
-        LoweredValueRequest request)
+        LoweredValueRequest request,
+        bool ownTail = false)
     {
         var listType = new TypeRef.TList(headType);
         Unify(tailType, listType);
 
-        int nodeTemp = NewTemp();
         bool runtimeManaged =
             request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             && IsRuntimeManageableListElement(headType, headTemp);
+        // A reference-counted cell never points at arena memory: a literal's later cells are placed
+        // by their own heads, so a tail left in the arena (a static string's cell) is copied in.
+        if (ownTail && runtimeManaged)
+        {
+            tailTemp = EmitReferenceCountedListTail(tailTemp, listType);
+        }
+
+        int nodeTemp = NewTemp();
         bool reusedCell = EmitListCellAllocation(nodeTemp, runtimeManaged, location);
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
