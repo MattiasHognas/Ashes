@@ -4733,7 +4733,13 @@ let recursive armNeverReachesJoin (expression: Expr) (state: CoreLoweringState) 
         | ExprAt(_span, inner) -> armNeverReachesJoin(inner)(state)
         | ExprIf(_condition, thenBranch, elseBranch) -> armNeverReachesJoin(thenBranch)(state) && armNeverReachesJoin(elseBranch)(state)
         | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> armNeverReachesJoin(body)(state)
+        | ExprMatch(_scrutinee, [], _position) -> false
+        | ExprMatch(_scrutinee, arms, _position) -> everyArmNeverReachesJoin(arms)(state)
         | other -> isSelfFunnelArm(other)(state)
+and everyArmNeverReachesJoin (arms: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match arms with
+        | [] -> true
+        | (_pattern, body, _guard) :: rest -> armNeverReachesJoin(body)(state) && everyArmNeverReachesJoin(rest)(state)
 
 let recursive patternFactsNamed (name: Str) (facts: List(PatternBindingFact)) =
     match facts with
@@ -12233,7 +12239,7 @@ let recursive normalizeUnownedJoinArms (slot: Int) (plan: ArgumentCopyPlan) (arm
     match arms with
         | [] -> (state, [])
         | arm :: rest ->
-            if arm.armStoreTemp < 0 || arm.armOwned
+            if arm.armStoreTemp < 0 || arm.armOwned || arm.armRetainedOwner
             then
                 match normalizeUnownedJoinArms(slot)(plan)(rest)(state) with
                     | (normalized, restArms) -> (normalized, arm :: restArms)
