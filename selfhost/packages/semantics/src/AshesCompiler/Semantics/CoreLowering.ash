@@ -10200,7 +10200,7 @@ let bodyEncounteredRequirementClosedScope (body: Expr) (entered: CoreLoweringSta
 // closed, and the second lowering starts from that substitution. A body lowered again only
 // because a call result resolved keeps the first substitution, where the binding's result is
 // still the lowering-local variable its self calls defer to.
-let lowerFunctionBodyResolvingCalls (body: Expr) prepare close lower (entered: CoreLoweringState) =
+let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
     match entered
     |> prepare
     |> lower(body) with
