@@ -11868,11 +11868,42 @@ let deferCallCopyOut cursorSlot endSlot preRestoreSlot (resultTemp: Int) (semant
 // flag crosses the reset through the conditional copy-out; a generic callee's list result with
 // no copy-out crosses it through the deep copy and is recorded as deep-copied; any other heap
 // result leaves the window open.
+// Stage 0 pins a call's result type at the call site to the type its discovery pass settled, so a
+// self call's window closes on the resolved type rather than deferring its copy-out. This lowering
+// resolves as it goes: a deferred self call's result is bound to the binding's own result type
+// here once that type holds no unresolved layout.
+let recursive deferredSelfCallOriginal (variable: Int) (pairs: List((SemanticType, SemanticType))) =
+    match pairs with
+        | [] -> None
+        | (SemVariable(candidate), original) :: rest ->
+            if candidate == variable
+            then Some(original)
+            else deferredSelfCallOriginal(variable)(rest)
+        | _ :: rest -> deferredSelfCallOriginal(variable)(rest)
+
+let pinDeferredSelfCallResult (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(variable) ->
+            match state
+            |> stateSelfCallResultUnifications
+            |> deferredSelfCallOriginal(variable) with
+                | None -> state
+                | Some(original) ->
+                    if containsUnresolvedLayout(original)(state)
+                    then state
+                    else
+                        match bindType(semanticType)(original)(state) with
+                            | (bound, None) -> bound
+                            | (_failed, Some(_error)) -> state
+        | _ -> state
+
 let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
         | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp } ->
-            match freshLocal(state) with
+            match state
+            |> pinDeferredSelfCallResult(semanticType)
+            |> freshLocal with
                 | FreshLocal { state = allocated, local = preRestoreSlot } ->
                     if isRuntimeTemp(temp)(allocated) || resultSurvivesReset(semanticType)(allocated)
                     then
