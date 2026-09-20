@@ -4595,6 +4595,71 @@ let buildRcAllocReusingModule name context =
     |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(19))
     |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
 
+// `AllocReusing` on an arena token: an arena cell's token is returned as the new cell's own address
+// with the new tag written, and a token that turns out reference-counted is left alone, with its
+// tag intact, while a fresh cell of the requested layout takes its place. Prints `true`, `3`,
+// `false`, `4`, `0`, `7`.
+let buildArenaAllocReusingModule name context =
+    [
+        5
+        |> LoadConstInt(0)
+        |> irOf,
+        false
+        |> AllocAdt(1)(0)(1)(false)
+        |> irOf,
+        false
+        |> SetAdtField(1)(0)(0)
+        |> irOf,
+        false
+        |> DropReuse(2)(1)(1)
+        |> irOf,
+        false
+        |> AllocReusing(3)(3)(1)(2)(false)(false)
+        |> irOf,
+        1
+        |> CmpIntEq(4)(3)
+        |> irOf,
+        irOf(PrintBool(4)),
+        3
+        |> GetAdtTag(5)
+        |> irOf,
+        irOf(PrintInt(5)),
+        false
+        |> AllocAdt(6)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(6)(0)(0)
+        |> irOf,
+        false
+        |> DropReuse(7)(6)(1)
+        |> irOf,
+        false
+        |> AllocReusing(8)(4)(1)(7)(false)(false)
+        |> irOf,
+        6
+        |> CmpIntEq(9)(8)
+        |> irOf,
+        irOf(PrintBool(9)),
+        8
+        |> GetAdtTag(10)
+        |> irOf,
+        irOf(PrintInt(10)),
+        6
+        |> GetAdtTag(11)
+        |> irOf,
+        irOf(PrintInt(11)),
+        None
+        |> RcDrop(6)("Cell")(0)(true)(false)
+        |> irOf,
+        7
+        |> LoadConstInt(12)
+        |> irOf,
+        irOf(PrintInt(12)),
+        irOf(Return(12))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(13))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
 // A runtime-managed closure's `RcDrop` (type name `Function`) releases its RC environment block
 // and then the closure object; a closure with no environment releases only itself. The call
 // before the drop proves the closure and its environment were intact. Prints `42`, then `7`.
@@ -4748,6 +4813,8 @@ let testRcStructuralDrop unit = assertProgramPrintsLines(buildRcStructuralDropMo
 let testRcDropReuse unit = assertProgramPrintsLines(buildRcDropReuseModule)("selfhostBackendRcDropReuse")("selfhost_backend_rc_drop_reuse_e2e")(["true", "true", "true", "7"])
 
 let testRcAllocReusing unit = assertProgramPrintsLines(buildRcAllocReusingModule)("selfhostBackendRcAllocReusing")("selfhost_backend_rc_alloc_reusing_e2e")(["true", "3", "true", "true", "4", "false", "7"])
+
+let testArenaAllocReusing unit = assertProgramPrintsLines(buildArenaAllocReusingModule)("selfhostBackendArenaAllocReusing")("selfhost_backend_arena_alloc_reusing_e2e")(["true", "3", "false", "4", "0", "7"])
 
 let testRcClosureDrop unit = assertProgramPrintsLines(buildRcClosureDropModule)("selfhostBackendRcClosureDrop")("selfhost_backend_rc_closure_drop_e2e")(["42", "7"])
 
@@ -5448,6 +5515,7 @@ let run shipped =
     |> testRcStructuralDrop
     |> testRcDropReuse
     |> testRcAllocReusing
+    |> testArenaAllocReusing
     |> testRcClosureDrop
     |> testRcClosureSharedDrop
     |> testCopyOutArenaStringAfterReset

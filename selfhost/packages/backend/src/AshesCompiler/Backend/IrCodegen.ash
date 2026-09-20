@@ -947,7 +947,15 @@ let codegenInstructionKind cx builder kind state =
                                         | AllocReusing(target, tag, fieldCount, tokenTemp, runtimeManaged, listCell, tagless) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(tokenTemp)
-                                            |> emitAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(runtimeManaged)(listCell)(tagless)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            |> emitAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(runtimeManaged)(listCell)(tagless)("t" + Ashes.Text.fromInt(target))(emitIsReferenceCountedIn(builder)(i64)(externals.rcRegion)("arena_reuse_token_rc"))(given (_) ->
+                                                // A declined token's replacement goes to the to-space: the scope around
+                                                // a reuse result may reset the arena under it, and the new cell's
+                                                // borrowed children rule out the reference-counted heap.
+                                                if listCell
+                                                then
+                                                    emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(0)(2)(true)("arena_reuse_fresh_cell")
+                                                else
+                                                    emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(tag)(fieldCount)(tagless)("arena_reuse_fresh_cell"))) :: tempEnv, terminated)
                         // Stores one field into an already-allocated ADT's payload: word `1 + fieldIndex`
                         // of a tagged cell (word `0` is the tag — see `AllocAdt`'s own layout comment
                         // above), word `fieldIndex` of a tagless one. The `ptr` operand arrives as this
@@ -1758,7 +1766,8 @@ let recursive codegenLiftedFunctions mc functions =
 
 // Whether any instruction is one of the copy family: only then does the module get the copy-out
 // helpers, whose libc calls would otherwise make every program dynamically linked, and the
-// persistent-region runtime (`IrCodegen.Copy`).
+// persistent-region runtime (`IrCodegen.Copy`). An arena `AllocReusing` belongs to it because a
+// declined token's replacement cell comes from the to-space.
 let recursive instructionsUseCopyOut instructions =
     match instructions with
         | [] -> false
@@ -1767,6 +1776,7 @@ let recursive instructionsUseCopyOut instructions =
         | IrInstruction { instruction = CopyOutClosure(_dest, _src, _managed, _purpose) } :: _ -> true
         | IrInstruction { instruction = CopyOutTcoListCell(_dest, _src, _headCopy, _purpose) } :: _ -> true
         | IrInstruction { instruction = AllocAdtToSpace(_target, _tag, _fieldCount, _tagless) } :: _ -> true
+        | IrInstruction { instruction = AllocReusing(_target, _tag, _fieldCount, _token, runtimeManaged, _listCell, _tagless) } :: rest -> runtimeManaged == false || instructionsUseCopyOut(rest)
         | IrInstruction { instruction = CopyOutArenaToSpace(_dest, _src, _size) } :: _ -> true
         | IrInstruction { instruction = CopyFixedInto(_dest, _src, _size) } :: _ -> true
         | IrInstruction { instruction = CopyStringIntoOrFresh(_dest, _old, _src) } :: _ -> true

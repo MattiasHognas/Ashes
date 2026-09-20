@@ -4531,6 +4531,27 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Reuse_update_reads_the_value_it_overwrites_from_the_token_cell()
+    {
+        IrProgram ir = LowerProgramWithImports(BuildPersistentMapStringUpdateMemoryProgram(1));
+        int checkedUpdates = 0;
+        foreach (IrFunction function in ir.Functions)
+        {
+            foreach (IrInst.CopyStringIntoOrFresh update in function.Instructions.OfType<IrInst.CopyStringIntoOrFresh>())
+            {
+                IrInst.GetAdtField oldValue = function.Instructions.OfType<IrInst.GetAdtField>()
+                    .Single(read => read.Target == update.OldBlobTemp);
+                function.Instructions.OfType<IrInst.AllocReusing>().Any(reuse => reuse.TokenTemp == oldValue.Ptr).ShouldBeTrue(
+                    "The backend returns a fresh cell for a token that turns out reference counted, so the old "
+                    + "value is only ever in the token.");
+                checkedUpdates++;
+            }
+        }
+
+        checkedUpdates.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_persistent_map_reuse_memory_should_plateau_as_updates_scale()
     {
         if (!OperatingSystem.IsLinux())

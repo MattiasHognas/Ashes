@@ -15778,13 +15778,13 @@ let emitSpecializationToSpaceCopy (fieldTemp: Int) (sizeBytes: Int) (state: Core
 // half: the reused cell's old field is unreferenced, so the new value overwrites the old blob in
 // place when the backend's runtime check finds it persistent, and materializes fresh otherwise.
 // This bounds blob growth to the largest value a cell ever held instead of leaving one blob per
-// rewrite behind. `cellTemp` is the reused cell, whose fields still hold the old values until
-// `emitAdtFields` overwrites them.
-let emitSpecializationInPlaceCopy (cellTemp: Int) (fieldIndex: Int) (tagless: Bool) (fieldTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
+// rewrite behind. `oldCellTemp` is the cell whose field still holds the old value
+// (`reusedCellOldFieldSource`).
+let emitSpecializationInPlaceCopy (oldCellTemp: Int) (fieldIndex: Int) (tagless: Bool) (fieldTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = oldState, temp = oldFieldTemp } ->
             match oldState
-            |> emit(GetAdtField(oldFieldTemp)(cellTemp)(fieldIndex)(tagless))
+            |> emit(GetAdtField(oldFieldTemp)(oldCellTemp)(fieldIndex)(tagless))
             |> freshTemp with
                 | FreshTemp { state = copyState, temp = destinationTemp } ->
                     if sizeBytes < 0
@@ -15807,6 +15807,18 @@ let specializationFieldSlotIsDead (fieldIndex: Int) (token: Maybe(CoreReuseToken
     match token with
         | None -> false
         | Some(CoreReuseToken { fieldBindings = fieldBindings }) -> fieldIndexIsUnbound(fieldIndex)(fieldBindings)
+
+// Stage 0's `ReusedCellOldFieldSource`: the cell an update reads its dead old value from. A reused
+// arena cell is its token, but the backend leaves a token that turns out reference-counted alone
+// and returns a fresh cell, whose fields hold nothing yet; the token's fields are valid either
+// way. A runtime-managed reuse may have no token at all, and keeps reading the cell it produced.
+let reusedCellOldFieldSource (cellTemp: Int) (token: Maybe(CoreReuseToken)) =
+    match token with
+        | None -> cellTemp
+        | Some(CoreReuseToken { temp = tokenTemp, runtimeManaged = runtimeManaged }) ->
+            if runtimeManaged
+            then cellTemp
+            else tokenTemp
 
 // A field whose own type is the type being rebuilt is a recursive child of the accumulator: the
 // recursive call that produced it is part of the specialization, so it is already a reuse-managed
@@ -15846,7 +15858,8 @@ let materializeSpecializationField (argument: Expr) (fieldType: SemanticType) (r
             else
                 let materialize =
                     if specializationFieldSlotIsDead(fieldIndex)(token)
-                    then emitSpecializationInPlaceCopy(cellTemp)(fieldIndex)(tagless)(fieldTemp)
+                    then
+                        emitSpecializationInPlaceCopy(reusedCellOldFieldSource(cellTemp)(token))(fieldIndex)(tagless)(fieldTemp)
                     else emitSpecializationToSpaceCopy(fieldTemp)
                 in
                     match resolveType(state)(fieldType) with
