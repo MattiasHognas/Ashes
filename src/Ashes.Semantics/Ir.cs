@@ -655,6 +655,8 @@ public abstract record IrInst
     /// <param name="RuntimeManaged">True when the closure object itself is reference-counted.</param>
     /// <param name="ReturnsRuntimeManaged">True when the closure's result is reference-counted.</param>
     /// <param name="AcceptsRuntimeManagedArgument">True when the closure may adopt a reference-counted argument.</param>
+    /// <param name="ReturnsGeneralRcOwned">True when the closure's function normalizes its result at its
+    /// return, so a caller takes the result over as an owned reference-counted value.</param>
     public sealed record MakeClosure(
         int Target,
         string FuncLabel,
@@ -662,7 +664,8 @@ public abstract record IrInst
         int EnvSizeBytes,
         bool RuntimeManaged = false,
         bool ReturnsRuntimeManaged = false,
-        bool AcceptsRuntimeManagedArgument = false
+        bool AcceptsRuntimeManagedArgument = false,
+        bool ReturnsGeneralRcOwned = false
     ) : IrInst, IRuntimeManagedTargetResult; // alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
     /// <summary>Stack-allocated form of <see cref="MakeClosure"/>, used for a non-escaping closure whose
     /// lifetime is bounded by the current frame.</summary>
@@ -672,13 +675,16 @@ public abstract record IrInst
     /// <param name="EnvSizeBytes">Size in bytes of the captured environment.</param>
     /// <param name="ReturnsRuntimeManaged">True when the closure's result is reference-counted.</param>
     /// <param name="AcceptsRuntimeManagedArgument">True when the closure may adopt a reference-counted argument.</param>
+    /// <param name="ReturnsGeneralRcOwned">True when the closure's function normalizes its result at its
+    /// return, so a caller takes the result over as an owned reference-counted value.</param>
     public sealed record MakeClosureStack(
         int Target,
         string FuncLabel,
         int EnvPtrTemp,
         int EnvSizeBytes,
         bool ReturnsRuntimeManaged = false,
-        bool AcceptsRuntimeManagedArgument = false
+        bool AcceptsRuntimeManagedArgument = false,
+        bool ReturnsGeneralRcOwned = false
     ) : IrInst; // stack alloc 32 bytes: {code, env, packed env_size/result ownership, dropper}
 
     /// <summary>Loads the address of a lifted function as an i64. Used to store a resource dropper

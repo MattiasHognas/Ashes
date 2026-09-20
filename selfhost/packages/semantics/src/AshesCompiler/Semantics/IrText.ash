@@ -738,7 +738,7 @@ let describeInstruction instruction =
                     optionalIntOperand("Replacement")(replacement)
                 ]
             )
-        | MakeClosure(target, funcLabel, envPtrTemp, envSizeBytes, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
+        | MakeClosure(target, funcLabel, envPtrTemp, envSizeBytes, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument, returnsGeneralRcOwned) ->
             IrInstructionDescription(
                 opcode = "MakeClosure",
                 operands = [
@@ -748,10 +748,11 @@ let describeInstruction instruction =
                     optionalIntOperand("EnvSizeBytes")(envSizeBytes),
                     boolOperand("RuntimeManaged")(runtimeManaged),
                     boolOperand("ReturnsRuntimeManaged")(returnsRuntimeManaged),
-                    boolOperand("AcceptsRuntimeManagedArgument")(acceptsRuntimeManagedArgument)
+                    boolOperand("AcceptsRuntimeManagedArgument")(acceptsRuntimeManagedArgument),
+                    boolOperand("ReturnsGeneralRcOwned")(returnsGeneralRcOwned)
                 ]
             )
-        | MakeClosureStack(target, funcLabel, envPtrTemp, envSizeBytes, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
+        | MakeClosureStack(target, funcLabel, envPtrTemp, envSizeBytes, returnsRuntimeManaged, acceptsRuntimeManagedArgument, returnsGeneralRcOwned) ->
             IrInstructionDescription(
                 opcode = "MakeClosureStack",
                 operands = [
@@ -760,7 +761,8 @@ let describeInstruction instruction =
                     optionalIntOperand("EnvPtrTemp")(envPtrTemp),
                     optionalIntOperand("EnvSizeBytes")(envSizeBytes),
                     boolOperand("ReturnsRuntimeManaged")(returnsRuntimeManaged),
-                    boolOperand("AcceptsRuntimeManagedArgument")(acceptsRuntimeManagedArgument)
+                    boolOperand("AcceptsRuntimeManagedArgument")(acceptsRuntimeManagedArgument),
+                    boolOperand("ReturnsGeneralRcOwned")(returnsGeneralRcOwned)
                 ]
             )
         | LoadFuncAddr(target, funcLabel) ->

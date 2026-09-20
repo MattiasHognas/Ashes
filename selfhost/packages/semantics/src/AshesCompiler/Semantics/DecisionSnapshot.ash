@@ -435,10 +435,10 @@ let recursive classifyInstructionRepr (kind: IrInstructionKind) (reprs: List((In
                 | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
         | AllocAdtStack(target, _tag, _fieldCount, _tagless) -> (setTempRepr(target)(true)(false)(reprs), slots)
         | AllocAdtToSpace(target, _tag, _fieldCount, _tagless) -> (setTempRepr(target)(true)(false)(reprs), slots)
-        | MakeClosure(target, _label, _env, _size, runtimeManaged, _returnsRm, _acceptsRm) ->
+        | MakeClosure(target, _label, _env, _size, runtimeManaged, _returnsRm, _acceptsRm, _returnsOwned) ->
             match reprOfFlag(runtimeManaged) with
                 | (isArena, isRc) -> (setTempRepr(target)(isArena)(isRc)(reprs), slots)
-        | MakeClosureStack(target, _label, _env, _size, _returnsRm, _acceptsRm) -> (setTempRepr(target)(true)(false)(reprs), slots)
+        | MakeClosureStack(target, _label, _env, _size, _returnsRm, _acceptsRm, _returnsOwned) -> (setTempRepr(target)(true)(false)(reprs), slots)
         | RcDup(target, source, runtimeManaged, _mayBeEmpty) ->
             if runtimeManaged
             then (setTempRepr(target)(false)(true)(reprs), slots)

@@ -34,7 +34,9 @@ internal static partial class LlvmCodegen
     // Closure layout: {code@0, env@8, packed_env_size@16, dropper@24}. The high bit of the packed
     // size records runtime-managed immediate results; the next bit records whether the function can
     // adopt a transferred RC argument; the bit below records that the closure object and its
-    // environment are reference-counted. The low 61 bits retain the environment size.
+    // environment are reference-counted, and the one below that the function normalizes its result
+    // at its return under the general contract (Lowering.GeneralRc). The low 60 bits retain the
+    // environment size.
     // The result flag lets an indirect caller reclaim call scratch without copying an independent
     // runtime-RC result. The dropper is a code pointer that releases what the closure's env owns:
     // resources moved into an arena closure (see SetClosureDropper), invoked when that closure is
@@ -44,7 +46,8 @@ internal static partial class LlvmCodegen
     private const ulong ClosureResultOwnershipBit = 1UL << 63;
     private const ulong ClosureArgumentOwnershipBit = 1UL << 62;
     private const ulong ClosureRuntimeManagedBit = 1UL << 61;
-    private const ulong ClosureEnvironmentSizeMask = ClosureRuntimeManagedBit - 1;
+    private const ulong ClosureGeneralRcResultBit = 1UL << 60;
+    private const ulong ClosureEnvironmentSizeMask = ClosureGeneralRcResultBit - 1;
 
     private static LlvmValueHandle EmitMakeClosure(
         LlvmCodegenState state,
@@ -53,7 +56,8 @@ internal static partial class LlvmCodegen
         int envSizeBytes,
         bool runtimeManaged = false,
         bool returnsRuntimeManaged = false,
-        bool acceptsRuntimeManagedArgument = false)
+        bool acceptsRuntimeManagedArgument = false,
+        bool returnsGeneralRcOwned = false)
     {
         LlvmValueHandle closurePtr = runtimeManaged
             ? EmitRuntimeRcAlloc(state, ClosureSizeBytes, "rc_closure")
@@ -64,7 +68,8 @@ internal static partial class LlvmCodegen
         ulong packedEnvironmentSize = (ulong)(uint)envSizeBytes
             | (returnsRuntimeManaged ? ClosureResultOwnershipBit : 0)
             | (acceptsRuntimeManagedArgument ? ClosureArgumentOwnershipBit : 0)
-            | (runtimeManaged ? ClosureRuntimeManagedBit : 0);
+            | (runtimeManaged ? ClosureRuntimeManagedBit : 0)
+            | (returnsGeneralRcOwned ? ClosureGeneralRcResultBit : 0);
         StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, packedEnvironmentSize, 0), $"closure_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_dropper_store_{funcLabel}");
         return closurePtr;
@@ -147,7 +152,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle envPtr,
         int envSizeBytes,
         bool returnsRuntimeManaged,
-        bool acceptsRuntimeManagedArgument)
+        bool acceptsRuntimeManagedArgument,
+        bool returnsGeneralRcOwned)
     {
         LlvmValueHandle closurePtr = EmitStackAlloc(state, ClosureSizeBytes, $"closure_stack_{funcLabel}");
         LlvmValueHandle codePtr = LlvmApi.BuildPtrToInt(state.Target.Builder, state.LiftedFunctions[funcLabel], state.I64, $"closure_stack_code_{funcLabel}");
@@ -155,7 +161,8 @@ internal static partial class LlvmCodegen
         StoreMemory(state, closurePtr, 8, envPtr, $"closure_stack_env_store_{funcLabel}");
         ulong packedEnvironmentSize = (ulong)(uint)envSizeBytes
             | (returnsRuntimeManaged ? ClosureResultOwnershipBit : 0)
-            | (acceptsRuntimeManagedArgument ? ClosureArgumentOwnershipBit : 0);
+            | (acceptsRuntimeManagedArgument ? ClosureArgumentOwnershipBit : 0)
+            | (returnsGeneralRcOwned ? ClosureGeneralRcResultBit : 0);
         StoreMemory(state, closurePtr, 16, LlvmApi.ConstInt(state.I64, packedEnvironmentSize, 0), $"closure_stack_env_size_store_{funcLabel}");
         StoreMemory(state, closurePtr, 24, LlvmApi.ConstInt(state.I64, 0, 0), $"closure_stack_dropper_store_{funcLabel}");
         return closurePtr;

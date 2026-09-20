@@ -142,8 +142,8 @@ let isModeledPureLeaf inst =
 
 let isInstructionModeledPure evaluable inst =
     match inst with
-        | MakeClosure(_, label, _, _, _, _, _) -> listContains(label)(evaluable)
-        | MakeClosureStack(_, label, _, _, _, _) -> listContains(label)(evaluable)
+        | MakeClosure(_, label, _, _, _, _, _, _) -> listContains(label)(evaluable)
+        | MakeClosureStack(_, label, _, _, _, _, _) -> listContains(label)(evaluable)
         | LoadFuncAddr(_, label) -> listContains(label)(evaluable)
         | CallKnown(_, label, _, _, _, _) -> listContains(label)(evaluable)
         | _ -> isModeledPureLeaf(inst)
@@ -327,7 +327,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                     )
         | RcDrop(_, _, _, _, _, _) -> Some(state)
-        | MakeClosure(target, fnLabel, envTemp, _, _, _, _) ->
+        | MakeClosure(target, fnLabel, envTemp, _, _, _, _, _) ->
             let envVal =
                 match lookupAssociation(envTemp)(state.temps) with
                     | Some(v) -> v
@@ -340,7 +340,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         locals = state.locals
                     )
                 )
-        | MakeClosureStack(target, fnLabel, envTemp, _, _, _) ->
+        | MakeClosureStack(target, fnLabel, envTemp, _, _, _, _) ->
             let envVal =
                 match lookupAssociation(envTemp)(state.temps) with
                     | Some(v) -> v
@@ -1047,7 +1047,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                             )(
                                 irInst :: acc
                             )
-                    | MakeClosure(dest, fnLabel, envTemp, envSize, _, _, _) ->
+                    | MakeClosure(dest, fnLabel, envTemp, envSize, _, _, _, _) ->
                         let nextTemps =
                             if envSize == 0
                             then
@@ -1062,7 +1062,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                             )(
                                 irInst :: acc
                             )
-                    | MakeClosureStack(dest, fnLabel, envTemp, envSize, _, _) ->
+                    | MakeClosureStack(dest, fnLabel, envTemp, envSize, _, _, _) ->
                         let nextTemps =
                             if envSize == 0
                             then

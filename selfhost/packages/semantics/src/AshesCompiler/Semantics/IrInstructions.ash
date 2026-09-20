@@ -134,8 +134,11 @@ type IrInstructionKind =
     // flag: true for a single-constructor cell laid out with no tag word (payload at offset 0, see
     // TaglessAdtLayout), false for the ordinary [tag, field0, ...] cell. GetAdtTag is never
     // emitted for a tagless cell; its one constructor tag is loaded as a constant instead.
-    | MakeClosure(IrTemp, Str, IrTemp, Int, Bool, Bool, Bool)
-    | MakeClosureStack(IrTemp, Str, IrTemp, Int, Bool, Bool)
+    // The trailing Bool on MakeClosure and MakeClosureStack is true when the closure's function
+    // normalizes its result at its return, so a caller takes the result over as an owned
+    // reference-counted value.
+    | MakeClosure(IrTemp, Str, IrTemp, Int, Bool, Bool, Bool, Bool)
+    | MakeClosureStack(IrTemp, Str, IrTemp, Int, Bool, Bool, Bool)
     | LoadFuncAddr(IrTemp, Str)
     | CallClosure(IrTemp, IrTemp, IrTemp, IrTemp)
     | CallKnown(IrTemp, Str, IrTemp, IrTemp, IrTemp, Bool)

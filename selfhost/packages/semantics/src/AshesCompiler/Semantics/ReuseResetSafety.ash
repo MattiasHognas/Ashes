@@ -157,8 +157,8 @@ and everyReaderConsumesSafely (temp: Int) (depth: Int) (scan: ReuseResetScan) (r
             else false
 and readerConsumesSafely (reader: IrInstructionKind) (temp: Int) (depth: Int) (scan: ReuseResetScan) =
     match reader with
-        | MakeClosure(_target, _label, _environment, _size, _runtimeManaged, _returnsManaged, _acceptsManaged) -> true
-        | MakeClosureStack(_target, _label, _environment, _size, _returnsManaged, _acceptsManaged) -> true
+        | MakeClosure(_target, _label, _environment, _size, _runtimeManaged, _returnsManaged, _acceptsManaged, _returnsOwned) -> true
+        | MakeClosureStack(_target, _label, _environment, _size, _returnsManaged, _acceptsManaged, _returnsOwned) -> true
         | SetAdtField(pointer, _index, _source, _tagless) -> pointer == temp
         | GetAdtField(_target, pointer, _index, _tagless) -> pointer == temp
         | StoreMemOffset(basePointer, _offset, _source) -> basePointer == temp
@@ -223,11 +223,11 @@ let recursive allocationsConsumed (instructions: List(IrInstruction)) (scan: Reu
                     if safelyConsumed(target)(0)(scan)
                     then allocationsConsumed(rest)(scan)
                     else rejectedResetSafety(BecauseRawAllocationMayEscape)(instruction.location)
-                | MakeClosure(target, _label, _environment, _size, _runtimeManaged, _returnsManaged, _acceptsManaged) ->
+                | MakeClosure(target, _label, _environment, _size, _runtimeManaged, _returnsManaged, _acceptsManaged, _returnsOwned) ->
                     if closureConsumedAsCallTarget(target)(0)(scan)
                     then allocationsConsumed(rest)(scan)
                     else rejectedResetSafety(BecauseClosureMayEscape)(instruction.location)
-                | MakeClosureStack(target, _label, _environment, _size, _returnsManaged, _acceptsManaged) ->
+                | MakeClosureStack(target, _label, _environment, _size, _returnsManaged, _acceptsManaged, _returnsOwned) ->
                     if closureConsumedAsCallTarget(target)(0)(scan)
                     then allocationsConsumed(rest)(scan)
                     else rejectedResetSafety(BecauseStackClosureMayEscape)(instruction.location)

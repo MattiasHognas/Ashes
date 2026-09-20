@@ -118,7 +118,7 @@ let testClosureEnvironmentScaffoldingAcceptsReset unit =
     |> at, 9
     |> StoreMemOffset(1)(0)
     |> at, false
-    |> MakeClosure(2)("go")(1)(8)(false)(false)
+    |> MakeClosure(2)("go")(1)(8)(false)(false)(false)
     |> at, 5
     |> CallClosure(3)(2)(4)
     |> at]
@@ -145,7 +145,7 @@ let testClosurePassedAsArgumentRejectsReset unit =
     [false
     |> Alloc(1)(8)
     |> at, false
-    |> MakeClosure(2)("go")(1)(8)(false)(false)
+    |> MakeClosure(2)("go")(1)(8)(false)(false)(false)
     |> at, 5
     |> CallClosure(3)(9)(2)
     |> at]
@@ -156,7 +156,7 @@ let testStackClosurePassedAsArgumentRejectsReset unit =
     [false
     |> Alloc(1)(8)
     |> at, false
-    |> MakeClosureStack(2)("go")(1)(8)(false)
+    |> MakeClosureStack(2)("go")(1)(8)(false)(false)
     |> at, 5
     |> CallClosure(3)(9)(2)
     |> at]
@@ -169,7 +169,7 @@ let testClosureThroughSingleStoreSlotAcceptsReset unit =
     [false
     |> Alloc(1)(8)
     |> at, false
-    |> MakeClosure(2)("go")(1)(8)(false)(false)
+    |> MakeClosure(2)("go")(1)(8)(false)(false)(false)
     |> at, 2
     |> StoreLocal(0)
     |> at, 0
@@ -184,7 +184,7 @@ let testClosureThroughRewrittenSlotRejectsReset unit =
     [false
     |> Alloc(1)(8)
     |> at, false
-    |> MakeClosure(2)("go")(1)(8)(false)(false)
+    |> MakeClosure(2)("go")(1)(8)(false)(false)(false)
     |> at, 2
     |> StoreLocal(0)
     |> at, 9

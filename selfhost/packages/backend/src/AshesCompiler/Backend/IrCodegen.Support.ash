@@ -649,10 +649,12 @@ let emitStackAllocAdt builder i64 tag fieldCount tagless resultName =
 // out: four `i64` words `{code, env, packedEnvironmentSize, dropper}`. `code` is the lifted
 // function's own address (`CallClosure` loads it back and calls through it), `env` the
 // environment word the function receives as its first parameter, the packed word the environment
-// byte size with the three ownership bits `LlvmCodegenExpressions.cs` defines (`1 << 63` = the
+// byte size with the four ownership bits `LlvmCodegenExpressions.cs` defines (`1 << 63` = the
 // result is runtime-managed, `1 << 62` = the argument is, `1 << 61` = the closure object and its
-// environment are themselves reference-counted), and `dropper` the resource-cleanup hook (always
-// `0` for an ordinary closure, the environment's owned captures for a reference-counted one).
+// environment are themselves reference-counted, `1 << 60` = the function normalizes its result at
+// its return, so a caller takes it over as an owned reference-counted value), and `dropper` the
+// resource-cleanup hook (always `0` for an ordinary closure, the environment's owned captures for
+// a reference-counted one).
 let closureSizeBytes = 32
 
 // `1 << 61`, `packClosureEnvironmentSize`'s third bit; `emitRuntimeRcClosureDrop`/`emitCopyOutClosure`
@@ -664,17 +666,19 @@ let closureRuntimeManagedBit = Ashes.Number.UInt.fromInt64(1 << 61)
 // this clears bit 61 alone, used when `emitCopyOutClosure` copies into an arena destination.
 let closureRuntimeManagedBitClearMask = Ashes.Number.UInt.fromInt64(~(1 << 61))
 
-// `(1 << 61) - 1`: the environment-size bits of a closure's packed size word, below the three
+// `(1 << 60) - 1`: the environment-size bits of a closure's packed size word, below the four
 // ownership bits `packClosureEnvironmentSize` sets.
-let closureEnvironmentSizeMask = Ashes.Number.UInt.fromInt64((1 << 61) - 1)
+let closureEnvironmentSizeMask = Ashes.Number.UInt.fromInt64((1 << 60) - 1)
 
-let packClosureEnvironmentSize envSizeBytes returnsRuntimeManaged acceptsRuntimeManagedArgument runtimeManaged =
+let packClosureEnvironmentSize envSizeBytes returnsRuntimeManaged acceptsRuntimeManagedArgument runtimeManaged returnsGeneralRcOwned =
     envSizeBytes + (if returnsRuntimeManaged
     then 1 << 63
     else 0) + (if acceptsRuntimeManagedArgument
     then 1 << 62
     else 0) + (if runtimeManaged
     then 1 << 61
+    else 0) + (if returnsGeneralRcOwned
+    then 1 << 60
     else 0)
 
 let emitStoreClosureWords builder i64 i8 closurePtr codeFn envRef packedSize resultName =

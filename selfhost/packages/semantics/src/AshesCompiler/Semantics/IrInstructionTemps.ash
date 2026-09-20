@@ -229,10 +229,10 @@ let mapInstructionTemps f (kind: IrInstructionKind) =
             T3
             |> f
             |> RegexSubstitute(f(T0))(f(T1))(f(T2))
-        | MakeClosure(T0, s0, T1, n0, b0, b1, b2) ->
-            MakeClosure(f(T0))(s0)(f(T1))(n0)(b0)(b1)(b2)
-        | MakeClosureStack(T0, s0, T1, n0, b0, b1) ->
-            MakeClosureStack(f(T0))(s0)(f(T1))(n0)(b0)(b1)
+        | MakeClosure(T0, s0, T1, n0, b0, b1, b2, b3) ->
+            MakeClosure(f(T0))(s0)(f(T1))(n0)(b0)(b1)(b2)(b3)
+        | MakeClosureStack(T0, s0, T1, n0, b0, b1, b2) ->
+            MakeClosureStack(f(T0))(s0)(f(T1))(n0)(b0)(b1)(b2)
         | LoadFuncAddr(T0, s0) ->
             LoadFuncAddr(f(T0))(s0)
         | CallClosure(T0, T1, T2, T3) ->

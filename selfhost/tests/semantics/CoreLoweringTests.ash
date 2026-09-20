@@ -611,7 +611,7 @@ let mutualBinding name sibling =
 let recursive hasClosureFor expectedLabel instructions =
     match instructions with
         | [] -> false
-        | IrInstruction { instruction = MakeClosure(_target, label, _environment, _size, _managed, _cell, _topLevel) } :: rest ->
+        | IrInstruction { instruction = MakeClosure(_target, label, _environment, _size, _managed, _cell, _topLevel, _returnsOwned) } :: rest ->
             if label == expectedLabel
             then true
             else hasClosureFor(expectedLabel)(rest)

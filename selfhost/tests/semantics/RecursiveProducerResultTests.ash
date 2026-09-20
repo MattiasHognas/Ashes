@@ -66,7 +66,7 @@ let recursive expectProducerInstructions label instructions =
     match instructions with
         | [] -> Unit
         | IrInstruction { instruction = Alloc(_target, 16, false) } :: _ -> test.fail("recursive producer spine must be owned")
-        | IrInstruction { instruction = MakeClosure(_target, callee, _environment, _size, _managed, returns, _accepts) } :: rest ->
+        | IrInstruction { instruction = MakeClosure(_target, callee, _environment, _size, _managed, returns, _accepts, _returnsOwned) } :: rest ->
             if callee == label && returns == false
             then test.fail("self closure must report its runtime-managed result")
             else expectProducerInstructions(label)(rest)
