@@ -61,6 +61,24 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Whether the list cell just emitted into <paramref name="cellTemp"/> was allocated in the
+    /// reference-counted region. A cell that reused a token, or whose head kept it in the arena, is
+    /// not, and the cell that takes it as a tail has to test it.
+    /// </summary>
+    private bool IsFreshReferenceCountedCell(int cellTemp)
+    {
+        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 4; i--)
+        {
+            if (_inst[i] is IrInst.Alloc alloc && alloc.Target == cellTemp)
+            {
+                return alloc.RuntimeManaged;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The tail a reference-counted cell takes over from the accumulator parameter it extends. The
     /// parameter's first value is whatever the caller passed, so a tail outside the reference-counted
     /// region is copied into it; one inside is moved into the cell exactly as it was before, with

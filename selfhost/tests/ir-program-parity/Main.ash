@@ -258,6 +258,7 @@ let fixtures =
         "tco_str_parameter_fresh_successor",
         "tco_consumed_list_parameter_returned_head",
         "tco_list_parameter_resolved_by_back_edge",
+        "list_literal_static_and_computed_heads",
         "tco_record_parameter_exit_before_list_accumulator",
         "tco_owned_child_record_accumulator",
         "tco_record_string_field_into_successor",

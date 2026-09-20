@@ -2391,6 +2391,24 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
+    public void List_literal_tests_only_the_tail_a_static_head_left_in_the_arena()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let labels x = ["static", Ashes.Text.fromInt(x), "other", Ashes.Text.fromInt(x + 1)]
+            match labels(1) with | [] -> 0 | head :: _ -> Ashes.Text.byteLength(head)
+            """);
+        IrFunction labels = ir.Functions.Single(function =>
+            function.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16 }) == 4);
+
+        labels.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: true }).ShouldBe(2,
+            "The cells with computed heads are reference counted; the ones with static heads stay in the arena.");
+        labels.Instructions.Count(instruction => instruction is IrInst.IsReferenceCounted).ShouldBe(1,
+            "Only the reference-counted cell whose tail is an arena cell tests it; the empty list and a cell "
+            + "just allocated in the reference-counted region are known.");
+    }
+
+    [Test]
     public void Borrowed_list_result_normalizes_to_runtime_ownership_at_scope_exit()
     {
         IrProgram ir = LowerProgram(

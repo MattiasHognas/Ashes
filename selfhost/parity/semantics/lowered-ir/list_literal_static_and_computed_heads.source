@@ -1,0 +1,5 @@
+let labels (x: Int) = ["static", Ashes.Text.fromInt(x), "other", Ashes.Text.fromInt(x)]
+
+match labels(1) with
+    | [] -> Ashes.IO.print("empty")
+    | head :: _ -> Ashes.IO.print(head)
