@@ -2464,9 +2464,9 @@ let recordBodyRuntimeManaged (label: Str) (runtimeManaged: Bool) (state: CoreLow
 let recursive backfillSelfClosureInstructions (label: Str) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> []
-        | (IrInstruction { instruction = MakeClosure(target, funcLabel, environmentTemp, environmentSize, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument), location = location } as instruction) :: rest ->
+        | (IrInstruction { instruction = MakeClosure(target, funcLabel, environmentTemp, environmentSize, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument, returnsGeneralRcOwned), location = location } as instruction) :: rest ->
             if funcLabel == label && returnsRuntimeManaged == false
-            then IrInstruction(instruction = MakeClosure(target)(funcLabel)(environmentTemp)(environmentSize)(runtimeManaged)(true)(acceptsRuntimeManagedArgument), location = location) :: backfillSelfClosureInstructions(label)(rest)
+            then IrInstruction(instruction = MakeClosure(target)(funcLabel)(environmentTemp)(environmentSize)(runtimeManaged)(true)(acceptsRuntimeManagedArgument)(returnsGeneralRcOwned), location = location) :: backfillSelfClosureInstructions(label)(rest)
             else instruction :: backfillSelfClosureInstructions(label)(rest)
         | instruction :: rest -> instruction :: backfillSelfClosureInstructions(label)(rest)
 
@@ -2492,11 +2492,11 @@ let backfillSelfClosureResultOwnership (label: Str) (runtimeManaged: Bool) (stat
 let recursive returnedClosureLabelOf (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) =
     match reversedInstructions with
         | [] -> None
-        | IrInstruction { instruction = MakeClosure(target, label, _environment, _size, _returns, _accepts, _flag) } :: rest ->
+        | IrInstruction { instruction = MakeClosure(target, label, _environment, _size, _returns, _accepts, _flag, _returnsOwned) } :: rest ->
             if target == bodyTemp
             then Some(label)
             else returnedClosureLabelOf(bodyTemp)(rest)
-        | IrInstruction { instruction = MakeClosureStack(target, label, _environment, _size, _returns, _accepts) } :: rest ->
+        | IrInstruction { instruction = MakeClosureStack(target, label, _environment, _size, _returns, _accepts, _returnsOwned) } :: rest ->
             if target == bodyTemp
             then Some(label)
             else returnedClosureLabelOf(bodyTemp)(rest)
@@ -3434,6 +3434,7 @@ and lowerBoundVariable binding state =
                                         environmentSize,
                                         false,
                                         false,
+                                        false,
                                         false
                                     ))
                                     |> success(closureTemp)(semanticType)
@@ -3628,14 +3629,14 @@ let letBodyRequest (tailForwarded: Bool) (bodyRequest: ConsumerRequest) (valueTe
 let recursive emptyEnvironmentClosureLabel (temp: Int) (reversedInstructions: List(IrInstruction)) =
     match reversedInstructions with
         | [] -> None
-        | IrInstruction { instruction = MakeClosure(target, label, _environment, size, _runtimeManaged, _returns, _accepts) } :: rest ->
+        | IrInstruction { instruction = MakeClosure(target, label, _environment, size, _runtimeManaged, _returns, _accepts, _returnsOwned) } :: rest ->
             if target == temp
             then
                 if size == 0
                 then Some(label)
                 else None
             else emptyEnvironmentClosureLabel(temp)(rest)
-        | IrInstruction { instruction = MakeClosureStack(target, label, _environment, size, _returns, _accepts) } :: rest ->
+        | IrInstruction { instruction = MakeClosureStack(target, label, _environment, size, _returns, _accepts, _returnsOwned) } :: rest ->
             if target == temp
             then
                 if size == 0
@@ -5257,11 +5258,9 @@ let emitClosure label environmentTemp captureTotal stackAllocate state =
                         let closureState =
                             if stackAllocate
                             then
-                                emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(acceptsRuntimeManaged))(tempState)
+                                emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(acceptsRuntimeManaged)(false))(tempState)
                             else
-                                acceptsRuntimeManaged
-                                |> MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)
-                                |> (given (instruction) -> emit(instruction)(tempState))
+                                emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)(acceptsRuntimeManaged)(false))(tempState)
                         in (closureState, closureTemp)
 
 let prepareLambdaBodyState parameter parameterType captures lambdaId origin state =
@@ -7480,7 +7479,7 @@ let recursive recordArenaCopyPlacements (instructions: List(IrInstructionKind)) 
                     state
                     |> recordValuePlacement(destTemp)(semanticType)
                     |> recordArenaCopyPlacements(rest)(semanticType)
-                | MakeClosure(target, _label, _environment, _size, _runtimeManaged, _returnsRuntimeManaged, _acceptsRuntimeManaged) ->
+                | MakeClosure(target, _label, _environment, _size, _runtimeManaged, _returnsRuntimeManaged, _acceptsRuntimeManaged, _returnsOwned) ->
                     state
                     |> recordValuePlacement(target)(semanticType)
                     |> recordArenaCopyPlacements(rest)(semanticType)
@@ -18596,7 +18595,7 @@ let lowerTopLevelFunctionReference (label: Str) (scheme: TypeScheme) (state: Cor
                             closureState
                             |> withTypeSupply(nextSupply)
                             |> emit(LoadConstInt(environmentTemp)(0))
-                            |> emit(MakeClosure(closureTemp)(label)(environmentTemp)(0)(false)(bodyReturnsRuntimeManaged(label)(closureState))(false))
+                            |> emit(MakeClosure(closureTemp)(label)(environmentTemp)(0)(false)(bodyReturnsRuntimeManaged(label)(closureState))(false)(false))
                             |> success(closureTemp)(semanticType)
 
 let lowerUnboundVariable name lower state =

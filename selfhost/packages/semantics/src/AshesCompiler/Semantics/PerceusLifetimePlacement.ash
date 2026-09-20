@@ -300,11 +300,11 @@ let propagateAlias (blocks: List(IrCfgBlock)) (state: AliasState) (index: Int) (
             if sortedSetContains(source)(state.aliasTemps) && sortedSetContains(ptr)(arenaAdtCells)
             then state with aliasTemps = sortedSetInsert(ptr)(state.aliasTemps)
             else state
-        | IrInstruction { instruction = MakeClosure(target, _label, environmentPtr, _size, _managed, _returnsManaged, _acceptsManaged) } ->
+        | IrInstruction { instruction = MakeClosure(target, _label, environmentPtr, _size, _managed, _returnsManaged, _acceptsManaged, _returnsOwned) } ->
             if sortedSetContains(environmentPtr)(state.aliasTemps)
             then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
             else state
-        | IrInstruction { instruction = MakeClosureStack(target, _label, environmentPtr, _size, _returnsManaged, _acceptsManaged) } ->
+        | IrInstruction { instruction = MakeClosureStack(target, _label, environmentPtr, _size, _returnsManaged, _acceptsManaged, _returnsOwned) } ->
             if sortedSetContains(environmentPtr)(state.aliasTemps)
             then state with aliasTemps = sortedSetInsert(target)(state.aliasTemps)
             else state

@@ -4689,7 +4689,7 @@ let buildRcClosureDropModule name context =
             |> StoreMemOffset(0)(0)
             |> irOf,
             false
-            |> MakeClosure(2)("rc_add_env")(0)(8)(true)(false)
+            |> MakeClosure(2)("rc_add_env")(0)(8)(true)(false)(false)
             |> irOf,
             2
             |> LoadConstInt(3)
@@ -4705,7 +4705,7 @@ let buildRcClosureDropModule name context =
             |> LoadConstInt(5)
             |> irOf,
             false
-            |> MakeClosure(6)("rc_add_env")(5)(0)(true)(false)
+            |> MakeClosure(6)("rc_add_env")(5)(0)(true)(false)(false)
             |> irOf,
             None
             |> RcDrop(6)("Function")(0)(true)(false)
@@ -4864,7 +4864,7 @@ let buildRcClosureSharedDropModule name context =
                 |> StoreMemOffset(0)(0)
                 |> irOf,
                 false
-                |> MakeClosure(2)("rc_shared_add_env")(0)(8)(true)(false)
+                |> MakeClosure(2)("rc_shared_add_env")(0)(8)(true)(false)(false)
                 |> irOf,
                 "rc_shared_dropper"
                 |> LoadFuncAddr(3)
@@ -4979,7 +4979,7 @@ let buildCopyOutClosureArenaModule name context =
         IrInstruction(instruction = Alloc(1)(8)(false), location = None),
         IrInstruction(instruction = LoadConstInt(2)(40), location = None),
         IrInstruction(instruction = StoreMemOffset(1)(0)(2), location = None),
-        IrInstruction(instruction = MakeClosure(3)("copy_add_env")(1)(8)(false)(false)(false), location = None),
+        IrInstruction(instruction = MakeClosure(3)("copy_add_env")(1)(8)(false)(false)(false)(false), location = None),
         IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
         IrInstruction(instruction = CopyOutClosure(4)(3)(false)(ArenaScopeBoundary), location = None),
         IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
@@ -4987,7 +4987,7 @@ let buildCopyOutClosureArenaModule name context =
         IrInstruction(instruction = CallClosure(6)(4)(5)(-1), location = None),
         IrInstruction(instruction = PrintInt(6), location = None),
         IrInstruction(instruction = LoadConstInt(7)(0), location = None),
-        IrInstruction(instruction = MakeClosure(8)("copy_add_env")(7)(0)(false)(false)(false), location = None),
+        IrInstruction(instruction = MakeClosure(8)("copy_add_env")(7)(0)(false)(false)(false)(false), location = None),
         IrInstruction(instruction = CopyOutClosure(9)(8)(false)(ArenaScopeBoundary), location = None),
         IrInstruction(instruction = LoadMemOffset(10)(9)(8), location = None),
         IrInstruction(instruction = PrintInt(10), location = None),
@@ -5025,7 +5025,7 @@ let buildCopyOutClosureRcNormalizerModule name context =
         IrInstruction(instruction = Alloc(0)(8)(true), location = None),
         IrInstruction(instruction = LoadConstInt(1)(40), location = None),
         IrInstruction(instruction = StoreMemOffset(0)(0)(1), location = None),
-        IrInstruction(instruction = MakeClosure(2)("copy_norm_env")(0)(8)(true)(false)(false), location = None),
+        IrInstruction(instruction = MakeClosure(2)("copy_norm_env")(0)(8)(true)(false)(false)(false), location = None),
         IrInstruction(instruction = CopyOutClosure(3)(2)(true)(RcNormalization), location = None),
         IrInstruction(instruction = LoadConstInt(4)(100), location = None),
         IrInstruction(instruction = StoreMemOffset(0)(0)(4), location = None),
@@ -5035,7 +5035,7 @@ let buildCopyOutClosureRcNormalizerModule name context =
         IrInstruction(instruction = Alloc(7)(8)(true), location = None),
         IrInstruction(instruction = LoadConstInt(8)(40), location = None),
         IrInstruction(instruction = StoreMemOffset(7)(0)(8), location = None),
-        IrInstruction(instruction = MakeClosure(9)("copy_raw_env")(7)(8)(true)(false)(false), location = None),
+        IrInstruction(instruction = MakeClosure(9)("copy_raw_env")(7)(8)(true)(false)(false)(false), location = None),
         IrInstruction(instruction = CopyOutClosure(10)(9)(true)(RcNormalization), location = None),
         IrInstruction(instruction = StoreMemOffset(7)(0)(4), location = None),
         IrInstruction(instruction = CallClosure(11)(10)(5)(-1), location = None),
@@ -5334,7 +5334,7 @@ let buildLoadArgumentOwnershipModule name context =
     in
         [
             IrInstruction(instruction = LoadConstInt(0)(0), location = None),
-            IrInstruction(instruction = MakeClosure(1)("own_flag")(0)(0)(false)(false)(true), location = None),
+            IrInstruction(instruction = MakeClosure(1)("own_flag")(0)(0)(false)(false)(true)(false), location = None),
             IrInstruction(instruction = LoadConstInt(2)(5), location = None),
             IrInstruction(instruction = CallClosure(3)(1)(2)(-1), location = None),
             IrInstruction(instruction = LoadConstInt(4)(1), location = None),

@@ -113,7 +113,7 @@ let emitToSpaceCopierCall (label: Str) (valueTemp: Int) (body: DropperBody) =
                         | (resultTemp, resultBody) ->
                             resultBody
                             |> emitDropper(Alloc(environmentTemp)(8)(false))
-                            |> emitDropper(MakeClosure(copierTemp)(label)(environmentTemp)(8)(false)(false)(false))
+                            |> emitDropper(MakeClosure(copierTemp)(label)(environmentTemp)(8)(false)(false)(false)(false))
                             |> emitDropper(StoreMemOffset(environmentTemp)(0)(copierTemp))
                             |> emitDropper(CallClosure(resultTemp)(copierTemp)(valueTemp)(-1))
                             |> (given (called: DropperBody) -> (resultTemp, called))

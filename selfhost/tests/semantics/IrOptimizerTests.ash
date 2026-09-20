@@ -194,7 +194,7 @@ let testDevirtualizeClosure unit =
                 |> LoadConstInt(0)
                 |> makeInstruction,
                 false
-                |> MakeClosure(1)("helper_target")(0)(0)(false)(false)
+                |> MakeClosure(1)("helper_target")(0)(0)(false)(false)(false)
                 |> makeInstruction,
                 5
                 |> LoadConstInt(2)
@@ -243,7 +243,7 @@ let testDevirtualizeClosureLeavesParameterSlotStoredAtBackEdge unit =
                 |> LoadConstInt(3)
                 |> makeInstruction,
                 false
-                |> MakeClosure(4)("helper_target")(3)(0)(false)(false)
+                |> MakeClosure(4)("helper_target")(3)(0)(false)(false)(false)
                 |> makeInstruction,
                 4
                 |> StoreLocal(1)
@@ -985,7 +985,7 @@ let closureReturningFunction label inner =
             |> LoadConstInt(0)
             |> makeInstruction,
             false
-            |> MakeClosure(1)(inner)(0)(0)(false)(false)
+            |> MakeClosure(1)(inner)(0)(0)(false)(false)(false)
             |> makeInstruction,
             makeInstruction(Return(1))
         ]
@@ -1004,7 +1004,7 @@ let stackClosureReturningFunction label inner =
             |> LoadConstInt(0)
             |> makeInstruction,
             false
-            |> MakeClosureStack(1)(inner)(0)(0)(false)
+            |> MakeClosureStack(1)(inner)(0)(0)(false)(false)
             |> makeInstruction,
             makeInstruction(Return(1))
         ]
@@ -1836,8 +1836,8 @@ let letBoundHelperInstructions =
         0
         |> LoadConstInt(0)
         |> makeInstruction,
-        true
-        |> MakeClosureStack(1)("helper")(0)(0)(false)
+        false
+        |> MakeClosureStack(1)("helper")(0)(0)(false)(true)
         |> makeInstruction,
         1
         |> StoreLocal(2)
@@ -1883,8 +1883,8 @@ let testLetBoundHelperWithDropperKeepsCleanup unit =
                 0
                 |> LoadConstInt(0)
                 |> makeInstruction,
-                true
-                |> MakeClosureStack(1)("helper")(0)(0)(false)
+                false
+                |> MakeClosureStack(1)("helper")(0)(0)(false)(true)
                 |> makeInstruction,
                 0
                 |> StoreMemOffset(1)(24)
@@ -1924,14 +1924,14 @@ let twoStoreSlotInstructions =
         0
         |> LoadConstInt(0)
         |> makeInstruction,
-        true
-        |> MakeClosureStack(1)("helper")(0)(0)(false)
+        false
+        |> MakeClosureStack(1)("helper")(0)(0)(false)(true)
         |> makeInstruction,
         1
         |> StoreLocal(2)
         |> makeInstruction,
-        true
-        |> MakeClosureStack(6)("other")(0)(0)(false)
+        false
+        |> MakeClosureStack(6)("other")(0)(0)(false)(true)
         |> makeInstruction,
         6
         |> StoreLocal(2)
@@ -2394,7 +2394,7 @@ let singleCreationSiteEntry =
             |> LoadConstInt(0)
             |> makeInstruction,
             false
-            |> MakeClosure(1)("inner")(0)(0)(false)(false)
+            |> MakeClosure(1)("inner")(0)(0)(false)(false)(false)
             |> makeInstruction,
             8
             |> AllocStack(2)
@@ -2403,7 +2403,7 @@ let singleCreationSiteEntry =
             |> StoreMemOffset(2)(0)
             |> makeInstruction,
             false
-            |> MakeClosureStack(3)("outer")(2)(8)(false)
+            |> MakeClosureStack(3)("outer")(2)(8)(false)(false)
             |> makeInstruction,
             1
             |> LoadLocal(4)
@@ -2452,7 +2452,7 @@ let disagreeingCreationSitesEntry =
             |> LoadConstInt(0)
             |> makeInstruction,
             false
-            |> MakeClosure(1)("inner")(0)(0)(false)(false)
+            |> MakeClosure(1)("inner")(0)(0)(false)(false)(false)
             |> makeInstruction,
             8
             |> AllocStack(2)
@@ -2461,10 +2461,10 @@ let disagreeingCreationSitesEntry =
             |> StoreMemOffset(2)(0)
             |> makeInstruction,
             false
-            |> MakeClosureStack(3)("outer")(2)(8)(false)
+            |> MakeClosureStack(3)("outer")(2)(8)(false)(false)
             |> makeInstruction,
             false
-            |> MakeClosure(4)("other")(0)(0)(false)(false)
+            |> MakeClosure(4)("other")(0)(0)(false)(false)(false)
             |> makeInstruction,
             8
             |> AllocStack(5)
@@ -2473,7 +2473,7 @@ let disagreeingCreationSitesEntry =
             |> StoreMemOffset(5)(0)
             |> makeInstruction,
             false
-            |> MakeClosureStack(6)("outer")(5)(8)(false)
+            |> MakeClosureStack(6)("outer")(5)(8)(false)(false)
             |> makeInstruction,
             1
             |> LoadLocal(7)
@@ -2602,7 +2602,7 @@ let curryingStageFunction retainCapture =
                             |> StoreMemOffset(0)(16)
                             |> makeInstruction,
                             false
-                            |> MakeClosure(3)("body")(0)(24)(false)(false)
+                            |> MakeClosure(3)("body")(0)(24)(false)(false)(false)
                             |> makeInstruction,
                             makeInstruction(Return(3))
                         ]

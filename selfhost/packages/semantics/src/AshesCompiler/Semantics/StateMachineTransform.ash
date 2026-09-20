@@ -171,8 +171,8 @@ let getDefinedTemps inst =
         | RegexFind(t, _, _, _) -> [t]
         | RegexCaptures(t, _, _, _) -> [t]
         | RegexSubstitute(t, _, _, _) -> [t]
-        | MakeClosure(t, _, _, _, _, _, _) -> [t]
-        | MakeClosureStack(t, _, _, _, _, _) -> [t]
+        | MakeClosure(t, _, _, _, _, _, _, _) -> [t]
+        | MakeClosureStack(t, _, _, _, _, _, _) -> [t]
         | LoadFuncAddr(t, _) -> [t]
         | CallClosure(t, _, _, _) -> [t]
         | CallKnown(t, _, _, _, _, _) -> [t]
@@ -367,8 +367,8 @@ let getUsedTemps inst =
         | RegexFind(_, c, s, st) -> [c, s, st]
         | RegexCaptures(_, c, s, st) -> [c, s, st]
         | RegexSubstitute(_, c, s, rep) -> [c, s, rep]
-        | MakeClosure(_, _, envPtr, _, _, _, _) -> [envPtr]
-        | MakeClosureStack(_, _, envPtr, _, _, _) -> [envPtr]
+        | MakeClosure(_, _, envPtr, _, _, _, _, _) -> [envPtr]
+        | MakeClosureStack(_, _, envPtr, _, _, _, _) -> [envPtr]
         | CallClosure(_, c, a, flag) ->
             if flag >= 0
             then [c, a, flag]

@@ -534,19 +534,19 @@ let resolveClosureDefinition (facts: ClosureDefinitionFacts) (closureTemp: IrTem
 // installed: a resource cleanup of that value is a runtime no-op (the dropper word is zero).
 let isDropperFreeStackClosureSlotLoad (facts: ClosureDefinitionFacts) (temp: IrTemp) =
     match resolveClosureDefinition(facts)(temp) with
-        | Some((MakeClosureStack(target, _, _, _, _, _), true)) -> !listContains(target)(facts.closureTempsWithDropper)
+        | Some((MakeClosureStack(target, _, _, _, _, _, _), true)) -> !listContains(target)(facts.closureTempsWithDropper)
         | _ -> false
 
 let tryBuildKnownCall (facts: ClosureDefinitionFacts) dest argTemp flagTemp definition =
     match definition with
-        | MakeClosure(_, fnLabel, envTemp, _, _, _, _) ->
+        | MakeClosure(_, fnLabel, envTemp, _, _, _, _, _) ->
             if lookupAssociation(envTemp)(facts.defCounts) == Some(1)
             then
                 false
                 |> CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)
                 |> Some
             else None
-        | MakeClosureStack(_, fnLabel, envTemp, envSize, _, _) ->
+        | MakeClosureStack(_, fnLabel, envTemp, envSize, _, _, _) ->
             if lookupAssociation(envTemp)(facts.defCounts) == Some(1)
             then
                 envSize > 0
@@ -1206,8 +1206,8 @@ let isDeadInstruction inst usedTemps readSlots =
         | LoadConstFloat(t, _) -> !listContains(t)(usedTemps)
         | LoadConstBool(t, _) -> !listContains(t)(usedTemps)
         | StoreLocal(slot, _) -> !listContains(slot)(readSlots)
-        | MakeClosure(t, _, _, _, _, _, _) -> !listContains(t)(usedTemps)
-        | MakeClosureStack(t, _, _, _, _, _) -> !listContains(t)(usedTemps)
+        | MakeClosure(t, _, _, _, _, _, _, _) -> !listContains(t)(usedTemps)
+        | MakeClosureStack(t, _, _, _, _, _, _) -> !listContains(t)(usedTemps)
         | _ -> false
 
 let elideDeadCode instructions =
@@ -1380,7 +1380,7 @@ let functionInstructions (fn: IrFunction) = fn.instructions
 // return one label.
 let knownClosureLabelOf sourceTemp singleDefs knownLabels =
     match lookupAssociation(sourceTemp)(singleDefs) with
-        | Some(MakeClosure(_, fnLabel, _, _, _, _, _)) -> Some(fnLabel)
+        | Some(MakeClosure(_, fnLabel, _, _, _, _, _, _)) -> Some(fnLabel)
         | Some(CallKnown(_, fnLabel, _, _, _, _)) -> lookupAssociation(fnLabel)(knownLabels)
         | _ -> None
 
@@ -2095,8 +2095,8 @@ let recursive collectEnvironmentStores instructions (acc: List(((IrTemp, Int), L
 let describeCreationSite (facts: ClosureDefinitionFacts) inst =
     (let described =
         match inst with
-            | MakeClosure(_, label, envTemp, size, _, _, _) -> Some((label, envTemp, size))
-            | MakeClosureStack(_, label, envTemp, size, _, _) -> Some((label, envTemp, size))
+            | MakeClosure(_, label, envTemp, size, _, _, _, _) -> Some((label, envTemp, size))
+            | MakeClosureStack(_, label, envTemp, size, _, _, _) -> Some((label, envTemp, size))
             | CallKnown(_, label, envTemp, _, _, _) -> Some((label, envTemp, 0))
             | _ -> None
     in
@@ -2171,8 +2171,8 @@ let recursive resolveCaptureLabel (creatorLabel: Str) (facts: ClosureDefinitionF
     then CaptureUnknown
     else
         match lookupAssociation(temp)(facts.singleDefs) with
-            | Some(MakeClosure(_, label, _, _, _, _, _)) -> CaptureKnown(label)
-            | Some(MakeClosureStack(_, label, _, _, _, _)) -> CaptureKnown(label)
+            | Some(MakeClosure(_, label, _, _, _, _, _, _)) -> CaptureKnown(label)
+            | Some(MakeClosureStack(_, label, _, _, _, _, _)) -> CaptureKnown(label)
             | Some(Borrow(_, source)) -> resolveCaptureLabel(creatorLabel)(facts)(source)(known)(knownReturned)(depth + 1)
             | Some(LoadLocal(_, slot)) ->
                 if lookupAssociation(slot)(facts.storeCountBySlot) == Some(1)
@@ -2346,11 +2346,11 @@ let acceptCurryingStageInstruction (scan: CurryingStageScan) inst (last: Bool) =
                         | None -> None
                 else None
             else None
-        | MakeClosure(target, label, envPtr, size, runtimeManaged, _, _) ->
+        | MakeClosure(target, label, envPtr, size, runtimeManaged, _, _, _) ->
             if runtimeManaged
             then None
             else acceptStageClosure(scan)(target)(label)(envPtr)(size)
-        | MakeClosureStack(target, label, envPtr, size, _, _) -> acceptStageClosure(scan)(target)(label)(envPtr)(size)
+        | MakeClosureStack(target, label, envPtr, size, _, _, _) -> acceptStageClosure(scan)(target)(label)(envPtr)(size)
         | Return(source) ->
             if last
             then

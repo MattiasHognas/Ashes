@@ -1013,7 +1013,7 @@ let codegenInstructionKind cx builder kind state =
                         // RC-managed allocation here has (so a future closure drop can walk back to
                         // it); the ordinary form is an arena bump allocation, since a closure and
                         // its environment routinely outlive the frame that built them.
-                                        | MakeClosure(target, funcLabel, envPtrTemp, envSizeBytes, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
+                                        | MakeClosure(target, funcLabel, envPtrTemp, envSizeBytes, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument, returnsGeneralRcOwned) ->
                                             let closurePtr =
                                                 if runtimeManaged
                                                 then emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(closureSizeBytes)("rc_closure")
@@ -1022,15 +1022,15 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 let result =
                                                     emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupIndexed(envPtrTemp)(tempEnv))(
-                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(runtimeManaged)
+                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(runtimeManaged)(returnsGeneralRcOwned)
                                                     )("t" + Ashes.Text.fromInt(target))
                                                 in ((target, result) :: tempEnv, terminated)
-                                        | MakeClosureStack(target, funcLabel, envPtrTemp, envSizeBytes, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
+                                        | MakeClosureStack(target, funcLabel, envPtrTemp, envSizeBytes, returnsRuntimeManaged, acceptsRuntimeManagedArgument, returnsGeneralRcOwned) ->
                                             let closurePtr = emitStackAlloc(builder)(i64)(closureSizeBytes)("closure_stack")
                                             in
                                                 let result =
                                                     emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupIndexed(envPtrTemp)(tempEnv))(
-                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(false)
+                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(false)(returnsGeneralRcOwned)
                                                     )("t" + Ashes.Text.fromInt(target))
                                                 in ((target, result) :: tempEnv, terminated)
                                         | LoadFuncAddr(target, funcLabel) ->
@@ -1388,7 +1388,7 @@ let recursive functionAllocatesStackMemory instructions =
     match instructions with
         | [] -> false
         | IrInstruction { instruction = AllocStack(_, _) } :: _ -> true
-        | IrInstruction { instruction = MakeClosureStack(_, _, _, _, _, _) } :: _ -> true
+        | IrInstruction { instruction = MakeClosureStack(_, _, _, _, _, _, _) } :: _ -> true
         | _ :: rest -> functionAllocatesStackMemory(rest)
 
 // The join every lowered multi-arm function body converges on: a function whose last three

@@ -214,7 +214,8 @@
           Target: 1,
           FuncLabel: lambda_0,
           ReturnsRuntimeManaged: false,
-          AcceptsRuntimeManagedArgument: false
+          AcceptsRuntimeManagedArgument: false,
+          ReturnsGeneralRcOwned: false
         },
         {
           Slot: 2,
@@ -428,7 +429,8 @@
             EnvSizeBytes: 8,
             RuntimeManaged: false,
             ReturnsRuntimeManaged: false,
-            AcceptsRuntimeManagedArgument: false
+            AcceptsRuntimeManagedArgument: false,
+            ReturnsGeneralRcOwned: false
           },
           {
             Source: 2
