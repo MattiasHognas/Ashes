@@ -288,6 +288,7 @@ public sealed partial class Lowering
         int TmcDeclines,
         int SelfReferences,
         int InstructionCount,
+        int NextTempSlot,
         Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts);
 
     /// <summary>
@@ -366,6 +367,7 @@ public sealed partial class Lowering
             _elementSpecializationTmcDeclines,
             _elementSpecializationSelfReferences,
             _inst.Count,
+            _nextTempSlot,
             SnapshotTempOwnershipFacts());
 
         _scopes.Clear();
@@ -398,6 +400,9 @@ public sealed partial class Lowering
         if (_inst.Count > saved.InstructionCount)
         {
             _inst.RemoveRange(saved.InstructionCount, _inst.Count - saved.InstructionCount);
+            // The discarded instructions were the only users of the temps reserved since, so the
+            // caller's numbering carries no trace of the specialization.
+            _nextTempSlot = saved.NextTempSlot;
         }
         RestoreTempOwnershipFacts(saved.TempOwnershipFacts);
         PopTraitConstraintScope();

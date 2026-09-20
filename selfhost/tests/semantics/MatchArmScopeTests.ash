@@ -101,12 +101,17 @@ let expectRecordArmResultIsCopiedOutPastTheReset unit =
     |> (given (_) -> Unit)
 
 // An arm that owns nothing leaves its window open around a heap result: the pre-restore slot is
-// allocated, but only the cleanup block restores the arm's bracket.
+// allocated, but only the cleanup block restores the arm's bracket. The other arm hands the join a
+// reference-counted value of its own, so this arm's arena result is normalized in place, a
+// reference when it is reference-counted and a copy otherwise, before it is stored.
 let expectOwnerlessHeapArmLeavesWindowOpen unit =
     Unit
     |> swappedRecordSource
     |> dumpSource
-    |> expectLine("    StoreLocal            Slot=2 Source=24")
+    |> expectLine("    IsReferenceCounted    Target=27 SourceTemp=24")
+    |> expectLine("    CopyOutArena          DestTemp=29 SrcTemp=24 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization")
+    |> expectLine("    StoreLocal            Slot=2 Source=30")
+    |> expectNoLine("    StoreLocal            Slot=2 Source=24")
     |> expectNoLine("    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10")
     |> expectLine("    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11")
     |> (given (_) -> Unit)
