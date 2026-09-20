@@ -4726,6 +4726,15 @@ let isSelfFunnelArm (expression: Expr) (state: CoreLoweringState) =
                 | (ExprVar(name), applied) -> name == selfName && applied == arity
                 | _ -> false
 
+// An arm that never reaches its join: every path through it is a tail self call, whose back edge
+// jumps away. Stage 0 records such a call's value, and a join of nothing else, as ownership neutral.
+let recursive armNeverReachesJoin (expression: Expr) (state: CoreLoweringState) =
+    match expression with
+        | ExprAt(_span, inner) -> armNeverReachesJoin(inner)(state)
+        | ExprIf(_condition, thenBranch, elseBranch) -> armNeverReachesJoin(thenBranch)(state) && armNeverReachesJoin(elseBranch)(state)
+        | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> armNeverReachesJoin(body)(state)
+        | other -> isSelfFunnelArm(other)(state)
+
 let recursive patternFactsNamed (name: Str) (facts: List(PatternBindingFact)) =
     match facts with
         | [] -> []
@@ -12101,7 +12110,7 @@ let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: Co
         armNewlyProduced = tempIsNewlyProduced(finalTemp)(state),
         armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
         armOwned = isRuntimeTemp(finalTemp)(state),
-        armStoreTemp = if isSelfFunnelArm(body)(state)
+        armStoreTemp = if armNeverReachesJoin(body)(state)
         then -1
         else finalTemp
     )
