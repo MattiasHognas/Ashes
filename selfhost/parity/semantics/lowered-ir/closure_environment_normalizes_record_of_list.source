@@ -1,0 +1,27 @@
+// A curried function's inner closure captures a record holding a list of records, which its
+// environment normalizer copies through the deep copy, and the fresh record handed to the second
+// curried position is adopted by a callee known to normalize it.
+type Inst =
+    | text: Str
+    | n: Int
+
+type Body =
+    | items: List(Inst)
+    | count: Int
+
+let emitTo (body: Body) (inst: Inst) = body with items = [inst]
+
+let mk (label: Str) = Inst(text = "" + label, n = 1)
+
+let build (seed: Str) = emitTo(emitTo(emitTo(Body(items = [], count = 0))(mk(seed)))(mk("Second")))(mk("Third"))
+
+let recursive weigh (items: List(Inst)) (total: Int) =
+    match items with
+        | [] -> total
+        | Inst { text = text, n = n } :: rest -> weigh(rest)(total + n + Ashes.Text.byteLength(text))
+
+let describe (body: Body) =
+    match body with
+        | Body { items = items } -> weigh(items)(0) + weigh(items)(0)
+
+Ashes.IO.print(describe(build("Found")))

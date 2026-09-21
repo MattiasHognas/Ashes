@@ -289,7 +289,10 @@ let fixtures =
         "tco_direct_conditional_accumulator_borrows_child",
         "owned_value_released_behind_optional_scalar_result",
         "tco_accumulator_of_owned_call_results",
-        "owned_result_of_unnamed_callee_read_from_closure_header"
+        "owned_result_of_unnamed_callee_read_from_closure_header",
+        "parameter_released_behind_pair_result",
+        "closure_environment_normalizes_record_of_list",
+        "fresh_argument_released_behind_unproven_result"
     ]
 
 // The fixtures whose stage-0 dump comes from a lowering that registers no trait declarations:
