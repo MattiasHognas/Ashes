@@ -74,6 +74,10 @@ under `tests/`.
 | `dumptoggles.sh <fixture> <SWITCH>...` | Builds the stage-1 dump tool under each switch and runs it on a fixture: which stage-0 rule makes the stage-1 binary crash. |
 | `dumpbt.sh [-k] <fixture> [words]` | The dump tool with debug information under gdb: the faulting instruction and the functions whose return addresses are on the stack. `compile --project ... --emit-ir lowered` maps a `lambda_N` to the source binding it was lowered from. |
 | `s1diffold.sh <fixture>...` | Stage 1 against the fixtures as stage 0 lowered them before the leak work, then as it lowers them now: a missing mirror of the new rules against an older gap. |
+| `variants.sh <template.ash> <rounds> <name>=<sed-expression>...` | Shrinks a reproducer: each sed expression deletes or replaces one construct, and the variant runs through `plateau.sh`. |
+| `progbt.sh <program.ash> [frames]`, `progwatch.sh <address-hex> [stops] [frames]` | A program built with debug information under gdb: the crash site, then every write to one word. A corrupted pointer is located with gdb's `find /g` over the reference-counted region first. An allocation at a misaligned address means a free-list link was decremented: some cell was released twice. |
+| `optloop.sh [-b] <source.ash> <rounds>...` | The real self-hosted optimizer run N times over one lowered program (`projects/optloop`), in a fraction of a second: a peak that grows with the rounds is a leak inside the optimizer. `CENSUS=<rounds>` dumps the heap at exit for `tinyrootshape.sh` and `tinypeek.sh`; `WATCH=<cell> ROUNDS_WATCHED=<n>` after a `DEBUG=1 -b` build lists every write to a cell's count with source lines. Hand-written reproducers of a stage-1 leak kept diverging from the real code; importing the real package into a probe project did not. |
+| `probeswitches.sh <SWITCH>...` | Builds stage 1 once per switch and runs the module probe with each: which stage-0 rule moves stage 1's peak. A rule that helps a probe can cost stage 1 elsewhere, and only this shows it. |
 | `biggraph.sh <stage1> <seconds> <GB> [lines]`, `fulldump.sh` | A snapshot of the module probe's reference-counted heap at a moment: leaked states, then root classes with exclusive attribution. |
 
 ## Leak census
@@ -84,6 +88,9 @@ release. Identical leaked objects in power-of-two multiplicities mean repeated w
 
 | Script | What it does |
 |---|---|
+| `mktinyinputs.sh <count>...` | Writes `tiny/loops<count>.ash`, that many copies of one recursive list function: two counts give the census a per-function difference. |
+| `debugstage1.sh <tag>` | Stage 1 built with debug information, for `tinywatch.sh`. The census naming a cell must come from the same binary. |
+| `tinyrootshape.sh <len> <elem> [tag]`, `tinypeek.sh <depth> <address-hex>...` | Over the last dump: the leaked roots of one shape tallied by nearby strings, and a cell printed as a tree of its words (`rcpeek.c`), which is how a root's type is recognised. |
 | `tinyrun.sh <stage1> <src.ash>` | Compiles one small file with stage 1: exit status, elapsed time, peak memory. |
 | `tinycensus.sh <stage1> <src.ash> [chunks]` | The same under gdb, stopped at process exit: dumps the reference-counted region and prints the size census and the leaked-state census. Everything live at exit is a leak. |
 | `tinylist.sh <stage1> <src.ash> [last-n]` | The leaked states at exit in address order; the most recently allocated belong to the last things lowered. |

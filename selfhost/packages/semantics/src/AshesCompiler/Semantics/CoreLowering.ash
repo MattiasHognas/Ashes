@@ -6700,6 +6700,24 @@ let isFreshAggregateLiteral (expression: Expr) (state: CoreLoweringState) =
         | ExprCons(_head, _tail) -> true
         | other -> isConstructorExpression(other)(state)
 
+// A child released whole is tested first: a successor that is not written as a literal where it
+// is copied (a name bound out of a tuple, a join) may still hold an arena cell built this
+// iteration, which has no reference count to release.
+let emitGuardedSourceChildDrop (childTemp: Int) (childType: SemanticType) (state: CoreLoweringState) =
+    if canTestRepresentation == false
+    then emitOwnedValueRelease(unlocatedInstruction)(childTemp)(childType)(state)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+                match tested
+                |> emit(IsReferenceCounted(referenceCountedTemp)(childTemp))
+                |> freshLabel("rc_source_child_in_arena") with
+                    | FreshLabel { state = labelled, label = arenaLabel } ->
+                        labelled
+                        |> emit(JumpIfFalse(referenceCountedTemp)(arenaLabel))
+                        |> emitOwnedValueRelease(unlocatedInstruction)(childTemp)(childType)
+                        |> emit(Label(arenaLabel))
+
 // The release of one child the dying successor holds (stage 0's
 // `EmitRuntimeManagedTcoSourceChildRelease`): a child the construction built as a fresh
 // aggregate literal is an arena cell rather than a reference, so only the references the
@@ -6711,8 +6729,8 @@ let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) 
             if isFreshAggregateLiteral(literal)(state)
             then
                 emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(state)
-            else emitOwnedValueRelease(unlocatedInstruction)(childTemp)(childType)(state)
-        | None -> emitOwnedValueRelease(unlocatedInstruction)(childTemp)(childType)(state)
+            else emitGuardedSourceChildDrop(childTemp)(childType)(state)
+        | None -> emitGuardedSourceChildDrop(childTemp)(childType)(state)
 and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (literal: Expr) (state: CoreLoweringState) =
     match (resolveType(state)(semanticType), literal) with
         | (SemNamed(_symbolId, _name, _arguments) as named, _literal) ->
@@ -6722,11 +6740,11 @@ and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (lit
                         | ConstructorArgumentCopy((_tag, _sizeBytes, tagless, _childPlans)) ->
                             releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedChildrenOfNamed(named)(state))(arguments)(state)
                         | _plan -> emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
-                | None -> emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
+                | None -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
         | (SemTuple(elements), ExprTuple(expressions)) ->
             if length(elements) == length(expressions)
             then releaseLiteralTupleElements(cellTemp)(0)(elements)(expressions)(state)
-            else emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
+            else emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
         | (SemList(element), ExprList(expressions, _isMultiline)) -> releaseLiteralListElements(cellTemp)(element)(expressions)(state)
         | (SemList(element), ExprCons(head, tail)) ->
             match freshTemp(state) with
@@ -6735,7 +6753,7 @@ and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (lit
                     |> releaseLiteralListHead(cellTemp)(element)(head)
                     |> unlocatedInstruction(LoadMemOffset(tailTemp)(cellTemp)(8))
                     |> emitSourceChildRelease(tailTemp)(SemList(element))(Some(tail))
-        | _ -> emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
+        | _ -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
 and releaseLiteralConstructorChildren (cellTemp: Int) (tagless: Bool) (children: List((Int, SemanticType))) (arguments: List(Expr)) (state: CoreLoweringState) =
     match children with
         | [] -> state
@@ -11626,17 +11644,80 @@ let consumedDeepCopiedListStaysWithCallee (temp: Int) (policy: CoreConsumedRelea
 // conditional list copy-out copies the heads on its arena branch, `elementCopyingFlagTemp` is
 // that branch's flag and the release follows it), and any other is released with its owned
 // children; a deep-copied result shares nothing with the arguments, so their parts go with them.
+let emitConsumedValueDrop (policy: CoreConsumedReleasePolicy) (temp: Int) (valueType: SemanticType) (preserve: Bool) (state: CoreLoweringState) =
+    if preserve && policy.verifiedRuntimeResult == false && policy.resultDeepCopied == false
+    then
+        if policy.elementCopyingFlagTemp >= 0
+        then emitConsumedArgumentDropByResultBranch(temp)(valueType)(policy.elementCopyingFlagTemp)(state)
+        else emitChildPreservingDrop(temp)(valueType)(state)
+    else emitRuntimeChildDrop(temp)(valueType)(state)
+
+// Stage 0's `HeapPartTypes`: the heap types reachable inside a value of a type, itself included.
+// A named type's constructor fields are expanded once per type name; its type arguments are walked
+// every time.
+let recursive heapPartTypesInto (pending: List(SemanticType)) (expanded: List(Str)) (parts: List(SemanticType)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> parts
+        | next :: rest ->
+            match resolveType(state)(next) with
+                | resolved ->
+                    if resultSurvivesReset(resolved)(state)
+                    then heapPartTypesInto(rest)(expanded)(parts)(state)
+                    else
+                        match resolved with
+                            | SemNamed(_id, name, arguments) ->
+                                if containsName(name)(expanded)
+                                then
+                                    heapPartTypesInto(append(arguments)(rest))(expanded)(resolved :: parts)(state)
+                                else
+                                    match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
+                                        | (_found, fieldTypes) ->
+                                            heapPartTypesInto(rest
+                                            |> append(arguments)
+                                            |> append(fieldTypes))(name :: expanded)(resolved :: parts)(state)
+                            | other ->
+                                heapPartTypesInto(append(structuralComponentTypes(other))(rest))(expanded)(other :: parts)(state)
+
+let recursive resultMayHoldAnyPart (resultType: SemanticType) (parts: List(SemanticType)) (state: CoreLoweringState) =
+    match parts with
+        | [] -> false
+        | part :: rest -> callResultMayContainArgumentType(resultType)(part)([])(state) || resultMayHoldAnyPart(resultType)(rest)(state)
+
+// Stage 0's `LowerCallDropHandedOverArgumentResultCannotHold`: a reference handed over for the
+// callee's result to keep is not in a result whose type has no place for a value of the
+// argument's type, so a callee that did not adopt it left it with the caller, which releases it
+// here, child-preserving when a part of the argument could be in the result.
+let emitHandedOverArgumentResultCannotHold (policy: CoreConsumedReleasePolicy) (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
+    match valueType with
+        | SemFunction(_parameter, _result, _row) -> state
+        | _ ->
+            if resultSurvivesReset(valueType)(state) || containsUnresolvedLayout(valueType)(state) || containsUnresolvedLayout(policy.resultType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state)
+            then state
+            else
+                let unconditional = policy with elementCopyingFlagTemp = -1
+                in
+                    match freshLabel("rc_handed_over_adopted")(state) with
+                        | FreshLabel { state = adoptedLabelled, label = adoptedLabel } ->
+                            match freshLabel("rc_handed_over_release")(adoptedLabelled) with
+                                | FreshLabel { state = releaseLabelled, label = releaseLabel } ->
+                                    releaseLabelled
+                                    |> emit(JumpIfFalse(adoptionFlagTemp)(releaseLabel))
+                                    |> emit(Jump(adoptedLabel))
+                                    |> emit(Label(releaseLabel))
+                                    |> emitConsumedValueDrop(unconditional)(temp)(valueType)(resultMayHoldAnyPart(policy.resultType)(heapPartTypesInto([valueType])([])([])(state))(state))
+                                    |> emit(Label(adoptedLabel))
+
 let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, adoptionFlagTemp = adoptionFlagTemp } when adoptionFlagTemp >= 0 ->
-            if policy.resultCopySevers
-            then
-                match resolveType(state)(semanticType) with
-                    | valueType ->
+            match resolveType(state)(semanticType) with
+                | valueType ->
+                    if policy.resultCopySevers
+                    then
                         emitHandedOverArgumentRelease(temp)(valueType)(adoptionFlagTemp)(
                             handedOverArgumentResultFlag(policy.resultType)(valueType)(policy.resultCopyFlagTemp)(state)
                         )(state)
-            else state
+                    else emitHandedOverArgumentResultCannotHold(policy)(temp)(valueType)(adoptionFlagTemp)(state)
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
                 | SemFunction(_parameter, _result, _row) ->
@@ -11646,13 +11727,7 @@ let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: Core
                 | valueType ->
                     if resultSurvivesReset(valueType)(state) || consumedDeepCopiedListStaysWithCallee(temp)(policy)(state)
                     then state
-                    else
-                        if preserve && policy.verifiedRuntimeResult == false && policy.resultDeepCopied == false
-                        then
-                            if policy.elementCopyingFlagTemp >= 0
-                            then emitConsumedArgumentDropByResultBranch(temp)(valueType)(policy.elementCopyingFlagTemp)(state)
-                            else emitChildPreservingDrop(temp)(valueType)(state)
-                        else emitRuntimeChildDrop(temp)(valueType)(state)
+                    else emitConsumedValueDrop(policy)(temp)(valueType)(preserve)(state)
 
 // Each consumed temp is released once.
 let recursive emitConsumedArgumentDrops (policy: CoreConsumedReleasePolicy) (dropped: List(Int)) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =

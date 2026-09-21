@@ -1120,7 +1120,11 @@ reference-counted heap has its successor copied at the back edge, with reference
 before the iteration's owners are released; a cell built for it therefore borrows its children,
 and a retain stored in such an arena cell would never be released. A parameter left in the arena
 gets no copy, so a cell that escapes into it retains the owned children it stores, whether the
-successor is written in place at the self-call or bound by a `let` the self-call passes on. A
+successor is written in place at the self-call or bound by a `let` the self-call passes on. The
+back-edge copy also releases what the dying arena successor held, through the literal when the
+successor is written as one at the copy site, and otherwise child by child after testing that the
+child is reference-counted: a successor bound out of a tuple may still start with an arena cell,
+which has no count to release. A
 successor that is a choice between the parameter itself and a cons onto it (`ChoiceAccumulatorRebuild`
 in the structural facts) places a list of heap elements on the reference-counted heap, with one
 exception: when a consed head reads a loop parameter, the accumulator stays in the arena, because
