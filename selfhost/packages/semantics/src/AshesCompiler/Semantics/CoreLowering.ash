@@ -2574,14 +2574,17 @@ let recursive expectedTypeForwards expression =
         | ExprCall(_, _, _, _) -> true
         | ExprList(_, _) -> true
         | ExprCons(_, _) -> true
+        | ExprTuple(_) -> true
         | _ -> false
 
-// The runtime-string request reaches every kind the expected type reaches, and `+`, whose
-// string concatenation is itself the producer that honors it.
+// The runtime-string request reaches every kind the expected type reaches except a tuple literal,
+// which hands its elements requests of their own, and `+`, whose string concatenation is itself
+// the producer that honors it.
 let recursive runtimeRequestForwards expression =
     match expression with
         | ExprAt(_span, inner) -> runtimeRequestForwards(inner)
         | ExprAdd(_, _) -> true
+        | ExprTuple(_) -> false
         | other -> expectedTypeForwards(other)
 
 // A binding transfer only reaches the straight `let` chain down to the binding's own read.
@@ -15439,7 +15442,47 @@ let tupleElementRequest (request: ConsumerRequest) (runtimeTuple: Bool) (transfe
     match request with
         | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeAdt = parentAdt, runtimeRecord = parentRecord } -> emptyConsumerRequest with runtimeString = parentString || runtimeTuple && isFreshStringChild(element)(state), runtimeList = parentList || runtimeTuple && isFreshListConstruction(element), runtimeTuple = runtimeTuple, runtimeAdt = parentAdt || runtimeTuple && isConstructorExpression(element)(state), runtimeRecord = parentRecord || runtimeTuple && isRecordLiteral(element), transfersRuntimeManagedChildren = transfers
 
-let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: Bool) (transfers: Bool) elements lower reversedTemps reversedTypes state =
+// The element types the tuple's expected type asks for, or none when it asks for no tuple of this
+// size.
+let expectedTupleElements (request: ConsumerRequest) (count: Int) (state: CoreLoweringState) =
+    match request.expectedType with
+        | Some(expected) ->
+            match resolveType(state)(expected) with
+                | SemTuple(expectedElements) ->
+                    if coreListLength(expectedElements) == count
+                    then expectedElements
+                    else []
+                | _ -> []
+        | None -> []
+
+// Stage 0's `UnifyTupleElementWithExpected`: an element meets its own part of the tuple's expected
+// type as soon as it is lowered, so a constructor whose type arguments only the expected type
+// fixes (a None beside a sibling arm's Some) has a resolved layout when the tuple is placed. A
+// mismatch is left to the unification of the whole tuple to report.
+let unifyTupleElementWithExpected (expectedElements: List(SemanticType)) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match expectedElements with
+        | expectedElement :: _rest ->
+            match bindType(expectedElement)(semanticType)(state) with
+                | (typedState, None) -> typedState
+                | (_failedState, Some(_error)) -> state
+        | [] -> state
+
+// The whole tuple meets its expected type once it is built, which reports any mismatch the
+// elements' own unifications left unreported.
+let unifyTupleWithExpected (request: ConsumerRequest) (lowered: LoweredCoreValue) =
+    match request.expectedType with
+        | Some(expectedType) ->
+            lowered
+            |> unifyExpectedResult(expectedType)
+            |> locateLoweredMismatch(request.argumentSite)
+        | None -> lowered
+
+let remainingExpectedElements (expectedElements: List(SemanticType)) =
+    match expectedElements with
+        | _first :: rest -> rest
+        | [] -> []
+
+let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: Bool) (transfers: Bool) (expectedElements: List(SemanticType)) elements lower reversedTemps reversedTypes state =
     match elements with
         | [] -> finishCoreValues(state)(reversedTemps)(reversedTypes)
         | element :: rest ->
@@ -15453,11 +15496,12 @@ let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: B
                         request,
                         runtimeTuple,
                         transfers,
+                        remainingExpectedElements(expectedElements),
                         rest,
                         lower,
                         temp :: reversedTemps,
                         semanticType :: reversedTypes,
-                        nextState
+                        unifyTupleElementWithExpected(expectedElements)(semanticType)(nextState)
                     )
 
 let retainTupleChildren (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (retains: Bool) (state: CoreLoweringState) =
@@ -15475,19 +15519,60 @@ let markAggregateRuntimeManaged (temp: Int) (runtimeManaged: Bool) (state: CoreL
 // tuple owns its children and an escaping arena tuple carries them out of the scopes that own
 // them, so both retain a child read from a live owner (`RetainRuntimeManagedTupleChildren`),
 // after the tuple temp is allocated and before the cell is.
+// Stage 0's `IsNormalizableSiblingElement`: an arena element of a tuple placed on the
+// reference-counted heap that a copy turns into an owned value, so the tuple can own every element
+// instead of stranding the reference-counted ones in the arena.
+let isNormalizableSiblingElement (semanticType: SemanticType) (state: CoreLoweringState) =
+    containsUnresolvedLayout(semanticType)(state) == false && (match ownedResultPlanOf(semanticType)(state) with
+        | Some(_plan) -> true
+        | None -> false)
+
+let recursive allTupleElementsPlaceable (copiesSiblings: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, temps, semanticTypes) with
+        | ([], [], []) -> true
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || copiesSiblings && isNormalizableSiblingElement(semanticType)(state)) && allTupleElementsPlaceable(copiesSiblings)(restElements)(restTemps)(restTypes)(state)
+        | _ -> false
+
+// Stage 0's `NormalizeGeneralRcTupleElements` for the siblings of a reference-counted element:
+// each arena sibling is retained or copied into an owned value, and the tuple stores that.
+let recursive normalizeTupleSiblings (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, temps, semanticTypes) with
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
+            match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state), ownedResultPlanOf(semanticType)(state)) with
+                | (false, Some(plan)) ->
+                    match emitArgumentCopy(temp)(plan)(state) with
+                        | (copied, copyTemp) ->
+                            match copied
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> normalizeTupleSiblings(restElements)(restTemps)(restTypes) with
+                                | (normalized, rest) -> (normalized, copyTemp :: rest)
+                | _ ->
+                    match normalizeTupleSiblings(restElements)(restTemps)(restTypes)(state) with
+                        | (normalized, rest) -> (normalized, temp :: rest)
+        | _ -> (state, [])
+
+let finishPlacedTuple elements (temps: List(Int)) (semanticTypes: List(SemanticType)) (tupleTemp: Int) (runtimeManaged: Bool) (transfers: Bool) (state: CoreLoweringState) =
+    match retainTupleChildren(elements)(temps)(semanticTypes)(runtimeManaged || transfers)(state) with
+        | (retainedState, storedTemps) ->
+            retainedState
+            |> emit(Alloc(tupleTemp)(coreListLength(storedTemps) * 8)(runtimeManaged))
+            |> emitTupleFields(tupleTemp)(0)(storedTemps)
+            |> markAggregateRuntimeManaged(tupleTemp)(runtimeManaged)
+            |> success(tupleTemp)(SemTuple(semanticTypes))
+
 let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
-            match (freshTemp(state), (runtimeTuple || holdsReferenceCountedElement(elements)(temps)(semanticTypes)(state)) && allRuntimeManageableTupleElements(elements)(temps)(semanticTypes)(state)) with
-                | (FreshTemp { state = allocatedState, temp = tupleTemp }, runtimeManaged) ->
-                    match retainTupleChildren(elements)(temps)(semanticTypes)(runtimeManaged || transfers)(allocatedState) with
-                        | (retainedState, storedTemps) ->
-                            retainedState
-                            |> emit(Alloc(tupleTemp)(coreListLength(storedTemps) * 8)(runtimeManaged))
-                            |> emitTupleFields(tupleTemp)(0)(storedTemps)
-                            |> markAggregateRuntimeManaged(tupleTemp)(runtimeManaged)
-                            |> success(tupleTemp)(SemTuple(semanticTypes))
+        | LoweredCoreValues { state = state, temps = loweredTemps, semanticTypes = semanticTypes, error = None } ->
+            match (freshTemp(state), holdsReferenceCountedElement(elements)(loweredTemps)(semanticTypes)(state)) with
+                | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
+                    if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
+                    then
+                        match if holdsReferenceCounted
+                        then normalizeTupleSiblings(elements)(loweredTemps)(semanticTypes)(reservedState)
+                        else (reservedState, loweredTemps) with
+                            | (normalizedState, temps) -> finishPlacedTuple(elements)(temps)(semanticTypes)(tupleTemp)(true)(transfers)(normalizedState)
+                    else finishPlacedTuple(elements)(loweredTemps)(semanticTypes)(tupleTemp)(false)(transfers)(reservedState)
 
 let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
     match (request, stateTcoLoop(state)) with
@@ -15508,8 +15593,9 @@ let lowerTuple elements lower state =
         | ConsumerRequest { runtimeTuple = runtimeTuple } as request ->
             state
             |> markResourceArgumentsMoved(elements)
-            |> lowerTupleElementsInto(request)(runtimeTuple)(tupleTransfers(request)(state))(elements)(lower)([])([])
+            |> lowerTupleElementsInto(request)(runtimeTuple)(tupleTransfers(request)(state))(expectedTupleElements(request)(coreListLength(elements))(state))(elements)(lower)([])([])
             |> finishTupleLowering(elements)(runtimeTuple)(tupleTransfers(request)(state))
+            |> unifyTupleWithExpected(request)
 
 // The live arena list-cell token, if one was published by a cons arm of the match this cell is
 // rebuilt in. A reference-counted cell never takes one: its token would carry transferred children
