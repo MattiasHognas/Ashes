@@ -2444,7 +2444,7 @@ internal static partial class LlvmCodegen
                 LoadRuntimeManagedArgumentFlag(state, callClosure.RuntimeManagedArgumentFlagTemp))),
             IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
                 LoadRuntimeManagedArgumentFlag(state, callKnown.RuntimeManagedArgumentFlagTemp),
-                tailCallKind: DetermineTailCallKind(callKnown, index, instructions))),
+                tailCallKind: DetermineTailCallKind(state, callKnown, index, instructions))),
             IrInst.LoadArgumentOwnership loadOwnership => StoreTemp(
                 state,
                 loadOwnership.Target,
@@ -2504,12 +2504,15 @@ internal static partial class LlvmCodegen
         return false;
     }
 
+    // The entry function returns nothing and ends by flushing and exiting the process, so a call
+    // in its last position is an ordinary call there.
     private static LlvmTailCallKind DetermineTailCallKind(
+        LlvmCodegenState state,
         IrInst.CallKnown call,
         int index,
         IReadOnlyList<IrInst> instructions)
     {
-        if (!CanEmitNativeTailCall(call, index, instructions))
+        if (state.IsEntry || !CanEmitNativeTailCall(call, index, instructions))
         {
             return LlvmTailCallKind.NoTail;
         }
@@ -2534,7 +2537,7 @@ internal static partial class LlvmCodegen
         DebugInfoContext? debugContext,
         string functionLabel)
     {
-        if (DetermineTailCallKind(callKnown, index, instructions) != LlvmTailCallKind.MustTail)
+        if (DetermineTailCallKind(state, callKnown, index, instructions) != LlvmTailCallKind.MustTail)
         {
             return false;
         }
