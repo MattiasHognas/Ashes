@@ -1,0 +1,15 @@
+{
+  "name": "probe2",
+  "entry": "src/Main.ash",
+  "sourceRoots": ["src"],
+  "outDir": "out",
+  "devDependencies": {
+    "semantics": { "path": "@ROOT@/selfhost/packages/semantics" },
+    "formatter": { "path": "@ROOT@/selfhost/packages/formatter" },
+    "backend": { "path": "@ROOT@/selfhost/packages/backend" },
+    "cli": { "path": "@ROOT@/selfhost/packages/cli" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "@ROOT@/selfhost/packages/frontend" }
+  }
+}

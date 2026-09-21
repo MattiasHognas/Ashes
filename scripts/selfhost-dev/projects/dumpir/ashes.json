@@ -1,0 +1,12 @@
+{
+  "name": "stage1-dumpir",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "semantics": { "path": "@ROOT@/selfhost/packages/semantics" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "@ROOT@/selfhost/packages/frontend" }
+  }
+}

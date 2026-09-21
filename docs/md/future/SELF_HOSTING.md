@@ -96,6 +96,20 @@ flowchart TD
     F --> G[G. Continue with step 1 below]
 ```
 
+**Landed so far.** A in #1114. B and C together in #1115 (arena reuse declines a reference-counted
+token), #1116 (a reference-counted list literal cell never points at an arena cell), #1117 (closures
+carry whether their function hands over an owned result) and #1119 (the ownership contract itself, with
+stage 1 brought to parity on every shared program). D is the tools in
+[`scripts/selfhost-dev/`](https://github.com/MattiasHognas/Ashes/blob/main/scripts/selfhost-dev/README.md). With them on `main`, stage 1
+compiles the self-hosted code generator module in 32 s at 2.6 GB peak, against 35 s at 8.9 GB before.
+E is next. The descriptions of A to D below are kept as the record of what was done and why.
+
+Two things the vetting in B added to the gate, because the gate as it stood was green through both.
+The ownership branch made k-nucleotide use 37.9 GB instead of 214 MB while every suite passed, so the
+`challenges/` programs are run against `main` before ownership work lands. And whole-program parity
+and the self-hosted semantics suite compare IR text: stage 1 miscompiled `Ashes.Text.join` with both
+green, and only the self-hosted `cli` and `backend` suites, which run code stage 1 generated, saw it.
+
 **What was found.** Four things, all measured.
 
 - *Stage 1 repeated its own work exponentially.* `lowerFunctionBodyResolvingCalls` lowers a lambda
