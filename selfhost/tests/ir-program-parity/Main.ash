@@ -212,6 +212,11 @@ let recursive printEach (lines: List(Str)) =
 // matches it directly: the parameter is a linear reuse root whose copier is synthesized at the
 // loop entry, each arm hands its dead matched cell out as an arena reuse token, the same-arity
 // rebuild consumes it in place, and the move analysis elides the entry deep copy.
+// The four tco_*conditional* and tco_let_bound_successor programs scan into two list accumulators,
+// one of them consed onto only in some arms: the accumulator chosen by a branch is placed on the
+// reference-counted heap beside a sibling that cannot hold it, its arms normalize into an owned
+// join, the back edge keeps the successors without an arena reset, the matched pair a callee
+// returned is released there, and a let-bound successor of an arena parameter retains its children.
 // tco_list_parameter_resolved_by_back_edge walks a list into an unannotated accumulator with
 // no operator in the body: the accumulator's type is a variable at the loop entry, so its
 // active flag is allocated where the back edge resolves it, after the arm's pattern locals.
@@ -272,7 +277,11 @@ let fixtures =
         "passthrough_or_fresh_result",
         "record_head_list_producer",
         "aggregate_borrowing_owner_kept_by_callee",
-        "producer_conses_nested_variant_head"
+        "producer_conses_nested_variant_head",
+        "tco_conditional_accumulator_beside_sibling",
+        "tco_record_pair_child_consed_conditionally",
+        "tco_let_bound_successor_keeps_owned_child",
+        "tco_direct_conditional_accumulator_borrows_child"
     ]
 
 // The fixtures whose stage-0 dump comes from a lowering that registers no trait declarations:

@@ -12148,7 +12148,17 @@ let preconstrainCallResult expected (site: Maybe(CoreMismatchSite)) arity lowere
 // spine's `arity` applications is constrained to the expected type before the arguments.
 let recursive lowerCallSpineCallee expression (context: CoreCallContext) expected (site: Maybe(CoreMismatchSite)) arity (transfers: Bool) lower state =
     match expression with
-        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+        // The applications of a spine are located at the outermost one; the callee they end in is
+        // located where it is written, which a pipeline puts on a later line than the call.
+        | ExprAt(_span, inner) ->
+            match unspanArgument(inner) with
+                | ExprCall(_function, _argument, _isSugar, _layout) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+                | ExprLambda(_parameter, _body, _annotation) -> lowerCallSpineCallee(inner)(context)(expected)(site)(arity)(transfers)(lower)(state)
+                | _ ->
+                    state
+                    |> lower(expression)
+                    |> preconstrainCallResult(expected)(site)(arity)
+                    |> callStageOf
         | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(context)(expected)(site)(arity + 1)(transfers)(lower)(state)
         | ExprLambda(parameter, body, annotation) ->
             state
