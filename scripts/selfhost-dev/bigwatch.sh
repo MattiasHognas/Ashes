@@ -10,6 +10,7 @@ if [ "$mode" = dump ]; then
     echo "chunks: $(cat "$T/bigwatch.chunks")"
     rm -rf "$T/big-dump"; mkdir -p "$T/big-dump"
     for f in "$T"/full-*.bin; do [ -e "$f" ] && mv "$f" "$T/big-dump/"; done
+    census_tool rcstates && ir_kinds_table || exit 1
     RCSTATES_LIST=1 "$T/rcstates" "$T/big-dump" "$T/irkinds.txt" > "$T/bigwatch.states" 2>&1
     grep -v "^state" "$T/bigwatch.states" | head -8
     echo "== sample leaked states per head class (middle of the address range)"

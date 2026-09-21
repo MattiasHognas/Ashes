@@ -7,6 +7,7 @@ bash "$HERE/mkrcroots.sh" > /dev/null || exit 1
 for which in 1 2; do
     src=$2; [ $which = 2 ] && src=$3
     CENSUS_LINES=1 STATE_LINES=1 bash "$HERE/tinycensus.sh" "$1" "$src" > /dev/null
+    census_tool rcroots && ir_kinds_table || exit 1
     RCROOTS_TALLY=1 "$T/rcroots" "$T/tiny-dump" "$T/irkinds.txt" | grep "^T " | cut -d' ' -f2-4 | sort | uniq -c | awk '{print $2" "$3" "$4" "$1}' | sort > "$T/rootdiff-$which.txt"
 done
 join -a1 -a2 -e0 -o 0,1.2,2.2 <(awk '{print $1"_"$2"_"$3" "$4}' "$T/rootdiff-1.txt" | sort) <(awk '{print $1"_"$2"_"$3" "$4}' "$T/rootdiff-2.txt" | sort) \

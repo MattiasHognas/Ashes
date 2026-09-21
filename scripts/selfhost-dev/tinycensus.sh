@@ -18,5 +18,6 @@ base=$((0x100000000000)); chunk=$((256 * 1048576))
 } > "$T/tinycensus.gdb"
 bash -c "ulimit -s 1048576; gdb -q -batch -x '$T/tinycensus.gdb' --args '$bin' compile '$src' -o '$J/tiny.out'" > "$T/tinycensus.log" 2>&1
 ls "$D"/full-*.bin > /dev/null 2>&1 || { echo "dump failed"; tail -5 "$T/tinycensus.log"; exit 1; }
+census_tool rccensus2 && census_tool rcstates && ir_kinds_table || exit 1
 "$T/rccensus2" "$D/full-0.bin" | head -${CENSUS_LINES:-14}
 "$T/rcstates" "$D" "$T/irkinds.txt" | head -${STATE_LINES:-16}

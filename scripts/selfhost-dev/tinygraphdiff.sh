@@ -5,6 +5,7 @@
 for which in 1 2; do
     src=$2; [ $which = 2 ] && src=$3
     CENSUS_LINES=1 STATE_LINES=1 bash "$HERE/tinycensus.sh" "$1" "$src" > /dev/null
+    census_tool rcgraph2 || exit 1
     "$T/rcgraph2" "$T/tiny-dump" 2>/dev/null > "$T/graphdiff-$which.txt"
     head -2 "$T/graphdiff-$which.txt" | cut -c1-160
 done

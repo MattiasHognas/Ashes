@@ -29,3 +29,20 @@ materialize_project() {
 }
 materialize_project dumpir
 materialize_project probe2
+
+# The census programs read a dump of the reference-counted region. Each is built into the scratch directory on
+# first use, and again when its source is newer.
+census_tool() {
+    local name=$1
+    if [ ! -x "$T/$name" ] || [ "$HERE/$name.c" -nt "$T/$name" ]; then
+        clang -O2 -o "$T/$name" "$HERE/$name.c" || { echo "could not build $name" >&2; return 1; }
+    fi
+}
+
+# The constructor names of `IrInstructionKind` in declaration order: a cell's tag is the declaration index.
+ir_kinds_table() {
+    awk '/^type IrInstructionKind/ { on = 1; next }
+         on && /^(type|let) / { exit }
+         on && /^    \| [A-Z]/ { n = $2; sub(/\(.*/, "", n); print n }' \
+        "$R/selfhost/packages/semantics/src/AshesCompiler/Semantics/IrInstructions.ash" > "$T/irkinds.txt"
+}
