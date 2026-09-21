@@ -303,8 +303,9 @@ let fixtures =
 // committed oracle: the head of a consumed list parameter read under an operator is tracked and
 // borrowed, an unannotated list parameter's active flag is allocated at the loop entry, and a
 // self call under an operator reads the callee's returns bit rather than asking for an arena
-// result. They stay out of the comparison until the oracle lowers with the trait declarations
-// the compiler stitches. The next is a producer over a record carrying an optional string: the
+// result (the only difference left in the first two, whose other functions match the oracle).
+// They stay out of the comparison until the oracle lowers with the trait declarations the
+// compiler stitches. The next is a producer over a record carrying an optional string: the
 // compiler leaves its consumed list parameter outside runtime management and zeroes the self
 // call's retain flag, where this lowering admits the parameter, keeps the callee's accepts bit,
 // and reaches the call through a back edge; it rejoins the comparison once the loop parameter
@@ -330,6 +331,8 @@ let fixtures =
 // placement.
 let elaboratedFixtures =
     [
+        "parameter_reaches_result_record_update",
+        "rc_child_of_call_argument_kept_by_callee_result",
         "self_call_operand_string_result",
         "tco_non_tail_self_call_in_operator_operand",
         "tco_consumed_list_parameter_borrowed_head",

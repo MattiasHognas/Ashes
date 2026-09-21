@@ -240,11 +240,18 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    byte and joined the shared fixtures. Two defects of stage 1's own surfaced on the way and were
    fixed at once: a second arm of a `match` ending in a tail call released the first arm's adopted
    scrutinee as well as its own, and a nullary constructor pattern was taken for a variable binding
-   the whole scrutinee, which left that arm releasing nothing. What is still unported from this arc
-   is the frame that collects the retains an arena aggregate takes as a call's argument and
-   releases them behind the call's result, with the refined back-edge test that decides slot by
-   slot whether a successor can hold an owned value, and the release of a handed-over argument
-   whose callee could not keep it, which stage 1 has only in its spine-only form. After this round
+   the whole scrutinee, which left that arm releasing nothing. A third port brought the reach
+   analysis's exposure account (an unproven result still proves it never holds a parameter whole
+   when every value the unproven construct saw is enumerated, so a fresh argument is released in
+   the ordinary way rather than handed over), the release of a normalized parameter behind a result
+   that only borrows from it, the closure environment normalizer on the general deep copy (a
+   captured record holding a list of records gets one), a callee's later curried positions known
+   normalized through the returned-closure chain, and the to-space copy of an argument bound to a
+   callee's quantified parameter, which stage 1 lacked at call sites altogether. What is still
+   unported from this arc is the frame that collects the retains an arena aggregate takes as a
+   call's argument and releases them behind the call's result, with the refined back-edge test that
+   decides slot by slot whether a successor can hold an owned value; both sit behind the placement
+   of a loop parameter at the loop's entry, which stage 1 still decides at finalization. After this round
    the probe's leaked list heads in the first 2 GB of heap fall from 1,020,000 holding 472 MB to
    476,000 holding 177 MB, and its peak from 2,582 MB to 2,507 MB: about 15,000 large roots holding
    800 MB are now the largest class, and the next thing to identify.
