@@ -12451,7 +12451,9 @@ let emitGuardedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreL
             emitReferenceOrCopy(sourceTemp)(given (copying: CoreLoweringState) ->
                 match freshTemp(copying) with
                     | FreshTemp { state = reserved } -> emitGuardedListDeepCopy(sourceTemp)(elementPlan)(reserved))(state)
-        | _ -> emitArgumentCopy(sourceTemp)(plan)(state)
+        | (_tests, ScalarArgumentCopy) -> (state, sourceTemp)
+        | (true, _plan) -> emitReferenceOrCopy(sourceTemp)(emitArgumentDeepCopy(sourceTemp)(plan))(state)
+        | (false, _plan) -> emitArgumentDeepCopy(sourceTemp)(plan)(state)
 
 // Stage 0's `EmitOwnedResultOrCopy`: a value the arm built itself is taken as it is when its cell
 // turns out reference-counted, the reference being the arm's own, and copied when the cell is
@@ -14552,7 +14554,7 @@ let finishMatchPlan plan =
                             |> emit(StoreLocal(resultSlot)(defaultTemp))
                             |> emit(Label(endLabel))
                             |> emit(LoadLocal(resultTemp)(resultSlot))
-                            |> normalizeMixedJoinArms(resultSlot)(resultType)(armResults) with
+                            |> normalizeMixedJoinArms(resultSlot)(resultType)(reverse(armResults)) with
                                 | (normalized, joinedArms) ->
                                     normalized
                                     |> markControlFlowJoin(resultTemp)(joinedArms)
