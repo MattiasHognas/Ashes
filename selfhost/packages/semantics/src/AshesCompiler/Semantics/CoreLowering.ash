@@ -12223,6 +12223,28 @@ let recursive replaceJoinArmStore (slot: Int) (source: Int) (replacement: List(I
             else instruction :: replaceJoinArmStore(slot)(source)(replacement)(rest)
         | instruction :: rest -> instruction :: replaceJoinArmStore(slot)(source)(replacement)(rest)
 
+// How many instructions precede the arm's store of `source` into the join slot, `-1` when the
+// store is not there.
+let recursive joinArmStoreIndex (slot: Int) (source: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: rest ->
+            if storeSlot == slot && storeSource == source
+            then length(rest)
+            else joinArmStoreIndex(slot)(source)(rest)
+        | _ :: rest -> joinArmStoreIndex(slot)(source)(rest)
+
+// Stage 0's `ShiftRecordedInstructionIndices`: a pattern owner's retain is spliced in later at the
+// instruction count recorded for it, so a site past the arm's store moves with the instructions
+// the normalization put in the store's place.
+let recursive shiftPatternOwnerSites (index: Int) (delta: Int) (sites: List(PatternOwnerSite)) =
+    match sites with
+        | [] -> []
+        | site :: rest ->
+            (if site.siteInsertCount > index
+            then site with siteInsertCount = site.siteInsertCount + delta
+            else site) :: shiftPatternOwnerSites(index)(delta)(rest)
+
 // Stage 0's `NormalizeJoinArmStore`: the arm's store becomes a normalization of its value (a
 // reference when it is reference-counted, a copy otherwise) followed by the store of the
 // normalized value, emitted into a buffer and spliced where the store was.
@@ -12233,7 +12255,18 @@ let normalizeJoinArmStore (slot: Int) (plan: ArgumentCopyPlan) (arm: MatchArmRes
             | (copied, normalizedTemp) ->
                 let buffered =
                     emit(StoreLocal(slot)(normalizedTemp))(copied)
-                in (buffered with reversedInstructions = replaceJoinArmStore(slot)(arm.armStoreTemp)(buffered.reversedInstructions)(state.reversedInstructions)) |> markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced))
+                in
+                    let index = joinArmStoreIndex(slot)(arm.armStoreTemp)(state.reversedInstructions)
+                    in
+                        (buffered with reversedInstructions = replaceJoinArmStore(slot)(arm.armStoreTemp)(buffered.reversedInstructions)(state.reversedInstructions))
+                        |> markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)
+                        |> (given (spliced: CoreLoweringState) ->
+                            if index < 0
+                            then spliced
+                            else
+                                withStatePatternOwnerSites(spliced
+                                |> statePatternOwnerSites
+                                |> shiftPatternOwnerSites(index)(length(buffered.reversedInstructions) - 1))(spliced)))
 
 let recursive normalizeUnownedJoinArms (slot: Int) (plan: ArgumentCopyPlan) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     match arms with

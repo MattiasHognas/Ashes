@@ -327,6 +327,30 @@ let expectArmResetsAreUnguardedWithoutACapability unit =
     |> countLinesStartingWith("  live_posts_skip_")
     |> test.assertEqual(0)
 
+let recursive lineIndexFrom (needle: Str) (index: Int) (lines: List(Str)) =
+    match lines with
+        | [] -> -1
+        | line :: rest ->
+            if line == needle
+            then index
+            else lineIndexFrom(needle)(index + 1)(rest)
+
+// A loop whose first arm hands the join a static string and whose second arm returns a head bound
+// out of the list parameter: the static arm is normalized in place, which puts instructions where
+// its store was. The head's pattern owner is retained at an instruction count recorded before
+// that, so the count moves with them and the retain still lands among its own arm's bindings
+// rather than in the arm before it, where it would never run while its release still does.
+let expectNormalizedArmMovesTheLaterPatternOwnerRetain unit =
+    (let lines = dumpSource("let recursive pick (ps: List(Str)) =\n    match ps with\n        | [] -> \"\"\n        | only :: rest ->\n            match rest with\n                | [] -> only\n                | _ -> pick(rest)\n\nAshes.IO.print(pick([Ashes.Text.fromInt(7)]))\n")
+    in
+        let armLabel = lineIndexFrom("  match_next_2:")(0)(lines)
+        in
+            let retain = lineIndexFrom("    RcDup                 Target=40 SourceTemp=39 RuntimeManaged=true")(0)(lines)
+            in
+                lines
+                |> expectLine("    IsReferenceCounted    Target=35 SourceTemp=4")
+                |> (given (_) -> test.assertEqual(true)(armLabel >= 0 && retain > armLabel)))
+
 let runMatchArmScopeTests unit =
     Unit
     |> expectTagGroupCasesAreBracketed
@@ -345,4 +369,5 @@ let runMatchArmScopeTests unit =
     |> expectWholeBindingArmReleasesAFreshRecordInline
     |> expectArmResetsAreGuardedByLivePostsUnderAHandle
     |> expectArmResetsAreUnguardedWithoutACapability
+    |> expectNormalizedArmMovesTheLaterPatternOwnerRetain
     |> (given (_) -> Ashes.IO.print("all self-hosted match arm scope tests passed"))
