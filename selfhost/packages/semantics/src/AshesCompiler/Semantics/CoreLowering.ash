@@ -12452,7 +12452,8 @@ let emitGuardedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreL
                 match freshTemp(copying) with
                     | FreshTemp { state = reserved } -> emitGuardedListDeepCopy(sourceTemp)(elementPlan)(reserved))(state)
         | (_tests, ScalarArgumentCopy) -> (state, sourceTemp)
-        | (true, _plan) -> emitReferenceOrCopy(sourceTemp)(emitArgumentDeepCopy(sourceTemp)(plan))(state)
+        | (true, _plan) ->
+            emitReferenceOrCopy(sourceTemp)(emitArgumentDeepCopy(sourceTemp)(plan))(state)
         | (false, _plan) -> emitArgumentDeepCopy(sourceTemp)(plan)(state)
 
 // Stage 0's `EmitOwnedResultOrCopy`: a value the arm built itself is taken as it is when its cell
@@ -16067,6 +16068,17 @@ let headReadsAdmittedLoopParameter (head: Expr) (state: CoreLoweringState) =
         | (Some(frame), Some(loop), Some(slot)) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
         | _ -> false
 
+// A head read through a binding that still owns its reference, or through a pattern binding of a
+// scrutinee the match adopted: the value is reference-counted already, stage 0's `RuntimeRc`
+// representation of the lowered read, and the cell retains it rather than copying it.
+let headReadsLiveRuntimeOwner (head: Expr) (state: CoreLoweringState) =
+    match unspanArgument(head) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) -> true
+                | None -> false
+        | _ -> false
+
 // The cell copy of an arena constructor head: the cell whole, then its owned children, with one
 // emitter's unused result temp burned ahead of it as stage 0 burns it.
 let emitConsHeadCopy (sourceTemp: Int) (sizeBytes: Int) (tagless: Bool) (children: List((Int, SemanticType))) (state: CoreLoweringState) =
@@ -16082,7 +16094,7 @@ let emitConsHeadCopy (sourceTemp: Int) (sizeBytes: Int) (tagless: Bool) (childre
 let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !childIsRuntimeManaged(head)(temp)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
+            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
             then
                 match resolveType(state)(semanticType) with
                     | SemString ->
