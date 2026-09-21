@@ -12671,41 +12671,90 @@ let calleeReturnsGeneralRcOwned (context: CoreCallContext) (state: CoreLoweringS
                 | None -> false
         | _ -> false)
 
+// The branch on a closure's owned-result flag ahead of the normalization: set, the result is taken
+// over as it is; clear, or with no closure to ask, it is normalized.
+let emitOwnedFlagTest (ownedFlagTemp: Int) (ownedLabel: Str) (state: CoreLoweringState) =
+    if ownedFlagTemp < 0
+    then state
+    else
+        match freshLabel("general_rc_result_normalize")(state) with
+            | FreshLabel { state = labelled, label = normalizeLabel } ->
+                labelled
+                |> emit(JumpIfFalse(ownedFlagTemp)(normalizeLabel))
+                |> emit(Jump(ownedLabel))
+                |> emit(Label(normalizeLabel))
+
+// The closure an indirect application called to produce `temp`, looked for among the most recent
+// instructions as stage 0's `TryEmitClosureReturnsGeneralRcOwnedFlag` does.
+let recursive closureOfCallResult (temp: Int) (budget: Int) (instructions: List(IrInstruction)) =
+    if budget == 0
+    then None
+    else
+        match instructions with
+            | [] -> None
+            | IrInstruction { instruction = CallClosure(target, closureTemp, _argumentTemp, _flagTemp) } :: rest ->
+                if target == temp
+                then Some(closureTemp)
+                else closureOfCallResult(temp)(budget - 1)(rest)
+            | _instruction :: rest -> closureOfCallResult(temp)(budget - 1)(rest)
+
+// Stage 0's `EmitClosureReturnsGeneralRcOwnedFlag`: bit 60 of the closure's header word says that
+// its function returns a result of the contract's types owned.
+let emitClosureReturnsGeneralRcOwnedFlag (closureTemp: Int) (state: CoreLoweringState) =
+    match freshTempRun(5)(state) with
+        | FreshTemp { state = allocated, temp = packedTemp } ->
+            (allocated
+            |> emit(LoadMemOffset(packedTemp)(closureTemp)(16))
+            |> emit(LoadConstInt(packedTemp + 1)(60))
+            |> emit(ShrInt(packedTemp + 2)(packedTemp)(packedTemp + 1))
+            |> emit(LoadConstInt(packedTemp + 3)(1))
+            |> emit(AndInt(packedTemp + 4)(packedTemp + 2)(packedTemp + 3)), packedTemp + 4)
+
 // Stage 0's `LowerGeneralRcCallResult`: a call result of the contract's types is owned by the
 // caller once the call's window is reset. It is taken over as it is from a callee known to return
-// it owned and normalized otherwise, since a generic callee's result may borrow its arguments'
-// parts. The value is kept in an owned slot and handed on without a runtime-managed fact.
+// it owned; from a closure it cannot name it is taken over when the closure's header says its
+// function returns it owned; and it is normalized otherwise, since a generic callee's result may
+// borrow its arguments' parts. The value is kept in an owned slot and handed on without a
+// runtime-managed fact.
 let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match freshLocal(state) with
-        | FreshLocal { state = slotted, local = ownedSlot } ->
-            let restored =
-                slotted
-                |> emit(StoreLocal(ownedSlot)(temp))
-                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
-            in
-                let owned =
-                    if calleeReturnsGeneralRcOwned(context)(restored)
-                    then restored
-                    else
-                        match generalCopyPlanOf(semanticType)(restored) with
-                            | None -> restored
-                            | Some(plan) ->
-                                match freshLabel("general_rc_result_owned")(restored) with
-                                    | FreshLabel { state = labelled, label = ownedLabel } ->
-                                        match emitGuardedDeepCopy(temp)(plan)(labelled) with
-                                            | (copied, copyTemp) ->
-                                                copied
-                                                |> emit(StoreLocal(ownedSlot)(copyTemp))
-                                                |> emit(Label(ownedLabel))
-                in
-                    match owned
-                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
-                    |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
-                    |> freshTemp with
-                        | FreshTemp { state = loaded, temp = resultTemp } ->
-                            loaded
-                            |> emit(LoadLocal(resultTemp)(ownedSlot))
-                            |> success(resultTemp)(semanticType)
+    (let returnsOwned = calleeReturnsGeneralRcOwned(context)(state)
+    in
+        match if returnsOwned
+        then (state, -1)
+        else
+            match closureOfCallResult(temp)(64)(state.reversedInstructions) with
+                | Some(closureTemp) -> emitClosureReturnsGeneralRcOwnedFlag(closureTemp)(state)
+                | None -> (state, -1) with
+            | (flagged, ownedFlagTemp) ->
+                match freshLocal(flagged) with
+                    | FreshLocal { state = slotted, local = ownedSlot } ->
+                        let restored =
+                            slotted
+                            |> emit(StoreLocal(ownedSlot)(temp))
+                            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                        in
+                            let owned =
+                                match (returnsOwned, generalCopyPlanOf(semanticType)(restored)) with
+                                    | (false, Some(plan)) ->
+                                        match freshLabel("general_rc_result_owned")(restored) with
+                                            | FreshLabel { state = labelled, label = ownedLabel } ->
+                                                match labelled
+                                                |> emitOwnedFlagTest(ownedFlagTemp)(ownedLabel)
+                                                |> emitGuardedDeepCopy(temp)(plan) with
+                                                    | (copied, copyTemp) ->
+                                                        copied
+                                                        |> emit(StoreLocal(ownedSlot)(copyTemp))
+                                                        |> emit(Label(ownedLabel))
+                                    | _ -> restored
+                            in
+                                match owned
+                                |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                                |> freshTemp with
+                                    | FreshTemp { state = loaded, temp = resultTemp } ->
+                                        loaded
+                                        |> emit(LoadLocal(resultTemp)(ownedSlot))
+                                        |> success(resultTemp)(semanticType))
 
 let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
