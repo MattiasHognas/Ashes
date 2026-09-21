@@ -43,6 +43,7 @@ export (
     type OwnedReleasePlan(..),
     type InlineReleaseSynthesis(..),
     value synthesizeOwnedAggregateRelease,
+    value synthesizeChildDrop,
     type DropperTypes(..),
     value prepareDropperTypes,
     value openDropperBody,
@@ -67,9 +68,11 @@ type DropperLabelCache =
     | structuralLabels: List((Str, Str))
     | adtLabels: List((Str, Str))
     | copierLabels: List((Str, Str))
+    | normalizerLabels: List((Str, Str))
+    | generalDropperLabels: List((Str, Str))
     deriving {Eq, Show}
 
-let emptyDropperLabelCache = DropperLabelCache(structuralLabels = [], adtLabels = [], copierLabels = [])
+let emptyDropperLabelCache = DropperLabelCache(structuralLabels = [], adtLabels = [], copierLabels = [], normalizerLabels = [], generalDropperLabels = [])
 
 // The outcome of one synthesis request: the helper's label (`None` when the release needs no
 // helper), the cache and counters to carry forward, and the functions synthesized by the request
@@ -293,13 +296,13 @@ let registerStructuralLabel (key: Str) (body: DropperBody) =
     match body with
         | DropperBody { cache = DropperLabelCache { structuralLabels = structural, adtLabels = adt, copierLabels = copiers }, nextLambdaId = nextLambdaId } ->
             let label = "__rcdrop_structural_" + Ashes.Text.fromInt(nextLambdaId)
-            in (label, (body with cache = DropperLabelCache(structuralLabels = (key, label) :: structural, adtLabels = adt, copierLabels = copiers), nextLambdaId = nextLambdaId + 1))
+            in (label, (body with cache = (body.cache with structuralLabels = (key, label) :: structural), nextLambdaId = nextLambdaId + 1))
 
 let registerAdtLabel (key: Str) (body: DropperBody) =
     match body with
         | DropperBody { cache = DropperLabelCache { structuralLabels = structural, adtLabels = adt, copierLabels = copiers }, nextLambdaId = nextLambdaId } ->
             let label = "__rcdrop_" + Ashes.Text.fromInt(nextLambdaId)
-            in (label, (body with cache = DropperLabelCache(structuralLabels = structural, adtLabels = (key, label) :: adt, copierLabels = copiers), nextLambdaId = nextLambdaId + 1))
+            in (label, (body with cache = (body.cache with adtLabels = (key, label) :: adt), nextLambdaId = nextLambdaId + 1))
 
 // The constructor names of the named type, in declaration order.
 let recursive constructorsNamed (typeName: Str) (definitions: List(ConstructorInferenceDefinition)) =
@@ -389,13 +392,75 @@ let usesRecursiveDropper (named: SemanticType) (body: DropperBody) =
             |> bodyEnvironment
             |> heapRuntimeRecursiveCopyAdtLayout(named)
 
-let recursive allocateConstructorLabels (names: List(Str)) (body: DropperBody) =
+let cachedGeneralDropperLabel (key: Str) (body: DropperBody) =
+    match body with
+        | DropperBody { cache = DropperLabelCache { generalDropperLabels = labels } } -> lookupLabel(key)(labels)
+
+let registerGeneralDropperLabel (key: Str) (body: DropperBody) =
+    match body with
+        | DropperBody { cache = DropperLabelCache { generalDropperLabels = labels }, nextLambdaId = nextLambdaId } ->
+            let label = "__rcdrop_general_" + Ashes.Text.fromInt(nextLambdaId)
+            in (label, (body with cache = (body.cache with generalDropperLabels = (key, label) :: labels), nextLambdaId = nextLambdaId + 1))
+
+let recursive containsTypeKey (key: Str) (path: List(Str)) =
+    match path with
+        | [] -> false
+        | candidate :: rest -> candidate == key || containsTypeKey(key)(rest)
+
+// Stage 0's `IsGeneralRcAdmissible` over the synthesis environment: a resolved graph of inline
+// values, strings, byte buffers, big integers, lists, tuples and algebraic data types. A named
+// type already on the walk's path is taken as admissible, which lets a recursive type through.
+let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Str)) (body: DropperBody) =
+    match semanticType with
+        | SemString -> true
+        | SemBytes -> true
+        | SemBigInt -> true
+        | SemList(element) -> generalRcAdmissible(element)(path)(body)
+        | SemTuple(elements) -> allGeneralRcAdmissible(elements)(path)(body)
+        | SemNamed(_symbolId, _name, _arguments) ->
+            if containsTypeKey(formatSemanticType(semanticType))(path)
+            then true
+            else
+                match (namedTypeConstructors(semanticType)(body), body
+                |> bodyEnvironment
+                |> classifyHeapLayout(semanticType)) with
+                    | ([], _facts) -> false
+                    | (_constructors, HeapLayoutFacts { containsResource = true }) -> false
+                    | (_constructors, HeapLayoutFacts { containsUnresolvedType = true }) -> false
+                    | (_constructors, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(formatSemanticType(semanticType) :: path)(body)
+        | other -> canArenaResetLayout(other)
+and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(Str)) (body: DropperBody) =
+    match types with
+        | [] -> true
+        | semanticType :: rest -> generalRcAdmissible(semanticType)(path)(body) && allGeneralRcAdmissible(rest)(path)(body)
+and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(Str)) (body: DropperBody) =
+    match children with
+        | [] -> true
+        | HeapLayoutChild { dropKind = DropClosure } :: _rest -> false
+        | HeapLayoutChild { dropKind = UnsupportedChildDrop } :: _rest -> false
+        | HeapLayoutChild { childType = childType } :: rest -> generalRcAdmissible(childType)(path)(body) && allChildrenGeneralRcAdmissible(rest)(path)(body)
+
+// Stage 0's `NeedsRuntimeManagedAdtNormalizer`: an admissible named type that neither the fixed
+// copy-out nor the inline runtime-managed layouts express. Its values are released through a
+// dropper of their own, synthesized once per type.
+let usesGeneralDropper (named: SemanticType) (body: DropperBody) =
+    match body
+    |> bodyEnvironment
+    |> classifyHeapLayout(named) with
+        | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
+        | HeapLayoutFacts { runtimeRecordAdtSupported = true } -> false
+        | HeapLayoutFacts { runtimeOwnedChildAdtSupported = true } -> false
+        | HeapLayoutFacts { runtimeTcoOwnedChildAdtSupported = true } -> false
+        | HeapLayoutFacts { runtimePositionalAdtSupported = true } -> false
+        | _ -> generalRcAdmissible(named)([])(body)
+
+let recursive allocateConstructorLabels (labelName: Str) (names: List(Str)) (body: DropperBody) =
     match names with
         | [] -> ([], body)
         | name :: rest ->
-            match freshDropperLabel("rcdrop_ctor")(body) with
+            match freshDropperLabel(labelName)(body) with
                 | (label, labelBody) ->
-                    match allocateConstructorLabels(rest)(labelBody) with
+                    match allocateConstructorLabels(labelName)(rest)(labelBody) with
                         | (blocks, blocksBody) -> ((label, name) :: blocks, blocksBody)
 
 let recursive switchCases (blocks: List((Str, Str))) (tag: Int) =
@@ -522,7 +587,36 @@ and emitAdtDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
     else
         if usesRecursiveDropper(named)(body)
         then emitRecursiveAdtDrop(valueTemp)(named)(body)
-        else emitFirstConstructorDrop(valueTemp)(named)(body)
+        else
+            if usesGeneralDropper(named)(body)
+            then emitGeneralAdtDrop(valueTemp)(named)(body)
+            else emitFirstConstructorDrop(valueTemp)(named)(body)
+// Stage 0's `EmitGeneralRuntimeManagedAdtDrop`: on the last reference the dropper releases every
+// owned field of the live constructor, then the cell. Its label is registered before its body, so
+// a field of the same type calls it.
+and emitGeneralAdtDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
+    match synthesizeGeneralDropperIn(named)(body) with
+        | (label, synthesizedBody) ->
+            match freshDropperTemp(synthesizedBody) with
+                | (environmentTemp, environmentBody) ->
+                    match freshDropperTemp(environmentBody) with
+                        | (resultTemp, resultBody) ->
+                            resultBody
+                            |> emitDropper(LoadConstInt(environmentTemp)(0))
+                            |> emitDropper(CallKnown(resultTemp)(label)(environmentTemp)(valueTemp)(-1)(false))
+and synthesizeGeneralDropperIn (named: SemanticType) (body: DropperBody) =
+    match cachedGeneralDropperLabel(formatSemanticType(named))(body) with
+        | Some(label) -> (label, body)
+        | None ->
+            match registerGeneralDropperLabel(formatSemanticType(named))(body) with
+                | (label, registered) ->
+                    registered
+                    |> beginSynthesizedBody
+                    |> emitAdtDropperBody("rcdrop_general_shared")("rcdrop_general_ctor")(named)
+                    |> finishSynthesizedBody(label)(named
+                    |> formatSemanticType
+                    |> createAdtDropperOrigin(label))(registered)
+                    |> (given (outer) -> (label, outer))
 and emitFirstConstructorDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
     match ownedChildren(firstConstructorName(named)(body))(named)(body) with
         | [] -> emitTypeDrop(valueTemp)(named)(body)
@@ -562,28 +656,28 @@ and synthesizeAdtDropperIn (named: SemanticType) (body: DropperBody) =
                 | (label, registered) ->
                     registered
                     |> beginSynthesizedBody
-                    |> emitAdtDropperBody(named)
+                    |> emitAdtDropperBody("rcdrop_shared")("rcdrop_ctor")(named)
                     |> finishSynthesizedBody(label)(named
                     |> formatSemanticType
                     |> createAdtDropperOrigin(label))(registered)
                     |> (given (outer) -> (label, outer))
-and emitAdtDropperBody (named: SemanticType) (body: DropperBody) =
+and emitAdtDropperBody (sharedName: Str) (constructorLabelName: Str) (named: SemanticType) (body: DropperBody) =
     match openSynthesizedValue(body) with
         | (valueTemp, valueBody) ->
-            match freshDropperLabel("rcdrop_shared")(valueBody) with
+            match freshDropperLabel(sharedName)(valueBody) with
                 | (sharedLabel, labelBody) ->
                     labelBody
                     |> emitUniqueTest(valueTemp)(sharedLabel)
-                    |> emitConstructorSwitch(valueTemp)(named)(sharedLabel)
+                    |> emitConstructorSwitch(constructorLabelName)(valueTemp)(named)(sharedLabel)
                     |> emitDropper(Label(sharedLabel))
                     |> emitTypeDrop(valueTemp)(named)
                     |> emitReturnZero
-and emitConstructorSwitch (valueTemp: Int) (named: SemanticType) (sharedLabel: Str) (body: DropperBody) =
+and emitConstructorSwitch (constructorLabelName: Str) (valueTemp: Int) (named: SemanticType) (sharedLabel: Str) (body: DropperBody) =
     match freshDropperTemp(body) with
         | (tagTemp, tagBody) ->
             match tagBody
             |> emitConstructorTagRead(tagTemp)(valueTemp)(named)
-            |> allocateConstructorLabels(namedTypeConstructors(named)(body)) with
+            |> allocateConstructorLabels(constructorLabelName)(namedTypeConstructors(named)(body)) with
                 | (blocks, blocksBody) ->
                     blocksBody
                     |> emitDropper(SwitchTag(tagTemp)(switchCases(blocks)(0))(sharedLabel))
@@ -796,3 +890,13 @@ let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType
                     released
                     |> inlineReleaseResult
                     |> Some
+
+// The inline release of an owned value by its type alone, stage 0's `EmitRuntimeManagedChildDrop`:
+// a tuple or a list is walked, a named type released by the dropper its layout calls for, and a
+// string-like leaf released as one allocation.
+let synthesizeChildDrop (valueTemp: Int) (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
+        | (ids, opened) ->
+            (opened with nextTemp = nextTemp, nextLocal = nextLocal)
+            |> emitChildDrop(valueTemp)(renumberType(ids)(semanticType))
+            |> inlineReleaseResult

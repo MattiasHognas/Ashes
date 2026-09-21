@@ -217,6 +217,11 @@ let recursive printEach (lines: List(Str)) =
 // reference-counted heap beside a sibling that cannot hold it, its arms normalize into an owned
 // join, the back edge keeps the successors without an arena reset, the matched pair a callee
 // returned is released there, and a let-bound successor of an arena parameter retains its children.
+// The three owned_* and tco_accumulator_of_owned_call_results programs build values of a recursive
+// variant, which only the synthesized normalization helper copies and only its own dropper
+// releases: a function returning one hands it over owned, a caller keeps it in an owned slot it
+// releases at its end or at its back edge, behind a result it made independent first, and a caller
+// that cannot name its callee reads the closure's header to know which it got.
 // tco_list_parameter_resolved_by_back_edge walks a list into an unannotated accumulator with
 // no operator in the body: the accumulator's type is a variable at the loop entry, so its
 // active flag is allocated where the back edge resolves it, after the arm's pattern locals.
@@ -281,7 +286,10 @@ let fixtures =
         "tco_conditional_accumulator_beside_sibling",
         "tco_record_pair_child_consed_conditionally",
         "tco_let_bound_successor_keeps_owned_child",
-        "tco_direct_conditional_accumulator_borrows_child"
+        "tco_direct_conditional_accumulator_borrows_child",
+        "owned_value_released_behind_optional_scalar_result",
+        "tco_accumulator_of_owned_call_results",
+        "owned_result_of_unnamed_callee_read_from_closure_header"
     ]
 
 // The fixtures whose stage-0 dump comes from a lowering that registers no trait declarations:

@@ -159,7 +159,9 @@ let ownedLetInTailArgumentRecordSource = "type Inst =\n    | Jump(Str)\n    | Ot
 // OPT-26: `label` owns the fresh reference-counted call result; the tail self-call's argument
 // stores it in a constructor field, so the read is retained (`Borrow`, then `RcDup`) and the
 // duplicate is what the field stores, while the owner's own release still fires. The loop
-// parameter `n` passed to `mk` takes the pending retain skeleton, dead in this arena frame.
+// parameter `n` passed to `mk` takes the pending retain skeleton. The accumulator holds records of
+// the contract's types, so it lives on the reference-counted heap and its back edge and exit
+// release list cells too: the owner's two releases are the ones naming its slot.
 let expectTailSelfCallArgumentRetainsOwnedBinding unit =
     ownedLetInTailArgumentRecordSource
     |> loopLines("[ClosureHelper from loop]")
@@ -182,10 +184,10 @@ let expectTailSelfCallArgumentRetainsOwnedBinding unit =
             "Source=" + fieldAfter("Target=")(lineContaining("RcDup")(lines))
             |> Ashes.Text.contains(lineContaining("SetAdtField")(lines))
             |> check("the constructor field storing the duplicate"))
-        |> (given (_) -> check("the back-edge owner release and the scope-exit release past the jump")(countContaining("RcDrop")(lines) == 2))
+        |> (given (_) -> check("the back-edge owner release and the scope-exit release past the jump")(countContaining("TypeName=String OwnerSlot=")(lines) == 2))
         |> (given (_) ->
             "TypeName=String OwnerSlot="
-            |> Ashes.Text.contains(lineContaining("RcDrop")(lines))
+            |> Ashes.Text.contains(lineContaining("OwnerSlot=")(lines))
             |> check("the owner release naming the let slot")))
 
 let ownedLetInOperandSelfCallSource = "let mk n = Ashes.Text.fromInt(n)\n\nlet recursive count n acc =\n    if n == 0\n    then 0\n    else\n        let s = mk(n)\n        in\n            if n % 2 == 0\n            then 1 + count(n - 1)(s :: acc)\n            else count(n - 1)(s :: acc)\n\nAshes.IO.print(count(4)([]))"

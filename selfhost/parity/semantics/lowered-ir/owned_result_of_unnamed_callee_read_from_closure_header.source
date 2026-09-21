@@ -1,0 +1,16 @@
+// A function takes the callee that builds a tree as a parameter, so it cannot name it: the
+// closure's header says whether its function returns the tree owned, and the caller reads that
+// bit to take the result over as it is or normalize it, then releases it at its end.
+type Tree =
+    | Leaf(Str)
+    | Node(Tree, Tree)
+
+let build (n: Int) =
+    Node(Leaf("f" + Ashes.Text.fromInt(n)), Node(Leaf(Ashes.Text.fromInt(n + 1)), Leaf("x")))
+
+let measure (make: Int -> Tree) (n: Int) =
+    match make(n) with
+        | Node(Leaf(name), _) -> Ashes.Text.byteLength(name)
+        | _ -> 0
+
+Ashes.IO.print(measure(build)(4) + measure(build)(12))

@@ -1,0 +1,462 @@
+IR (lowered)
+============
+
+function __rcnorm_1  [RuntimeManagedAdtNormalizer]
+  locals=7 temps=27
+    LoadLocal             Target=0 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_2   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Jump                  Target=rc_representation_done_3   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_copy_2:
+    GetAdtTag             Target=3 Ptr=0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_4   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rcnorm_ctor_4:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=5 Ptr=0 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    IsReferenceCounted    Target=6 SourceTemp=5
+    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_7   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=7   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Jump                  Target=rc_representation_done_8   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_copy_7:
+    CopyOutArena          DestTemp=8 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=8   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_done_8:
+    LoadLocal             Target=9 Slot=4   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=9   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    StoreLocal            Slot=3 Source=4   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Jump                  Target=rcnorm_end_6   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rcnorm_ctor_5:
+    CopyOutArena          DestTemp=10 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=11 Ptr=0 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=rc_representation_copy_9   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=13   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Jump                  Target=rc_representation_done_10   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_copy_9:
+    LoadConstInt          Target=15 Value=0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    CallKnown             Target=16 FuncLabel=__rcnorm_1 EnvTemp=15 ArgTemp=11   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    StoreLocal            Slot=5 Source=16   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_done_10:
+    LoadLocal             Target=17 Slot=5   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    SetAdtField           Ptr=10 FieldIndex=0 Source=17   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    GetAdtField           Target=18 Ptr=0 FieldIndex=1   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    IsReferenceCounted    Target=19 SourceTemp=18
+    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_11   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    RcDup                 Target=20 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=20   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Jump                  Target=rc_representation_done_12   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_copy_11:
+    LoadConstInt          Target=22 Value=0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    CallKnown             Target=23 FuncLabel=__rcnorm_1 EnvTemp=22 ArgTemp=18   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    StoreLocal            Slot=6 Source=23   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_done_12:
+    LoadLocal             Target=24 Slot=6   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    SetAdtField           Ptr=10 FieldIndex=1 Source=24   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    StoreLocal            Slot=3 Source=10   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Jump                  Target=rcnorm_end_6   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rcnorm_end_6:
+    LoadLocal             Target=25 Slot=3   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    StoreLocal            Slot=2 Source=25   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_done_3:
+    LoadLocal             Target=26 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Return                Source=26   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+
+function lambda_0  [SourceFunction from build]
+  locals=3 temps=20
+    LoadConstStr          Target=0 StrLabel=str_0   (owned_value_released_behind_optional_scalar_result.ash:14:18)
+    LoadLocal             Target=1 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:14:43)
+    TextFromInt           Target=2 ValueTemp=1   (owned_value_released_behind_optional_scalar_result.ash:14:24)
+    ConcatStr             Target=3 Left=0 Right=2   (owned_value_released_behind_optional_scalar_result.ash:14:18)
+    AllocAdt              Target=4 Tag=0 FieldCount=1   (owned_value_released_behind_optional_scalar_result.ash:14:13)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=3   (owned_value_released_behind_optional_scalar_result.ash:14:13)
+    LoadLocal             Target=5 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:11:13)
+    LoadConstInt          Target=6 Value=1   (owned_value_released_behind_optional_scalar_result.ash:11:17)
+    AddInt                Target=7 Left=5 Right=6   (owned_value_released_behind_optional_scalar_result.ash:11:13)
+    TextFromInt           Target=8 ValueTemp=7   (owned_value_released_behind_optional_scalar_result.ash:11:13)
+    AllocAdt              Target=9 Tag=0 FieldCount=1   (owned_value_released_behind_optional_scalar_result.ash:11:13)
+    SetAdtField           Ptr=9 FieldIndex=0 Source=8   (owned_value_released_behind_optional_scalar_result.ash:11:13)
+    LoadConstStr          Target=10 StrLabel=str_1   (owned_value_released_behind_optional_scalar_result.ash:10:10)
+    AllocAdt              Target=11 Tag=0 FieldCount=1   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    SetAdtField           Ptr=11 FieldIndex=0 Source=10   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    AllocAdt              Target=12 Tag=1 FieldCount=2   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    SetAdtField           Ptr=12 FieldIndex=0 Source=9   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    SetAdtField           Ptr=12 FieldIndex=1 Source=11   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    AllocAdt              Target=13 Tag=1 FieldCount=2   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    SetAdtField           Ptr=13 FieldIndex=0 Source=4   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    SetAdtField           Ptr=13 FieldIndex=1 Source=12   (owned_value_released_behind_optional_scalar_result.ash:10:5)
+    IsReferenceCounted    Target=14 SourceTemp=13
+    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    RcDup                 Target=15 SourceTemp=13 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=15   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Jump                  Target=rc_representation_done_1   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_copy_0:
+    LoadConstInt          Target=17 Value=0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    CallKnown             Target=18 FuncLabel=__rcnorm_1 EnvTemp=17 ArgTemp=13   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    StoreLocal            Slot=2 Source=18   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+  rc_representation_done_1:
+    LoadLocal             Target=19 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Return                Source=19   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+
+function __rcnorm_3  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=8
+    LoadLocal             Target=0 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_21   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Jump                  Target=rc_representation_done_22   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rc_representation_copy_21:
+    GetAdtTag             Target=3 Ptr=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_23   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcnorm_ctor_23:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=4   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Jump                  Target=rcnorm_end_25   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcnorm_ctor_24:
+    CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=5   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Jump                  Target=rcnorm_end_25   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcnorm_end_25:
+    LoadLocal             Target=6 Slot=3   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreLocal            Slot=2 Source=6   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rc_representation_done_22:
+    LoadLocal             Target=7 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Return                Source=7   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+
+function __rcdrop_general_4  [RuntimeManagedAdtDropper]
+  locals=2 temps=11
+    LoadLocal             Target=0 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_27   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    GetAdtTag             Target=2 Ptr=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_27   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcdrop_general_ctor_28:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_general_shared_27   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcdrop_general_ctor_29:
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadConstInt          Target=5 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallKnown             Target=6 FuncLabel=__rcdrop_general_4 EnvTemp=5 ArgTemp=4   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    GetAdtField           Target=7 Ptr=0 FieldIndex=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadConstInt          Target=8 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallKnown             Target=9 FuncLabel=__rcdrop_general_4 EnvTemp=8 ArgTemp=7   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Jump                  Target=rcdrop_general_shared_27   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcdrop_general_shared_27:
+    RcDrop                SourceTemp=0 TypeName=Tree RuntimeManaged=true
+    LoadConstInt          Target=10 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Return                Source=10   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+
+function __deepcopy_5  [AdtDeepCopier]
+  locals=2 temps=6
+    LoadLocal             Target=0 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadEnv               Target=1 Index=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    GetAdtTag             Target=2 Ptr=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_5_default   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  __deepcopy_5_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Return                Source=3   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  __deepcopy_5_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=5   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Return                Source=4   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  __deepcopy_5_default:
+    Return                Source=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+
+function __rcdrop_general_6  [RuntimeManagedAdtDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_32   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    GetAdtTag             Target=2 Ptr=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_32   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcdrop_general_ctor_33:
+    Jump                  Target=rcdrop_general_shared_32   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcdrop_general_ctor_34:
+    Jump                  Target=rcdrop_general_shared_32   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rcdrop_general_shared_32:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Return                Source=3   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+
+function lambda_2  [SourceFunction from firstUse]
+  locals=18 temps=55
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (owned_value_released_behind_optional_scalar_result.ash:17:11)
+    Borrow                Target=1 SourceTemp=0
+    LoadLocal             Target=2 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:17:17)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (owned_value_released_behind_optional_scalar_result.ash:17:11)
+    StoreLocal            Slot=5 Source=3   (owned_value_released_behind_optional_scalar_result.ash:17:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    LoadLocal             Target=4 Slot=5   (owned_value_released_behind_optional_scalar_result.ash:17:11)
+    GetAdtTag             Target=5 Ptr=4   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    SwitchTag             TagTemp=5 Cases=[1] DefaultLabel=match_group_default_16   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+  match_group_15:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=6 Value=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    CmpIntNe              Target=7 Left=4 Right=6   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_17   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtTag             Target=8 Ptr=4   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    LoadConstInt          Target=10 Value=1   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    CmpIntEq              Target=9 Left=8 Right=10   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_17   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtField           Target=11 Ptr=4 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtField           Target=12 Ptr=4 FieldIndex=1   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    LoadConstInt          Target=13 Value=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    CmpIntNe              Target=14 Left=12 Right=13   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_17   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtTag             Target=15 Ptr=12   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    LoadConstInt          Target=17 Value=1   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    CmpIntEq              Target=16 Left=15 Right=17   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_17   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtField           Target=18 Ptr=12 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    LoadConstInt          Target=19 Value=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    CmpIntNe              Target=20 Left=18 Right=19   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    JumpIfFalse           CondTemp=20 Target=match_arm_cleanup_17   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtTag             Target=21 Ptr=18   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    LoadConstInt          Target=23 Value=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    CmpIntEq              Target=22 Left=21 Right=23   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    JumpIfFalse           CondTemp=22 Target=match_arm_cleanup_17   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtField           Target=24 Ptr=18 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    StoreLocal            Slot=9 Source=24   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    GetAdtField           Target=25 Ptr=12 FieldIndex=1   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    LoadLocal             Target=26 Slot=9   (owned_value_released_behind_optional_scalar_result.ash:19:13)
+    Borrow                Target=27 SourceTemp=26
+    TextByteLength        Target=28 TextTemp=27   (owned_value_released_behind_optional_scalar_result.ash:19:13)
+    RcDrop                SourceTemp=24 TypeName=String OwnerSlot=9
+    AllocAdt              Target=29 Tag=1 FieldCount=1   (owned_value_released_behind_optional_scalar_result.ash:19:13)
+    SetAdtField           Ptr=29 FieldIndex=0 Source=28   (owned_value_released_behind_optional_scalar_result.ash:19:13)
+    StoreLocal            Slot=6 Source=29   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    Jump                  Target=match_end_13   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+  match_arm_cleanup_17:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=11
+    Jump                  Target=match_group_default_16   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+  match_group_default_16:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    AllocAdt              Target=31 Tag=0 FieldCount=0   (owned_value_released_behind_optional_scalar_result.ash:22:16)
+    StoreLocal            Slot=6 Source=31   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    Jump                  Target=match_end_13   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+  match_arm_cleanup_18:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_none_14   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+  match_none_14:
+    LoadConstInt          Target=32 Value=0   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    StoreLocal            Slot=6 Source=32   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+  match_end_13:
+    LoadLocal             Target=33 Slot=6   (owned_value_released_behind_optional_scalar_result.ash:17:5)
+    IsReferenceCounted    Target=34 SourceTemp=33
+    JumpIfFalse           CondTemp=34 Target=rc_representation_copy_19   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    RcDup                 Target=35 SourceTemp=33 RuntimeManaged=true
+    StoreLocal            Slot=16 Source=35   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Jump                  Target=rc_representation_done_20   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rc_representation_copy_19:
+    LoadConstInt          Target=37 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallKnown             Target=38 FuncLabel=__rcnorm_3 EnvTemp=37 ArgTemp=33   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreLocal            Slot=16 Source=38   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rc_representation_done_20:
+    LoadLocal             Target=39 Slot=16   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadLocal             Target=40 Slot=5   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadConstInt          Target=41 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CmpIntNe              Target=42 Left=40 Right=41   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    JumpIfFalse           CondTemp=42 Target=general_rc_owned_absent_26   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    IsReferenceCounted    Target=43 SourceTemp=40
+    JumpIfFalse           CondTemp=43 Target=general_rc_owned_absent_26   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadConstInt          Target=44 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallKnown             Target=45 FuncLabel=__rcdrop_general_4 EnvTemp=44 ArgTemp=40   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreLocal            Slot=5 Source=41   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  general_rc_owned_absent_26:
+    LoadArgumentOwnership Target=46   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadConstInt          Target=47 Value=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    ShrInt                Target=48 Left=46 Right=47   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    JumpIfFalse           CondTemp=48 Target=rc_result_owned_30   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Alloc                 Target=49 SizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    MakeClosure           Target=50 FuncLabel=__deepcopy_5 EnvPtrTemp=49 EnvSizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreMemOffset        BasePtr=49 OffsetBytes=0 Source=50   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallClosure           Target=51 ClosureTemp=50 ArgTemp=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadConstInt          Target=52 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallKnown             Target=53 FuncLabel=__rcdrop_general_6 EnvTemp=52 ArgTemp=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreLocal            Slot=17 Source=51   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Jump                  Target=rc_result_done_31   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rc_result_owned_30:
+    StoreLocal            Slot=17 Source=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+  rc_result_done_31:
+    LoadLocal             Target=54 Slot=17   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Return                Source=54   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+
+function lambda_8  [ClosureHelper from rounds]
+  locals=29 temps=49
+    LoadEnv               Target=0 Index=0   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    StoreLocal            Slot=2 Source=0   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    StoreLocal            Slot=5 Source=1   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    StoreLocal            Slot=6 Source=1   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    StoreLocal            Slot=7 Source=1   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+  lambda_8_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    LoadLocal             Target=2 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:25:8)
+    LoadConstInt          Target=3 Value=0   (owned_value_released_behind_optional_scalar_result.ash:25:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (owned_value_released_behind_optional_scalar_result.ash:25:8)
+    JumpIfFalse           CondTemp=4 Target=else_35   (owned_value_released_behind_optional_scalar_result.ash:25:5)
+    LoadLocal             Target=5 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:26:10)
+    StoreLocal            Slot=11 Source=5   (owned_value_released_behind_optional_scalar_result.ash:25:5)
+    Jump                  Target=endif_36   (owned_value_released_behind_optional_scalar_result.ash:25:5)
+  else_35:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=6 Index=1   (owned_value_released_behind_optional_scalar_result.ash:28:15)
+    Borrow                Target=7 SourceTemp=6
+    LoadLocal             Target=8 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:28:24)
+    LoadMemOffset         Target=9 BasePtr=7 OffsetBytes=16   (owned_value_released_behind_optional_scalar_result.ash:28:15)
+    LoadConstInt          Target=10 Value=62   (owned_value_released_behind_optional_scalar_result.ash:28:15)
+    ShrInt                Target=11 Left=9 Right=10   (owned_value_released_behind_optional_scalar_result.ash:28:15)
+    LoadConstInt          Target=12 Value=1   (owned_value_released_behind_optional_scalar_result.ash:28:15)
+    LoadConstInt          Target=13 Value=0   (owned_value_released_behind_optional_scalar_result.ash:28:15)
+    CallClosure           Target=14 ClosureTemp=7 ArgTemp=8 RuntimeManagedArgumentFlagTemp=13   (owned_value_released_behind_optional_scalar_result.ash:28:15)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=15 Value=0   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    CmpIntNe              Target=16 Left=14 Right=15   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_40   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    GetAdtTag             Target=17 Ptr=14   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    LoadConstInt          Target=19 Value=1   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    CmpIntEq              Target=18 Left=17 Right=19   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    JumpIfFalse           CondTemp=18 Target=match_arm_cleanup_40   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    GetAdtField           Target=20 Ptr=14 FieldIndex=0   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    StoreLocal            Slot=18 Source=20   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    StoreLocal            Slot=19 Source=14   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    LoadLocal             Target=21 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:29:37)
+    LoadConstInt          Target=22 Value=1   (owned_value_released_behind_optional_scalar_result.ash:29:41)
+    SubInt                Target=23 Left=21 Right=22   (owned_value_released_behind_optional_scalar_result.ash:29:37)
+    LoadLocal             Target=24 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:29:44)
+    LoadLocal             Target=25 Slot=18   (owned_value_released_behind_optional_scalar_result.ash:29:52)
+    AddInt                Target=26 Left=24 Right=25   (owned_value_released_behind_optional_scalar_result.ash:29:44)
+    LoadLocal             Target=27 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:29:30)
+    LoadLocal             Target=28 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:29:30)
+    StoreLocal            Slot=2 Source=23   (owned_value_released_behind_optional_scalar_result.ash:29:30)
+    StoreLocal            Slot=1 Source=26   (owned_value_released_behind_optional_scalar_result.ash:29:30)
+    LoadLocal             Target=47 Slot=19
+    RcDrop                SourceTemp=47 TypeName=Maybe OwnerSlot=19 RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=27
+    RestoreStackPointer   Slot=10   (owned_value_released_behind_optional_scalar_result.ash:29:30)
+    Jump                  Target=lambda_8_body   (owned_value_released_behind_optional_scalar_result.ash:29:30)
+    LoadConstInt          Target=29 Value=0   (owned_value_released_behind_optional_scalar_result.ash:29:30)
+    StoreLocal            Slot=15 Source=29   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    LoadLocal             Target=30 Slot=19   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    RcDrop                SourceTemp=30 TypeName=Maybe OwnerSlot=19 RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_end_37   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+  match_arm_cleanup_40:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
+    Jump                  Target=match_next_39   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+  match_next_39:
+    SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
+    LoadConstInt          Target=31 Value=0   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    CmpIntNe              Target=32 Left=14 Right=31   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    JumpIfFalse           CondTemp=32 Target=match_arm_cleanup_41   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    GetAdtTag             Target=33 Ptr=14   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    LoadConstInt          Target=35 Value=0   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    CmpIntEq              Target=34 Left=33 Right=35   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    JumpIfFalse           CondTemp=34 Target=match_arm_cleanup_41   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    StoreLocal            Slot=24 Source=14   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    LoadLocal             Target=36 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:30:30)
+    LoadConstInt          Target=37 Value=1   (owned_value_released_behind_optional_scalar_result.ash:30:34)
+    SubInt                Target=38 Left=36 Right=37   (owned_value_released_behind_optional_scalar_result.ash:30:30)
+    LoadLocal             Target=39 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:30:37)
+    LoadLocal             Target=40 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:30:23)
+    LoadLocal             Target=41 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:30:23)
+    StoreLocal            Slot=2 Source=38   (owned_value_released_behind_optional_scalar_result.ash:30:23)
+    StoreLocal            Slot=1 Source=39   (owned_value_released_behind_optional_scalar_result.ash:30:23)
+    LoadLocal             Target=48 Slot=24
+    RcDrop                SourceTemp=48 TypeName=Maybe OwnerSlot=24 RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=28
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=28
+    RestoreStackPointer   Slot=10   (owned_value_released_behind_optional_scalar_result.ash:30:23)
+    Jump                  Target=lambda_8_body   (owned_value_released_behind_optional_scalar_result.ash:30:23)
+    LoadConstInt          Target=42 Value=0   (owned_value_released_behind_optional_scalar_result.ash:30:23)
+    StoreLocal            Slot=15 Source=42   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    LoadLocal             Target=43 Slot=24   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    RcDrop                SourceTemp=43 TypeName=Maybe OwnerSlot=24 RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=25
+    Jump                  Target=match_end_37   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+  match_arm_cleanup_41:
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=26
+    Jump                  Target=match_none_38   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+  match_none_38:
+    LoadConstInt          Target=44 Value=0   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    StoreLocal            Slot=15 Source=44   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+  match_end_37:
+    LoadLocal             Target=45 Slot=15   (owned_value_released_behind_optional_scalar_result.ash:28:9)
+    StoreLocal            Slot=11 Source=45   (owned_value_released_behind_optional_scalar_result.ash:25:5)
+  endif_36:
+    LoadLocal             Target=46 Slot=11   (owned_value_released_behind_optional_scalar_result.ash:25:5)
+    Return                Source=46   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+
+function lambda_7  [SourceFunction from rounds]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    LoadLocal             Target=1 Slot=1   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    LoadEnv               Target=2 Index=0   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    Borrow                Target=3 SourceTemp=2
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    MakeClosure           Target=6 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=16   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    Return                Source=6   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+
+function _start_main  [ProgramEntry]
+  locals=14 temps=20
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    StoreLocal            Slot=2 Source=1   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    AllocStack            Target=2 SizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadLocal             Target=3 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    MakeClosureStack      Target=5 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreLocal            Slot=5 Source=5   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Alloc                 Target=6 SizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    LoadLocal             Target=7 Slot=5   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    Borrow                Target=8 SourceTemp=7
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=8   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    MakeClosure           Target=9 FuncLabel=lambda_7 EnvPtrTemp=6 EnvSizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    StoreLocal            Slot=6 Source=9   (owned_value_released_behind_optional_scalar_result.ash:24:1)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadLocal             Target=10 Slot=6   (owned_value_released_behind_optional_scalar_result.ash:33:4)
+    LoadConstInt          Target=11 Value=150   (owned_value_released_behind_optional_scalar_result.ash:33:11)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (owned_value_released_behind_optional_scalar_result.ash:32:1)
+    LoadConstInt          Target=13 Value=0   (owned_value_released_behind_optional_scalar_result.ash:32:1)
+    CallClosure           Target=14 ClosureTemp=12 ArgTemp=13   (owned_value_released_behind_optional_scalar_result.ash:32:1)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
+    PrintInt              Source=14   (owned_value_released_behind_optional_scalar_result.ash:32:1)
+    AllocAdt              Target=15 Tag=0 FieldCount=0   (owned_value_released_behind_optional_scalar_result.ash:32:1)
+    StoreLocal            Slot=10 Source=15   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadLocal             Target=16 Slot=5   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CleanupResource       SourceTemp=16 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=11
+    CopyOutArena          DestTemp=17 SrcTemp=15 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=11
+    StoreLocal            Slot=12 Source=17   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    LoadLocal             Target=18 Slot=2   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    CleanupResource       SourceTemp=18 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=13
+    LoadLocal             Target=19 Slot=12   (owned_value_released_behind_optional_scalar_result.ash:9:1)
+    Return                Source=19
+

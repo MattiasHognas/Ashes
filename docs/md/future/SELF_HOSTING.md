@@ -230,10 +230,21 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    programs match stage 0 byte for byte and are listed in whole-program parity. The port found a
    leak of stage 1's own making on the way: the owner a `match` keeps its adopted scrutinee in had
    no binding to take a type name from, so a loop never released a pair a callee returned to it.
-   What is still unported is the path for types only the normalization helper expresses (a
-   recursive variant): stage 1 synthesizes neither that helper nor its dropper and keeps no owned
-   slots for such values, and the rules of the second and third rounds that release an owned value
-   behind a pair, a table of pairs or an optional scalar sit on exactly that. After this round
+   The path for types only the normalization helper expresses (a recursive variant) followed in a
+   second port. Stage 1 now synthesizes that helper and the type's own dropper, a function
+   returning such a value hands it over owned and says so in its closure's header, a caller keeps
+   the result in an owned slot it releases at its end or at a loop's back edge, behind a result it
+   made independent first (an optional scalar or a table of pairs included), a loop accumulating
+   such values lives on the reference-counted heap, and a caller that cannot name its callee reads
+   the header to know which it got. Three programs over a recursive variant match stage 0 byte for
+   byte and joined the shared fixtures. Two defects of stage 1's own surfaced on the way and were
+   fixed at once: a second arm of a `match` ending in a tail call released the first arm's adopted
+   scrutinee as well as its own, and a nullary constructor pattern was taken for a variable binding
+   the whole scrutinee, which left that arm releasing nothing. What is still unported from this arc
+   is the frame that collects the retains an arena aggregate takes as a call's argument and
+   releases them behind the call's result, with the refined back-edge test that decides slot by
+   slot whether a successor can hold an owned value, and the release of a handed-over argument
+   whose callee could not keep it, which stage 1 has only in its spine-only form. After this round
    the probe's leaked list heads in the first 2 GB of heap fall from 1,020,000 holding 472 MB to
    476,000 holding 177 MB, and its peak from 2,582 MB to 2,507 MB: about 15,000 large roots holding
    800 MB are now the largest class, and the next thing to identify.

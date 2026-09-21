@@ -1,0 +1,275 @@
+IR (lowered)
+============
+
+function __rcnorm_1  [RuntimeManagedAdtNormalizer]
+  locals=7 temps=27
+    LoadLocal             Target=0 Slot=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Jump                  Target=rc_representation_done_3   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_copy_2:
+    GetAdtTag             Target=3 Ptr=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_4   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rcnorm_ctor_4:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=5 Ptr=0 FieldIndex=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    IsReferenceCounted    Target=6 SourceTemp=5
+    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_7   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=7   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Jump                  Target=rc_representation_done_8   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_copy_7:
+    CopyOutArena          DestTemp=8 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=8   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_done_8:
+    LoadLocal             Target=9 Slot=4   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=9   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    StoreLocal            Slot=3 Source=4   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Jump                  Target=rcnorm_end_6   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rcnorm_ctor_5:
+    CopyOutArena          DestTemp=10 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=11 Ptr=0 FieldIndex=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=rc_representation_copy_9   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=13   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Jump                  Target=rc_representation_done_10   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_copy_9:
+    LoadConstInt          Target=15 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    CallKnown             Target=16 FuncLabel=__rcnorm_1 EnvTemp=15 ArgTemp=11   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    StoreLocal            Slot=5 Source=16   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_done_10:
+    LoadLocal             Target=17 Slot=5   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    SetAdtField           Ptr=10 FieldIndex=0 Source=17   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    GetAdtField           Target=18 Ptr=0 FieldIndex=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    IsReferenceCounted    Target=19 SourceTemp=18
+    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_11   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    RcDup                 Target=20 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=20   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Jump                  Target=rc_representation_done_12   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_copy_11:
+    LoadConstInt          Target=22 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    CallKnown             Target=23 FuncLabel=__rcnorm_1 EnvTemp=22 ArgTemp=18   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    StoreLocal            Slot=6 Source=23   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_done_12:
+    LoadLocal             Target=24 Slot=6   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    SetAdtField           Ptr=10 FieldIndex=1 Source=24   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    StoreLocal            Slot=3 Source=10   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Jump                  Target=rcnorm_end_6   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rcnorm_end_6:
+    LoadLocal             Target=25 Slot=3   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    StoreLocal            Slot=2 Source=25   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_done_3:
+    LoadLocal             Target=26 Slot=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Return                Source=26   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+
+function lambda_0  [SourceFunction from build]
+  locals=3 temps=20
+    LoadConstStr          Target=0 StrLabel=str_0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:15)
+    LoadLocal             Target=1 Slot=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:40)
+    TextFromInt           Target=2 ValueTemp=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:21)
+    ConcatStr             Target=3 Left=0 Right=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:15)
+    AllocAdt              Target=4 Tag=0 FieldCount=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:10)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=3   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:10)
+    LoadLocal             Target=5 Slot=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:74)
+    LoadConstInt          Target=6 Value=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:78)
+    AddInt                Target=7 Left=5 Right=6   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:74)
+    TextFromInt           Target=8 ValueTemp=7   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:55)
+    AllocAdt              Target=9 Tag=0 FieldCount=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:50)
+    SetAdtField           Ptr=9 FieldIndex=0 Source=8   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:50)
+    LoadConstStr          Target=10 StrLabel=str_1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:88)
+    AllocAdt              Target=11 Tag=0 FieldCount=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:83)
+    SetAdtField           Ptr=11 FieldIndex=0 Source=10   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:83)
+    AllocAdt              Target=12 Tag=1 FieldCount=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:45)
+    SetAdtField           Ptr=12 FieldIndex=0 Source=9   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:45)
+    SetAdtField           Ptr=12 FieldIndex=1 Source=11   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:45)
+    AllocAdt              Target=13 Tag=1 FieldCount=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:5)
+    SetAdtField           Ptr=13 FieldIndex=0 Source=4   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:5)
+    SetAdtField           Ptr=13 FieldIndex=1 Source=12   (owned_result_of_unnamed_callee_read_from_closure_header.ash:9:5)
+    IsReferenceCounted    Target=14 SourceTemp=13
+    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    RcDup                 Target=15 SourceTemp=13 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=15   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Jump                  Target=rc_representation_done_1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_copy_0:
+    LoadConstInt          Target=17 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    CallKnown             Target=18 FuncLabel=__rcnorm_1 EnvTemp=17 ArgTemp=13   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    StoreLocal            Slot=2 Source=18   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+  rc_representation_done_1:
+    LoadLocal             Target=19 Slot=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Return                Source=19   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+
+function __rcdrop_general_4  [RuntimeManagedAdtDropper]
+  locals=2 temps=11
+    LoadLocal             Target=0 Slot=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_24   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    GetAdtTag             Target=2 Ptr=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_24   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+  rcdrop_general_ctor_25:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_general_shared_24   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+  rcdrop_general_ctor_26:
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    LoadConstInt          Target=5 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    CallKnown             Target=6 FuncLabel=__rcdrop_general_4 EnvTemp=5 ArgTemp=4   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    GetAdtField           Target=7 Ptr=0 FieldIndex=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    LoadConstInt          Target=8 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    CallKnown             Target=9 FuncLabel=__rcdrop_general_4 EnvTemp=8 ArgTemp=7   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    Jump                  Target=rcdrop_general_shared_24   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+  rcdrop_general_shared_24:
+    RcDrop                SourceTemp=0 TypeName=Tree RuntimeManaged=true
+    LoadConstInt          Target=10 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    Return                Source=10   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+
+function lambda_3  [ClosureHelper from measure]
+  locals=17 temps=42
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    LoadLocal             Target=1 Slot=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:16)
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    LoadMemOffset         Target=3 BasePtr=0 OffsetBytes=16   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    LoadConstInt          Target=4 Value=60   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    ShrInt                Target=5 Left=3 Right=4   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    LoadConstInt          Target=6 Value=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    AndInt                Target=7 Left=5 Right=6   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    StoreLocal            Slot=5 Source=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    JumpIfFalse           CondTemp=7 Target=general_rc_result_normalize_14   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    Jump                  Target=general_rc_result_owned_13   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+  general_rc_result_normalize_14:
+    IsReferenceCounted    Target=8 SourceTemp=2
+    JumpIfFalse           CondTemp=8 Target=rc_representation_copy_15   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    RcDup                 Target=9 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=9   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    Jump                  Target=rc_representation_done_16   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+  rc_representation_copy_15:
+    LoadConstInt          Target=11 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    CallKnown             Target=12 FuncLabel=__rcnorm_1 EnvTemp=11 ArgTemp=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    StoreLocal            Slot=6 Source=12   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+  rc_representation_done_16:
+    LoadLocal             Target=13 Slot=6   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    StoreLocal            Slot=5 Source=13   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+  general_rc_result_owned_13:
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    LoadLocal             Target=14 Slot=5   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:11)
+    GetAdtTag             Target=15 Ptr=14   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    SwitchTag             TagTemp=15 Cases=[1] DefaultLabel=match_group_default_20   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+  match_group_19:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadConstInt          Target=16 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    CmpIntNe              Target=17 Left=14 Right=16   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_21   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    GetAdtTag             Target=18 Ptr=14   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    LoadConstInt          Target=20 Value=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    CmpIntEq              Target=19 Left=18 Right=20   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    JumpIfFalse           CondTemp=19 Target=match_arm_cleanup_21   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    GetAdtField           Target=21 Ptr=14 FieldIndex=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    LoadConstInt          Target=22 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    CmpIntNe              Target=23 Left=21 Right=22   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    JumpIfFalse           CondTemp=23 Target=match_arm_cleanup_21   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    GetAdtTag             Target=24 Ptr=21   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    LoadConstInt          Target=26 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    CmpIntEq              Target=25 Left=24 Right=26   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    JumpIfFalse           CondTemp=25 Target=match_arm_cleanup_21   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    GetAdtField           Target=27 Ptr=21 FieldIndex=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    StoreLocal            Slot=10 Source=27   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    GetAdtField           Target=28 Ptr=14 FieldIndex=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    LoadLocal             Target=29 Slot=10   (owned_result_of_unnamed_callee_read_from_closure_header.ash:13:56)
+    Borrow                Target=30 SourceTemp=29
+    TextByteLength        Target=31 TextTemp=30   (owned_result_of_unnamed_callee_read_from_closure_header.ash:13:34)
+    RcDrop                SourceTemp=27 TypeName=String OwnerSlot=10
+    StoreLocal            Slot=7 Source=31   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=11
+    Jump                  Target=match_end_17   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+  match_arm_cleanup_21:
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=12
+    Jump                  Target=match_group_default_20   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+  match_group_default_20:
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=33 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:14:16)
+    StoreLocal            Slot=7 Source=33   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_17   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+  match_arm_cleanup_22:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_none_18   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+  match_none_18:
+    LoadConstInt          Target=34 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    StoreLocal            Slot=7 Source=34   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+  match_end_17:
+    LoadLocal             Target=35 Slot=7   (owned_result_of_unnamed_callee_read_from_closure_header.ash:12:5)
+    LoadLocal             Target=36 Slot=5   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    LoadConstInt          Target=37 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    CmpIntNe              Target=38 Left=36 Right=37   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    JumpIfFalse           CondTemp=38 Target=general_rc_owned_absent_23   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    IsReferenceCounted    Target=39 SourceTemp=36
+    JumpIfFalse           CondTemp=39 Target=general_rc_owned_absent_23   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    LoadConstInt          Target=40 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    CallKnown             Target=41 FuncLabel=__rcdrop_general_4 EnvTemp=40 ArgTemp=36   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    StoreLocal            Slot=5 Source=37   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+  general_rc_owned_absent_23:
+    Return                Source=35   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+
+function lambda_2  [SourceFunction from measure]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    MakeClosure           Target=2 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=8   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    Return                Source=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+
+function _start_main  [ProgramEntry]
+  locals=16 temps=24
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    StoreLocal            Slot=2 Source=1   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    StoreLocal            Slot=5 Source=3   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadLocal             Target=4 Slot=5   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:16)
+    Borrow                Target=5 SourceTemp=4
+    LoadLocal             Target=6 Slot=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:24)
+    Borrow                Target=7 SourceTemp=6
+    CallClosure           Target=8 ClosureTemp=5 ArgTemp=7   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:16)
+    LoadConstInt          Target=9 Value=4   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:31)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:16)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=8
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadLocal             Target=11 Slot=5   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:36)
+    Borrow                Target=12 SourceTemp=11
+    LoadLocal             Target=13 Slot=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:44)
+    Borrow                Target=14 SourceTemp=13
+    CallClosure           Target=15 ClosureTemp=12 ArgTemp=14   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:36)
+    LoadConstInt          Target=16 Value=12   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:51)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:36)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    AddInt                Target=18 Left=10 Right=17   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:16)
+    PrintInt              Source=18   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:1)
+    AllocAdt              Target=19 Tag=0 FieldCount=0   (owned_result_of_unnamed_callee_read_from_closure_header.ash:16:1)
+    StoreLocal            Slot=12 Source=19   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    LoadLocal             Target=20 Slot=5   (owned_result_of_unnamed_callee_read_from_closure_header.ash:11:1)
+    CleanupResource       SourceTemp=20 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=13
+    CopyOutArena          DestTemp=21 SrcTemp=19 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=13
+    StoreLocal            Slot=14 Source=21   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    LoadLocal             Target=22 Slot=2   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    CleanupResource       SourceTemp=22 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=15
+    LoadLocal             Target=23 Slot=14   (owned_result_of_unnamed_callee_read_from_closure_header.ash:8:1)
+    Return                Source=23
+
