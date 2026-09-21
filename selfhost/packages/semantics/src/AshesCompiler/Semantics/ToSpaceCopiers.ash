@@ -48,7 +48,7 @@ let registerToSpaceLabel (prefix: Str) (key: Str) (body: DropperBody) =
     match body with
         | DropperBody { cache = DropperLabelCache { structuralLabels = structural, adtLabels = adt, copierLabels = copiers }, nextLambdaId = nextLambdaId } ->
             let label = prefix + Ashes.Text.fromInt(nextLambdaId)
-            in (label, (body with cache = DropperLabelCache(structuralLabels = structural, adtLabels = adt, copierLabels = (key, label) :: copiers), nextLambdaId = nextLambdaId + 1))
+            in (label, (body with cache = (body.cache with copierLabels = (key, label) :: copiers), nextLambdaId = nextLambdaId + 1))
 
 let recursive everyElementIsCopyType (elements: List(SemanticType)) =
     match elements with

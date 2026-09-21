@@ -67,9 +67,11 @@ type DropperLabelCache =
     | structuralLabels: List((Str, Str))
     | adtLabels: List((Str, Str))
     | copierLabels: List((Str, Str))
+    | normalizerLabels: List((Str, Str))
+    | generalDropperLabels: List((Str, Str))
     deriving {Eq, Show}
 
-let emptyDropperLabelCache = DropperLabelCache(structuralLabels = [], adtLabels = [], copierLabels = [])
+let emptyDropperLabelCache = DropperLabelCache(structuralLabels = [], adtLabels = [], copierLabels = [], normalizerLabels = [], generalDropperLabels = [])
 
 // The outcome of one synthesis request: the helper's label (`None` when the release needs no
 // helper), the cache and counters to carry forward, and the functions synthesized by the request
@@ -293,13 +295,13 @@ let registerStructuralLabel (key: Str) (body: DropperBody) =
     match body with
         | DropperBody { cache = DropperLabelCache { structuralLabels = structural, adtLabels = adt, copierLabels = copiers }, nextLambdaId = nextLambdaId } ->
             let label = "__rcdrop_structural_" + Ashes.Text.fromInt(nextLambdaId)
-            in (label, (body with cache = DropperLabelCache(structuralLabels = (key, label) :: structural, adtLabels = adt, copierLabels = copiers), nextLambdaId = nextLambdaId + 1))
+            in (label, (body with cache = (body.cache with structuralLabels = (key, label) :: structural), nextLambdaId = nextLambdaId + 1))
 
 let registerAdtLabel (key: Str) (body: DropperBody) =
     match body with
         | DropperBody { cache = DropperLabelCache { structuralLabels = structural, adtLabels = adt, copierLabels = copiers }, nextLambdaId = nextLambdaId } ->
             let label = "__rcdrop_" + Ashes.Text.fromInt(nextLambdaId)
-            in (label, (body with cache = DropperLabelCache(structuralLabels = structural, adtLabels = (key, label) :: adt, copierLabels = copiers), nextLambdaId = nextLambdaId + 1))
+            in (label, (body with cache = (body.cache with adtLabels = (key, label) :: adt), nextLambdaId = nextLambdaId + 1))
 
 // The constructor names of the named type, in declaration order.
 let recursive constructorsNamed (typeName: Str) (definitions: List(ConstructorInferenceDefinition)) =

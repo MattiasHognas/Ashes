@@ -37,7 +37,7 @@ let registerCopierLabel (prefix: Str) (key: Str) (body: DropperBody) =
     match body with
         | DropperBody { cache = DropperLabelCache { structuralLabels = structural, adtLabels = adt, copierLabels = copiers }, nextLambdaId = nextLambdaId } ->
             let label = prefix + Ashes.Text.fromInt(nextLambdaId)
-            in (label, (body with cache = DropperLabelCache(structuralLabels = structural, adtLabels = adt, copierLabels = (key, label) :: copiers), nextLambdaId = nextLambdaId + 1))
+            in (label, (body with cache = (body.cache with copierLabels = (key, label) :: copiers), nextLambdaId = nextLambdaId + 1))
 
 // Whether the arena copier can clone a value of this type completely (stage 0's
 // `IsDeepCopyOutSafeType`).
