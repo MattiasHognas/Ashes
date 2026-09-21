@@ -12442,10 +12442,10 @@ let recursive shiftPatternOwnerSites (index: Int) (delta: Int) (sites: List(Patt
             then site with siteInsertCount = site.siteInsertCount + delta
             else site) :: shiftPatternOwnerSites(index)(delta)(rest)
 
-// Stage 0's `EmitRuntimeManagedTcoDeepCopy` of a whole join value: a list copied cell by cell is
+// Stage 0's `EmitRuntimeManagedTcoDeepCopy` of a whole value: a list copied cell by cell is
 // tested again inside the first test and shares the reference-counted suffix it reaches, and the
 // result temp stage 0 reserves before that walk takes over is reserved here too.
-let emitJoinValueCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+let emitGuardedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match (canTestRepresentation, plan) with
         | (true, ListDeepArgumentCopy(elementPlan)) ->
             emitReferenceOrCopy(sourceTemp)(given (copying: CoreLoweringState) ->
@@ -12473,7 +12473,7 @@ let emitOwnedResultOrCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: Cor
                                     |> emit(JumpIfFalse(referenceCountedTemp)(copyLabel))
                                     |> emit(Jump(ownedLabel))
                                     |> emit(Label(copyLabel))
-                                    |> emitJoinValueCopy(sourceTemp)(plan) with
+                                    |> emitGuardedDeepCopy(sourceTemp)(plan) with
                                         | (copied, copyTemp) ->
                                             match copied
                                             |> emit(StoreLocal(resultSlot)(copyTemp))
@@ -12485,7 +12485,7 @@ let emitOwnedResultOrCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: Cor
 let emitJoinArmNormalization (arm: MatchArmResult) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     if arm.armFreshCell
     then emitOwnedResultOrCopy(arm.armStoreTemp)(plan)(state)
-    else emitJoinValueCopy(arm.armStoreTemp)(plan)(state)
+    else emitGuardedDeepCopy(arm.armStoreTemp)(plan)(state)
 
 // Stage 0's `NormalizeJoinArmStore`: the arm's store becomes a normalization of its value (a
 // reference when it is reference-counted, a copy otherwise) followed by the store of the
@@ -13924,12 +13924,34 @@ let aggregateLetValueRequest (name: Str) (value: Expr) (body: Expr) (state: Core
 // whose body either returns the binding or hands it straight to a runtime-string consumer places
 // the value on the reference-counted heap; an aggregate value is asked for its representation by
 // `aggregateLetValueRequest`; the value is otherwise lowered without a request.
-let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+let representationLetValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
     (let directEscape = isDirectBindingResult(body)(name)
     in
         if isRuntimeRcStringProducer(value)(state) && (directEscape || isImmediateRuntimeStringUse(body)(name)) && (isCaptureSafeStringProducer(value)(state) || directEscape == false)
         then inheritedLetValueRequest(state) with runtimeString = true
         else aggregateLetValueRequest(name)(value)(body)(state))
+
+// Stage 0's `LoopSuccessorLetRequest`: a binding the loop's self-call passes on becomes the next
+// iteration's parameter exactly like an argument written in place. It escapes every binding scope
+// of this iteration, so an aggregate it builds retains the owned children it stores, whose owners
+// are still released at the back edge. A parameter on the reference-counted heap needs none of it:
+// its back edge copies the successor with references of its own before those owners are released.
+let loopSuccessorLetRequest (name: Str) (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
+        | (Some(frame), Some(loop)) ->
+            match selfCallOrdinalPassing(body)(name)(loop.selfName) with
+                | None -> request
+                | Some(ordinal) ->
+                    match parameterSlotAtOrdinal(ordinal)(frame.parameterSlots) with
+                        | None -> request
+                        | Some(slot) ->
+                            if loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+                            then request
+                            else request with transfersRuntimeManagedChildren = true
+        | _ -> request
+
+let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    loopSuccessorLetRequest(name)(body)(representationLetValueRequest(name)(value)(body)(state))(state)
 
 // Stage 0's `LowerSequentialBindingChain`: the innermost body of a `let` chain escapes the chain
 // under `escapingResultRequest` when the chain's last binding is an ordinary `let`; a chain ending
@@ -15708,7 +15730,7 @@ let recursive normalizeTupleSiblings (elements: List(Expr)) (temps: List(Int)) (
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
             match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state), ownedResultPlanOf(semanticType)(state)) with
                 | (false, Some(plan)) ->
-                    match emitArgumentCopy(temp)(plan)(state) with
+                    match emitGuardedDeepCopy(temp)(plan)(state) with
                         | (copied, copyTemp) ->
                             match copied
                             |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)

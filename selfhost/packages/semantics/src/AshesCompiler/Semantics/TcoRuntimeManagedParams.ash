@@ -34,6 +34,7 @@ export (
     value runtimeManagedStrOrdinals,
     value tcoSelfCallShapes,
     value isTcoListShape,
+    value selfCallOrdinalPassing,
 )
 
 // The reference-ownership shape shared by every exact tail self-call argument at one parameter
@@ -491,3 +492,65 @@ let isTcoListShape (shape: TcoArgumentShape) =
         | TcoConsumedTailShape -> true
         | TcoChoiceAccumulatorShape -> true
         | _ -> false
+
+// Stage 0's `SelfCallArgumentOrdinal`: the position a call's argument takes in a call of `self`,
+// the number of applications under it.
+let recursive selfCallArgumentOrdinal (function: Expr) (self: Str) (ordinal: Int) =
+    match function with
+        | ExprAt(_span, inner) -> selfCallArgumentOrdinal(inner)(self)(ordinal)
+        | ExprCall(inner, _argument, _sugar, _layout) -> selfCallArgumentOrdinal(inner)(self)(ordinal + 1)
+        | ExprVar(name) ->
+            if name == self
+            then Some(ordinal)
+            else None
+        | _ -> None
+
+let shapeFirstSome (first: Maybe(Int)) (second: Maybe(Int)) =
+    match first with
+        | Some(_found) -> first
+        | None -> second
+
+// Stage 0's `SelfCallOrdinalPassing`: the position at which a call of `self` in the expression
+// passes the name as it is, through the branches, arms and bindings a loop body is made of.
+let recursive selfCallOrdinalPassing (expression: Expr) (name: Str) (self: Str) =
+    match expression with
+        | ExprAt(_span, inner) -> selfCallOrdinalPassing(inner)(name)(self)
+        | ExprCall(function, argument, _sugar, _layout) ->
+            self
+            |> selfCallOrdinalPassing(argument)(name)
+            |> shapeFirstSome(selfCallOrdinalPassing(function)(name)(self))
+            |> shapeFirstSome(match shapeUnspan(argument) with
+                | ExprVar(passed) ->
+                    if passed == name
+                    then selfCallArgumentOrdinal(function)(self)(0)
+                    else None
+                | _ -> None)
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            self
+            |> selfCallOrdinalPassing(elseBranch)(name)
+            |> shapeFirstSome(selfCallOrdinalPassing(thenBranch)(name)(self))
+            |> shapeFirstSome(selfCallOrdinalPassing(condition)(name)(self))
+        | ExprMatch(value, cases, _position) ->
+            self
+            |> selfCallOrdinalPassingCases(cases)(name)
+            |> shapeFirstSome(selfCallOrdinalPassing(value)(name)(self))
+        | ExprLet(_bound, value, body, _parameters, _annotation, _requirements) ->
+            self
+            |> selfCallOrdinalPassing(body)(name)
+            |> shapeFirstSome(selfCallOrdinalPassing(value)(name)(self))
+        | ExprLetResult(_bound, value, body) ->
+            self
+            |> selfCallOrdinalPassing(body)(name)
+            |> shapeFirstSome(selfCallOrdinalPassing(value)(name)(self))
+        | ExprLetRecursive(_bound, value, body, _parameters, _annotation, _requirements) ->
+            self
+            |> selfCallOrdinalPassing(body)(name)
+            |> shapeFirstSome(selfCallOrdinalPassing(value)(name)(self))
+        | _ -> None
+and selfCallOrdinalPassingCases (cases: List((Pattern, Expr, Maybe(Expr)))) (name: Str) (self: Str) =
+    match cases with
+        | [] -> None
+        | (_pattern, body, _guard) :: rest ->
+            self
+            |> selfCallOrdinalPassingCases(rest)(name)
+            |> shapeFirstSome(selfCallOrdinalPassing(body)(name)(self))
