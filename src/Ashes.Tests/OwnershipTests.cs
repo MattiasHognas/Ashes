@@ -575,10 +575,11 @@ public sealed class OwnershipTests
             "a borrowed parameter part has no release of its own");
     }
 
-    // The same tuple shape around a let-owned fresh string still copies it: the let's scope-exit
-    // release would otherwise free the string the escaping tuple holds.
+    // The same tuple shape around a let-owned fresh string holds a reference-counted element, so
+    // the tuple is placed on the reference-counted heap with its list of records copied there: it
+    // takes a reference of its own to the string, and the let's scope-exit release still fires.
     [Test]
-    public void Escaping_arena_tuple_still_clones_a_string_owned_by_a_released_let()
+    public void Escaping_tuple_holding_a_let_owned_string_is_reference_counted_and_retains_it()
     {
         IrProgram ir = LowerProgram(
             """
@@ -599,10 +600,13 @@ public sealed class OwnershipTests
             """);
 
         IrFunction fresh = ir.Functions.Single(function =>
-            function.Instructions.Any(inst => inst is IrInst.AllocAdt));
+            function.Instructions.Any(inst => inst is IrInst.AllocAdt)
+            && function.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String" }));
+        fresh.Instructions.Any(inst => inst is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: true }).ShouldBeTrue(
+            "a tuple holding a reference-counted string is placed on the reference-counted heap");
         fresh.Instructions.Any(inst =>
-            inst is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone }).ShouldBeTrue(
-            "the let-owned string is cloned before its scope releases it");
+            inst is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone }).ShouldBeFalse(
+            "the tuple retains the let-owned string instead of cloning it");
         fresh.Instructions.Any(inst =>
             inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true, OwnerSlot: >= 0 }).ShouldBeTrue(
             "the let still releases its own reference");

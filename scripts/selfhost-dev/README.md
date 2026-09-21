@@ -51,6 +51,31 @@ function.
 | `curryscale.sh <stage1> <k>...` | One `k`-parameter curried function per `k`: exponential growth means a body is lowered again at every nesting level. |
 | `toggleab.sh <program>` | A program compiled under each `GRC_NO_*` switch and run under a memory cap: the switch that changes the exit status or peak memory names the mechanism. |
 
+## Reproducers
+
+A leak found in stage 1 is reduced to a program of a few dozen lines with the word `ROUNDS` where its repeat count
+goes, and everything after that runs on the reproducer in seconds. A peak that stays flat as the rounds grow means
+nothing leaks per round; the program's output must depend on the work, because a wrong number is how a
+use-after-free shows when it does not crash. The templates of the first round of leak work are kept in
+`reproducers/`, each named for its scenario and canonically formatted like any other `.ash` file (`ROUNDS` reads
+as an identifier). Only these scripts run them; each scenario that stands for a fix is also an end-to-end test
+under `tests/`.
+
+| Script | What it does |
+|---|---|
+| `plateau.sh <template.ash> <rounds>...` | Compiles the template at each round count with this checkout's compiler and runs it under a memory cap: exit status, output, time, peak memory. `TOGGLE=NAME=1` compiles under one switch. |
+| `plateauall.sh <small> <large> <template.ash>...` | `plateau.sh` for several templates at two round counts, plain and with `ASHES_RC_POISON=1`. |
+| `plateauswitches.sh <template.ash> <rounds> <SWITCH>...` | The template with no switch and under each given switch, plain and poisoned: the rule a wrong result depends on. |
+| `plateautoggles.sh <template.ash> <rounds>` | The same over every `GRC_NO_*` switch of the ownership contract. |
+| `plateauold.sh <template.ash> <rounds>...` | With every placement rule added by the stage-1 leak work switched off: how the compiler behaved before it. |
+| `publishref.sh <git-ref> <label>`, `plateauwith.sh <label> <template.ash> <rounds>...` | Publishes another commit's compiler (`origin/main`, say) from an exported tree, without touching this checkout, and runs a template with it. |
+| `progcensus.sh <program.ash> [chunks]` | Runs any program under gdb to its exit and prints the reference-counted cells still live, by size and first word. Naming what leaks this way has beaten reading the lowering every time. |
+| `irfn.sh <program.ash> <binding> [which] [pattern]` | Stage 0's lowered IR of one binding of a program, locations stripped, optionally only the lines matching a pattern. |
+| `dumptoggles.sh <fixture> <SWITCH>...` | Builds the stage-1 dump tool under each switch and runs it on a fixture: which stage-0 rule makes the stage-1 binary crash. |
+| `dumpbt.sh [-k] <fixture> [words]` | The dump tool with debug information under gdb: the faulting instruction and the functions whose return addresses are on the stack. `compile --project ... --emit-ir lowered` maps a `lambda_N` to the source binding it was lowered from. |
+| `s1diffold.sh <fixture>...` | Stage 1 against the fixtures as stage 0 lowered them before the leak work, then as it lowers them now: a missing mirror of the new rules against an older gap. |
+| `biggraph.sh <stage1> <seconds> <GB> [lines]`, `fulldump.sh` | A snapshot of the module probe's reference-counted heap at a moment: leaked states, then root classes with exclusive attribution. |
+
 ## Leak census
 
 Compile a tiny input with stage 1, take a census of what is still live at exit, add one construct and diff the

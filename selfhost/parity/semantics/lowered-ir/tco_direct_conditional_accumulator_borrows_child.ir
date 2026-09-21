@@ -1,0 +1,1532 @@
+IR (lowered)
+============
+
+function __deepcopy_1  [AdtDeepCopier]
+  locals=2 temps=8
+    LoadLocal             Target=0 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadEnv               Target=1 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadConstInt          Target=2 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_1_default   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+  __deepcopy_1_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=3 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    CopyOutArena          DestTemp=6 SrcTemp=5 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=7   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Return                Source=3   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+  __deepcopy_1_default:
+    Return                Source=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+
+function __deepcopy_2  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadEnv               Target=1 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadConstInt          Target=2 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_2_default   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+  __deepcopy_2_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Return                Source=3   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+  __deepcopy_2_default:
+    Return                Source=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+
+function lambda_0  [SourceFunction from readNext]
+  locals=3 temps=32
+    LoadConstInt          Target=0 Value=2   (tco_direct_conditional_accumulator_borrows_child.ash:13:44)
+    LoadLocal             Target=1 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:73)
+    TextFromInt           Target=2 ValueTemp=1 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:54)
+    LoadLocal             Target=3 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:95)
+    AllocAdt              Target=4 Tag=0 FieldCount=3 RuntimeManaged=true Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:33)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:33)
+    SetAdtField           Ptr=4 FieldIndex=1 Source=2 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:33)
+    SetAdtField           Ptr=4 FieldIndex=2 Source=3 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:33)
+    LoadConstStr          Target=5 StrLabel=str_0   (tco_direct_conditional_accumulator_borrows_child.ash:13:121)
+    LoadLocal             Target=6 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:149)
+    TextFromInt           Target=7 ValueTemp=6   (tco_direct_conditional_accumulator_borrows_child.ash:13:130)
+    ConcatStr             Target=8 Left=5 Right=7 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:121)
+    LoadLocal             Target=9 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:165)
+    AllocAdt              Target=10 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:106)
+    SetAdtField           Ptr=10 FieldIndex=0 Source=8 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:106)
+    SetAdtField           Ptr=10 FieldIndex=1 Source=9 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:106)
+    Alloc                 Target=11 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:32)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:13:32)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (tco_direct_conditional_accumulator_borrows_child.ash:13:32)
+    LoadArgumentOwnership Target=12   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadConstInt          Target=13 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    ShrInt                Target=14 Left=12 Right=13   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    JumpIfFalse           CondTemp=14 Target=rc_result_owned_0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Alloc                 Target=15 SizeBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=16 BasePtr=11 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Alloc                 Target=17 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    MakeClosure           Target=18 FuncLabel=__deepcopy_1 EnvPtrTemp=17 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=18   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    CallClosure           Target=19 ClosureTemp=18 ArgTemp=16   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=19   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=20 BasePtr=11 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Alloc                 Target=21 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    MakeClosure           Target=22 FuncLabel=__deepcopy_2 EnvPtrTemp=21 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=22   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    CallClosure           Target=23 ClosureTemp=22 ArgTemp=20   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreMemOffset        BasePtr=15 OffsetBytes=8 Source=23   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    RcIsUnique            Target=24 SourceTemp=11
+    JumpIfFalse           CondTemp=24 Target=rc_drop_tuple_shared_2   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadMemOffset         Target=25 BasePtr=11 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    RcIsUnique            Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=rc_drop_shared_3   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    GetAdtField           Target=27 Ptr=25 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    RcDrop                SourceTemp=27 TypeName=String RuntimeManaged=true
+  rc_drop_shared_3:
+    RcDrop                SourceTemp=25 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=28 BasePtr=11 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    RcIsUnique            Target=29 SourceTemp=28
+    JumpIfFalse           CondTemp=29 Target=rc_drop_shared_4   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    GetAdtField           Target=30 Ptr=28 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    RcDrop                SourceTemp=30 TypeName=String RuntimeManaged=true
+  rc_drop_shared_4:
+    RcDrop                SourceTemp=28 TypeName=Diag RuntimeManaged=true
+  rc_drop_tuple_shared_2:
+    RcDrop                SourceTemp=11 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=2 Source=15   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Jump                  Target=rc_result_done_1   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+  rc_result_owned_0:
+    StoreLocal            Slot=2 Source=11   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+  rc_result_done_1:
+    LoadLocal             Target=31 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Return                Source=31   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+
+function __deepcopy_list_7  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=1 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=2 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_7_copy   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=4 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  __deepcopy_list_7_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=7 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_1 EnvPtrTemp=7 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=11 SizeBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=11   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+
+function __deepcopy_list_8  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=1 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=2 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_8_copy   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=4 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  __deepcopy_list_8_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=7 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_2 EnvPtrTemp=7 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=11 SizeBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=11   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+
+function lambda_6  [ClosureHelper from scan]
+  locals=60 temps=265
+    LoadEnv               Target=0 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=2 Source=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=1 Index=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=3 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=2 Index=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=4 Source=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=91 Slot=4   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    IsReferenceCounted    Target=92 SourceTemp=91
+    JumpIfFalse           CondTemp=92 Target=rc_representation_copy_25   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDup                 Target=93 SourceTemp=91 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=93   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_representation_done_26   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_copy_25:
+    LoadConstInt          Target=95 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=33 Source=91   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=34 Source=95   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=35 Source=95   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_27:
+    LoadLocal             Target=96 Slot=33   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=97 Left=96 Right=95   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=97 Target=rc_normalize_list_end_28   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=98 BasePtr=96 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=99 BasePtr=96 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    IsReferenceCounted    Target=100 SourceTemp=98
+    JumpIfFalse           CondTemp=100 Target=rc_representation_copy_29   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDup                 Target=101 SourceTemp=98 RuntimeManaged=true
+    StoreLocal            Slot=36 Source=101   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_representation_done_30   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_copy_29:
+    CopyOutArena          DestTemp=103 SrcTemp=98 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=104 Ptr=98 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    IsReferenceCounted    Target=105 SourceTemp=104
+    JumpIfFalse           CondTemp=105 Target=rc_representation_copy_31   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDup                 Target=106 SourceTemp=104 RuntimeManaged=true
+    StoreLocal            Slot=37 Source=106   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_representation_done_32   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_copy_31:
+    CopyOutArena          DestTemp=107 SrcTemp=104 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=37 Source=107   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_done_32:
+    LoadLocal             Target=108 Slot=37   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    SetAdtField           Ptr=103 FieldIndex=1 Source=108 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=36 Source=103   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_done_30:
+    LoadLocal             Target=109 Slot=36   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=110 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=110 OffsetBytes=0 Source=109   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=110 OffsetBytes=8 Source=95   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=111 Slot=34   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=112 Left=111 Right=95   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=112 Target=rc_normalize_list_first_33   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=113 Slot=35   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=113 OffsetBytes=8 Source=110   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_34   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_first_33:
+    StoreLocal            Slot=34 Source=110   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_linked_34:
+    StoreLocal            Slot=35 Source=110   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=33 Source=99   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_27   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_end_28:
+    LoadLocal             Target=114 Slot=34   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=32 Source=114   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_done_26:
+    LoadLocal             Target=115 Slot=32   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=4 Source=115   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=116 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=8 Source=116   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=117 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadArgumentOwnership Target=118   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=119 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    AndInt                Target=120 Left=118 Right=119   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=120 Target=rc_arg_normalize_copy_35   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=38 Source=117   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_arg_normalize_done_36   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_arg_normalize_copy_35:
+    IsReferenceCounted    Target=121 SourceTemp=117
+    JumpIfFalse           CondTemp=121 Target=rc_representation_copy_37   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDup                 Target=122 SourceTemp=117 RuntimeManaged=true
+    StoreLocal            Slot=39 Source=122   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_representation_done_38   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_copy_37:
+    LoadConstInt          Target=124 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=40 Source=117   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=41 Source=124   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=42 Source=124   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_39:
+    LoadLocal             Target=125 Slot=40   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=126 Left=125 Right=124   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=126 Target=rc_normalize_list_end_40   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=127 BasePtr=125 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=128 BasePtr=125 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    IsReferenceCounted    Target=129 SourceTemp=127
+    JumpIfFalse           CondTemp=129 Target=rc_representation_copy_41   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDup                 Target=130 SourceTemp=127 RuntimeManaged=true
+    StoreLocal            Slot=43 Source=130   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_representation_done_42   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_copy_41:
+    CopyOutArena          DestTemp=132 SrcTemp=127 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=133 Ptr=127 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    IsReferenceCounted    Target=134 SourceTemp=133
+    JumpIfFalse           CondTemp=134 Target=rc_representation_copy_43   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDup                 Target=135 SourceTemp=133 RuntimeManaged=true
+    StoreLocal            Slot=44 Source=135   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_representation_done_44   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_copy_43:
+    CopyOutArena          DestTemp=136 SrcTemp=133 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=44 Source=136   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_done_44:
+    LoadLocal             Target=137 Slot=44   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    SetAdtField           Ptr=132 FieldIndex=0 Source=137 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=43 Source=132   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_done_42:
+    LoadLocal             Target=138 Slot=43   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=139 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=139 OffsetBytes=0 Source=138   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=139 OffsetBytes=8 Source=124   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=140 Slot=41   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=141 Left=140 Right=124   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=141 Target=rc_normalize_list_first_45   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=142 Slot=42   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=142 OffsetBytes=8 Source=139   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_46   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_first_45:
+    StoreLocal            Slot=41 Source=139   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_linked_46:
+    StoreLocal            Slot=42 Source=139   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=40 Source=128   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_39   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_normalize_list_end_40:
+    LoadLocal             Target=143 Slot=41   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=39 Source=143   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_representation_done_38:
+    LoadLocal             Target=144 Slot=39   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=38 Source=144   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_arg_normalize_done_36:
+    LoadLocal             Target=145 Slot=38   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=1 Source=145   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=146 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=9 Source=146   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadConstInt          Target=3 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=7 Source=3   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    SaveStackPointer      Slot=12   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=4 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:16:8)
+    LoadLocal             Target=5 Slot=3   (tco_direct_conditional_accumulator_borrows_child.ash:16:20)
+    CmpIntGe              Target=6 Left=4 Right=5   (tco_direct_conditional_accumulator_borrows_child.ash:16:8)
+    JumpIfFalse           CondTemp=6 Target=else_5   (tco_direct_conditional_accumulator_borrows_child.ash:16:5)
+    LoadLocal             Target=7 Slot=4   (tco_direct_conditional_accumulator_borrows_child.ash:17:11)
+    LoadLocal             Target=8 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:17:19)
+    RcDup                 Target=10 SourceTemp=7 RuntimeManaged=true MayBeEmpty=true
+    RcDup                 Target=11 SourceTemp=8 RuntimeManaged=true MayBeEmpty=true
+    Alloc                 Target=9 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:17:10)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=10   (tco_direct_conditional_accumulator_borrows_child.ash:17:10)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=11   (tco_direct_conditional_accumulator_borrows_child.ash:17:10)
+    StoreLocal            Slot=13 Source=9   (tco_direct_conditional_accumulator_borrows_child.ash:16:5)
+    Jump                  Target=endif_6   (tco_direct_conditional_accumulator_borrows_child.ash:16:5)
+  else_5:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadEnv               Target=12 Index=3   (tco_direct_conditional_accumulator_borrows_child.ash:19:15)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:19:24)
+    LoadMemOffset         Target=15 BasePtr=13 OffsetBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:19:15)
+    LoadConstInt          Target=16 Value=62   (tco_direct_conditional_accumulator_borrows_child.ash:19:15)
+    ShrInt                Target=17 Left=15 Right=16   (tco_direct_conditional_accumulator_borrows_child.ash:19:15)
+    LoadConstInt          Target=18 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:19:15)
+    LoadConstInt          Target=19 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:19:15)
+    CallClosure           Target=20 ClosureTemp=13 ArgTemp=14 RuntimeManagedArgumentFlagTemp=19   (tco_direct_conditional_accumulator_borrows_child.ash:19:15)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
+    SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
+    LoadMemOffset         Target=21 BasePtr=20 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    StoreLocal            Slot=20 Source=21   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    LoadMemOffset         Target=22 BasePtr=20 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    StoreLocal            Slot=21 Source=22   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    StoreLocal            Slot=22 Source=20   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    LoadLocal             Target=23 Slot=3   (tco_direct_conditional_accumulator_borrows_child.ash:21:22)
+    LoadLocal             Target=24 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:21:29)
+    LoadConstInt          Target=25 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:21:40)
+    AddInt                Target=26 Left=24 Right=25   (tco_direct_conditional_accumulator_borrows_child.ash:21:29)
+    LoadLocal             Target=27 Slot=20   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Borrow                Target=28 SourceTemp=27
+    RcDup                 Target=29 SourceTemp=28 RuntimeManaged=true
+    RcDrop                SourceTemp=21 TypeName=Tok OwnerSlot=20
+    LoadLocal             Target=30 Slot=4   (tco_direct_conditional_accumulator_borrows_child.ash:21:52)
+    IsReferenceCounted    Target=31 SourceTemp=30
+    StoreLocal            Slot=23 Source=30   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    LoadConstInt          Target=32 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    CmpIntEq              Target=33 Left=30 Right=32   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    OrInt                 Target=34 Left=31 Right=33   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    JumpIfFalse           CondTemp=34 Target=rc_tail_copy_11   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Jump                  Target=rc_tail_done_10   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_tail_copy_11:
+    LoadConstInt          Target=36 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreLocal            Slot=24 Source=30   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreLocal            Slot=25 Source=36   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreLocal            Slot=26 Source=36   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_normalize_list_12:
+    LoadLocal             Target=37 Slot=24   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    CmpIntNe              Target=38 Left=37 Right=36   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_end_13   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    LoadMemOffset         Target=39 BasePtr=37 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    LoadMemOffset         Target=40 BasePtr=37 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    IsReferenceCounted    Target=41 SourceTemp=39
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_14   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    RcDup                 Target=42 SourceTemp=39 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=42   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Jump                  Target=rc_representation_done_15   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_representation_copy_14:
+    CopyOutArena          DestTemp=44 SrcTemp=39 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=45 Ptr=39 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    IsReferenceCounted    Target=46 SourceTemp=45
+    JumpIfFalse           CondTemp=46 Target=rc_representation_copy_16   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    RcDup                 Target=47 SourceTemp=45 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=47   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Jump                  Target=rc_representation_done_17   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_representation_copy_16:
+    CopyOutArena          DestTemp=48 SrcTemp=45 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=28 Source=48   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_representation_done_17:
+    LoadLocal             Target=49 Slot=28   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    SetAdtField           Ptr=44 FieldIndex=1 Source=49 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreLocal            Slot=27 Source=44   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_representation_done_15:
+    LoadLocal             Target=50 Slot=27   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Alloc                 Target=51 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreMemOffset        BasePtr=51 OffsetBytes=0 Source=50   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreMemOffset        BasePtr=51 OffsetBytes=8 Source=36   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    LoadLocal             Target=52 Slot=25   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    CmpIntNe              Target=53 Left=52 Right=36   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    JumpIfFalse           CondTemp=53 Target=rc_normalize_list_first_18   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    LoadLocal             Target=54 Slot=26   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=51   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Jump                  Target=rc_normalize_list_linked_19   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_normalize_list_first_18:
+    StoreLocal            Slot=25 Source=51   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_normalize_list_linked_19:
+    StoreLocal            Slot=26 Source=51   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreLocal            Slot=24 Source=40   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Jump                  Target=rc_normalize_list_12   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_normalize_list_end_13:
+    LoadLocal             Target=55 Slot=25   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreLocal            Slot=23 Source=55   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+  rc_tail_done_10:
+    LoadLocal             Target=56 Slot=23   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    Alloc                 Target=57 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreMemOffset        BasePtr=57 OffsetBytes=0 Source=29   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=56   (tco_direct_conditional_accumulator_borrows_child.ash:21:43)
+    LoadLocal             Target=58 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:21:63)
+    LoadLocal             Target=59 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:21:74)
+    LoadConstInt          Target=60 Value=7   (tco_direct_conditional_accumulator_borrows_child.ash:21:85)
+    DivInt                Target=61 Left=59 Right=60   (tco_direct_conditional_accumulator_borrows_child.ash:21:74)
+    LoadConstInt          Target=62 Value=7   (tco_direct_conditional_accumulator_borrows_child.ash:21:89)
+    MulInt                Target=63 Left=61 Right=62   (tco_direct_conditional_accumulator_borrows_child.ash:21:74)
+    SubInt                Target=64 Left=58 Right=63   (tco_direct_conditional_accumulator_borrows_child.ash:21:63)
+    LoadConstInt          Target=65 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:21:94)
+    CmpIntEq              Target=66 Left=64 Right=65   (tco_direct_conditional_accumulator_borrows_child.ash:21:63)
+    JumpIfFalse           CondTemp=66 Target=else_20   (tco_direct_conditional_accumulator_borrows_child.ash:21:60)
+    LoadLocal             Target=67 Slot=21   (tco_direct_conditional_accumulator_borrows_child.ash:22:22)
+    Borrow                Target=68 SourceTemp=67
+    LoadLocal             Target=69 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:22:36)
+    Alloc                 Target=70 SizeBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:22:22)
+    StoreMemOffset        BasePtr=70 OffsetBytes=0 Source=68   (tco_direct_conditional_accumulator_borrows_child.ash:22:22)
+    StoreMemOffset        BasePtr=70 OffsetBytes=8 Source=69   (tco_direct_conditional_accumulator_borrows_child.ash:22:22)
+    StoreLocal            Slot=29 Source=70   (tco_direct_conditional_accumulator_borrows_child.ash:21:60)
+    Jump                  Target=endif_21   (tco_direct_conditional_accumulator_borrows_child.ash:21:60)
+  else_20:
+    LoadLocal             Target=71 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:23:22)
+    StoreLocal            Slot=29 Source=71   (tco_direct_conditional_accumulator_borrows_child.ash:21:60)
+  endif_21:
+    LoadLocal             Target=72 Slot=29   (tco_direct_conditional_accumulator_borrows_child.ash:21:60)
+    LoadLocal             Target=73 Slot=3   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    LoadLocal             Target=74 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    LoadLocal             Target=75 Slot=4   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    LoadLocal             Target=76 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    StoreLocal            Slot=3 Source=23   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    StoreLocal            Slot=2 Source=26   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    StoreLocal            Slot=4 Source=57   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    StoreLocal            Slot=1 Source=72   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    IsReferenceCounted    Target=214 SourceTemp=72
+    JumpIfFalse           CondTemp=214 Target=rc_representation_copy_136
+    RcDup                 Target=215 SourceTemp=72 RuntimeManaged=true
+    RcDrop                SourceTemp=22 TypeName=Diag OwnerSlot=21
+    StoreLocal            Slot=52 Source=215
+    Jump                  Target=rc_representation_done_137
+  rc_representation_copy_136:
+    IsReferenceCounted    Target=217 SourceTemp=72
+    JumpIfFalse           CondTemp=217 Target=rc_representation_copy_138
+    RcDup                 Target=218 SourceTemp=72 RuntimeManaged=true
+    RcDrop                SourceTemp=22 TypeName=Diag OwnerSlot=21
+    StoreLocal            Slot=53 Source=218
+    Jump                  Target=rc_representation_done_139
+  rc_representation_copy_138:
+    LoadConstInt          Target=219 Value=0
+    StoreLocal            Slot=54 Source=72
+    StoreLocal            Slot=55 Source=219
+    StoreLocal            Slot=56 Source=219
+  rc_normalize_list_140:
+    LoadLocal             Target=220 Slot=54
+    CmpIntNe              Target=221 Left=220 Right=219
+    JumpIfFalse           CondTemp=221 Target=lambda_6_rc_edge_21_59
+    IsReferenceCounted    Target=222 SourceTemp=220
+    JumpIfFalse           CondTemp=222 Target=rc_normalize_list_cell_142
+    RcDup                 Target=223 SourceTemp=220 RuntimeManaged=true
+    RcDrop                SourceTemp=22 TypeName=Diag OwnerSlot=21
+    LoadLocal             Target=224 Slot=55
+    CmpIntNe              Target=225 Left=224 Right=219
+    JumpIfFalse           CondTemp=225 Target=rc_normalize_list_first_143
+    LoadLocal             Target=226 Slot=56
+    StoreMemOffset        BasePtr=226 OffsetBytes=8 Source=223
+    Jump                  Target=rc_normalize_list_linked_144
+  rc_normalize_list_first_143:
+    StoreLocal            Slot=55 Source=223
+  rc_normalize_list_linked_144:
+    StoreLocal            Slot=56 Source=223
+    Jump                  Target=rc_normalize_list_end_141
+  rc_normalize_list_cell_142:
+    LoadMemOffset         Target=227 BasePtr=220 OffsetBytes=0
+    LoadMemOffset         Target=228 BasePtr=220 OffsetBytes=8
+    IsReferenceCounted    Target=229 SourceTemp=227
+    JumpIfFalse           CondTemp=229 Target=rc_representation_copy_145
+    RcDup                 Target=230 SourceTemp=227 RuntimeManaged=true
+    StoreLocal            Slot=57 Source=230
+    Jump                  Target=rc_representation_done_146
+  rc_representation_copy_145:
+    CopyOutArena          DestTemp=232 SrcTemp=227 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=233 Ptr=227 FieldIndex=0 Tagless=true
+    IsReferenceCounted    Target=234 SourceTemp=233
+    JumpIfFalse           CondTemp=234 Target=rc_representation_copy_147
+    RcDup                 Target=235 SourceTemp=233 RuntimeManaged=true
+    StoreLocal            Slot=58 Source=235
+    Jump                  Target=rc_representation_done_148
+  rc_representation_copy_147:
+    CopyOutArena          DestTemp=236 SrcTemp=233 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=58 Source=236
+  rc_representation_done_148:
+    LoadLocal             Target=237 Slot=58
+    SetAdtField           Ptr=232 FieldIndex=0 Source=237 Tagless=true
+    StoreLocal            Slot=57 Source=232
+  rc_representation_done_146:
+    LoadLocal             Target=238 Slot=57
+    Alloc                 Target=239 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=239 OffsetBytes=0 Source=238
+    StoreMemOffset        BasePtr=239 OffsetBytes=8 Source=219
+    LoadLocal             Target=240 Slot=55
+    CmpIntNe              Target=241 Left=240 Right=219
+    JumpIfFalse           CondTemp=241 Target=rc_normalize_list_first_149
+    LoadLocal             Target=242 Slot=56
+    StoreMemOffset        BasePtr=242 OffsetBytes=8 Source=239
+    Jump                  Target=rc_normalize_list_linked_150
+  rc_normalize_list_first_149:
+    StoreLocal            Slot=55 Source=239
+  rc_normalize_list_linked_150:
+    StoreLocal            Slot=56 Source=239
+    StoreLocal            Slot=54 Source=228
+    Jump                  Target=rc_normalize_list_140
+  rc_normalize_list_end_141:
+    LoadLocal             Target=243 Slot=55
+    StoreLocal            Slot=53 Source=243
+  rc_representation_done_139:
+    LoadLocal             Target=244 Slot=53
+    StoreLocal            Slot=52 Source=244
+  rc_representation_done_137:
+    LoadLocal             Target=245 Slot=52
+    LoadLocal             Target=246 Slot=9
+    JumpIfFalse           CondTemp=246 Target=rc_tco_drop_inactive_151
+    StoreLocal            Slot=59 Source=76
+  rcdrop_list_152:
+    LoadLocal             Target=247 Slot=59
+    LoadConstInt          Target=248 Value=0
+    CmpIntNe              Target=249 Left=247 Right=248
+    JumpIfFalse           CondTemp=249 Target=rcdrop_list_end_154
+    RcIsUnique            Target=250 SourceTemp=247
+    JumpIfFalse           CondTemp=250 Target=rcdrop_list_shared_153
+    LoadMemOffset         Target=251 BasePtr=247 OffsetBytes=0
+    RcIsUnique            Target=252 SourceTemp=251
+    JumpIfFalse           CondTemp=252 Target=rc_drop_shared_155
+    GetAdtField           Target=253 Ptr=251 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=253 TypeName=String RuntimeManaged=true
+  rc_drop_shared_155:
+    RcDrop                SourceTemp=251 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=254 BasePtr=247 OffsetBytes=8
+    RcDrop                SourceTemp=247 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=59 Source=254
+    Jump                  Target=rcdrop_list_152
+  rcdrop_list_shared_153:
+    RcDrop                SourceTemp=247 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_154
+  rcdrop_list_end_154:
+  rc_tco_drop_inactive_151:
+    LoadLocal             Target=255 Slot=22
+    RcIsUnique            Target=256 SourceTemp=255
+    JumpIfFalse           CondTemp=256 Target=rc_drop_tuple_shared_156
+    LoadMemOffset         Target=257 BasePtr=255 OffsetBytes=0
+    RcIsUnique            Target=258 SourceTemp=257
+    JumpIfFalse           CondTemp=258 Target=rc_drop_shared_157
+    GetAdtField           Target=259 Ptr=257 FieldIndex=1 Tagless=true
+    RcDrop                SourceTemp=259 TypeName=String RuntimeManaged=true
+  rc_drop_shared_157:
+    RcDrop                SourceTemp=257 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=260 BasePtr=255 OffsetBytes=8
+    RcIsUnique            Target=261 SourceTemp=260
+    JumpIfFalse           CondTemp=261 Target=rc_drop_shared_158
+    GetAdtField           Target=262 Ptr=260 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=262 TypeName=String RuntimeManaged=true
+  rc_drop_shared_158:
+    RcDrop                SourceTemp=260 TypeName=Diag RuntimeManaged=true
+  rc_drop_tuple_shared_156:
+    RcDrop                SourceTemp=255 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=4 Source=57
+    LoadConstInt          Target=263 Value=1
+    StoreLocal            Slot=8 Source=263
+    StoreLocal            Slot=1 Source=245
+    LoadConstInt          Target=264 Value=1
+    StoreLocal            Slot=9 Source=264
+    RestoreStackPointer   Slot=12   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    Jump                  Target=lambda_6_body   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    LoadConstInt          Target=77 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:21:17)
+    StoreLocal            Slot=17 Source=77   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    LoadLocal             Target=80 Slot=22   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    RcIsUnique            Target=81 SourceTemp=80
+    JumpIfFalse           CondTemp=81 Target=rc_drop_tuple_shared_22   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    LoadMemOffset         Target=82 BasePtr=80 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    RcIsUnique            Target=83 SourceTemp=82
+    JumpIfFalse           CondTemp=83 Target=rc_drop_shared_23   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    GetAdtField           Target=84 Ptr=82 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    RcDrop                SourceTemp=84 TypeName=String RuntimeManaged=true
+  rc_drop_shared_23:
+    RcDrop                SourceTemp=82 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=85 BasePtr=80 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    RcIsUnique            Target=86 SourceTemp=85
+    JumpIfFalse           CondTemp=86 Target=rc_drop_shared_24   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    GetAdtField           Target=87 Ptr=85 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    RcDrop                SourceTemp=87 TypeName=String RuntimeManaged=true
+  rc_drop_shared_24:
+    RcDrop                SourceTemp=85 TypeName=Diag RuntimeManaged=true
+  rc_drop_tuple_shared_22:
+    RcDrop                SourceTemp=80 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=30
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=30
+    Jump                  Target=match_end_7   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=31
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=31
+    Jump                  Target=match_none_8   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+  match_none_8:
+    LoadConstInt          Target=88 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    StoreLocal            Slot=17 Source=88   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+  match_end_7:
+    LoadLocal             Target=89 Slot=17   (tco_direct_conditional_accumulator_borrows_child.ash:19:9)
+    StoreLocal            Slot=13 Source=89   (tco_direct_conditional_accumulator_borrows_child.ash:16:5)
+  endif_6:
+    LoadLocal             Target=90 Slot=13   (tco_direct_conditional_accumulator_borrows_child.ash:16:5)
+    LoadConstInt          Target=147 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=45 Source=147   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=148 Slot=4   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=149 Slot=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntEq              Target=150 Left=148 Right=90   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=151 Slot=45   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntEq              Target=152 Left=151 Right=147   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    AndInt                Target=153 Left=149 Right=150   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    AndInt                Target=154 Left=153 Right=152   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=154 Target=rc_tco_exit_transfer_not_selected_47   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=155 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=45 Source=155   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_tco_exit_transfer_done_48   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_tco_exit_transfer_not_selected_47:
+    LoadLocal             Target=156 Slot=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=156 Target=rc_tco_exit_drop_inactive_49   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=46 Source=148   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_50:
+    LoadLocal             Target=157 Slot=46   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=158 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=159 Left=157 Right=158   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=159 Target=rcdrop_list_end_52   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=160 SourceTemp=157
+    JumpIfFalse           CondTemp=160 Target=rcdrop_list_shared_51   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=161 BasePtr=157 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=162 SourceTemp=161
+    JumpIfFalse           CondTemp=162 Target=rc_drop_shared_53   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    GetAdtField           Target=163 Ptr=161 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=163 TypeName=String RuntimeManaged=true
+  rc_drop_shared_53:
+    RcDrop                SourceTemp=161 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=164 BasePtr=157 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=157 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=46 Source=164   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rcdrop_list_50   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_shared_51:
+    RcDrop                SourceTemp=157 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_52   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_end_52:
+  rc_tco_exit_drop_inactive_49:
+  rc_tco_exit_transfer_done_48:
+    LoadLocal             Target=165 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=166 Slot=9   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntEq              Target=167 Left=165 Right=90   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=168 Slot=45   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntEq              Target=169 Left=168 Right=147   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    AndInt                Target=170 Left=166 Right=167   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    AndInt                Target=171 Left=170 Right=169   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=171 Target=rc_tco_exit_transfer_not_selected_54   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=172 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=45 Source=172   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_tco_exit_transfer_done_55   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_tco_exit_transfer_not_selected_54:
+    LoadLocal             Target=173 Slot=9   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=173 Target=rc_tco_exit_drop_inactive_56   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=47 Source=165   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_57:
+    LoadLocal             Target=174 Slot=47   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=175 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=176 Left=174 Right=175   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=176 Target=rcdrop_list_end_59   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=177 SourceTemp=174
+    JumpIfFalse           CondTemp=177 Target=rcdrop_list_shared_58   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=178 BasePtr=174 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=179 SourceTemp=178
+    JumpIfFalse           CondTemp=179 Target=rc_drop_shared_60   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    GetAdtField           Target=180 Ptr=178 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=180 TypeName=String RuntimeManaged=true
+  rc_drop_shared_60:
+    RcDrop                SourceTemp=178 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=181 BasePtr=174 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=174 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=47 Source=181   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rcdrop_list_57   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_shared_58:
+    RcDrop                SourceTemp=174 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_59   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_end_59:
+  rc_tco_exit_drop_inactive_56:
+  rc_tco_exit_transfer_done_55:
+    LoadArgumentOwnership Target=182   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=183 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    ShrInt                Target=184 Left=182 Right=183   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=184 Target=rc_result_owned_61   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=185 SizeBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=186 BasePtr=90 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=187 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=188 FuncLabel=__deepcopy_list_7 EnvPtrTemp=187 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=187 OffsetBytes=0 Source=188   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CallClosure           Target=189 ClosureTemp=188 ArgTemp=186   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=185 OffsetBytes=0 Source=189   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=190 BasePtr=90 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Alloc                 Target=191 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=192 FuncLabel=__deepcopy_list_8 EnvPtrTemp=191 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=191 OffsetBytes=0 Source=192   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CallClosure           Target=193 ClosureTemp=192 ArgTemp=190   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=185 OffsetBytes=8 Source=193   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=194 SourceTemp=90
+    JumpIfFalse           CondTemp=194 Target=rc_drop_tuple_shared_63   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=195 BasePtr=90 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=49 Source=195   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_64:
+    LoadLocal             Target=196 Slot=49   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=197 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=198 Left=196 Right=197   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=198 Target=rcdrop_list_end_66   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=199 SourceTemp=196
+    JumpIfFalse           CondTemp=199 Target=rcdrop_list_shared_65   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=200 BasePtr=196 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=201 SourceTemp=200
+    JumpIfFalse           CondTemp=201 Target=rc_drop_shared_67   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    GetAdtField           Target=202 Ptr=200 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=202 TypeName=String RuntimeManaged=true
+  rc_drop_shared_67:
+    RcDrop                SourceTemp=200 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=203 BasePtr=196 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=196 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=49 Source=203   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rcdrop_list_64   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_shared_65:
+    RcDrop                SourceTemp=196 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_66   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_end_66:
+    LoadMemOffset         Target=204 BasePtr=90 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=50 Source=204   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_68:
+    LoadLocal             Target=205 Slot=50   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=206 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    CmpIntNe              Target=207 Left=205 Right=206   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    JumpIfFalse           CondTemp=207 Target=rcdrop_list_end_70   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=208 SourceTemp=205
+    JumpIfFalse           CondTemp=208 Target=rcdrop_list_shared_69   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadMemOffset         Target=209 BasePtr=205 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcIsUnique            Target=210 SourceTemp=209
+    JumpIfFalse           CondTemp=210 Target=rc_drop_shared_71   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    GetAdtField           Target=211 Ptr=209 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=211 TypeName=String RuntimeManaged=true
+  rc_drop_shared_71:
+    RcDrop                SourceTemp=209 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=212 BasePtr=205 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    RcDrop                SourceTemp=205 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=50 Source=212   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rcdrop_list_68   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_shared_69:
+    RcDrop                SourceTemp=205 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_70   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rcdrop_list_end_70:
+  rc_drop_tuple_shared_63:
+    RcDrop                SourceTemp=90 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=48 Source=185   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Jump                  Target=rc_result_done_62   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_result_owned_61:
+    StoreLocal            Slot=48 Source=90   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  rc_result_done_62:
+    LoadLocal             Target=213 Slot=48   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=213   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+  lambda_6_rc_edge_21_59:
+    RcDrop                SourceTemp=22 TypeName=Diag OwnerSlot=21
+    Jump                  Target=rc_normalize_list_end_141
+
+function lambda_5  [ClosureHelper from scan]
+  locals=2 temps=8
+    Alloc                 Target=0 SizeBytes=32   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=1 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=2 Index=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=3 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=4 Index=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=5   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=7 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=32 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=7   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+
+function lambda_4  [ClosureHelper from scan]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=24   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=1 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=2 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=3 Index=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=6 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=24   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=6   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+
+function lambda_3  [SourceFunction from scan]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=1 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadEnv               Target=2 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Borrow                Target=3 SourceTemp=2
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=6 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Return                Source=6   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+
+function lambda_10  [ClosureHelper from count]
+  locals=33 temps=82
+    LoadEnv               Target=0 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=2 Source=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadLocal             Target=35 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    IsReferenceCounted    Target=36 SourceTemp=35
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_81   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    RcDup                 Target=37 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=37   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Jump                  Target=rc_representation_done_82   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_representation_copy_81:
+    LoadConstInt          Target=39 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=25 Source=35   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=26 Source=39   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=27 Source=39   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_normalize_list_83:
+    LoadLocal             Target=40 Slot=25   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    CmpIntNe              Target=41 Left=40 Right=39   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_end_84   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadMemOffset         Target=42 BasePtr=40 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadMemOffset         Target=43 BasePtr=40 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    IsReferenceCounted    Target=44 SourceTemp=42
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_85   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    RcDup                 Target=45 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=45   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Jump                  Target=rc_representation_done_86   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_representation_copy_85:
+    CopyOutArena          DestTemp=47 SrcTemp=42 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=48 Ptr=42 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    IsReferenceCounted    Target=49 SourceTemp=48
+    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_87   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    RcDup                 Target=50 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=50   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Jump                  Target=rc_representation_done_88   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_representation_copy_87:
+    CopyOutArena          DestTemp=51 SrcTemp=48 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=29 Source=51   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_representation_done_88:
+    LoadLocal             Target=52 Slot=29   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    SetAdtField           Ptr=47 FieldIndex=1 Source=52 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=28 Source=47   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_representation_done_86:
+    LoadLocal             Target=53 Slot=28   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Alloc                 Target=54 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreMemOffset        BasePtr=54 OffsetBytes=0 Source=53   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=39   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadLocal             Target=55 Slot=26   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    CmpIntNe              Target=56 Left=55 Right=39   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    JumpIfFalse           CondTemp=56 Target=rc_normalize_list_first_89   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadLocal             Target=57 Slot=27   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=54   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_90   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_normalize_list_first_89:
+    StoreLocal            Slot=26 Source=54   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_normalize_list_linked_90:
+    StoreLocal            Slot=27 Source=54   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=25 Source=43   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Jump                  Target=rc_normalize_list_83   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_normalize_list_end_84:
+    LoadLocal             Target=58 Slot=26   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=24 Source=58   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rc_representation_done_82:
+    LoadLocal             Target=59 Slot=24   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=2 Source=59   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadConstInt          Target=60 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=8 Source=60   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=5 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=6 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=7 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  lambda_10_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadLocal             Target=2 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:26:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=3 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_75   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    LoadLocal             Target=5 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:27:17)
+    StoreLocal            Slot=12 Source=5   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_72   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+  match_arm_cleanup_75:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_74   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+  match_next_74:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=6 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_76   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    StoreLocal            Slot=19 Source=8   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    StoreLocal            Slot=20 Source=9   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    LoadLocal             Target=10 Slot=20   (tco_direct_conditional_accumulator_borrows_child.ash:28:34)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:28:40)
+    LoadLocal             Target=13 Slot=19   (tco_direct_conditional_accumulator_borrows_child.ash:28:68)
+    GetAdtField           Target=14 Ptr=13 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:28:68)
+    RcDrop                SourceTemp=8 TypeName=Tok OwnerSlot=19
+    TextByteLength        Target=15 TextTemp=14   (tco_direct_conditional_accumulator_borrows_child.ash:28:46)
+    AddInt                Target=16 Left=12 Right=15   (tco_direct_conditional_accumulator_borrows_child.ash:28:40)
+    RcDup                 Target=17 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
+    LoadLocal             Target=18 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    StoreLocal            Slot=21 Source=18   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+  rcdrop_list_77:
+    LoadLocal             Target=19 Slot=21   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    LoadConstInt          Target=20 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    CmpIntNe              Target=21 Left=19 Right=20   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    JumpIfFalse           CondTemp=21 Target=rcdrop_list_end_79   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    RcIsUnique            Target=22 SourceTemp=19
+    JumpIfFalse           CondTemp=22 Target=rcdrop_list_shared_78   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    LoadMemOffset         Target=23 BasePtr=19 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    RcIsUnique            Target=24 SourceTemp=23
+    JumpIfFalse           CondTemp=24 Target=rc_drop_shared_80   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    GetAdtField           Target=25 Ptr=23 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    RcDrop                SourceTemp=25 TypeName=String RuntimeManaged=true
+  rc_drop_shared_80:
+    RcDrop                SourceTemp=23 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=26 BasePtr=19 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=21 Source=26   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    Jump                  Target=rcdrop_list_77   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+  rcdrop_list_shared_78:
+    RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_79   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+  rcdrop_list_end_79:
+    LoadConstInt          Target=27 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    StoreLocal            Slot=8 Source=27   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    LoadLocal             Target=28 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    LoadLocal             Target=29 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    StoreLocal            Slot=2 Source=17   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    StoreLocal            Slot=1 Source=16   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    LoadLocal             Target=71 Slot=8
+    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_159
+    StoreLocal            Slot=32 Source=28
+  rcdrop_list_160:
+    LoadLocal             Target=72 Slot=32
+    LoadConstInt          Target=73 Value=0
+    CmpIntNe              Target=74 Left=72 Right=73
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_162
+    RcIsUnique            Target=75 SourceTemp=72
+    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_161
+    LoadMemOffset         Target=76 BasePtr=72 OffsetBytes=0
+    RcIsUnique            Target=77 SourceTemp=76
+    JumpIfFalse           CondTemp=77 Target=rc_drop_shared_163
+    GetAdtField           Target=78 Ptr=76 FieldIndex=1 Tagless=true
+    RcDrop                SourceTemp=78 TypeName=String RuntimeManaged=true
+  rc_drop_shared_163:
+    RcDrop                SourceTemp=76 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=79 BasePtr=72 OffsetBytes=8
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=79
+    Jump                  Target=rcdrop_list_160
+  rcdrop_list_shared_161:
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_162
+  rcdrop_list_end_162:
+  rc_tco_drop_inactive_159:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
+    LoadConstInt          Target=80 Value=0
+    StoreLocal            Slot=6 Source=80
+    StoreLocal            Slot=7 Source=80
+    StoreLocal            Slot=2 Source=17
+    LoadConstInt          Target=81 Value=1
+    StoreLocal            Slot=8 Source=81
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
+    RestoreStackPointer   Slot=11   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    Jump                  Target=lambda_10_body   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    LoadConstInt          Target=30 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:28:28)
+    StoreLocal            Slot=12 Source=30   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    Jump                  Target=match_end_72   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+  match_arm_cleanup_76:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
+    Jump                  Target=match_none_73   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+  match_none_73:
+    LoadConstInt          Target=33 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    StoreLocal            Slot=12 Source=33   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+  match_end_72:
+    LoadLocal             Target=34 Slot=12   (tco_direct_conditional_accumulator_borrows_child.ash:26:5)
+    LoadLocal             Target=61 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadLocal             Target=62 Slot=8   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    JumpIfFalse           CondTemp=62 Target=rc_tco_exit_drop_inactive_91   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=30 Source=61   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rcdrop_list_92:
+    LoadLocal             Target=63 Slot=30   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadConstInt          Target=64 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    CmpIntNe              Target=65 Left=63 Right=64   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_94   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    RcIsUnique            Target=66 SourceTemp=63
+    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_93   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadMemOffset         Target=67 BasePtr=63 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    RcIsUnique            Target=68 SourceTemp=67
+    JumpIfFalse           CondTemp=68 Target=rc_drop_shared_95   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    GetAdtField           Target=69 Ptr=67 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    RcDrop                SourceTemp=69 TypeName=String RuntimeManaged=true
+  rc_drop_shared_95:
+    RcDrop                SourceTemp=67 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=70 BasePtr=63 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=70   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Jump                  Target=rcdrop_list_92   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rcdrop_list_shared_93:
+    RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_94   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+  rcdrop_list_end_94:
+  rc_tco_exit_drop_inactive_91:
+    Return                Source=34   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+
+function lambda_9  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadLocal             Target=1 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    MakeClosure           Target=4 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    Return                Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+
+function lambda_12  [ClosureHelper from weigh]
+  locals=33 temps=85
+    LoadEnv               Target=0 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=2 Source=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadLocal             Target=38 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    IsReferenceCounted    Target=39 SourceTemp=38
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_105   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    RcDup                 Target=40 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=40   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Jump                  Target=rc_representation_done_106   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_representation_copy_105:
+    LoadConstInt          Target=42 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=25 Source=38   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=26 Source=42   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=27 Source=42   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_normalize_list_107:
+    LoadLocal             Target=43 Slot=25   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    CmpIntNe              Target=44 Left=43 Right=42   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_end_108   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadMemOffset         Target=45 BasePtr=43 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadMemOffset         Target=46 BasePtr=43 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    IsReferenceCounted    Target=47 SourceTemp=45
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_109   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    RcDup                 Target=48 SourceTemp=45 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=48   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Jump                  Target=rc_representation_done_110   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_representation_copy_109:
+    CopyOutArena          DestTemp=50 SrcTemp=45 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=51 Ptr=45 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    IsReferenceCounted    Target=52 SourceTemp=51
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_111   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    RcDup                 Target=53 SourceTemp=51 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=53   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Jump                  Target=rc_representation_done_112   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_representation_copy_111:
+    CopyOutArena          DestTemp=54 SrcTemp=51 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=29 Source=54   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_representation_done_112:
+    LoadLocal             Target=55 Slot=29   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    SetAdtField           Ptr=50 FieldIndex=0 Source=55 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=28 Source=50   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_representation_done_110:
+    LoadLocal             Target=56 Slot=28   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Alloc                 Target=57 SizeBytes=16 RuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreMemOffset        BasePtr=57 OffsetBytes=0 Source=56   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=42   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadLocal             Target=58 Slot=26   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    CmpIntNe              Target=59 Left=58 Right=42   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    JumpIfFalse           CondTemp=59 Target=rc_normalize_list_first_113   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadLocal             Target=60 Slot=27   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreMemOffset        BasePtr=60 OffsetBytes=8 Source=57   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Jump                  Target=rc_normalize_list_linked_114   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_normalize_list_first_113:
+    StoreLocal            Slot=26 Source=57   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_normalize_list_linked_114:
+    StoreLocal            Slot=27 Source=57   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=25 Source=46   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Jump                  Target=rc_normalize_list_107   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_normalize_list_end_108:
+    LoadLocal             Target=61 Slot=26   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=24 Source=61   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rc_representation_done_106:
+    LoadLocal             Target=62 Slot=24   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=2 Source=62   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadConstInt          Target=63 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=8 Source=63   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=5 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=6 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=7 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  lambda_12_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadLocal             Target=2 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:31:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=3 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_99   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    LoadLocal             Target=5 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:32:17)
+    StoreLocal            Slot=12 Source=5   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_96   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+  match_arm_cleanup_99:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_98   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+  match_next_98:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=6 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_100   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    StoreLocal            Slot=19 Source=8   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    StoreLocal            Slot=20 Source=9   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    LoadLocal             Target=10 Slot=20   (tco_direct_conditional_accumulator_borrows_child.ash:33:39)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:33:45)
+    LoadLocal             Target=13 Slot=19   (tco_direct_conditional_accumulator_borrows_child.ash:33:51)
+    GetAdtField           Target=14 Ptr=13 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:33:51)
+    AddInt                Target=15 Left=12 Right=14   (tco_direct_conditional_accumulator_borrows_child.ash:33:45)
+    LoadLocal             Target=16 Slot=19   (tco_direct_conditional_accumulator_borrows_child.ash:33:89)
+    GetAdtField           Target=17 Ptr=16 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:33:89)
+    RcDrop                SourceTemp=8 TypeName=Diag OwnerSlot=19
+    TextByteLength        Target=18 TextTemp=17   (tco_direct_conditional_accumulator_borrows_child.ash:33:67)
+    AddInt                Target=19 Left=15 Right=18   (tco_direct_conditional_accumulator_borrows_child.ash:33:45)
+    RcDup                 Target=20 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
+    LoadLocal             Target=21 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    StoreLocal            Slot=21 Source=21   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+  rcdrop_list_101:
+    LoadLocal             Target=22 Slot=21   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    LoadConstInt          Target=23 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    CmpIntNe              Target=24 Left=22 Right=23   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    JumpIfFalse           CondTemp=24 Target=rcdrop_list_end_103   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    RcIsUnique            Target=25 SourceTemp=22
+    JumpIfFalse           CondTemp=25 Target=rcdrop_list_shared_102   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    RcIsUnique            Target=27 SourceTemp=26
+    JumpIfFalse           CondTemp=27 Target=rc_drop_shared_104   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    GetAdtField           Target=28 Ptr=26 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    RcDrop                SourceTemp=28 TypeName=String RuntimeManaged=true
+  rc_drop_shared_104:
+    RcDrop                SourceTemp=26 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=29 BasePtr=22 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=21 Source=29   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    Jump                  Target=rcdrop_list_101   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+  rcdrop_list_shared_102:
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_103   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+  rcdrop_list_end_103:
+    LoadConstInt          Target=30 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    StoreLocal            Slot=8 Source=30   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    LoadLocal             Target=31 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    LoadLocal             Target=32 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    StoreLocal            Slot=2 Source=20   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    StoreLocal            Slot=1 Source=19   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    LoadLocal             Target=74 Slot=8
+    JumpIfFalse           CondTemp=74 Target=rc_tco_drop_inactive_164
+    StoreLocal            Slot=32 Source=31
+  rcdrop_list_165:
+    LoadLocal             Target=75 Slot=32
+    LoadConstInt          Target=76 Value=0
+    CmpIntNe              Target=77 Left=75 Right=76
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_end_167
+    RcIsUnique            Target=78 SourceTemp=75
+    JumpIfFalse           CondTemp=78 Target=rcdrop_list_shared_166
+    LoadMemOffset         Target=79 BasePtr=75 OffsetBytes=0
+    RcIsUnique            Target=80 SourceTemp=79
+    JumpIfFalse           CondTemp=80 Target=rc_drop_shared_168
+    GetAdtField           Target=81 Ptr=79 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=81 TypeName=String RuntimeManaged=true
+  rc_drop_shared_168:
+    RcDrop                SourceTemp=79 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=82 BasePtr=75 OffsetBytes=8
+    RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=82
+    Jump                  Target=rcdrop_list_165
+  rcdrop_list_shared_166:
+    RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_167
+  rcdrop_list_end_167:
+  rc_tco_drop_inactive_164:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
+    LoadConstInt          Target=83 Value=0
+    StoreLocal            Slot=6 Source=83
+    StoreLocal            Slot=7 Source=83
+    StoreLocal            Slot=2 Source=20
+    LoadConstInt          Target=84 Value=1
+    StoreLocal            Slot=8 Source=84
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
+    RestoreStackPointer   Slot=11   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    Jump                  Target=lambda_12_body   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    LoadConstInt          Target=33 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:33:33)
+    StoreLocal            Slot=12 Source=33   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    Jump                  Target=match_end_96   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+  match_arm_cleanup_100:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
+    Jump                  Target=match_none_97   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+  match_none_97:
+    LoadConstInt          Target=36 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    StoreLocal            Slot=12 Source=36   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+  match_end_96:
+    LoadLocal             Target=37 Slot=12   (tco_direct_conditional_accumulator_borrows_child.ash:31:5)
+    LoadLocal             Target=64 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadLocal             Target=65 Slot=8   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    JumpIfFalse           CondTemp=65 Target=rc_tco_exit_drop_inactive_115   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=30 Source=64   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rcdrop_list_116:
+    LoadLocal             Target=66 Slot=30   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadConstInt          Target=67 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    CmpIntNe              Target=68 Left=66 Right=67   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_118   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    RcIsUnique            Target=69 SourceTemp=66
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_117   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    RcIsUnique            Target=71 SourceTemp=70
+    JumpIfFalse           CondTemp=71 Target=rc_drop_shared_119   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    GetAdtField           Target=72 Ptr=70 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
+  rc_drop_shared_119:
+    RcDrop                SourceTemp=70 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=73 BasePtr=66 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=73   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Jump                  Target=rcdrop_list_116   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rcdrop_list_shared_117:
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_118   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+  rcdrop_list_end_118:
+  rc_tco_exit_drop_inactive_115:
+    Return                Source=37   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+
+function lambda_11  [SourceFunction from weigh]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    LoadLocal             Target=1 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    MakeClosure           Target=4 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Return                Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+
+function lambda_14  [ClosureHelper from rounds]
+  locals=36 temps=97
+    LoadEnv               Target=0 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreLocal            Slot=2 Source=0   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreLocal            Slot=5 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreLocal            Slot=6 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreLocal            Slot=7 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+  lambda_14_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadLocal             Target=2 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:36:8)
+    LoadConstInt          Target=3 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:36:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_direct_conditional_accumulator_borrows_child.ash:36:8)
+    JumpIfFalse           CondTemp=4 Target=else_120   (tco_direct_conditional_accumulator_borrows_child.ash:36:5)
+    LoadLocal             Target=5 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:37:10)
+    StoreLocal            Slot=11 Source=5   (tco_direct_conditional_accumulator_borrows_child.ash:36:5)
+    Jump                  Target=endif_121   (tco_direct_conditional_accumulator_borrows_child.ash:36:5)
+  else_120:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=6 Index=1   (tco_direct_conditional_accumulator_borrows_child.ash:39:15)
+    LoadConstInt          Target=7 Value=2000   (tco_direct_conditional_accumulator_borrows_child.ash:39:20)
+    CallClosure           Target=8 ClosureTemp=6 ArgTemp=7   (tco_direct_conditional_accumulator_borrows_child.ash:39:15)
+    LoadConstInt          Target=9 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:26)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (tco_direct_conditional_accumulator_borrows_child.ash:39:15)
+    LoadConstInt          Target=11 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:29)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (tco_direct_conditional_accumulator_borrows_child.ash:39:15)
+    LoadConstInt          Target=13 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:33)
+    CallClosure           Target=14 ClosureTemp=12 ArgTemp=13   (tco_direct_conditional_accumulator_borrows_child.ash:39:15)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadMemOffset         Target=15 BasePtr=14 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    StoreLocal            Slot=18 Source=15   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadMemOffset         Target=16 BasePtr=14 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    StoreLocal            Slot=19 Source=16   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    StoreLocal            Slot=20 Source=14   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadLocal             Target=17 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:40:47)
+    LoadConstInt          Target=18 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:40:51)
+    SubInt                Target=19 Left=17 Right=18   (tco_direct_conditional_accumulator_borrows_child.ash:40:47)
+    LoadLocal             Target=20 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:40:54)
+    SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
+    LoadEnv               Target=21 Index=2   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    LoadLocal             Target=22 Slot=18   (tco_direct_conditional_accumulator_borrows_child.ash:40:68)
+    Borrow                Target=23 SourceTemp=22
+    LoadMemOffset         Target=24 BasePtr=21 OffsetBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    LoadConstInt          Target=25 Value=62   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    ShrInt                Target=26 Left=24 Right=25   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    LoadConstInt          Target=27 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    AndInt                Target=28 Left=26 Right=27   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    StoreLocal            Slot=23 Source=23   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_125   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    RcDup                 Target=29 SourceTemp=23 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=23 Source=29   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+  rc_call_argument_not_retained_125:
+    LoadLocal             Target=30 Slot=23   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    CallClosure           Target=31 ClosureTemp=21 ArgTemp=30 RuntimeManagedArgumentFlagTemp=28   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    LoadConstInt          Target=32 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:40:76)
+    CallClosure           Target=33 ClosureTemp=31 ArgTemp=32   (tco_direct_conditional_accumulator_borrows_child.ash:40:62)
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=24
+    AddInt                Target=34 Left=20 Right=33   (tco_direct_conditional_accumulator_borrows_child.ash:40:54)
+    RcDrop                SourceTemp=15 TypeName=List OwnerSlot=18
+    SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
+    LoadEnv               Target=35 Index=3   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    LoadLocal             Target=36 Slot=19   (tco_direct_conditional_accumulator_borrows_child.ash:40:87)
+    Borrow                Target=37 SourceTemp=36
+    LoadMemOffset         Target=38 BasePtr=35 OffsetBytes=16   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    LoadConstInt          Target=39 Value=62   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    ShrInt                Target=40 Left=38 Right=39   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    LoadConstInt          Target=41 Value=1   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    AndInt                Target=42 Left=40 Right=41   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    StoreLocal            Slot=27 Source=37   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    JumpIfFalse           CondTemp=42 Target=rc_call_argument_not_retained_126   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    RcDup                 Target=43 SourceTemp=37 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=27 Source=43   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+  rc_call_argument_not_retained_126:
+    LoadLocal             Target=44 Slot=27   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    CallClosure           Target=45 ClosureTemp=35 ArgTemp=44 RuntimeManagedArgumentFlagTemp=42   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    LoadConstInt          Target=46 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:40:100)
+    CallClosure           Target=47 ClosureTemp=45 ArgTemp=46   (tco_direct_conditional_accumulator_borrows_child.ash:40:81)
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=28
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=28
+    AddInt                Target=48 Left=34 Right=47   (tco_direct_conditional_accumulator_borrows_child.ash:40:54)
+    RcDrop                SourceTemp=16 TypeName=List OwnerSlot=19
+    LoadLocal             Target=49 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:40:40)
+    LoadLocal             Target=50 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:40:40)
+    StoreLocal            Slot=2 Source=19   (tco_direct_conditional_accumulator_borrows_child.ash:40:40)
+    StoreLocal            Slot=1 Source=48   (tco_direct_conditional_accumulator_borrows_child.ash:40:40)
+    LoadLocal             Target=77 Slot=20
+    RcIsUnique            Target=78 SourceTemp=77
+    JumpIfFalse           CondTemp=78 Target=rc_drop_tuple_shared_169
+    LoadMemOffset         Target=79 BasePtr=77 OffsetBytes=0
+    StoreLocal            Slot=34 Source=79
+  rcdrop_list_170:
+    LoadLocal             Target=80 Slot=34
+    LoadConstInt          Target=81 Value=0
+    CmpIntNe              Target=82 Left=80 Right=81
+    JumpIfFalse           CondTemp=82 Target=rcdrop_list_end_172
+    RcIsUnique            Target=83 SourceTemp=80
+    JumpIfFalse           CondTemp=83 Target=rcdrop_list_shared_171
+    LoadMemOffset         Target=84 BasePtr=80 OffsetBytes=0
+    RcIsUnique            Target=85 SourceTemp=84
+    JumpIfFalse           CondTemp=85 Target=rc_drop_shared_173
+    GetAdtField           Target=86 Ptr=84 FieldIndex=1 Tagless=true
+    RcDrop                SourceTemp=86 TypeName=String RuntimeManaged=true
+  rc_drop_shared_173:
+    RcDrop                SourceTemp=84 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=87 BasePtr=80 OffsetBytes=8
+    RcDrop                SourceTemp=80 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=34 Source=87
+    Jump                  Target=rcdrop_list_170
+  rcdrop_list_shared_171:
+    RcDrop                SourceTemp=80 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_172
+  rcdrop_list_end_172:
+    LoadMemOffset         Target=88 BasePtr=77 OffsetBytes=8
+    StoreLocal            Slot=35 Source=88
+  rcdrop_list_174:
+    LoadLocal             Target=89 Slot=35
+    LoadConstInt          Target=90 Value=0
+    CmpIntNe              Target=91 Left=89 Right=90
+    JumpIfFalse           CondTemp=91 Target=rcdrop_list_end_176
+    RcIsUnique            Target=92 SourceTemp=89
+    JumpIfFalse           CondTemp=92 Target=rcdrop_list_shared_175
+    LoadMemOffset         Target=93 BasePtr=89 OffsetBytes=0
+    RcIsUnique            Target=94 SourceTemp=93
+    JumpIfFalse           CondTemp=94 Target=rc_drop_shared_177
+    GetAdtField           Target=95 Ptr=93 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=95 TypeName=String RuntimeManaged=true
+  rc_drop_shared_177:
+    RcDrop                SourceTemp=93 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=96 BasePtr=89 OffsetBytes=8
+    RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=35 Source=96
+    Jump                  Target=rcdrop_list_174
+  rcdrop_list_shared_175:
+    RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_176
+  rcdrop_list_end_176:
+  rc_drop_tuple_shared_169:
+    RcDrop                SourceTemp=77 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=33
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=33
+    RestoreStackPointer   Slot=10   (tco_direct_conditional_accumulator_borrows_child.ash:40:40)
+    Jump                  Target=lambda_14_body   (tco_direct_conditional_accumulator_borrows_child.ash:40:40)
+    LoadConstInt          Target=51 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:40:40)
+    StoreLocal            Slot=15 Source=51   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadLocal             Target=54 Slot=20   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcIsUnique            Target=55 SourceTemp=54
+    JumpIfFalse           CondTemp=55 Target=rc_drop_tuple_shared_127   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadMemOffset         Target=56 BasePtr=54 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    StoreLocal            Slot=29 Source=56   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  rcdrop_list_128:
+    LoadLocal             Target=57 Slot=29   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadConstInt          Target=58 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    CmpIntNe              Target=59 Left=57 Right=58   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_130   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcIsUnique            Target=60 SourceTemp=57
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_129   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcIsUnique            Target=62 SourceTemp=61
+    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_131   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    GetAdtField           Target=63 Ptr=61 FieldIndex=1 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcDrop                SourceTemp=63 TypeName=String RuntimeManaged=true
+  rc_drop_shared_131:
+    RcDrop                SourceTemp=61 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=64 BasePtr=57 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=64   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    Jump                  Target=rcdrop_list_128   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  rcdrop_list_shared_129:
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_130   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  rcdrop_list_end_130:
+    LoadMemOffset         Target=65 BasePtr=54 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    StoreLocal            Slot=30 Source=65   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  rcdrop_list_132:
+    LoadLocal             Target=66 Slot=30   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadConstInt          Target=67 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    CmpIntNe              Target=68 Left=66 Right=67   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_134   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcIsUnique            Target=69 SourceTemp=66
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_133   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcIsUnique            Target=71 SourceTemp=70
+    JumpIfFalse           CondTemp=71 Target=rc_drop_shared_135   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    GetAdtField           Target=72 Ptr=70 FieldIndex=0 Tagless=true   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
+  rc_drop_shared_135:
+    RcDrop                SourceTemp=70 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=73 BasePtr=66 OffsetBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=73   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    Jump                  Target=rcdrop_list_132   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  rcdrop_list_shared_133:
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_134   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  rcdrop_list_end_134:
+  rc_drop_tuple_shared_127:
+    RcDrop                SourceTemp=54 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=31
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=31
+    Jump                  Target=match_end_122   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  match_arm_cleanup_124:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=32
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=32
+    Jump                  Target=match_none_123   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  match_none_123:
+    LoadConstInt          Target=74 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    StoreLocal            Slot=15 Source=74   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+  match_end_122:
+    LoadLocal             Target=75 Slot=15   (tco_direct_conditional_accumulator_borrows_child.ash:39:9)
+    StoreLocal            Slot=11 Source=75   (tco_direct_conditional_accumulator_borrows_child.ash:36:5)
+  endif_121:
+    LoadLocal             Target=76 Slot=11   (tco_direct_conditional_accumulator_borrows_child.ash:36:5)
+    Return                Source=76   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+
+function lambda_13  [SourceFunction from rounds]
+  locals=2 temps=8
+    Alloc                 Target=0 SizeBytes=32   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadLocal             Target=1 Slot=1   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadEnv               Target=2 Index=0   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadEnv               Target=5 Index=1   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadEnv               Target=6 Index=2   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    MakeClosure           Target=7 FuncLabel=lambda_14 EnvPtrTemp=0 EnvSizeBytes=32   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    Return                Source=7   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+
+function _start_main  [ProgramEntry]
+  locals=12 temps=23
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    StoreLocal            Slot=2 Source=1   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    Alloc                 Target=2 SizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadLocal             Target=3 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    MakeClosure           Target=5 FuncLabel=lambda_3 EnvPtrTemp=2 EnvSizeBytes=8   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    StoreLocal            Slot=3 Source=5   (tco_direct_conditional_accumulator_borrows_child.ash:15:1)
+    LoadConstInt          Target=6 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    MakeClosure           Target=7 FuncLabel=lambda_9 EnvPtrTemp=6 EnvSizeBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    StoreLocal            Slot=4 Source=7   (tco_direct_conditional_accumulator_borrows_child.ash:25:1)
+    LoadConstInt          Target=8 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    MakeClosure           Target=9 FuncLabel=lambda_11 EnvPtrTemp=8 EnvSizeBytes=0   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    StoreLocal            Slot=5 Source=9   (tco_direct_conditional_accumulator_borrows_child.ash:30:1)
+    Alloc                 Target=10 SizeBytes=24   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadLocal             Target=11 Slot=3   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=11   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadLocal             Target=12 Slot=4   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=12   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    LoadLocal             Target=13 Slot=5   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreMemOffset        BasePtr=10 OffsetBytes=16 Source=13   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    MakeClosure           Target=14 FuncLabel=lambda_13 EnvPtrTemp=10 EnvSizeBytes=24   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    StoreLocal            Slot=6 Source=14   (tco_direct_conditional_accumulator_borrows_child.ash:35:1)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadLocal             Target=15 Slot=6   (tco_direct_conditional_accumulator_borrows_child.ash:43:4)
+    LoadConstInt          Target=16 Value=3   (tco_direct_conditional_accumulator_borrows_child.ash:43:11)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16   (tco_direct_conditional_accumulator_borrows_child.ash:42:1)
+    LoadConstInt          Target=18 Value=0   (tco_direct_conditional_accumulator_borrows_child.ash:42:1)
+    CallClosure           Target=19 ClosureTemp=17 ArgTemp=18   (tco_direct_conditional_accumulator_borrows_child.ash:42:1)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
+    PrintInt              Source=19   (tco_direct_conditional_accumulator_borrows_child.ash:42:1)
+    AllocAdt              Target=20 Tag=0 FieldCount=0   (tco_direct_conditional_accumulator_borrows_child.ash:42:1)
+    StoreLocal            Slot=10 Source=20   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    LoadLocal             Target=21 Slot=2   (tco_direct_conditional_accumulator_borrows_child.ash:13:1)
+    CleanupResource       SourceTemp=21 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=11
+    CopyOutArena          DestTemp=22 SrcTemp=20 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=11
+    Return                Source=22
+

@@ -15296,8 +15296,8 @@ let isRuntimeManageableHeapChild (semanticType: SemanticType) (listOverScalarsOn
         | _ -> false
 
 // Stage 0's `IsRuntimeManageableTupleElement`: a scalar, or a runtime-managed tuple, string,
-// bytes, big integer, list over scalars, or named type.
-let isRuntimeManageableTupleElement (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || childIsRuntimeManaged(child)(temp)(state) && isRuntimeManageableHeapChild(semanticType)(true)(state)
+// bytes, big integer, list, or named type.
+let isRuntimeManageableTupleElement (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || childIsRuntimeManaged(child)(temp)(state) && isRuntimeManageableHeapChild(semanticType)(false)(state)
 
 // Stage 0's `IsRuntimeManageableListElement`: a scalar, or a runtime-managed heap value.
 let isRuntimeManageableListElement (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || childIsRuntimeManaged(child)(temp)(state) && isRuntimeManageableHeapChild(semanticType)(false)(state)
@@ -15306,6 +15306,15 @@ let recursive allRuntimeManageableTupleElements (elements: List(Expr)) (temps: L
     match (elements, temps, semanticTypes) with
         | ([], [], []) -> true
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) && allRuntimeManageableTupleElements(restElements)(restTemps)(restTypes)(state)
+        | _ -> false
+
+// Stage 0's `HoldsReferenceCountedElement`. A tuple's store takes a reference to a
+// reference-counted element, and an arena tuple can release nothing, so that reference would
+// outlive the tuple. On the reference-counted heap the tuple owns the element and whoever matches
+// on it releases both.
+let recursive holdsReferenceCountedElement (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, temps, semanticTypes) with
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false || holdsReferenceCountedElement(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
 // Stage 0's `RetainRuntimeManagedAggregateChild` on an already lowered child: the read of a
@@ -15394,7 +15403,7 @@ let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered 
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
-            match (freshTemp(state), runtimeTuple && allRuntimeManageableTupleElements(elements)(temps)(semanticTypes)(state)) with
+            match (freshTemp(state), (runtimeTuple || holdsReferenceCountedElement(elements)(temps)(semanticTypes)(state)) && allRuntimeManageableTupleElements(elements)(temps)(semanticTypes)(state)) with
                 | (FreshTemp { state = allocatedState, temp = tupleTemp }, runtimeManaged) ->
                     match retainTupleChildren(elements)(temps)(semanticTypes)(runtimeManaged || transfers)(allocatedState) with
                         | (retainedState, storedTemps) ->

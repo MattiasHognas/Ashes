@@ -1115,6 +1115,20 @@ blocking sibling, arena or runtime-RC representation, and the transition from
 earlier evidence. Final per-function traces keep those decisions in parameter
 order for compiler observability without affecting generated code.
 
+A list parameter's placement decides who owns what a successor's cells store. A parameter on the
+reference-counted heap has its successor copied at the back edge, with references of its own,
+before the iteration's owners are released; a cell built for it therefore borrows its children,
+and a retain stored in such an arena cell would never be released. A parameter left in the arena
+gets no copy, so a cell that escapes into it retains the owned children it stores, whether the
+successor is written in place at the self-call or bound by a `let` the self-call passes on. A
+successor that is a choice between the parameter itself and a cons onto it (`ChoiceAccumulatorRebuild`
+in the structural facts) places a list of heap elements on the reference-counted heap, with one
+exception: when a consed head reads a loop parameter, the accumulator stays in the arena, because
+that sibling's predecessor is released at the same back edge. A tuple that holds a
+reference-counted element is placed on the reference-counted heap with its arena siblings copied
+there, so that whoever matches on it releases all of it; an arena tuple releases nothing, and a
+reference-counted value stored in one is stranded.
+
 Classifier B consumes that placement decision as its representation authority.
 Resolved argument layout and concrete per-edge facts still determine whether
 `GetTcoCopyOutKind` and the `TcoBackEdge*` machinery can copy, reset, or compact

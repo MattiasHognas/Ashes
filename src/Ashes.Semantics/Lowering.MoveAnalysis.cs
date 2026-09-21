@@ -1188,8 +1188,24 @@ public sealed partial class Lowering
         public required bool?[] BytesProvenanceSafeListRebuild { get; init; }
         public required bool?[] AccumulatorEdges { get; init; }
         public required bool[] AnyRebuildEdge { get; init; }
+        public required bool?[] ChoiceAccumulatorEdges { get; init; }
+        public required bool[] AnyChoiceEdge { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
+
+        public static TcoParamFactsState ForParameters(int count, string selfName)
+            => new()
+            {
+                Observed = new TcoSelfCallArgumentShape?[count],
+                ArenaSelfContainedListRebuild = new bool?[count],
+                FreshClosureRebuild = new bool?[count],
+                BytesProvenanceSafeListRebuild = new bool?[count],
+                AccumulatorEdges = new bool?[count],
+                AnyRebuildEdge = new bool[count],
+                ChoiceAccumulatorEdges = new bool?[count],
+                AnyChoiceEdge = new bool[count],
+                SelfName = selfName,
+            };
     }
 
     /// <summary>
@@ -1212,16 +1228,7 @@ public sealed partial class Lowering
         IReadOnlyDictionary<Expr, bool> expressionFreshness)
     {
         var paramNames = info.Params;
-        var state = new TcoParamFactsState
-        {
-            Observed = new TcoSelfCallArgumentShape?[paramNames.Count],
-            ArenaSelfContainedListRebuild = new bool?[paramNames.Count],
-            FreshClosureRebuild = new bool?[paramNames.Count],
-            BytesProvenanceSafeListRebuild = new bool?[paramNames.Count],
-            AccumulatorEdges = new bool?[paramNames.Count],
-            AnyRebuildEdge = new bool[paramNames.Count],
-            SelfName = _maKeyName[function],
-        };
+        TcoParamFactsState state = TcoParamFactsState.ForParameters(paramNames.Count, _maKeyName[function]);
 
         // Use the same body-entry scope recorded by call census. It contains this binding's own name
         // only for recursive definitions; a plain local function whose body refers to an outer
@@ -1265,7 +1272,8 @@ public sealed partial class Lowering
                     affineSelfAppendOnly.Contains(i)
                         ? TcoParamReuseAffinity.SelfAppendOnly
                         : TcoParamReuseAffinity.GeneralOrUnknown,
-                    state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i]));
+                    state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i],
+                    state.ChoiceAccumulatorEdges[i] == true && state.AnyChoiceEdge[i]));
             }
         }
 
@@ -2517,8 +2525,54 @@ public sealed partial class Lowering
                 || (local != TcoSelfCallArgumentShape.ConsumedTail && structural is Expr.Call);
             state.AccumulatorEdges[i] = (state.AccumulatorEdges[i] ?? true) && accumulatorEdge;
             state.AnyRebuildEdge[i] |= local != TcoSelfCallArgumentShape.UnchangedPassthrough;
+            bool choiceEdge = local == TcoSelfCallArgumentShape.Mixed
+                && IsBranchingAccumulatorEdge(structural, paramNames[i], i, parameterScope);
+            state.ChoiceAccumulatorEdges[i] = (state.ChoiceAccumulatorEdges[i] ?? true)
+                && (choiceEdge || IsAccumulatorEdgeArm(structural, paramNames[i], i, parameterScope));
+            state.AnyChoiceEdge[i] |= choiceEdge;
         }
     }
+
+    // A choice between accumulator edges (the parameter handed on in one arm, a cons onto it in
+    // another) is one itself, as long as no arm's pattern rebinds the parameter's name.
+    private static bool IsBranchingAccumulatorEdge(
+        Expr expression,
+        string parameterName,
+        int ordinal,
+        IReadOnlyDictionary<string, int> parameterScope)
+        => Environment.GetEnvironmentVariable("GRC_NO_BRANCHACCUMULATOR") is null
+            && expression switch
+            {
+                Expr.If conditional => IsAccumulatorEdgeArm(conditional.Then, parameterName, ordinal, parameterScope)
+                    && IsAccumulatorEdgeArm(conditional.Else, parameterName, ordinal, parameterScope),
+                Expr.Match match => match.Cases.All(arm => !PatternBinds(arm.Pattern, parameterName)
+                    && IsAccumulatorEdgeArm(arm.Body, parameterName, ordinal, parameterScope)),
+                _ => false,
+            };
+
+    private static bool IsAccumulatorEdgeArm(
+        Expr arm,
+        string parameterName,
+        int ordinal,
+        IReadOnlyDictionary<string, int> parameterScope)
+        => arm switch
+        {
+            Expr.Var passed => parameterScope.TryGetValue(passed.Name, out int passedOrdinal) && passedOrdinal == ordinal,
+            Expr.Cons { Tail: Expr.Var tail } cons => parameterScope.TryGetValue(tail.Name, out int tailOrdinal)
+                && tailOrdinal == ordinal
+                && !ReadsLoopParameter(cons.Head, parameterScope),
+            _ => IsBranchingAccumulatorEdge(arm, parameterName, ordinal, parameterScope),
+        };
+
+    // A head that is a sibling parameter, or is built from one, is released with that parameter's
+    // predecessor at the back edge; the accumulator would be left holding it.
+    private static bool ReadsLoopParameter(Expr expression, IReadOnlyDictionary<string, int> parameterScope)
+        => expression switch
+        {
+            Expr.Var variable => parameterScope.ContainsKey(variable.Name),
+            Expr.QualifiedVar qualified => parameterScope.ContainsKey(qualified.Module),
+            _ => EnumerateChildren(expression).Any(child => ReadsLoopParameter(child, parameterScope)),
+        };
 
     // `argument` is how the tail call spells the value; `structural` is what it was bound to. The
     // first two shapes ask which binding the name refers to, so they read the spelling.

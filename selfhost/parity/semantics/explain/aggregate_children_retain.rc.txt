@@ -53,9 +53,9 @@ Function: pair
 
 Function: _start_main
   Operations
-    dup:                  1
-    drop:                 6
-    uniqueness checks:    2
+    dup:                  2
+    drop:                 20
+    uniqueness checks:    8
     allocations:          3
     reused allocations:   0
     reuse tokens:         0

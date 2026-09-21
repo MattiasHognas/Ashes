@@ -46,3 +46,10 @@ ir_kinds_table() {
          on && /^    \| [A-Z]/ { n = $2; sub(/\(.*/, "", n); print n }' \
         "$R/selfhost/packages/semantics/src/AshesCompiler/Semantics/IrInstructions.ash" > "$T/irkinds.txt"
 }
+
+# The environment switches of the placement rules added by the stage-1 leak work. With all of them set the compiler
+# lowers as it did before that work, which is the reference point for a reproducer and for a stage-1 mirror.
+leakwork_switches_off() {
+    export GRC_NO_RCTUPLE=1 GRC_NO_RCTUPLESIBLING=1 GRC_NO_TUPLEELEMENTTYPE=1 GRC_NO_BRANCHACCUMULATOR=1 \
+        GRC_NO_HEAPLISTUNBLOCK=1 GRC_NO_LETSUCCESSOR=1 GRC_NO_BORROWEDSUCCESSOR=1
+}
