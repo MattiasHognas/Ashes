@@ -44,6 +44,7 @@ function.
 | Script | What it does |
 |---|---|
 | `publishcli.sh <label>` | Publishes this checkout's compiler as a self-contained binary into the scratch directory, for comparisons across branches. |
+| `challengesvsmain.sh <label>` | The gate's last step in one go: publishes a compiler from `origin/main` and one from this checkout and runs `challenge_ab.sh` with both. About 15 minutes. |
 | `challenge_ab.sh <labelA> <cliA> <labelB> <cliB> [challenge...]` | Every `challenges/` program on its README workload with two compilers, three runs each, one at a time: best time, peak memory, exit status, output hash. |
 | `quickstage1.sh <tag> [ENV=value]` | Builds stage 1 and tries it on two tiny programs, a seconds-long crash detector. |
 | `probepeak.sh <stage1>...` | Stage 1 compiling the self-hosted code generator module to completion: wall time and peak memory. |
@@ -77,6 +78,7 @@ under `tests/`.
 | `variants.sh <template.ash> <rounds> <name>=<sed-expression>...` | Shrinks a reproducer: each sed expression deletes or replaces one construct, and the variant runs through `plateau.sh`. |
 | `progbt.sh <program.ash> [frames]`, `progwatch.sh <address-hex> [stops] [frames]` | A program built with debug information under gdb: the crash site, then every write to one word. A corrupted pointer is located with gdb's `find /g` over the reference-counted region first. An allocation at a misaligned address means a free-list link was decremented: some cell was released twice. |
 | `optloop.sh [-b] <source.ash> <rounds>...` | The real self-hosted optimizer run N times over one lowered program (`projects/optloop`), in a fraction of a second: a peak that grows with the rounds is a leak inside the optimizer. `CENSUS=<rounds>` dumps the heap at exit for `tinyrootshape.sh` and `tinypeek.sh`; `WATCH=<cell> ROUNDS_WATCHED=<n>` after a `DEBUG=1 -b` build lists every write to a cell's count with source lines. Hand-written reproducers of a stage-1 leak kept diverging from the real code; importing the real package into a probe project did not. |
+| `optloopswitches.sh <source.ash> <rounds> <SWITCH>...` | The optimizer probe rebuilt under each switch: which stage-0 rule moves the optimizer's leak. A rule with no measured effect is not kept. |
 | `probeswitches.sh <SWITCH>...` | Builds stage 1 once per switch and runs the module probe with each: which stage-0 rule moves stage 1's peak. A rule that helps a probe can cost stage 1 elsewhere, and only this shows it. |
 | `biggraph.sh <stage1> <seconds> <GB> [lines]`, `fulldump.sh` | A snapshot of the module probe's reference-counted heap at a moment: leaked states, then root classes with exclusive attribution. |
 
@@ -90,6 +92,7 @@ release. Identical leaked objects in power-of-two multiplicities mean repeated w
 |---|---|
 | `mktinyinputs.sh <count>...` | Writes `tiny/loops<count>.ash`, that many copies of one recursive list function: two counts give the census a per-function difference. |
 | `debugstage1.sh <tag>` | Stage 1 built with debug information, for `tinywatch.sh`. The census naming a cell must come from the same binary. |
+| `rcrootsof.c` | `rcrootsof <dump-dir> <size> <count>`: header addresses of roots of one cell size, spread over the address range, to look into with `rcpeek`. Naming a root class before chasing it matters: the largest class of the module probe turned out to be the program's own syntax tree, which is live data, not a leak. |
 | `tinyrootshape.sh <len> <elem> [tag]`, `tinypeek.sh <depth> <address-hex>...` | Over the last dump: the leaked roots of one shape tallied by nearby strings, and a cell printed as a tree of its words (`rcpeek.c`), which is how a root's type is recognised. |
 | `tinyrun.sh <stage1> <src.ash>` | Compiles one small file with stage 1: exit status, elapsed time, peak memory. |
 | `tinycensus.sh <stage1> <src.ash> [chunks]` | The same under gdb, stopped at process exit: dumps the reference-counted region and prints the size census and the leaked-state census. Everything live at exit is a leak. |

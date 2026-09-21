@@ -569,7 +569,7 @@ public sealed partial class Lowering
             && _generalRcOwnedSlots.Count > 0
             && !CanArenaReset(pruned)
             && !ContainsUnresolvedLayoutType(pruned, [])
-            && CanNormalizeIntoOwnedRuntimeValue(pruned);
+            && (CanNormalizeIntoOwnedRuntimeValue(pruned) || HasFixedArenaCopyOut(pruned));
         int resultTemp = bodyTemp;
         // Any other result is copied into the arena, where the caller takes it like any fresh
         // result: a copy on the reference-counted heap would be owned by a caller that does not
@@ -632,6 +632,23 @@ public sealed partial class Lowering
     /// A copy of a result in the arena by its fixed copy-out, detached from the owned values the
     /// function releases after it; -1 when the type has none.
     /// </summary>
+    // A result with a fixed copy-out (an optional integer, a list of scalars) is detached from the
+    // function's owned values by that copy, whatever it was read out of.
+    private bool HasFixedArenaCopyOut(TypeRef type)
+        => Environment.GetEnvironmentVariable("GRC_NO_FIXEDCOPYRESULT") is null
+            && (GetCallCopyOutKind(type, out _, out _) is CopyOutKind.DeepAdt or CopyOutKind.Shallow or CopyOutKind.List
+                || IsScalarFieldVariant(type));
+
+    // A variant every field of which is inline (an optional integer): the contract does not govern
+    // it, since it owns no heap child, and a generic one has no fixed copy-out either, so the
+    // normalization helper is what detaches it from a value it may have been read out of.
+    private bool IsScalarFieldVariant(TypeRef type)
+        => Prune(type) is TypeRef.TNamedType named
+            && IsGeneralRcAdmissible(named)
+            && named.Symbol.Constructors.All(constructor =>
+                Enumerable.Range(0, constructor.Arity).All(index =>
+                    CanArenaReset(Prune(InstantiateConstructorParameterType(constructor, index, named)))));
+
     private int EmitGeneralRcArenaResultCopy(int sourceTemp, TypeRef type)
     {
         CopyOutKind kind = GetCallCopyOutKind(type, out int sizeBytes, out IrInst.ListHeadCopyKind headCopy);

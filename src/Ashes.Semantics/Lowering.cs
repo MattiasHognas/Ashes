@@ -6769,7 +6769,8 @@ public sealed partial class Lowering
     private bool CanNormalizeIntoOwnedRuntimeValue(TypeRef type)
         => Prune(type) switch
         {
-            TypeRef.TList list => TryGetRuntimeManagedListHeadCopy(list.Element, out _),
+            TypeRef.TList list => TryGetRuntimeManagedListHeadCopy(list.Element, out _)
+                || (Environment.GetEnvironmentVariable("GRC_NO_WIDELISTRESULT") is null && CanRuntimeManageTcoListElement(list.Element)),
             TypeRef.TNamedType named => IsRuntimeNormalizableParameterType(named) && CanDeepCopyOutAdt(named),
             TypeRef.TStr => true,
             _ => false,

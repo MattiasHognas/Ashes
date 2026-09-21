@@ -244,6 +244,23 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    optimizer's per-instruction pairs, and costs stage 1's own lowering 190 MB, because the state it
    threads is large and rebuilt every iteration. The probe still leaks 0.9 MB per round from other
    sites, which is where the next round starts.
+   The third round corrected two readings before it fixed anything. The largest class in the module
+   probe's snapshot, about 18,000 roots keeping 800 MB, is not a leak: the roots are the
+   `LetBindingSyntax` nodes of the program being compiled, held from the arena, which is live data.
+   And the per-function figure from the exit census over-counts for the same reason, since a
+   function's syntax tree and IR are legitimately live when the process exits. What measures a leak
+   is a probe whose input does not change between rounds (`optloop.sh`), and the module probe's
+   peak. The fix of the round is at the function's end: a function releases the values it owns only
+   once its result is independent of them, and two kinds of result could never be made so. A list
+   whose heads have no fixed copy (a table of string pairs) was not normalizable, which in the
+   optimizer left the three largest per-round roots behind; and a variant whose fields are all
+   inline, an optional integer, is neither a contract type nor has a generic one a fixed copy-out,
+   so the 28 functions in the self-hosted sources that return one left whatever they owned, mostly
+   an `Expr`. Fifty more functions leave their owned values behind because their result type is
+   generic; those need annotations in the source, not a compiler change. What dominates the module
+   probe after this is old versions of the lowering state's persistent maps, kept by arena records
+   that hold reference-counted roots: the record-update design question, whose first designed fix
+   was unsound, and the subject of the next round.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
