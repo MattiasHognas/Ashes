@@ -12607,8 +12607,13 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStr
                                                     |> emit(StoreLocal(resultSlot)(branchTemp))
                                                     |> emit(Label(endLabel))
                                                     |> emit(LoadLocal(target)(resultSlot))
-                                                    |> markControlFlowJoin(target)([thenArm, matchArmResultOf(elseBranch)(branchTemp)(elseType)(transferred)])
-                                                    |> success(target)(resolveType(transferred)(thenType))
+                                                    |> normalizeMixedJoinArms(resultSlot)(thenType)([thenArm, matchArmResultOf(elseBranch)(branchTemp)(elseType)(transferred)])
+                                                    |> (given (joined: (CoreLoweringState, List(MatchArmResult))) ->
+                                                        match joined with
+                                                            | (normalized, joinedArms) ->
+                                                                normalized
+                                                                |> markControlFlowJoin(target)(joinedArms)
+                                                                |> success(target)(resolveType(transferred)(thenType)))
 
 // The then branch inherits the context's expected type; the else branch is expected to have the
 // then branch's type.
