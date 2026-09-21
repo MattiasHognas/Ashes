@@ -11324,6 +11324,28 @@ and quantifiedContains (id: Int) (quantified: List((Int, Str))) =
         | [] -> false
         | (candidate, _name) :: rest -> candidate == id || quantifiedContains(id)(rest)
 
+// Stage 0's `IsCalleeParameterQuantifiedInScheme`: the callee's declared scheme leaves the
+// parameter at `index` one of its own quantified variables, read off the scheme as it was
+// generalized rather than through the substitution.
+let recursive parameterQuantifiedAt (quantified: List((Int, Str))) (index: Int) (body: SemanticType) =
+    match body with
+        | SemFunction(parameter, result, _row) ->
+            if index == 0
+            then
+                match parameter with
+                    | SemVariable(id) -> quantifiedContains(id)(quantified)
+                    | _ -> false
+            else parameterQuantifiedAt(quantified)(index - 1)(result)
+        | _ -> false
+
+let calleeSchemeOf (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprVar(callee) ->
+            match lookupBinding(callee)(state.bindings) with
+                | Some(CoreBinding { scheme = scheme }) -> Some(scheme)
+                | None -> None
+        | _ -> None
+
 let calleeResultListElementQuantified (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
@@ -11346,6 +11368,8 @@ type CoreCallContext =
     // The type the consumer asked the whole spine for, read before the general call cleared the
     // consumer request.
     | expectedResult: Maybe(SemanticType)
+    // The declared scheme of a callee named by a plain variable.
+    | calleeScheme: Maybe(TypeScheme)
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -11959,6 +11983,22 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                         resultDeepCopied = false
                                     )
 
+// A callee whose own scheme leaves a parameter quantified is compiled once for every
+// instantiation, so its body has no layout for that parameter and cannot normalize an
+// arena-placed argument on entry. The caller knows the argument's type, and copies it into
+// to-space, which no arena reset rewinds, before the call.
+let copyGenericArgumentToSpace (context: CoreCallContext) (index: Int) (argumentType: SemanticType) (argumentTemp: Int) (state: CoreLoweringState) =
+    match context.calleeScheme with
+        | Some(TypeScheme { quantified = quantified, body = body }) ->
+            if parameterQuantifiedAt(quantified)(index)(body) && specializationFieldRelocatable(argumentType)(state)
+            then
+                match state with
+                    | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+                        match synthesizeToSpaceCopy(argumentTemp)(resolveType(state)(argumentType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                            | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
+            else (state, argumentTemp)
+        | None -> (state, argumentTemp)
+
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
 // the callee facts and the argument temp, the retain and the flags are emitted, and the call
 // follows.
@@ -11969,9 +12009,11 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
             |> failure(unifiedState)
             |> callStageOf
         | (unifiedState, None) ->
-            unifiedState
-            |> argumentHandOffOf(context.facts)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(argumentTemp)
-            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(argumentTemp)(resultType)(handOff)(unifiedState))
+            match copyGenericArgumentToSpace(context)(context.argumentCount - arity)(argumentType)(argumentTemp)(unifiedState) with
+                | (copiedState, passedTemp) ->
+                    copiedState
+                    |> argumentHandOffOf(context.facts)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)
+                    |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(copiedState))
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
 // state's span is back to once the argument is lowered.
@@ -12969,7 +13011,8 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             resultElementQuantified = calleeResultListElementQuantified(spine)(state),
             calleeName = calleeDisplayName(spine.root),
             argumentCount = coreListLength(spine.arguments),
-            expectedResult = expected
+            expectedResult = expected,
+            calleeScheme = calleeSchemeOf(spine)(state)
         ))
 
 // The consumed arguments whose parts the callee's result may still name: released spine-only unless
