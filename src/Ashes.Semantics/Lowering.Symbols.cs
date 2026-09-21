@@ -220,6 +220,7 @@ public sealed partial class Lowering
                     runtimeManagedCandidate: false,
                     request);
                 Unify(paramType, updateType);
+                HandFreshRecordUpdateChildToOwnedSlot(updateExpr, updateTemp, paramType, resultType);
                 fieldTemps[i] = updateTemp;
                 MarkResourceArgMoved(updateExpr);
             }
@@ -1445,11 +1446,11 @@ public sealed partial class Lowering
             resultType,
             runtimeManagedCandidate,
             request);
-        if (ctor.ParentType is { } parentType
-            && _typeSymbols[parentType].IsZeroCost)
+        if (ctor.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost)
         {
             return (argTemps[0], resultType);
         }
+        runtimeManagedCandidate = runtimeManagedCandidate || (!stackAllocate && resultType is TypeRef.TNamedType placedType && PlaceConstructorOwningFreshChild(args, argTemps, argTypes, placedType));
         PrepareConstructorArgumentOwnership(
             args,
             argTypes,

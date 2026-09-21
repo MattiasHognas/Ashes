@@ -1,20 +1,17 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9024)
-
 function __deepcopy_1  [AdtDeepCopier]
   locals=2 temps=4
-    LoadLocal             Target=0 Slot=1
-    LoadEnv               Target=1 Index=0
-    GetAdtTag             Target=2 Ptr=0
-    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_1_default
+    LoadLocal             Target=0 Slot=1   (concat_runtime_result.ash:1:1)
+    LoadEnv               Target=1 Index=0   (concat_runtime_result.ash:1:1)
+    GetAdtTag             Target=2 Ptr=0   (concat_runtime_result.ash:1:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_1_default   (concat_runtime_result.ash:1:1)
   __deepcopy_1_c0:
-    AllocAdt              Target=3 Tag=0 FieldCount=0
-    Return                Source=3
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (concat_runtime_result.ash:1:1)
+    Return                Source=3   (concat_runtime_result.ash:1:1)
   __deepcopy_1_default:
-    Return                Source=0
+    Return                Source=0   (concat_runtime_result.ash:1:1)
 
 function lambda_0  [SourceFunction from report]
   locals=8 temps=16
@@ -33,29 +30,29 @@ function lambda_0  [SourceFunction from report]
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=6
     CopyOutArena          DestTemp=8 SrcTemp=6 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=6
-    LoadArgumentOwnership Target=9
-    LoadConstInt          Target=10 Value=1
-    ShrInt                Target=11 Left=9 Right=10
-    JumpIfFalse           CondTemp=11 Target=rc_result_owned_0
-    Alloc                 Target=12 SizeBytes=8
-    MakeClosure           Target=13 FuncLabel=__deepcopy_1 EnvPtrTemp=12 EnvSizeBytes=8
-    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=13
-    CallClosure           Target=14 ClosureTemp=13 ArgTemp=8
+    LoadArgumentOwnership Target=9   (concat_runtime_result.ash:1:1)
+    LoadConstInt          Target=10 Value=1   (concat_runtime_result.ash:1:1)
+    ShrInt                Target=11 Left=9 Right=10   (concat_runtime_result.ash:1:1)
+    JumpIfFalse           CondTemp=11 Target=rc_result_owned_0   (concat_runtime_result.ash:1:1)
+    Alloc                 Target=12 SizeBytes=8   (concat_runtime_result.ash:1:1)
+    MakeClosure           Target=13 FuncLabel=__deepcopy_1 EnvPtrTemp=12 EnvSizeBytes=8   (concat_runtime_result.ash:1:1)
+    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=13   (concat_runtime_result.ash:1:1)
+    CallClosure           Target=14 ClosureTemp=13 ArgTemp=8   (concat_runtime_result.ash:1:1)
     RcDrop                SourceTemp=8 TypeName=Unit RuntimeManaged=true
-    StoreLocal            Slot=7 Source=14
-    Jump                  Target=rc_result_done_1
+    StoreLocal            Slot=7 Source=14   (concat_runtime_result.ash:1:1)
+    Jump                  Target=rc_result_done_1   (concat_runtime_result.ash:1:1)
   rc_result_owned_0:
-    StoreLocal            Slot=7 Source=8
+    StoreLocal            Slot=7 Source=8   (concat_runtime_result.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=15 Slot=7
-    Return                Source=15
+    LoadLocal             Target=15 Slot=7   (concat_runtime_result.ash:1:1)
+    Return                Source=15   (concat_runtime_result.ash:1:1)
 
 function _start_main  [ProgramEntry]
   locals=8 temps=11
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (concat_runtime_result.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (concat_runtime_result.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (concat_runtime_result.ash:1:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=2 Slot=2   (concat_runtime_result.ash:5:1)
     Borrow                Target=3 SourceTemp=2
@@ -66,11 +63,11 @@ function _start_main  [ProgramEntry]
     CallClosure           Target=8 ClosureTemp=3 ArgTemp=4   (concat_runtime_result.ash:5:1)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    StoreLocal            Slot=6 Source=8
-    LoadLocal             Target=9 Slot=2
+    StoreLocal            Slot=6 Source=8   (concat_runtime_result.ash:1:1)
+    LoadLocal             Target=9 Slot=2   (concat_runtime_result.ash:1:1)
     CleanupResource       SourceTemp=9 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=7
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=7
-    LoadLocal             Target=10 Slot=6
+    LoadLocal             Target=10 Slot=6   (concat_runtime_result.ash:1:1)
     Return                Source=10
 

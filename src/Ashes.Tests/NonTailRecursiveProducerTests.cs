@@ -66,13 +66,12 @@ public sealed class NonTailRecursiveProducerTests
     }
 
     [Test]
-    public void An_arena_returning_recursive_function_keeps_the_bit_clear()
+    public void A_recursive_record_producer_returns_its_result_owned()
     {
-        // The control: this producer builds an ADT whose cells stay arena-placed — the recursive
-        // result is wrapped in a list literal rather than consed onto, so it is not the spine of a
-        // recursive list producer and keeps the arena placement. Its self-closure must NOT claim a
-        // reference-counted result: the call site's copy-out is what keeps that result alive past
-        // the call's own arena window.
+        // This producer builds a record that reaches itself through a list field, which no fixed
+        // copy-out expresses. It normalizes its own result at its return (the general contract,
+        // see Lowering.GeneralRc), so its self-closure claims a reference-counted result and the
+        // call site takes it over without a copy.
         var ir = LowerProgram("""
             type Node =
                 | value: Int
@@ -95,7 +94,7 @@ public sealed class NonTailRecursiveProducerTests
         producer.Instructions
             .OfType<IrInst.MakeClosure>()
             .Where(c => string.Equals(c.FuncLabel, producer.Label, StringComparison.Ordinal))
-            .ShouldAllBe(c => !c.ReturnsRuntimeManaged);
+            .ShouldAllBe(c => c.ReturnsRuntimeManaged);
     }
 
     [Test]

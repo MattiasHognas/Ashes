@@ -2665,6 +2665,133 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_update_fresh_call_result_field_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A record update whose new field value is a call's owned reference-counted result. The
+        // update's cell is an arena one, which never releases what it holds, so the fresh list needs
+        // an owner of its own: without one the function's result normalization takes a second
+        // reference and the first is never released, one whole list per round.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordUpdateFreshCallResultFieldProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 41}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update with a fresh call-result field", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_tuple_scrutinee_loop_owned_results_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop walking two lists through `match (a, b) with`, threading a state each iteration's
+        // call returns owned. The tails it hands on are read out of the tuple the scrutinee builds,
+        // and have to be traced through it to the loop's own parameters: values the iteration
+        // received cannot hold the result it produced, which is what lets the back edge release it.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildTupleScrutineeLoopProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 16}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple-scrutinee loop with owned results", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_loop_result_tuple_holding_its_state_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop whose base case returns a tuple holding its own reference-counted state parameter.
+        // The arena tuple retains the state to carry it past the loop's release of the parameter,
+        // and the function's result normalization then takes a reference of its own: the tuple's
+        // reference needs an owner that releases it, since the arena cell never does.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopResultTupleHoldingStateProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 41}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop result tuple holding its state parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_accumulator_with_differing_self_call_shapes_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An accumulator of the ownership contract's values that one arm extends with a call's owned
+        // result and another hands on unchanged. No single self-call shape holds, and a parameter
+        // left in the arena for that never releases its predecessor, so the owned result each
+        // iteration handed it was orphaned. Classified as an accumulator it is placed on the
+        // reference-counted heap and the iteration's owned value is released at the back edge.
+        int[] roundCounts = [4000, 16000, 64000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildDifferingShapeAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 20}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("accumulator with differing self-call shapes", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_state_threaded_beside_a_variant_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A state threaded through a loop beside a variant of the ownership contract's types whose
+        // successor is read out of a call's result (a function type peeled one arrow per argument).
+        // Only records were admitted as reference-counted loop parameters, so the variant could
+        // never be placed, and a parameter that can never be placed blocks every sibling that may
+        // hold it: the state stayed in the arena and each iteration's owned results were kept.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildStateBesideVariantParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 50}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("state threaded beside a variant parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_recursive_map_bound_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9287,6 +9414,255 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(pipeline(Node(nodeName = "n", nodeItems = buildItems(20000)([]))))
             """;
     }
+
+    // The state's instruction list has a self-recursive element, which makes the record one of the
+    // general ownership contract's types, the ones whose constructor and update cells stay in the arena.
+    private static string BuildRecordUpdateFreshCallResultFieldProgram(int rounds)
+        => $$"""
+            type Instruction =
+                | InstConst(Int)
+                | InstSeq(Instruction, Instruction)
+
+            type State =
+                | reversedInstructions: List(Instruction)
+                | stringLiterals: List(Str)
+                | nextTemp: Int
+
+            let recursive names n acc =
+                if n <= 0 then acc
+                else names(n - 1)("item" :: acc)
+
+            let recursive countItems items total =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countItems(tail)(total + 1)
+
+            let step (state: State) = state with stringLiterals = names(40)([]), nextTemp = state.nextTemp + 1
+
+            let initial = State(reversedInstructions = [], stringLiterals = ["a"], nextTemp = 0)
+
+            let recursive repeat times total =
+                if times == 0 then total
+                else
+                    let stepped = step(initial)
+                    in repeat(times - 1)(total + stepped.nextTemp + countItems(stepped.stringLiterals)(0))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildTupleScrutineeLoopProgram(int rounds)
+        => $$"""
+            type Instruction =
+                | InstConst(Int)
+                | InstSeq(Instruction, Instruction)
+
+            type State =
+                | reversedInstructions: List(Instruction)
+                | stringLiterals: List(Str)
+                | nextTemp: Int
+
+            type Lowered =
+                | state: State
+                | temp: Int
+
+            let recursive names n acc =
+                if n <= 0 then acc
+                else names(n - 1)("item" :: acc)
+
+            let lowerOne (argument: Instruction) (state: State) =
+                Lowered(state = (state with stringLiterals = names(40)([]), nextTemp = state.nextTemp + 1), temp = state.nextTemp)
+
+            let recursive countItems items total =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countItems(tail)(total + 1)
+
+            let recursive lowerAll (arguments: List(Instruction)) (fieldTypes: List(Instruction)) (state: State) (reversedTemps: List(Int)) =
+                match (arguments, fieldTypes) with
+                    | (argument :: restArguments, fieldType :: restTypes) ->
+                        match lowerOne(argument)(state) with
+                            | Lowered { state = nextState, temp = temp } -> lowerAll(restArguments)(restTypes)(nextState)(temp :: reversedTemps)
+                    | _ -> state.nextTemp + countItems(reversedTemps)(0)
+
+            let initial = State(reversedInstructions = [], stringLiterals = ["a"], nextTemp = 0)
+
+            let arguments = [InstConst(1), InstConst(2), InstConst(3), InstConst(4), InstConst(5), InstConst(6), InstConst(7), InstConst(8)]
+
+            let recursive repeat times total =
+                if times == 0 then total
+                else repeat(times - 1)(total + lowerAll(arguments)(arguments)(initial)([]))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    // The element carries a string, which makes it one of the general ownership contract's types;
+    // the inner loop is a local closure, as in the self-hosted optimizer this shape comes from.
+    private static string BuildDifferingShapeAccumulatorProgram(int rounds)
+        => $$"""
+            type Instruction =
+                | InstConst(Int)
+                | InstName(Str)
+                | InstSeq(Instruction, Instruction)
+
+            let pushAssociation (key: Int) (value: Instruction) (entries: List((Int, Instruction))) = (key, value) :: entries
+
+            let recursive lookupCount (key: Int) (counts: List((Int, Int))) =
+                match counts with
+                    | [] -> 0
+                    | (candidate, count) :: rest ->
+                        if candidate == key then count
+                        else lookupCount(key)(rest)
+
+            let definedTemps (inst: Instruction) =
+                match inst with
+                    | InstConst(n) -> [n, n + 1]
+                    | InstName(_) -> []
+                    | InstSeq(_, _) -> []
+
+            let recursive collect (instructions: List(Instruction)) (defCounts: List((Int, Int))) (acc: List((Int, Instruction))) =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        let recursive addDefs (ds: List(Int)) (entries: List((Int, Instruction))) =
+                            match ds with
+                                | [] -> entries
+                                | d :: dTail ->
+                                    if lookupCount(d)(defCounts) == 1
+                                    then
+                                        entries
+                                        |> pushAssociation(d)(inst)
+                                        |> addDefs(dTail)
+                                    else addDefs(dTail)(entries)
+                        in
+                            acc
+                            |> addDefs(definedTemps(inst))
+                            |> collect(tail)(defCounts)
+
+            let recursive countEntries (entries: List((Int, Instruction))) total =
+                match entries with
+                    | [] -> total
+                    | _ :: rest -> countEntries(rest)(total + 1)
+
+            let recursive program n acc =
+                if n == 0 then acc
+                else program(n - 1)(InstConst(n * 2) :: acc)
+
+            let recursive counts n acc =
+                if n == 0 then acc
+                else counts(n - 1)((n * 2, 1) :: acc)
+
+            let recursive repeat times total =
+                if times == 0 then total
+                else
+                    let singleDefs = collect(program(20)([]))(counts(20)([]))([])
+                    in repeat(times - 1)(total + countEntries(singleDefs)(0))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildStateBesideVariantParameterProgram(int rounds)
+        => $$"""
+            type TypeExpr =
+                | Named(Str)
+                | Arrow(TypeExpr, TypeExpr)
+
+            type Instruction =
+                | InstConst(Int)
+                | InstSeq(Instruction, Instruction)
+
+            type State =
+                | reversedInstructions: List(Instruction)
+                | stringLiterals: List(Str)
+                | nextTemp: Int
+
+            type Lowered =
+                | state: State
+                | temp: Int
+
+            type Resolution =
+                | resolvedState: State
+                | resultType: TypeExpr
+
+            let recursive names n acc =
+                if n <= 0 then acc
+                else names(n - 1)("item" :: acc)
+
+            let recursive countItems items total =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countItems(tail)(total + 1)
+
+            let lowerOne (argument: Int) (state: State) =
+                Lowered(state = (state with stringLiterals = names(40)([]), nextTemp = state.nextTemp + argument), temp = state.nextTemp)
+
+            let resolveFunctionType (functionType: TypeExpr) (state: State) =
+                match functionType with
+                    | Arrow(_, result) -> Resolution(resolvedState = (state with nextTemp = state.nextTemp + 1), resultType = result)
+                    | Named(_) -> Resolution(resolvedState = state, resultType = functionType)
+
+            let recursive lowerArguments (arguments: List(Int)) (functionType: TypeExpr) (state: State) =
+                match arguments with
+                    | [] -> state.nextTemp + countItems(state.stringLiterals)(0)
+                    | argument :: rest ->
+                        match resolveFunctionType(functionType)(state) with
+                            | Resolution { resolvedState = functionState, resultType = resultType } ->
+                                match lowerOne(argument)(functionState) with
+                                    | Lowered { state = nextState } -> lowerArguments(rest)(resultType)(nextState)
+
+            let initial = State(reversedInstructions = [], stringLiterals = ["a"], nextTemp = 0)
+            let functionType = Arrow(Named("a"))(Arrow(Named("b"))(Arrow(Named("c"))(Arrow(Named("d"))(Named("r")))))
+            let recursive repeat times total =
+                if times == 0 then total
+                else repeat(times - 1)(total + lowerArguments([1, 1, 1, 1, 1, 1])(functionType)(initial))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildLoopResultTupleHoldingStateProgram(int rounds)
+        => $$"""
+            type Instruction =
+                | InstConst(Int)
+                | InstSeq(Instruction, Instruction)
+
+            type State =
+                | reversedInstructions: List(Instruction)
+                | stringLiterals: List(Str)
+                | nextTemp: Int
+
+            let recursive names n acc =
+                if n <= 0 then acc
+                else names(n - 1)("item" :: acc)
+
+            let recursive countItems items total =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countItems(tail)(total + 1)
+
+            let bindOne (left: Int) (right: Int) (state: State) =
+                if left == right
+                then ((state with nextTemp = state.nextTemp + 1), None)
+                else (state, Some("mismatch"))
+
+            let recursive bindAll (pairs: List((Int, Int))) (state: State) =
+                match pairs with
+                    | [] -> (state, None)
+                    | (left, right) :: rest ->
+                        match bindOne(left)(right)(state) with
+                            | (failedState, Some(error)) -> (failedState, Some(error))
+                            | (bound, None) -> bindAll(rest)(bound)
+
+            let fresh (seed: Int) (state: State) = state with stringLiterals = names(40)([]), nextTemp = seed
+
+            let initial = State(reversedInstructions = [], stringLiterals = ["a"], nextTemp = 0)
+
+            let recursive repeat times total =
+                if times == 0 then total
+                else
+                    match bindAll([])(fresh(1)(initial)) with
+                        | (bound, _) -> repeat(times - 1)(total + bound.nextTemp + countItems(bound.stringLiterals)(0))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
 
     private static string BuildRegionManagedTaskFrameProgram(int iterations)
         => $$"""

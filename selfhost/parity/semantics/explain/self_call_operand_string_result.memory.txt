@@ -7,11 +7,11 @@ Function: go
     result fresh: yes
   perceus [lambda_0]
     dup:                  0
-    drop:                 1
+    drop:                 2
     uniqueness checks:    0
   representation [lambda_0]
-    conservative unknown: 3
+    conservative unknown: 2
     region:               2
-    runtime rc:           3
+    runtime rc:           4
     copy value:           6
 

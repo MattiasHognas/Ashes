@@ -84,7 +84,7 @@ Function: total
 Function: firstLabels [lambda_8]
   Operations
     dup:                  0
-    drop:                 1
+    drop:                 2
     uniqueness checks:    0
     allocations:          0
     reused allocations:   0

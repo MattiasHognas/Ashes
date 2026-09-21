@@ -3,7 +3,7 @@ RC report
 
 Function: _start_main
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 3
     uniqueness checks:    1
     allocations:          4

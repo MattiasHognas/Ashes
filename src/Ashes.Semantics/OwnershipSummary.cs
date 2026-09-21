@@ -278,6 +278,11 @@ internal enum TcoParamReuseAffinity
 /// <param name="ReuseAffinity">
 /// The canonical affine-use proof consumed by representation-specific reuse lowering.
 /// </param>
+/// <param name="AccumulatorRebuild">
+/// True when every self-recursive call site was classified at this position, each one passing the
+/// parameter itself, a cons onto it, or a call's result, and at least one of them rebuilds it: an
+/// accumulator whose per-site shapes differ (extended in one arm, handed on in another).
+/// </param>
 internal sealed record TcoParamStructuralFacts(
     int ParameterOrdinal,
     string ParameterName,
@@ -286,7 +291,8 @@ internal sealed record TcoParamStructuralFacts(
     bool FreshClosureRebuild,
     bool BytesProvenanceSafeListRebuild,
     TcoParamUseMode UseMode,
-    TcoParamReuseAffinity ReuseAffinity);
+    TcoParamReuseAffinity ReuseAffinity,
+    bool AccumulatorRebuild = false);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge

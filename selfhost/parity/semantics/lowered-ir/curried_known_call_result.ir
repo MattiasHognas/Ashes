@@ -1,9 +1,6 @@
 IR (lowered)
 ============
 
-trait evidence
-  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
-
 function lambda_1  [ClosureHelper from describe]
   locals=3 temps=9
     LoadEnv               Target=0 Index=0   (curried_known_call_result.ash:1:53)
@@ -39,14 +36,14 @@ function lambda_0  [SourceFunction from describe]
     LoadLocal             Target=1 Slot=1   (curried_known_call_result.ash:1:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (curried_known_call_result.ash:1:1)
     MakeClosure           Target=2 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (curried_known_call_result.ash:1:1)
-    Return                Source=2
+    Return                Source=2   (curried_known_call_result.ash:1:1)
 
 function _start_main  [ProgramEntry]
   locals=8 temps=11
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
-    LoadConstInt          Target=0 Value=0
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
-    StoreLocal            Slot=2 Source=1
+    LoadConstInt          Target=0 Value=0   (curried_known_call_result.ash:1:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (curried_known_call_result.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (curried_known_call_result.ash:1:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=2 Slot=2   (curried_known_call_result.ash:3:16)
     Borrow                Target=3 SourceTemp=2
@@ -59,8 +56,8 @@ function _start_main  [ProgramEntry]
     PrintStr              Source=7   (curried_known_call_result.ash:3:1)
     RcDrop                SourceTemp=7 TypeName=String RuntimeManaged=true
     AllocAdt              Target=8 Tag=0 FieldCount=0   (curried_known_call_result.ash:3:1)
-    StoreLocal            Slot=6 Source=8
-    LoadLocal             Target=9 Slot=2
+    StoreLocal            Slot=6 Source=8   (curried_known_call_result.ash:1:1)
+    LoadLocal             Target=9 Slot=2   (curried_known_call_result.ash:1:1)
     CleanupResource       SourceTemp=9 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=7
     CopyOutArena          DestTemp=10 SrcTemp=8 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization

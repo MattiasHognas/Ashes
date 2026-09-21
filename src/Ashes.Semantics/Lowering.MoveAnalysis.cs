@@ -1186,6 +1186,8 @@ public sealed partial class Lowering
         public required bool?[] ArenaSelfContainedListRebuild { get; init; }
         public required bool?[] FreshClosureRebuild { get; init; }
         public required bool?[] BytesProvenanceSafeListRebuild { get; init; }
+        public required bool?[] AccumulatorEdges { get; init; }
+        public required bool[] AnyRebuildEdge { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
     }
@@ -1216,6 +1218,8 @@ public sealed partial class Lowering
             ArenaSelfContainedListRebuild = new bool?[paramNames.Count],
             FreshClosureRebuild = new bool?[paramNames.Count],
             BytesProvenanceSafeListRebuild = new bool?[paramNames.Count],
+            AccumulatorEdges = new bool?[paramNames.Count],
+            AnyRebuildEdge = new bool[paramNames.Count],
             SelfName = _maKeyName[function],
         };
 
@@ -1260,7 +1264,8 @@ public sealed partial class Lowering
                             : TcoParamUseMode.GeneralOrUnknown,
                     affineSelfAppendOnly.Contains(i)
                         ? TcoParamReuseAffinity.SelfAppendOnly
-                        : TcoParamReuseAffinity.GeneralOrUnknown));
+                        : TcoParamReuseAffinity.GeneralOrUnknown,
+                    state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i]));
             }
         }
 
@@ -2506,6 +2511,12 @@ public sealed partial class Lowering
             state.BytesProvenanceSafeListRebuild[i] =
                 (state.BytesProvenanceSafeListRebuild[i] ?? true)
                 && bytesProvenanceSafeListRebuild;
+            // An accumulator's edge hands the parameter on, conses onto it, or replaces it with a
+            // call's result; a consumed tail or any other expression is not one.
+            bool accumulatorEdge = local is TcoSelfCallArgumentShape.UnchangedPassthrough or TcoSelfCallArgumentShape.GrownCons
+                || (local != TcoSelfCallArgumentShape.ConsumedTail && structural is Expr.Call);
+            state.AccumulatorEdges[i] = (state.AccumulatorEdges[i] ?? true) && accumulatorEdge;
+            state.AnyRebuildEdge[i] |= local != TcoSelfCallArgumentShape.UnchangedPassthrough;
         }
     }
 

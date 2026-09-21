@@ -1048,7 +1048,7 @@ public sealed partial class Lowering
     /// the result kept stay alive; unstructured RC values (Str/Bytes/BigInt) have no parts and
     /// release normally.
     /// </summary>
-    private void EmitRuntimeManagedChildPreservingDrop(int valueTemp, TypeRef type)
+    private void EmitRuntimeManagedChildPreservingDrop(int valueTemp, TypeRef type, TypeRef? resultType = null)
     {
         TypeRef pruned = Prune(type);
         switch (pruned)
@@ -1059,6 +1059,10 @@ public sealed partial class Lowering
             case TypeRef.TTuple:
                 EmitRuntimeManagedShallowAggregateDrop(valueTemp, "Tuple");
                 break;
+            case TypeRef.TNamedType named when TypeUnreachableChildren(named, resultType) is { Count: > 0 } unreachable:
+                EmitRuntimeManagedUnreachableChildDrops(valueTemp, named, unreachable);
+                EmitRuntimeManagedShallowAggregateDrop(valueTemp, named.Symbol.Name);
+                break;
             case TypeRef.TNamedType named:
                 EmitRuntimeManagedShallowAggregateDrop(valueTemp, named.Symbol.Name);
                 break;
@@ -1066,6 +1070,78 @@ public sealed partial class Lowering
                 EmitRuntimeManagedChildDrop(valueTemp, pruned);
                 break;
         }
+    }
+
+    // The fields of a consumed aggregate the callee's result cannot hold: a field of a type the
+    // result type can never contain is out of the result's reach whatever the callee did with the
+    // argument, so this caller's last reference to it is released rather than preserved with the
+    // rest. Keeping every field because the result may hold one of them leaks the others, which is
+    // one leaked copy of each unrelated field per call. A list the result cannot hold but whose
+    // elements it may gives up its cells and keeps its heads, the way a consumed list argument does.
+    private List<(OrdinaryHeapLayoutChild Child, bool SpineOnly)> TypeUnreachableChildren(
+        TypeRef.TNamedType named,
+        TypeRef? resultType)
+    {
+        var unreachable = new List<(OrdinaryHeapLayoutChild, bool)>();
+        if (resultType is null || named.Symbol.Constructors.Count != 1)
+        {
+            return unreachable;
+        }
+
+        foreach (OrdinaryHeapLayoutChild child in GetOwnedOrdinaryHeapChildren(named, named.Symbol.Constructors[0]))
+        {
+            if (ResultMayContainPart(resultType, child.Type))
+            {
+                continue;
+            }
+
+            if (HeapPartTypes(child.Type).TrueForAll(part => !ResultMayContainPart(resultType, part)))
+            {
+                unreachable.Add((child, false));
+            }
+            else if (Prune(child.Type) is TypeRef.TList)
+            {
+                unreachable.Add((child, true));
+            }
+        }
+
+        return unreachable;
+    }
+
+    private bool ResultMayContainPart(TypeRef resultType, TypeRef partType)
+        => CallResultMayContainArgumentType(resultType, partType, new HashSet<string>(StringComparer.Ordinal));
+
+    private void EmitRuntimeManagedUnreachableChildDrops(
+        int valueTemp,
+        TypeRef.TNamedType named,
+        List<(OrdinaryHeapLayoutChild Child, bool SpineOnly)> children)
+    {
+        // Only the last reference owns the fields: a shared aggregate's fields stay with the owner
+        // the other reference belongs to.
+        int uniqueTemp = NewTemp();
+        string sharedLabel = NewLabel("rcdrop_preserving_shared");
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, valueTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, sharedLabel));
+        Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        foreach ((OrdinaryHeapLayoutChild child, bool spineOnly) in children)
+        {
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index, IsTaglessAdt(named)));
+            if (spineOnly)
+            {
+                EmitRuntimeManagedListSpineDrop(childTemp);
+            }
+            else
+            {
+                EmitRuntimeManagedChildDrop(childTemp, child.Type);
+            }
+        }
+
+        Emit(new IrInst.Label(sharedLabel));
     }
 
     private void EmitRuntimeManagedShallowAggregateDrop(int valueTemp, string typeName)
@@ -1254,6 +1330,12 @@ public sealed partial class Lowering
             || CanRuntimeManageOwnedChildAdt(named))
         {
             EmitRecursiveRuntimeManagedAdtDrop(valueTemp, named);
+            return;
+        }
+
+        if (Environment.GetEnvironmentVariable("GRC_NO_DROPROUTE") is null && NeedsRuntimeManagedAdtNormalizer(named))
+        {
+            EmitGeneralRuntimeManagedAdtDrop(valueTemp, named);
             return;
         }
 

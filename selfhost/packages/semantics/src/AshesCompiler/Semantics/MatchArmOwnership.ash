@@ -33,6 +33,10 @@ type MatchArmResult =
     | armRuntimeManaged: Bool
     | armNewlyProduced: Bool
     | armRetainedOwner: Bool
+    // Whether the arm hands the join a reference-counted value of its own, and the temp its last
+    // store put in the join slot: `-1` for an arm that never reaches the join.
+    | armOwned: Bool
+    | armStoreTemp: Int
 
 let recursive unspanned (expression: Expr) =
     match expression with

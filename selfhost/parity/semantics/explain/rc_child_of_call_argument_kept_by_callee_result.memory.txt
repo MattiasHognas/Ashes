@@ -142,13 +142,13 @@ Function: firstNames
     impls: consumed, move-safe yes
     result fresh: yes
   perceus [lambda_14]
-    dup:                  10
-    drop:                 28
+    dup:                  11
+    drop:                 29
     uniqueness checks:    12
   representation [lambda_14]
-    conservative unknown: 10
+    conservative unknown: 9
     region:               5
-    runtime rc:           36
+    runtime rc:           38
 
 Function: methodNameOf
   ownership

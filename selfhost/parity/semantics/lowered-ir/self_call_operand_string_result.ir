@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from go]
-  locals=8 temps=23
+  locals=7 temps=21
     LoadLocal             Target=0 Slot=1   (self_call_operand_string_result.ash:2:8)
     LoadConstInt          Target=1 Value=0   (self_call_operand_string_result.ash:2:13)
     CmpIntEq              Target=2 Left=0 Right=1   (self_call_operand_string_result.ash:2:8)
@@ -21,14 +21,11 @@ function lambda_0  [SourceFunction from go]
     SubInt                Target=10 Left=8 Right=9   (self_call_operand_string_result.ash:4:19)
     LoadConstInt          Target=12 Value=2   (self_call_operand_string_result.ash:4:16)
     CallClosure           Target=11 ClosureTemp=6 ArgTemp=10 RuntimeManagedArgumentFlagTemp=12   (self_call_operand_string_result.ash:4:16)
-    StoreLocal            Slot=6 Source=11   (self_call_operand_string_result.ash:4:16)
-    LoadLocal             Target=21 Slot=6
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
-    CopyOutArena          DestTemp=22 SrcTemp=21 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=13 SrcTemp=11 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    StoreLocal            Slot=6 Source=22
-    LoadLocal             Target=13 Slot=6   (self_call_operand_string_result.ash:4:16)
     ConcatStr             Target=14 Left=5 Right=13 RuntimeManaged=true   (self_call_operand_string_result.ash:4:10)
+    RcDrop                SourceTemp=13 TypeName=String RuntimeManaged=true
     StoreLocal            Slot=2 Source=14   (self_call_operand_string_result.ash:2:5)
   endif_1:
     LoadLocal             Target=15 Slot=2   (self_call_operand_string_result.ash:2:5)
@@ -38,12 +35,12 @@ function lambda_0  [SourceFunction from go]
     JumpIfFalse           CondTemp=18 Target=rc_result_owned_2   (self_call_operand_string_result.ash:1:1)
     CopyOutArena          DestTemp=19 SrcTemp=15 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=15 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=7 Source=19   (self_call_operand_string_result.ash:1:1)
+    StoreLocal            Slot=6 Source=19   (self_call_operand_string_result.ash:1:1)
     Jump                  Target=rc_result_done_3   (self_call_operand_string_result.ash:1:1)
   rc_result_owned_2:
-    StoreLocal            Slot=7 Source=15   (self_call_operand_string_result.ash:1:1)
+    StoreLocal            Slot=6 Source=15   (self_call_operand_string_result.ash:1:1)
   rc_result_done_3:
-    LoadLocal             Target=20 Slot=7   (self_call_operand_string_result.ash:1:1)
+    LoadLocal             Target=20 Slot=6   (self_call_operand_string_result.ash:1:1)
     Return                Source=20   (self_call_operand_string_result.ash:1:1)
 
 function _start_main  [ProgramEntry]

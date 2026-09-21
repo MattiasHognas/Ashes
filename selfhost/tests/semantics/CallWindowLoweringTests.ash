@@ -98,12 +98,12 @@ let expectNormalizedResultResetsEnclosingBracket unit =
     |> expectNoInstructionText("DestTemp=12")
     |> (given (_) -> Unit)
 
-// A fresh reference-counted argument to a helper that neither borrows nor keeps it: the caller
-// reads the callee's accepts bit, retains the argument only when the bit is set, passes the slot's
-// value with the flag, and releases the fresh argument after the call.
+// A fresh reference-counted argument to a helper whose result reach is unknown travels under the
+// callee's accepts bit: the caller reads the bit and passes its own reference with the flag, without
+// retaining a second one, and releases the argument after the call where the callee did not adopt it.
 let freshArgumentProgram = "let makeText n =\n    let text = Ashes.Text.fromInt(n)\n    in text\n\nlet shout (text: Str) = Ashes.IO.print(text)\n\nshout(makeText(7))"
 
-let expectFreshArgumentRetainedUnderAcceptsBit unit =
+let expectFreshArgumentHandedOverUnderAcceptsBit unit =
     freshArgumentProgram
     |> dumpSource
     |> expectInstruction("LoadMemOffset         Target=10 BasePtr=5 OffsetBytes=16")
@@ -111,13 +111,11 @@ let expectFreshArgumentRetainedUnderAcceptsBit unit =
     |> expectInstruction("ShrInt                Target=12 Left=10 Right=11")
     |> expectInstruction("LoadConstInt          Target=13 Value=1")
     |> expectInstruction("AndInt                Target=14 Left=12 Right=13")
-    |> expectInstruction("StoreLocal            Slot=11 Source=9")
-    |> expectInstruction("JumpIfFalse           CondTemp=14 Target=rc_call_argument_not_retained_2")
-    |> expectInstruction("RcDup                 Target=15 SourceTemp=9 RuntimeManaged=true")
-    |> expectInstruction("StoreLocal            Slot=11 Source=15")
-    |> expectInstruction("LoadLocal             Target=16 Slot=11")
-    |> expectInstruction("CallClosure           Target=20 ClosureTemp=5 ArgTemp=16 RuntimeManagedArgumentFlagTemp=14")
+    |> expectInstruction("CallClosure           Target=18 ClosureTemp=5 ArgTemp=9 RuntimeManagedArgumentFlagTemp=14")
+    |> expectInstruction("JumpIfFalse           CondTemp=14 Target=rc_handed_over_not_adopted_4")
     |> expectInstruction("RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true")
+    |> expectNoInstructionText("rc_call_argument_not_retained")
+    |> expectNoInstructionText("RcDup")
     |> (given (_) -> Unit)
 
 // A helper whose result keeps its argument takes a fresh argument outright: the accepts bit is
@@ -294,7 +292,7 @@ let runCallWindowLoweringTests unit =
     |> (given (_) -> expectGenericListResultDeepCopyMatchesStageZero(Unit))
     |> expectCurriedSelfCallKeepsWindowOpen
     |> expectNormalizedResultResetsEnclosingBracket
-    |> expectFreshArgumentRetainedUnderAcceptsBit
+    |> expectFreshArgumentHandedOverUnderAcceptsBit
     |> expectKeptFreshArgumentIsTransferred
     |> expectKnownRuntimeManagedResultResetsWithoutFlag
     |> expectScalarResultKeepsPlainReset

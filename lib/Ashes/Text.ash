@@ -298,13 +298,13 @@ let compare left right =
     |> Ashes.Byte.fromText
     |> Ashes.Byte.compare(Ashes.Byte.fromText(left))
 
-let join separator parts =
-    (let recursive rev acc xs =
+let join (separator: Str) (parts: List(Str)) =
+    (let recursive rev (acc: List(Str)) (xs: List(Str)) =
         match xs with
             | [] -> acc
             | head :: tail -> rev(head :: acc)(tail)
     in
-        let recursive interleaveGo acc ps =
+        let recursive interleaveGo (acc: List(Str)) (ps: List(Str)) =
             match ps with
                 | [] -> rev([])(acc)
                 | first :: rest ->
@@ -312,7 +312,7 @@ let join separator parts =
                         | [] -> interleaveGo(first :: [])(rest)
                         | _ -> interleaveGo(first :: separator :: acc)(rest)
         in
-            let recursive pairwiseGo acc ps =
+            let recursive pairwiseGo (acc: List(Str)) (ps: List(Str)) =
                 match ps with
                     | [] -> rev([])(acc)
                     | first :: rest ->
@@ -322,7 +322,7 @@ let join separator parts =
                                 let merged = first + second
                                 in pairwiseGo(merged :: acc)(more)
             in
-                let recursive reduce ps =
+                let recursive reduce (ps: List(Str)) =
                     match ps with
                         | [] -> ""
                         | only :: rest ->

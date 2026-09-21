@@ -37,7 +37,7 @@ Function: insertLeft
     drop:                 0
     uniqueness checks:    0
   representation [lambda_0]
-    conservative unknown: 8
+    conservative unknown: 7
     region:               5
     copy value:           2
 

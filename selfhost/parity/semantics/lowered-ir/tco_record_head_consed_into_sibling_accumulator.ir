@@ -690,7 +690,7 @@ function lambda_4  [SourceFunction from total]
     Return                Source=4   (tco_record_head_consed_into_sibling_accumulator.ash:16:1)
 
 function lambda_8  [ClosureHelper from firstLabels]
-  locals=19 temps=44
+  locals=18 temps=42
     LoadEnv               Target=0 Index=0   (tco_record_head_consed_into_sibling_accumulator.ash:22:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_record_head_consed_into_sibling_accumulator.ash:22:5)
@@ -745,25 +745,22 @@ function lambda_8  [ClosureHelper from firstLabels]
     SubInt                Target=27 Left=25 Right=26   (tco_record_head_consed_into_sibling_accumulator.ash:27:46)
     LoadConstInt          Target=29 Value=2   (tco_record_head_consed_into_sibling_accumulator.ash:27:28)
     CallClosure           Target=28 ClosureTemp=24 ArgTemp=27 RuntimeManagedArgumentFlagTemp=29   (tco_record_head_consed_into_sibling_accumulator.ash:27:28)
-    StoreLocal            Slot=15 Source=28   (tco_record_head_consed_into_sibling_accumulator.ash:27:28)
-    LoadLocal             Target=42 Slot=15
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
-    CopyOutArena          DestTemp=43 SrcTemp=42 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=30 SrcTemp=28 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
-    StoreLocal            Slot=15 Source=43
-    LoadLocal             Target=30 Slot=15   (tco_record_head_consed_into_sibling_accumulator.ash:27:28)
-    ConcatStr             Target=31 Left=20 Right=30 RuntimeManaged=true   (tco_record_head_consed_into_sibling_accumulator.ash:27:18)
     RcDrop                SourceTemp=8 TypeName=List OwnerSlot=10
+    ConcatStr             Target=31 Left=20 Right=30 RuntimeManaged=true   (tco_record_head_consed_into_sibling_accumulator.ash:27:18)
+    RcDrop                SourceTemp=30 TypeName=String RuntimeManaged=true
     StoreLocal            Slot=11 Source=31   (tco_record_head_consed_into_sibling_accumulator.ash:25:13)
   endif_80:
     LoadLocal             Target=32 Slot=11   (tco_record_head_consed_into_sibling_accumulator.ash:25:13)
     StoreLocal            Slot=2 Source=32   (tco_record_head_consed_into_sibling_accumulator.ash:22:5)
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=16
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=16
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=15
     Jump                  Target=match_end_74   (tco_record_head_consed_into_sibling_accumulator.ash:22:5)
   match_arm_cleanup_78:
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=17
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=17
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=16
     Jump                  Target=match_none_75   (tco_record_head_consed_into_sibling_accumulator.ash:22:5)
   match_none_75:
     LoadConstInt          Target=35 Value=0   (tco_record_head_consed_into_sibling_accumulator.ash:22:5)
@@ -776,12 +773,12 @@ function lambda_8  [ClosureHelper from firstLabels]
     JumpIfFalse           CondTemp=39 Target=rc_result_owned_81   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
     CopyOutArena          DestTemp=40 SrcTemp=36 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=36 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=18 Source=40   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
+    StoreLocal            Slot=17 Source=40   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
     Jump                  Target=rc_result_done_82   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
   rc_result_owned_81:
-    StoreLocal            Slot=18 Source=36   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
+    StoreLocal            Slot=17 Source=36   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
   rc_result_done_82:
-    LoadLocal             Target=41 Slot=18   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
+    LoadLocal             Target=41 Slot=17   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
     Return                Source=41   (tco_record_head_consed_into_sibling_accumulator.ash:21:1)
 
 function lambda_7  [SourceFunction from firstLabels]

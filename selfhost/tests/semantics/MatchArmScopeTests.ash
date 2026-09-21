@@ -101,12 +101,17 @@ let expectRecordArmResultIsCopiedOutPastTheReset unit =
     |> (given (_) -> Unit)
 
 // An arm that owns nothing leaves its window open around a heap result: the pre-restore slot is
-// allocated, but only the cleanup block restores the arm's bracket.
+// allocated, but only the cleanup block restores the arm's bracket. The other arm hands the join a
+// reference-counted value of its own, so this arm's arena result is normalized in place, a
+// reference when it is reference-counted and a copy otherwise, before it is stored.
 let expectOwnerlessHeapArmLeavesWindowOpen unit =
     Unit
     |> swappedRecordSource
     |> dumpSource
-    |> expectLine("    StoreLocal            Slot=2 Source=24")
+    |> expectLine("    IsReferenceCounted    Target=27 SourceTemp=24")
+    |> expectLine("    CopyOutArena          DestTemp=29 SrcTemp=24 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization")
+    |> expectLine("    StoreLocal            Slot=2 Source=30")
+    |> expectNoLine("    StoreLocal            Slot=2 Source=24")
     |> expectNoLine("    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10")
     |> expectLine("    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11")
     |> (given (_) -> Unit)
@@ -322,6 +327,30 @@ let expectArmResetsAreUnguardedWithoutACapability unit =
     |> countLinesStartingWith("  live_posts_skip_")
     |> test.assertEqual(0)
 
+let recursive lineIndexFrom (needle: Str) (index: Int) (lines: List(Str)) =
+    match lines with
+        | [] -> -1
+        | line :: rest ->
+            if line == needle
+            then index
+            else lineIndexFrom(needle)(index + 1)(rest)
+
+// A loop whose first arm hands the join a static string and whose second arm returns a head bound
+// out of the list parameter: the static arm is normalized in place, which puts instructions where
+// its store was. The head's pattern owner is retained at an instruction count recorded before
+// that, so the count moves with them and the retain still lands among its own arm's bindings
+// rather than in the arm before it, where it would never run while its release still does.
+let expectNormalizedArmMovesTheLaterPatternOwnerRetain unit =
+    (let lines = dumpSource("let recursive pick (ps: List(Str)) =\n    match ps with\n        | [] -> \"\"\n        | only :: rest ->\n            match rest with\n                | [] -> only\n                | _ -> pick(rest)\n\nAshes.IO.print(pick([Ashes.Text.fromInt(7)]))\n")
+    in
+        let armLabel = lineIndexFrom("  match_next_2:")(0)(lines)
+        in
+            let retain = lineIndexFrom("    RcDup                 Target=40 SourceTemp=39 RuntimeManaged=true")(0)(lines)
+            in
+                lines
+                |> expectLine("    IsReferenceCounted    Target=35 SourceTemp=4")
+                |> (given (_) -> test.assertEqual(true)(armLabel >= 0 && retain > armLabel)))
+
 let runMatchArmScopeTests unit =
     Unit
     |> expectTagGroupCasesAreBracketed
@@ -340,4 +369,5 @@ let runMatchArmScopeTests unit =
     |> expectWholeBindingArmReleasesAFreshRecordInline
     |> expectArmResetsAreGuardedByLivePostsUnderAHandle
     |> expectArmResetsAreUnguardedWithoutACapability
+    |> expectNormalizedArmMovesTheLaterPatternOwnerRetain
     |> (given (_) -> Ashes.IO.print("all self-hosted match arm scope tests passed"))

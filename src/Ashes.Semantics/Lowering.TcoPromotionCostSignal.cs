@@ -364,7 +364,9 @@ public sealed partial class Lowering
                 TcoRuntimeManagedKind.None,
                 TcoRcEligibilityReason.UnresolvedType);
         }
-        if (IsRcEligibleScalarTupleOrAdtType(parameterType))
+        if (IsRcEligibleScalarTupleOrAdtType(parameterType)
+            && !IsGeneralRcSpecializationAccumulator(tco, facts, parameterType)
+            && !IsUnplaceableGeneralRcVariantParameter(tco, facts, parameterType))
         {
             return new TcoRcEligibility(
                 OwnershipShapeEligible: true,
@@ -375,25 +377,7 @@ public sealed partial class Lowering
 
         if (parameterType is TypeRef.TList list)
         {
-            bool layoutEligible = CanRuntimeManageTcoListElement(list.Element) &&
-                IsBytesProvenanceEligibleTcoListElement(facts, list.Element);
-            bool consumedTail = facts.ConsumedListTail
-                && !CanArenaReset(Prune(list.Element))
-                && !IsBorrowableInspectOnlyList(tco, facts.ParameterOrdinal, list);
-            TcoRcEligibilityReason reason = facts.FreshRebuiltList
-                ? TcoRcEligibilityReason.FreshListRebuild
-                : facts.AffineConsList
-                    ? TcoRcEligibilityReason.AffineConsList
-                    : consumedTail
-                        ? TcoRcEligibilityReason.ConsumedListTail
-                        : layoutEligible
-                            ? TcoRcEligibilityReason.MissingListOwnershipShape
-                            : TcoRcEligibilityReason.UnsupportedListElementLayout;
-            return new TcoRcEligibility(
-                facts.FreshRebuiltList || facts.AffineConsList || consumedTail,
-                layoutEligible,
-                TcoRuntimeManagedKind.List,
-                reason);
+            return EvaluateTcoListRcEligibility(tco, facts, list);
         }
 
         if (parameterType is TypeRef.TFun)
@@ -417,6 +401,49 @@ public sealed partial class Lowering
             TcoRcEligibilityReason.UnsupportedLayout);
     }
 
+    private TcoRcEligibility EvaluateTcoListRcEligibility(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
+    {
+        bool generalAccumulator = IsGeneralRcAccumulatorList(tco, facts, list);
+        bool layoutEligible = (CanRuntimeManageTcoListElement(list.Element)
+                || (IsGeneralRcTcoListElement(list.Element) && facts.AffineConsList && !facts.ConsumedListTail)
+                || generalAccumulator)
+            && IsBytesProvenanceEligibleTcoListElement(facts, list.Element);
+        bool consumedTail = facts.ConsumedListTail
+            && !CanArenaReset(Prune(list.Element))
+            && !IsBorrowableInspectOnlyList(tco, facts.ParameterOrdinal, list);
+        TcoRcEligibilityReason reason = facts.FreshRebuiltList
+            ? TcoRcEligibilityReason.FreshListRebuild
+            : facts.AffineConsList
+                ? TcoRcEligibilityReason.AffineConsList
+                : consumedTail
+                    ? TcoRcEligibilityReason.ConsumedListTail
+                    : layoutEligible
+                        ? TcoRcEligibilityReason.MissingListOwnershipShape
+                        : TcoRcEligibilityReason.UnsupportedListElementLayout;
+        return new TcoRcEligibility(
+            facts.FreshRebuiltList || facts.AffineConsList || consumedTail || generalAccumulator,
+            layoutEligible,
+            TcoRuntimeManagedKind.List,
+            reason);
+    }
+
+    // A list of the contract's values that the loop rebuilds with a different shape at different
+    // self-calls (a call's owned result in one arm, the parameter itself in another) is an
+    // accumulator all the same. Its successor is normalized at the back edge like any other list of
+    // these values, and only a parameter placed on the reference-counted heap releases its
+    // predecessor and lets the iteration release the owned value the successor was built from. The
+    // shape analysis must have classified every self-call at this position: a tail-modulo-cons
+    // function's self-call sits inside a cons and is never classified, so it is excluded.
+    private bool IsGeneralRcAccumulatorList(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
+        => GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_MIXEDLIST") is null
+            && !tco.TmcShapePresent
+            && !facts.ConsumedListTail
+            && !facts.LoopInvariant
+            && IsGeneralRcValueType(list.Element)
+            && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.AccumulatorRebuild)
+                .Contains(facts.ParameterOrdinal);
+
     private bool IsBytesProvenanceEligibleTcoListElement(
         TcoParamStaticFacts facts,
         TypeRef elementType)
@@ -431,6 +458,22 @@ public sealed partial class Lowering
         bool[] requestedRuntime,
         int candidateOrdinal)
     {
+        // Under the general contract reference-counted cells reach a list accumulator whatever its
+        // placement: one kept in the arena for a sibling's sake holds them without releasing them, so
+        // profitability no longer demotes a list, nor a value of the contract's own types threaded
+        // through the loop (a state each iteration rebuilds): kept in the arena, its owned
+        // successors are never released. A sibling that could hold the candidate itself (or a part
+        // of it) still blocks: it would keep that part without a reference of its own.
+        TypeRef? unblockedAccumulator = GeneralRcEnabled
+            && candidateOrdinal < parameterTypes.Length
+            && candidateOrdinal < tco.ParamSlots.Count
+            && !tco.ParamFacts[tco.ParamSlots[candidateOrdinal]].ConsumedListTail
+            && parameterTypes[candidateOrdinal] is { } candidateType
+            && (Prune(candidateType) is TypeRef.TList { Element: var element } && Prune(element) is TypeRef.TStr
+                || (tco.SelfCallParameterFlow is not null && IsGeneralRcValueType(Prune(candidateType))))
+                ? Prune(candidateType)
+                : null;
+
         int count = Math.Min(parameterTypes.Length, tco.ParamSlots.Count);
         for (int ordinal = 0; ordinal < count; ordinal++)
         {
@@ -439,7 +482,9 @@ public sealed partial class Lowering
                     tco,
                     parameterTypes,
                     requestedRuntime,
-                    ordinal))
+                    ordinal)
+                && (unblockedAccumulator is null
+                    || SiblingMayReceiveAccumulator(tco, parameterTypes[ordinal]!, ordinal, candidateOrdinal, unblockedAccumulator)))
             {
                 return ordinal;
             }
@@ -447,6 +492,18 @@ public sealed partial class Lowering
 
         return null;
     }
+
+    // Whether a self-call may pass the accumulator, or a part of it, in the sibling's position: from
+    // the body's parameter flow when it was followed, from the sibling's type otherwise.
+    private bool SiblingMayReceiveAccumulator(
+        TcoContext tco,
+        TypeRef siblingType,
+        int siblingOrdinal,
+        int accumulatorOrdinal,
+        TypeRef accumulatorType)
+        => CallResultMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal))
+            && (tco.SelfCallParameterFlow is not { } flow
+                || (flow.TryGetValue(siblingOrdinal, out HashSet<int>? sources) && sources.Contains(accumulatorOrdinal)));
 
     private bool IsPermanentlyBlockingTcoParam(
         TcoContext tco,
