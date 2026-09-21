@@ -30,6 +30,8 @@ export (
     value isResultPoisoned,
     value resultReachesParameter,
     value resultReachesParameterWhole,
+    value reachEnumerated,
+    value resultCannotKeepParameterWhole,
     value getBorrowedParameters,
     value getConsumedParameters,
 )
@@ -80,6 +82,11 @@ type ResultReachCause =
     | UnmodelledReach
     | InternalSharing
     | ConservativeUnknownReach
+    // The values the unproven construct could see were not enumerated, so the reach paths say nothing
+    // about what it may have kept. Set alongside the cause that made the result unproven wherever
+    // that construct's inputs are unknown; left clear where they are known (an unknown callee applied
+    // to known arguments), which keeps the whole-reach account complete under poison.
+    | UnenumeratedInputs
     deriving {Eq, Show}
 
 type ParameterReachEntry =
@@ -97,6 +104,10 @@ type FunctionResultReachFacts =
     | causes: List(ResultReachCause)
     | isPoisoned: Bool
     | wholeParameterReach: List(Str)
+    // The parameters handed whole to something the analysis cannot see through, an unknown callee,
+    // which may hand any of them straight back. Kept apart from the two accounts above, which
+    // describe only what the analysis could follow.
+    | exposedWholeParameterReach: List(Str)
     deriving {Eq, Show}
 
 type BytesOwnershipProvenance =
@@ -207,6 +218,24 @@ let recursive containsParameterName (names: List(Str)) (param: Str) =
 let resultReachesParameterWhole facts param =
     match facts with
         | FunctionResultReachFacts { wholeParameterReach = whole } -> containsParameterName(whole)(param)
+
+let recursive containsReachCause (causes: List(ResultReachCause)) (target: ResultReachCause) =
+    match causes with
+        | [] -> false
+        | cause :: rest -> cause == target || containsReachCause(rest)(target)
+
+// Every value the result could have been built from was accounted for, so the reach paths are a
+// complete account of which parameters the result may hold and at what depth, even where the
+// result is poisoned.
+let reachEnumerated facts =
+    match facts with
+        | FunctionResultReachFacts { causes = causes } -> !containsReachCause(causes)(UnenumeratedInputs)
+
+// The result provably never holds the parameter as itself, though it may hold its components:
+// the whole reach read as a proof rather than a possibility, which needs the account complete.
+let resultCannotKeepParameterWhole facts param =
+    match facts with
+        | FunctionResultReachFacts { wholeParameterReach = whole, exposedWholeParameterReach = exposed } -> reachEnumerated(facts) && !containsParameterName(whole)(param) && !containsParameterName(exposed)(param)
 
 let recursive collectByOwnership (target: ParameterOwnership) (pairs: List((Str, ParameterOwnership))) (acc: List(Str)) =
     match pairs with

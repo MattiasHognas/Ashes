@@ -1,0 +1,28 @@
+// A function whose entry normalizes its parameter owns it, and its result, a pair holding a record
+// rebuilt around the parameter, only borrows what it reaches: the result is made reference-counted
+// and the parameter released behind it.
+type Where =
+    | line: Int
+    | column: Int
+
+type Instr =
+    | kind: Int
+    | target: Int
+    | location: Where
+
+let step (kind: Int) (target: Int) (location: Where) = (target, Instr(kind = kind + 1, target = target, location = location))
+
+let rewrite (instruction: Instr) =
+    match instruction with
+        | Instr { kind = kind, target = target, location = location } ->
+            match step(kind)(target)(location) with
+                | (_n, rewritten) -> rewritten
+
+let weigh (instruction: Instr) =
+    match instruction with
+        | Instr { kind = kind, target = target, location = Where { line = line } } -> kind + target + line
+
+Instr(kind = 1, target = 2, location = Where(line = 3, column = 4))
+|> rewrite
+|> weigh
+|> Ashes.IO.print

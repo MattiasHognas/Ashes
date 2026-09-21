@@ -26,6 +26,7 @@ export (
     value calleeParameterBorrows,
     value calleeResultReachesArgument,
     value calleeResultReachesArgumentWhole,
+    value calleeResultCannotKeepArgumentWhole,
     value innermostStageLabel,
     value compiledResultRuntimeManaged,
     value calleeSaturatedAndEligible,
@@ -169,5 +170,24 @@ let calleeResultReachesArgumentWhole (facts: Maybe(CoreCalleeFacts)) (index: Int
         | Some(CoreCalleeFacts { parameters = parameters, reach = ResultReachState { counts = counts } }) ->
             match parameterNameAt(index)(parameters) with
                 | Some(parameter) -> wholeReachCountOf(parameter)(counts) > 0
+                | None -> false
+        | None -> false
+
+let recursive reachCausesContain (causes: List(ResultReachCause)) (target: ResultReachCause) =
+    match causes with
+        | [] -> false
+        | cause :: rest -> cause == target || reachCausesContain(rest)(target)
+
+// Stage 0's `CalleeResultCannotKeepParameterWhole`: the proof `calleeResultReachesArgumentWhole` is
+// the possibility of. The callee's result never holds the argument itself, though it may hold
+// parts of it, and this holds under poison too, as long as every input of the unproven construct
+// was enumerated: an unknown callee applied to a parameter's destructured parts leaves the result
+// unconfined while proving the list itself cannot be in it, so the caller may release the list it
+// handed over instead of abandoning it to the callee.
+let calleeResultCannotKeepArgumentWhole (facts: Maybe(CoreCalleeFacts)) (index: Int) =
+    match facts with
+        | Some(CoreCalleeFacts { parameters = parameters, reach = ResultReachState { counts = counts, causes = causes } }) ->
+            match parameterNameAt(index)(parameters) with
+                | Some(parameter) -> !reachCausesContain(causes)(UnenumeratedInputs) && wholeReachCountOf(parameter)(counts) == 0 && wholeReachCountOf("~" + parameter)(counts) == 0
                 | None -> false
         | None -> false

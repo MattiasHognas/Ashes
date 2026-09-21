@@ -65,7 +65,7 @@ let reachOfToken (token: Str) = ResultReachState(counts = [ParameterReachEntry(p
 
 let reachParam (parameter: Str) = reachOfToken(parameter)
 
-let reachPoisoned (cause: ResultReachCause) = ResultReachState(counts = [], causes = [cause], isPoisoned = true)
+let reachPoisoned (cause: ResultReachCause) = ResultReachState(counts = [], causes = [cause, UnenumeratedInputs], isPoisoned = true)
 
 let withCounts (counts: List(ParameterReachEntry)) (causes: List(ResultReachCause)) =
     match causes with
@@ -294,6 +294,46 @@ let extendPathsNamed (field: Str) (state: ResultReachState) = extendEntries("/" 
 // hands the caller a value containing parts of the argument, never the argument itself.
 let extendPathsComponent (state: ResultReachState) = extendEntries("/*")(state)
 
+// Marks a path as reaching its root only through a construct this analysis cannot see through. No
+// identifier, and no synthetic token segment, contains it.
+let exposedTag = "~"
+
+let isExposedRoot (root: Str) = Ashes.Text.startsWith(root)(exposedTag)
+
+let untagRoot (root: Str) =
+    if isExposedRoot(root)
+    then Ashes.Text.substring(root)(1)(Ashes.Text.length(root) - 1)
+    else root
+
+// An already tagged path stays as it is: exposing what an earlier exposure produced is still one
+// exposure, and double tagging would lose the root's name.
+let tagEntry (entry: ParameterReachEntry) =
+    match entry with
+        | ParameterReachEntry { parameterName = name, reachCount = count } ->
+            if isExposedRoot(name)
+            then entry
+            else ParameterReachEntry(parameterName = exposedTag + name, reachCount = count)
+
+// Stage 0's `TagExposed`: a reach substituted for an exposed root of a callee's summary. What that
+// callee exposed, this caller exposes too.
+let tagExposed (state: ResultReachState) =
+    match state with
+        | ResultReachState { counts = counts, causes = causes } ->
+            withCounts(map(tagEntry)(counts))(causes)
+
+// Stage 0's `ReachExposed`: an unproven result built only from values this walk enumerated,
+// `inputs` being their summed reach. The unknown construct may hand back any of them or one of
+// their sub-cells, so each is reached at exactly the depth it was exposed at; it may equally hand
+// back a global or a fresh value, which `cause` records. Exposure travels on tagged paths, which
+// stay out of the published may-alias set: what they add is the depth the exposure happened at,
+// which is what proves a parameter handed over in pieces never comes back whole.
+let reachExposed (inputs: ResultReachState) (cause: ResultReachCause) =
+    match inputs with
+        | ResultReachState { counts = counts, causes = causes } ->
+            causes
+            |> addCause(cause)
+            |> withCounts(map(tagEntry)(counts))
+
 let rootOf (name: Str) =
     (let slash = Ashes.Text.indexOf(name)("/")
     in
@@ -330,7 +370,9 @@ let recursive stripEntries (entries: List(ParameterReachEntry)) (stripped: List(
         | ParameterReachEntry { parameterName = name } :: rest ->
             let root = rootOf(name)
             in
-                if isSyntheticRoot(root)
+                if root
+                |> untagRoot
+                |> isSyntheticRoot
                 then stripEntries(rest)(stripped)
                 else
                     stripped
@@ -978,6 +1020,36 @@ let qualifiedReach (env: List((Str, ResultReachState))) (qualifier: Str) (name: 
                 | None -> reachPoisoned(GlobalOrTopLevelReach)
         | [] -> reachPoisoned(GlobalOrTopLevelReach)
 
+let recursive anyFunctionNamed (name: Str) (functions: List(ReachFunction)) =
+    match functions with
+        | [] -> false
+        | ReachFunction { name = candidate } :: rest -> candidate == name || anyFunctionNamed(name)(rest)
+
+// Stage 0's `CalleeValueReach` for a plain name: a bound name's own reach, or none at all for a
+// name known to be a top-level function, value or constructor, which close over top-level values,
+// never over the parameters of the function being walked. `None` for a name that is neither.
+let namedCalleeReach (context: ReachContext) (env: List((Str, ResultReachState))) (name: Str) =
+    match lookupEnv(name)(env) with
+        | Some(bound) -> Some(bound)
+        | None ->
+            match context with
+                | ReachContext { registry = ReachRegistry { valueNames = valueNames } } ->
+                    if anyFunctionNamed(name)(functionsOf(context)) || containsName(name)(valueNames) || isConstructorName(context)(name)
+                    then
+                        Unit
+                        |> reachBottom
+                        |> Some
+                    else None
+
+// The same for a dotted callee: a field of a bound value read as a function, or a module member.
+let qualifiedCalleeReach (env: List((Str, ResultReachState))) (qualifier: Str) (name: Str) =
+    match Ashes.Text.split(qualifier)(".") with
+        | first :: _rest ->
+            match lookupEnv(first)(env) with
+                | Some(_bound) -> qualifiedReach(env)(qualifier)(name)
+                | None -> reachBottom(Unit)
+        | [] -> reachBottom(Unit)
+
 // The scope inside a binding's body: the name resolves to its registered function, or shadows one.
 let bindingScopeOf (registry: ReachRegistry) (scope: ReachScope) (name: Str) (value: Expr) =
     match lambdaChainOf(value)([]) with
@@ -1260,9 +1332,9 @@ and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
                                         then overAppliedReach(context)(env)(scope)(token)(function)(arguments)
                                         else registeredReach(context)(env)(scope)(token)(function)(arguments)
                                     | None ->
-                                        stepOf(reachPoisoned(UnmodelledReach))(token)
+                                        unknownCalleeReach(context)(env)(scope)(token)(namedCalleeReach(context)(env)(name))(arguments)
                             | None ->
-                                stepOf(reachPoisoned(UnmodelledReach))(token)
+                                unknownCalleeReach(context)(env)(scope)(token)(namedCalleeReach(context)(env)(name))(arguments)
         | (ExprQualifiedVar(moduleName, memberName), arguments) ->
             if arguments
             |> length
@@ -1270,14 +1342,33 @@ and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
             then
                 stepOf(reachBottom(Unit))(token)
             else
-                stepOf(reachPoisoned(UnmodelledReach))(token)
+                unknownCalleeReach(context)(env)(scope)(token)(memberName
+                |> qualifiedCalleeReach(env)(moduleName)
+                |> Some)(arguments)
         | _ ->
             stepOf(reachPoisoned(UnmodelledReach))(token)
+// Stage 0's `UnknownCalleeReach`: a call that does not resolve to a registered function, a parameter
+// applied as a function, a builtin with no reach declaration, a call through a let-bound value.
+// What the callee does is unknown; what it was given is not. Nothing mutates, so a value can only
+// come out of the call if it went in, as the callee value itself or as an argument, which leaves
+// the reach paths a complete account even though the result is unconfined. A callee this walk
+// cannot place at all breaks the account.
+and unknownCalleeReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (callee: Maybe(ResultReachState)) (arguments: List(Expr)) =
+    match callee with
+        | None ->
+            stepOf(reachPoisoned(UnmodelledReach))(token)
+        | Some(calleeReach) ->
+            match sumList(context)(env)(scope)(token)(arguments)(calleeReach) with
+                | ReachStep { reach = inputs, token = next } ->
+                    stepOf(reachExposed(inputs)(UnmodelledReach))(next)
 and constructorReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (constructor: ReachConstructor) (arguments: List(Expr)) =
     match constructor with
         | ReachConstructor { arity = arity, copyFields = copyFields } ->
             if length(arguments) != arity
             then
+                // Under-applied: the result is a closure holding the arguments given so far. The
+                // callee is a registered function whose own captures are top-level values, so those
+                // arguments are the only values of this function's it can hold.
                 stepOf(reachPoisoned(UnmodelledReach))(token)
             else
                 Unit
@@ -1313,7 +1404,11 @@ and registeredReach (context: ReachContext) (env: List((Str, ResultReachState)))
         | ReachFunction { key = key, parameters = parameters } ->
             if length(arguments) != length(parameters)
             then
-                stepOf(reachPoisoned(UnmodelledReach))(token)
+                match Unit
+                |> reachBottom
+                |> sumList(context)(env)(scope)(token)(arguments) with
+                    | ReachStep { reach = inputs, token = next } ->
+                        stepOf(reachExposed(inputs)(UnmodelledReach))(next)
             else
                 match lookupTable(key)(context.table) with
                     | ResultReachState { counts = counts, causes = causes } ->
@@ -1324,7 +1419,9 @@ and substituteEntries (context: ReachContext) (env: List((Str, ResultReachState)
     match entries with
         | [] -> stepOf(acc)(token)
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
-            match argumentAt(indexOfName(rootOf(name))(parameters)(0))(arguments) with
+            match argumentAt(indexOfName(name
+            |> rootOf
+            |> untagRoot)(parameters)(0))(arguments) with
                 | None ->
                     stepOf(reachPoisoned(ConservativeUnknownReach))(token)
                 | Some(argument) ->
@@ -1334,10 +1431,16 @@ and substituteEntries (context: ReachContext) (env: List((Str, ResultReachState)
                             |> reachScale(placedReach(name)(argumentReach))
                             |> reachSum(acc)
                             |> substituteEntries(context)(env)(scope)(next)(parameters)(arguments)(rest)
+// What the callee exposed to something it could not see through, this call exposes too.
 and placedReach (name: Str) (argumentReach: ResultReachState) =
-    if isWholeName(name)
-    then argumentReach
-    else extendPathsComponent(argumentReach)
+    (let placed =
+        if isWholeName(name)
+        then argumentReach
+        else extendPathsComponent(argumentReach)
+    in
+        if isExposedRoot(name)
+        then tagExposed(placed)
+        else placed)
 // The inner self-call of the nested shape: the enclosing function applied to the same outer
 // parameters with the accumulator set to the argument, against its own growing summary.
 and selfRecursiveReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (arguments: List(Expr)) =
@@ -1354,7 +1457,7 @@ and substituteSelfEntries (context: ReachContext) (env: List((Str, ResultReachSt
     match entries with
         | [] -> stepOf(acc)(token)
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
-            if rootOf(name) == accumulator
+            if untagRoot(rootOf(name)) == accumulator
             then
                 match argumentAt(0)(arguments) with
                     | None ->
@@ -1367,7 +1470,9 @@ and substituteSelfEntries (context: ReachContext) (env: List((Str, ResultReachSt
                                 |> reachSum(acc)
                                 |> substituteSelfEntries(context)(env)(scope)(next)(accumulator)(arguments)(rest)
             else
-                match lookupEnv(rootOf(name))(env) with
+                match lookupEnv(name
+                |> rootOf
+                |> untagRoot)(env) with
                     | Some(outerReach) ->
                         count
                         |> reachScale(placedReach(name)(outerReach))
@@ -1403,14 +1508,18 @@ and substituteMarkers (context: ReachContext) (env: List((Str, ResultReachState)
     match entries with
         | [] -> stepOf(acc)(token)
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
-            match argumentAt(indexOfName(rootOf(name))(markers)(0))(arguments) with
+            match argumentAt(indexOfName(name
+            |> rootOf
+            |> untagRoot)(markers)(0))(arguments) with
                 | None ->
                     stepOf(reachPoisoned(ConservativeUnknownReach))(token)
                 | Some(argument) ->
                     match reachOf(context)(env)(scope)(token)(argument) with
                         | ReachStep { reach = argumentReach, token = next } ->
                             count
-                            |> reachScale(argumentReach)
+                            |> reachScale(if isExposedRoot(name)
+                            then tagExposed(argumentReach)
+                            else argumentReach)
                             |> reachSum(acc)
                             |> substituteMarkers(context)(env)(scope)(next)(markers)(arguments)(rest)
 and overApplyReach (context: ReachContext) (body: Expr) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) =
@@ -1788,21 +1897,40 @@ let singleFunctionReach (parameters: List(Str)) (body: Expr) =
                 | ReachSummary { reach = reach } :: _rest -> reach
                 | [] -> reachBottom(Unit)))
 
+let recursive followedEntries (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> []
+        | (ParameterReachEntry { parameterName = name } as entry) :: rest ->
+            if isExposedRoot(name)
+            then followedEntries(rest)
+            else entry :: followedEntries(rest)
+
 let recursive wholeNames (entries: List(ParameterReachEntry)) =
     match entries with
         | [] -> []
         | ParameterReachEntry { parameterName = name } :: rest ->
-            if isWholeName(name)
+            if isWholeName(name) && !isExposedRoot(name)
             then name :: wholeNames(rest)
             else wholeNames(rest)
 
-// The stored summary as the ownership summary's reach facts.
+let recursive exposedWholeNames (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> []
+        | ParameterReachEntry { parameterName = name } :: rest ->
+            if isWholeName(name) && isExposedRoot(name)
+            then untagRoot(name) :: exposedWholeNames(rest)
+            else exposedWholeNames(rest)
+
+// The stored summary as the ownership summary's reach facts, stage 0's `BuildResultReachFacts`: the
+// may-alias set and the whole reach it has always carried, built from the paths the analysis could
+// follow, and separately what was exposed to a construct it could not follow.
 let reachFactsOf (reach: ResultReachState) =
     match reach with
         | ResultReachState { counts = counts, causes = causes, isPoisoned = poisoned } ->
             FunctionResultReachFacts(
-                parameterReach = counts,
+                parameterReach = followedEntries(counts),
                 causes = causes,
                 isPoisoned = poisoned,
-                wholeParameterReach = wholeNames(counts)
+                wholeParameterReach = wholeNames(counts),
+                exposedWholeParameterReach = exposedWholeNames(counts)
             )

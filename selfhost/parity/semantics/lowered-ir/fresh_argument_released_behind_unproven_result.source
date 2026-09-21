@@ -1,0 +1,21 @@
+// A callee applies a function it cannot see through to one parameter only, so its result, though
+// unproven, provably never holds the other parameter whole: a fresh list handed to that parameter
+// is released by the caller in the ordinary way after the call.
+type Fact =
+    | name: Str
+    | uses: List(Int)
+
+let apply f x = f(x)
+
+let keep (text: Str) = text
+
+let firstName (facts: List(Fact)) (fallback: Str) =
+    match facts with
+        | [] -> apply(keep)(fallback)
+        | Fact { name = name } :: _ -> name
+
+let mk (item: Int) = Fact(name = "f" + Ashes.Text.fromInt(item), uses = [item, item + 1])
+
+let label (seed: Int) = firstName([mk(seed), mk(seed + 1)])("none")
+
+Ashes.IO.print(Ashes.Text.byteLength(label(7)))
