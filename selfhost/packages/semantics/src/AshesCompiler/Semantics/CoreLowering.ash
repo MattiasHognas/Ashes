@@ -6855,6 +6855,31 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                         |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                         |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
         | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoGrownConsShape, parameterSlot = slot, argumentTemp = temp } :: rest -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
+        // A choice accumulator's successor is whatever the chosen arm handed over: an owned
+        // reference-counted list is stored as it is, the parameter's own value is retained, since
+        // the predecessor release still runs, and anything else is taken by reference when it
+        // turns out reference-counted and copied otherwise.
+        | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoChoiceAccumulatorShape, parameterSlot = slot, argumentTemp = temp, argumentType = argumentType, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
+            if isRuntime
+            then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
+            else
+                if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
+                then
+                    match freshTemp(state) with
+                        | FreshTemp { state = allocated, temp = duplicate } ->
+                            allocated
+                            |> unlocatedInstruction(RcDup(duplicate)(temp)(true)(true))
+                            |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+                            |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
+                else
+                    match argumentCopyPlanOf(argumentType)(state) with
+                        | None -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
+                        | Some(plan) ->
+                            match emitBackEdgeReferenceOrCopy(temp)(argumentType)(unlocatedDeepCopy(temp)(plan))(state) with
+                                | (copied, copyTemp) ->
+                                    copied
+                                    |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                                    |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)
         | TcoResetArgument { managedAdt = Some((activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
             if shape == TcoPassThroughShape
             then normalizeRuntimeManagedBackEdgeArguments(rest)(reversedStores)(state)
@@ -6911,6 +6936,10 @@ let recursive dropRuntimeManagedBackEdgePredecessors (arguments: List(TcoResetAr
     match arguments with
         | [] -> state
         | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoConsumedTailShape, oldTemp = oldTemp } :: rest ->
+            state
+            |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
+            |> dropRuntimeManagedBackEdgePredecessors(rest)
+        | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoChoiceAccumulatorShape, oldTemp = oldTemp } :: rest ->
             state
             |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
             |> dropRuntimeManagedBackEdgePredecessors(rest)
@@ -7322,6 +7351,23 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
                     then emitCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
                     else released)
 
+// Stage 0's `TcoBackEdgeTryEmitRuntimeManagedSuccessorsWithoutReset`: a loop that can neither
+// reset its arena plainly nor copy every argument out still owns the list and aggregate parameters
+// it placed on the reference-counted heap. Each successor takes a reference of its own and the
+// predecessor is released, as the reset path does, only without the reset; the iteration's owned
+// drops follow the successors, which may borrow from them.
+let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = anyManagedListArgument(arguments) && !allArgumentsSurvivePlainReset(arguments)(state) && !allArgumentsCompactable(arguments)(state)
+
+let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated } ->
+            match normalizeRuntimeManagedBackEdgeArguments(arguments)([])(allocated) with
+                | (normalized, stores) ->
+                    normalized
+                    |> dropRuntimeManagedBackEdgePredecessors(arguments)
+                    |> emitResolvedOwnedDrops(reset.ownedDrops)
+                    |> emitRuntimeManagedBackEdgeStores(stores)
+
 let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(frame), Some(loop)) ->
@@ -7331,9 +7377,12 @@ let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
                 if tcoBackEdgeCanEmitRuntimeManagedReset(loop)(arguments)(state)
                 then emitRuntimeManagedTcoReset(reset)(arguments)(state)
                 else
-                    state
-                    |> dropStrBackEdgePredecessors(arguments)
-                    |> emitArenaTcoReset(reset)(frame)(arguments))
+                    if tcoBackEdgeKeepsSuccessorsWithoutReset(arguments)(state)
+                    then emitRuntimeManagedSuccessorsWithoutReset(reset)(arguments)(state)
+                    else
+                        state
+                        |> dropStrBackEdgePredecessors(arguments)
+                        |> emitArenaTcoReset(reset)(frame)(arguments))
         | _ -> emitPlainTcoReset(reset)(state)
 
 let recursive lookupTcoReset (resetId: Int) (resets: List(CoreTcoReset)) =
@@ -8363,7 +8412,7 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (sta
             match argumentCopyPlanOf(SemList(element))(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state))
+                    if tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
@@ -12244,6 +12293,27 @@ let tempIsNewlyProduced (temp: Int) (state: CoreLoweringState) =
         | Some(RuntimeNewlyProduced) -> true
         | _ -> false
 
+// Stage 0's `BorrowsLoopParameter`: an arm handing on a loop parameter the frame places on the
+// reference-counted heap, or a pattern binding taken out of one. Its value is reference-counted,
+// but the reference is the parameter's.
+let armBorrowsLoopParameterOf (body: Expr) (state: CoreLoweringState) =
+    match tailForwardedVariable(body) with
+        | Some(name) -> loopParameterIsRuntimeManaged(name)(state)
+        | None -> false
+
+// Stage 0's `ConstructsFreshCell`: an arm that builds its value itself (a cons, a literal, a
+// constructor application). A reference-counted value it hands on is fresh and its own, so it is
+// kept rather than retained.
+let recursive constructsFreshCell (body: Expr) (state: CoreLoweringState) =
+    match body with
+        | ExprAt(_span, inner) -> constructsFreshCell(inner)(state)
+        | ExprLet(_name, _value, nested, _parameters, _annotation, _requirements) -> constructsFreshCell(nested)(state)
+        | ExprCons(_head, _tail) -> true
+        | ExprTuple(_elements) -> true
+        | ExprList(_first :: _rest, _isMultiline) -> true
+        | ExprRecord(_name, _fields, _isMultiline) -> false
+        | other -> isConstructorExpression(other)(state)
+
 // What a branch stored into its join slot: a reference-counted value when its final temp is one,
 // or when it is the empty list literal of a list-typed join; newly produced only when the temp
 // itself was freshly produced.
@@ -12253,12 +12323,14 @@ let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: Co
         armNewlyProduced = tempIsNewlyProduced(finalTemp)(state),
         armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
         armOwned = isRuntimeTemp(finalTemp)(state),
+        armBorrowsLoopParameter = armBorrowsLoopParameterOf(body)(state),
+        armFreshCell = constructsFreshCell(body)(state),
         armStoreTemp = if armNeverReachesJoin(body)(state)
         then -1
         else finalTemp
     )
 
-let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1)
+let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false)
 
 // Stage 0's `TransferDirectRuntimeManagedBranchResult`: an `if` branch that returns a pattern
 // owner takes a duplicate of its read, an identity marker until the loop's finalize places the
@@ -12324,13 +12396,58 @@ let recursive shiftPatternOwnerSites (index: Int) (delta: Int) (sites: List(Patt
             then site with siteInsertCount = site.siteInsertCount + delta
             else site) :: shiftPatternOwnerSites(index)(delta)(rest)
 
+// Stage 0's `EmitRuntimeManagedTcoDeepCopy` of a whole join value: a list copied cell by cell is
+// tested again inside the first test and shares the reference-counted suffix it reaches, and the
+// result temp stage 0 reserves before that walk takes over is reserved here too.
+let emitJoinValueCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (true, ListDeepArgumentCopy(elementPlan)) ->
+            emitReferenceOrCopy(sourceTemp)(given (copying: CoreLoweringState) ->
+                match freshTemp(copying) with
+                    | FreshTemp { state = reserved } -> emitGuardedListDeepCopy(sourceTemp)(elementPlan)(reserved))(state)
+        | _ -> emitArgumentCopy(sourceTemp)(plan)(state)
+
+// Stage 0's `EmitOwnedResultOrCopy`: a value the arm built itself is taken as it is when its cell
+// turns out reference-counted, the reference being the arm's own, and copied when the cell is
+// still in the arena.
+let emitOwnedResultOrCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotted, local = resultSlot } ->
+            match slotted
+            |> emit(StoreLocal(resultSlot)(sourceTemp))
+            |> freshTemp with
+                | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+                    match tested
+                    |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
+                    |> freshLabel("general_rc_result_arena_copy") with
+                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                            match freshLabel("general_rc_result_already_owned")(copyLabelled) with
+                                | FreshLabel { state = ownedLabelled, label = ownedLabel } ->
+                                    match ownedLabelled
+                                    |> emit(JumpIfFalse(referenceCountedTemp)(copyLabel))
+                                    |> emit(Jump(ownedLabel))
+                                    |> emit(Label(copyLabel))
+                                    |> emitJoinValueCopy(sourceTemp)(plan) with
+                                        | (copied, copyTemp) ->
+                                            match copied
+                                            |> emit(StoreLocal(resultSlot)(copyTemp))
+                                            |> emit(Label(ownedLabel))
+                                            |> freshTemp with
+                                                | FreshTemp { state = resulted, temp = resultTemp } ->
+                                                    (emit(LoadLocal(resultTemp)(resultSlot))(resulted), resultTemp)
+
+let emitJoinArmNormalization (arm: MatchArmResult) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    if arm.armFreshCell
+    then emitOwnedResultOrCopy(arm.armStoreTemp)(plan)(state)
+    else emitJoinValueCopy(arm.armStoreTemp)(plan)(state)
+
 // Stage 0's `NormalizeJoinArmStore`: the arm's store becomes a normalization of its value (a
 // reference when it is reference-counted, a copy otherwise) followed by the store of the
 // normalized value, emitted into a buffer and spliced where the store was.
 let normalizeJoinArmStore (slot: Int) (plan: ArgumentCopyPlan) (arm: MatchArmResult) (state: CoreLoweringState) =
     (let emptied = state with reversedInstructions = []
     in
-        match emitArgumentCopy(arm.armStoreTemp)(plan)(emptied) with
+        match emitJoinArmNormalization(arm)(plan)(emptied) with
             | (copied, normalizedTemp) ->
                 let buffered =
                     emit(StoreLocal(slot)(normalizedTemp))(copied)
@@ -12351,7 +12468,7 @@ let recursive normalizeUnownedJoinArms (slot: Int) (plan: ArgumentCopyPlan) (arm
     match arms with
         | [] -> (state, [])
         | arm :: rest ->
-            if arm.armStoreTemp < 0 || arm.armOwned || arm.armRetainedOwner
+            if arm.armStoreTemp < 0 || (arm.armOwned || arm.armRetainedOwner) && !arm.armBorrowsLoopParameter
             then
                 match normalizeUnownedJoinArms(slot)(plan)(rest)(state) with
                     | (normalized, restArms) -> (normalized, arm :: restArms)
@@ -12359,7 +12476,7 @@ let recursive normalizeUnownedJoinArms (slot: Int) (plan: ArgumentCopyPlan) (arm
                 match state
                 |> normalizeJoinArmStore(slot)(plan)(arm)
                 |> normalizeUnownedJoinArms(slot)(plan)(rest) with
-                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp) :: restArms)
+                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell) :: restArms)
 
 // The arms that reach the join, and how many of them hand it a reference-counted value: one of
 // their own, or a reference a pattern owner retained (stage 0's `IsReferenceCountedJoinArm`).
@@ -12370,7 +12487,7 @@ let recursive joinArmTally (arms: List(MatchArmResult)) (reaching: Int) (owned: 
             if arm.armStoreTemp < 0
             then joinArmTally(rest)(reaching)(owned)
             else
-                if arm.armOwned || arm.armRetainedOwner
+                if arm.armOwned || arm.armRetainedOwner || arm.armBorrowsLoopParameter
                 then joinArmTally(rest)(reaching + 1)(owned + 1)
                 else joinArmTally(rest)(reaching + 1)(owned)
 
@@ -13357,7 +13474,7 @@ let closeArmScope body owners bracket resultSlot resultTemp resultType (state: C
 let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
     LoweredMatchArm(
         lowered = failure(failedState)(error),
-        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1)
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false)
     )
 
 // A constructor application whose every argument is a literal or another such application, with
@@ -15890,7 +16007,7 @@ let emitConsHeadCopy (sourceTemp: Int) (sizeBytes: Int) (tagless: Bool) (childre
 let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !isRuntimeTemp(temp)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
+            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !childIsRuntimeManaged(head)(temp)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
             then
                 match resolveType(state)(semanticType) with
                     | SemString ->
@@ -19812,8 +19929,17 @@ let failedTailSelfCallArguments state error =
 // its runtime-managed parameter reaches, so the back edge stores it as the parameter's own value;
 // a fresh string that reads no parameter (`fromInt(n) + "-x"`) is built in the arena and copied
 // out by the back edge.
-let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (state: CoreLoweringState) =
-    withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = true, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
+// Stage 0's `BackEdgeCopiesListSuccessor`: a choice accumulator already placed on the
+// reference-counted heap has its successor copied at the back edge with references of its own,
+// before the iteration's owners are released, so an arena cell built for it borrows its children;
+// a retain stored in that cell would never be released.
+let backEdgeCopiesListSuccessor (slot: Maybe(Int)) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match (shape, slot, stateTcoLoopFrame(state)) with
+        | (TcoChoiceAccumulatorShape, Some(parameterSlot), Some(frame)) -> loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
+        | _ -> false
+
+let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (state: CoreLoweringState) =
+    withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
     then tailSlot
     else None)))(state)
 
@@ -19887,7 +20013,7 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
                     match functionState
                     |> withStateBackEdgeArgumentSlot(headSlotOf(slots))
                     |> withStateAffineAppendContext(affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations))
-                    |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))
+                    |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))(backEdgeCopiesListSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(loop)(functionState))
                     |> lower(argument)
                     |> duplicatePatternOwnerChild(argument)
                     |> retainTransferredChild(argument)(true) with
@@ -19933,6 +20059,21 @@ let recursive ownerTypeNameOfSlot (slot: Int) (bindings: List(CoreBinding)) (sta
             else ownerTypeNameOfSlot(slot)(rest)(state)
         | _ :: rest -> ownerTypeNameOfSlot(slot)(rest)(state)
 
+// The type name an iteration's owner releases under: its binding's, or, for an owner no binding
+// names (the slot a match keeps its adopted scrutinee in), the type its release plan was made for.
+let iterationOwnerTypeName (slot: Int) (state: CoreLoweringState) =
+    match ownerTypeNameOfSlot(slot)(state.bindings)(state) with
+        | Some(typeName) -> Some(typeName)
+        | None ->
+            match state
+            |> stateOwnerReleasePlans
+            |> lookupOwnerReleasePlan(slot) with
+                | Some((semanticType, _plan)) ->
+                    state
+                    |> stateConstructorLayouts
+                    |> ownedTypeNameOf(resolveType(state)(semanticType))
+                | None -> None
+
 // The runtime owners registered since the loop entry that still hold their reference at the back
 // edge, with the type name each releases under (stage 0's `CollectTcoBackEdgeOwnedDrops`): their
 // lexical release sits after the jump, unreachable on this path.
@@ -19940,7 +20081,7 @@ let recursive iterationOwnedDrops (depth: Int) (state: CoreLoweringState) (owner
     match owners with
         | [] -> []
         | (slot, true) :: rest ->
-            match (slot >= depth, ownerTypeNameOfSlot(slot)(state.bindings)(state)) with
+            match (slot >= depth, iterationOwnerTypeName(slot)(state)) with
                 | (true, Some(typeName)) -> (slot, typeName) :: iterationOwnedDrops(depth)(state)(rest)
                 | _ -> iterationOwnedDrops(depth)(state)(rest)
         | _ :: rest -> iterationOwnedDrops(depth)(state)(rest)

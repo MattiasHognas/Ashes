@@ -14,73 +14,79 @@ import AshesCompiler.Frontend.Syntax.TopLevelItem
 import AshesCompiler.Frontend.Syntax.LetBindingSyntax
 export (
     value exprMentionsName,
+    value exprReadsName,
     value programMentionsVariable,
 )
 
-let recursive exprMentionsName (name: Str) (expression: Expr) =
+let recursive exprMentionsWith (qualifiers: Bool) (name: Str) (expression: Expr) =
     match expression with
-        | ExprAt(_span, inner) -> exprMentionsName(name)(inner)
+        | ExprAt(_span, inner) -> exprMentionsWith(qualifiers)(name)(inner)
         | ExprVar(candidate) -> candidate == name
-        | ExprQualifiedVar(_module, _member) -> false
-        | ExprAdd(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprSubtract(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprMultiply(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprDivide(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprModulo(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseAnd(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseOr(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseXor(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprShiftLeft(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprShiftRight(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseNot(operand) -> exprMentionsName(name)(operand)
-        | ExprLogicalNot(operand) -> exprMentionsName(name)(operand)
-        | ExprLogicalAnd(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLogicalOr(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprGreaterThan(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLessThan(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprGreaterOrEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLessOrEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprNotEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprResultPipe(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprResultMapErrorPipe(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprCons(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLet(_name, value, body, _params, _annotation, _requirements) -> exprMentionsEither(name)(value)(body)
-        | ExprLetResult(_name, value, body) -> exprMentionsEither(name)(value)(body)
-        | ExprLetRecursive(_name, value, body, _params, _annotation, _requirements) -> exprMentionsEither(name)(value)(body)
-        | ExprIf(condition, thenBranch, elseBranch) -> exprMentionsName(name)(condition) || exprMentionsEither(name)(thenBranch)(elseBranch)
-        | ExprLambda(_parameter, body, _annotation) -> exprMentionsName(name)(body)
-        | ExprCall(function, argument, _isSugar, _layout) -> exprMentionsEither(name)(function)(argument)
-        | ExprTuple(elements) -> exprMentionsAny(name)(elements)
-        | ExprList(elements, _isMultiline) -> exprMentionsAny(name)(elements)
-        | ExprMatch(value, cases, _position) -> exprMentionsName(name)(value) || exprMentionsMatchCases(name)(cases)
-        | ExprAwait(operand) -> exprMentionsName(name)(operand)
-        | ExprRecord(_ctorName, fields, _isMultiline) -> exprMentionsFields(name)(fields)
-        | ExprRecordUpdate(target, fields) -> exprMentionsName(name)(target) || exprMentionsFields(name)(fields)
-        | ExprPerform(operand) -> exprMentionsName(name)(operand)
-        | ExprHandle(operand, arms) -> exprMentionsName(name)(operand) || exprMentionsHandleArms(name)(arms)
+        | ExprQualifiedVar(qualifier, _member) -> qualifiers && qualifier == name
+        | ExprAdd(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprSubtract(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprMultiply(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprDivide(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprModulo(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprBitwiseAnd(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprBitwiseOr(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprBitwiseXor(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprShiftLeft(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprShiftRight(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprBitwiseNot(operand) -> exprMentionsWith(qualifiers)(name)(operand)
+        | ExprLogicalNot(operand) -> exprMentionsWith(qualifiers)(name)(operand)
+        | ExprLogicalAnd(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprLogicalOr(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprGreaterThan(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprLessThan(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprGreaterOrEqual(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprLessOrEqual(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprEqual(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprNotEqual(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprResultPipe(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprResultMapErrorPipe(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprCons(left, right) -> exprMentionsEither(qualifiers)(name)(left)(right)
+        | ExprLet(_name, value, body, _params, _annotation, _requirements) -> exprMentionsEither(qualifiers)(name)(value)(body)
+        | ExprLetResult(_name, value, body) -> exprMentionsEither(qualifiers)(name)(value)(body)
+        | ExprLetRecursive(_name, value, body, _params, _annotation, _requirements) -> exprMentionsEither(qualifiers)(name)(value)(body)
+        | ExprIf(condition, thenBranch, elseBranch) -> exprMentionsWith(qualifiers)(name)(condition) || exprMentionsEither(qualifiers)(name)(thenBranch)(elseBranch)
+        | ExprLambda(_parameter, body, _annotation) -> exprMentionsWith(qualifiers)(name)(body)
+        | ExprCall(function, argument, _isSugar, _layout) -> exprMentionsEither(qualifiers)(name)(function)(argument)
+        | ExprTuple(elements) -> exprMentionsAny(qualifiers)(name)(elements)
+        | ExprList(elements, _isMultiline) -> exprMentionsAny(qualifiers)(name)(elements)
+        | ExprMatch(value, cases, _position) -> exprMentionsWith(qualifiers)(name)(value) || exprMentionsMatchCases(qualifiers)(name)(cases)
+        | ExprAwait(operand) -> exprMentionsWith(qualifiers)(name)(operand)
+        | ExprRecord(_ctorName, fields, _isMultiline) -> exprMentionsFields(qualifiers)(name)(fields)
+        | ExprRecordUpdate(target, fields) -> exprMentionsWith(qualifiers)(name)(target) || exprMentionsFields(qualifiers)(name)(fields)
+        | ExprPerform(operand) -> exprMentionsWith(qualifiers)(name)(operand)
+        | ExprHandle(operand, arms) -> exprMentionsWith(qualifiers)(name)(operand) || exprMentionsHandleArms(qualifiers)(name)(arms)
         | _ -> false
-and exprMentionsEither (name: Str) (left: Expr) (right: Expr) = exprMentionsName(name)(left) || exprMentionsName(name)(right)
-and exprMentionsAny (name: Str) (expressions: List(Expr)) =
+and exprMentionsEither (qualifiers: Bool) (name: Str) (left: Expr) (right: Expr) = exprMentionsWith(qualifiers)(name)(left) || exprMentionsWith(qualifiers)(name)(right)
+and exprMentionsAny (qualifiers: Bool) (name: Str) (expressions: List(Expr)) =
     match expressions with
         | [] -> false
-        | head :: rest -> exprMentionsName(name)(head) || exprMentionsAny(name)(rest)
-and exprMentionsFields (name: Str) (fields: List((Str, Expr))) =
+        | head :: rest -> exprMentionsWith(qualifiers)(name)(head) || exprMentionsAny(qualifiers)(name)(rest)
+and exprMentionsFields (qualifiers: Bool) (name: Str) (fields: List((Str, Expr))) =
     match fields with
         | [] -> false
-        | (_fieldName, expression) :: rest -> exprMentionsName(name)(expression) || exprMentionsFields(name)(rest)
-and exprMentionsMatchCases (name: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) =
+        | (_fieldName, expression) :: rest -> exprMentionsWith(qualifiers)(name)(expression) || exprMentionsFields(qualifiers)(name)(rest)
+and exprMentionsMatchCases (qualifiers: Bool) (name: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) =
     match cases with
         | [] -> false
-        | (_pattern, body, guard) :: rest -> exprMentionsName(name)(body) || exprMentionsGuard(name)(guard) || exprMentionsMatchCases(name)(rest)
-and exprMentionsGuard (name: Str) (guard: Maybe(Expr)) =
+        | (_pattern, body, guard) :: rest -> exprMentionsWith(qualifiers)(name)(body) || exprMentionsGuard(qualifiers)(name)(guard) || exprMentionsMatchCases(qualifiers)(name)(rest)
+and exprMentionsGuard (qualifiers: Bool) (name: Str) (guard: Maybe(Expr)) =
     match guard with
-        | Some(expression) -> exprMentionsName(name)(expression)
+        | Some(expression) -> exprMentionsWith(qualifiers)(name)(expression)
         | None -> false
-and exprMentionsHandleArms (name: Str) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
+and exprMentionsHandleArms (qualifiers: Bool) (name: Str) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
     match arms with
         | [] -> false
-        | (_binder, _operation, _patterns, body) :: rest -> exprMentionsName(name)(body) || exprMentionsHandleArms(name)(rest)
+        | (_binder, _operation, _patterns, body) :: rest -> exprMentionsWith(qualifiers)(name)(body) || exprMentionsHandleArms(qualifiers)(name)(rest)
+
+let exprMentionsName (name: Str) (expression: Expr) = exprMentionsWith(false)(name)(expression)
+
+// A mention that also counts a member read through the name, `name.member`.
+let exprReadsName (name: Str) (expression: Expr) = exprMentionsWith(true)(name)(expression)
 
 let recursive bindingsMentionName (name: Str) (bindings: List(LetBindingSyntax)) =
     match bindings with
@@ -97,4 +103,4 @@ let recursive itemsMentionName (name: Str) (items: List(TopLevelItem)) =
 
 let programMentionsVariable (name: Str) (program: ProgramSyntax) =
     match program with
-        | ProgramSyntax { items = items, body = body } -> itemsMentionName(name)(items) || exprMentionsGuard(name)(body)
+        | ProgramSyntax { items = items, body = body } -> itemsMentionName(name)(items) || exprMentionsGuard(false)(name)(body)
