@@ -141,6 +141,7 @@ _*.md
 # Local CI/CD (ci/) outputs
 staging/
 .ci-cache/
+.claude/
 
 # Binaries the self-hosted backend suite writes into the directory it is run from
 /selfhost_backend_*_e2e
