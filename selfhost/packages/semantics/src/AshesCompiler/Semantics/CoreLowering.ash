@@ -8554,6 +8554,62 @@ let candidateAdtManaged (candidate: TcoManagedCandidate) =
         | Some(_copy) -> true
         | None -> false
 
+// Every constructor field of a named type, resolved, with whether the type has any constructor at
+// all: a type the lowering knows no constructor for proves nothing about its own layout.
+let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (found: Bool) (fieldTypes: List(SemanticType)) =
+    match layouts with
+        | [] -> (found, fieldTypes)
+        | layout :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName
+                    then
+                        match layoutFieldTypes(layout)(state) with
+                            | (layoutFields, _resultType) ->
+                                layoutFields
+                                |> map(resolveType(state))
+                                |> append(fieldTypes)
+                                |> namedTypeConstructorFieldTypes(typeName)(rest)(state)(true)
+                    else namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
+                | None -> namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
+
+// Stage 0's `StructuralComponentTypes`: what a value of this type structurally contains as far as the
+// type itself says. A named type's fields are not among its type arguments, which the walk below
+// expands separately.
+let structuralComponentTypes (semanticType: SemanticType) =
+    match semanticType with
+        | SemList(element) -> [element]
+        | SemPointer(pointee) -> [pointee]
+        | SemTuple(elements) -> elements
+        | SemNamed(_id, _name, arguments) -> arguments
+        | SemCapability(_name, arguments) -> arguments
+        | _ -> []
+
+// Stage 0's `CallResultMayContainArgumentType`: whether a value of the argument's type could be
+// reachable inside the result. An unresolved variable, a rigid type parameter, and a function value
+// (which can have captured anything) all answer yes, and a yes only ever keeps a handed-over reference
+// where it is, so erring this way leaks at worst. A named type is expanded once per type name on a
+// walk, which is what stops a recursive type unfolding forever; its type arguments are walked every
+// time regardless, so the same generic type at two instantiations still has both compared.
+let recursive callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemFunction(_parameter, _result, _row) -> true
+        | resolved ->
+            resolved == argumentType || anyTypeMayContainArgumentType(structuralComponentTypes(resolved))(argumentType)(expanded)(state) || (match resolved with
+                | SemNamed(_id, name, _arguments) ->
+                    if containsName(name)(expanded)
+                    then false
+                    else
+                        match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
+                            | (_found, fieldTypes) -> anyTypeMayContainArgumentType(fieldTypes)(argumentType)(name :: expanded)(state)
+                | _ -> false)
+and anyTypeMayContainArgumentType (candidates: List(SemanticType)) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    match candidates with
+        | [] -> false
+        | candidate :: rest -> callResultMayContainArgumentType(candidate)(argumentType)(expanded)(state) || anyTypeMayContainArgumentType(rest)(argumentType)(expanded)(state)
+
 // Stage 0's `IsPermanentlyBlockingTcoParam`: a sibling that keeps the frame's per-iteration
 // reclaim from ever running — heap-typed, neither a resource handle nor the loop's own unchanged
 // value, not a consumed tail over scalars, and not itself placed on the reference-counted heap —
@@ -8568,6 +8624,56 @@ let recursive anyBlockingSibling (candidates: List(TcoManagedCandidate)) (state:
     match candidates with
         | [] -> false
         | candidate :: rest -> tcoParameterBlocksFrame(candidate)(state) || anyBlockingSibling(rest)(state)
+
+// Stage 0's `IsHeapListAccumulatorElement`: a list whose cells the loop builds on the
+// reference-counted heap whatever its placement, one of strings or of any element that owns heap
+// parts.
+let isHeapListAccumulatorElement (element: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(element) with
+        | SemString -> true
+        | resolved -> !resultSurvivesReset(resolved)(state)
+
+// The list accumulator a blocking sibling does not demote, stage 0's `unblockedAccumulator`:
+// reference-counted cells reach such a list whatever its placement, and kept in the arena for a
+// sibling's sake it would hold them without releasing them.
+let unblockedAccumulatorType (candidate: TcoManagedCandidate) (state: CoreLoweringState) =
+    if candidate.shape == TcoConsumedTailShape
+    then None
+    else
+        match slotResolvedType(candidate.slot)(state.bindings)(state) with
+            | Some(SemList(element) as accumulator) ->
+                if isHeapListAccumulatorElement(element)(state)
+                then Some(accumulator)
+                else None
+            | _ -> None
+
+// Stage 0's `SiblingMayReceiveAccumulator` by type: a sibling that could hold the accumulator, or
+// a part of it, would keep that part without a reference of its own, so it still blocks.
+let siblingMayReceiveAccumulator (sibling: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (state: CoreLoweringState) =
+    match (accumulator, slotResolvedType(sibling.slot)(state.bindings)(state)) with
+        | (Some(accumulatorType), Some(siblingType)) -> callResultMayContainArgumentType(siblingType)(accumulatorType)([])(state)
+        | _ -> true
+
+// Stage 0's `FindBlockingSiblingForCandidate`: whether some other parameter of the frame keeps this
+// candidate off the reference-counted heap.
+let recursive candidateBlockedBySibling (candidate: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (siblings: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match siblings with
+        | [] -> false
+        | sibling :: rest -> sibling.ordinal != candidate.ordinal && tcoParameterBlocksFrame(sibling)(state) && siblingMayReceiveAccumulator(sibling)(accumulator)(state) || candidateBlockedBySibling(candidate)(accumulator)(rest)(state)
+
+let recursive demoteBlockedCandidates (candidates: List(TcoManagedCandidate)) (siblings: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match candidates with
+        | [] -> []
+        | candidate :: rest ->
+            (if candidateBlockedBySibling(candidate)(unblockedAccumulatorType(candidate)(state))(siblings)(state)
+            then candidate with listElement = None, adtCopy = None
+            else candidate) :: demoteBlockedCandidates(rest)(siblings)(state)
+
+// The frame's candidates with every one a sibling blocks taken off the reference-counted heap.
+let unblockedCandidates (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    if anyBlockingSibling(candidates)(state)
+    then demoteBlockedCandidates(candidates)(candidates)(state)
+    else candidates
 
 let recursive lookupListActiveSlot (slot: Int) (pairs: List((Int, Int))) =
     match pairs with
@@ -9219,11 +9325,7 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
-                    |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(if anyBlockingSibling(candidates)(state)
-        then []
-        else tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots))(if anyBlockingSibling(candidates)(state)
-        then []
-        else tcoRuntimeManagedAdtSlotsOf(candidates)(frame.listActiveSlots)))
+                    |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots)))
 
 // Stage 0's post-body refresh allocates the active flag of every candidate the loop entry and
 // the back edges left without one, ahead of the entry normalization's own locals.
@@ -9684,64 +9786,8 @@ let specializationAccumulatorTypeOf (callee: Str) (state: CoreLoweringState) =
                 | _ -> None
         | None -> None
 
-// Every constructor field of a named type, resolved, with whether the type has any constructor at
-// all: a type the lowering knows no constructor for proves nothing about its own layout.
-let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (found: Bool) (fieldTypes: List(SemanticType)) =
-    match layouts with
-        | [] -> (found, fieldTypes)
-        | layout :: rest ->
-            match constructorResultName(layout) with
-                | Some(resultName) ->
-                    if resultName == typeName
-                    then
-                        match layoutFieldTypes(layout)(state) with
-                            | (layoutFields, _resultType) ->
-                                layoutFields
-                                |> map(resolveType(state))
-                                |> append(fieldTypes)
-                                |> namedTypeConstructorFieldTypes(typeName)(rest)(state)(true)
-                    else namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
-                | None -> namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
-
 // Whether the rebuild's constructor-site materialization can relocate a field of this type into
 // to-space through a synthesized copier — the half of the persistence question that needs the type
-// Stage 0's `StructuralComponentTypes`: what a value of this type structurally contains as far as the
-// type itself says. A named type's fields are not among its type arguments, which the walk below
-// expands separately.
-let structuralComponentTypes (semanticType: SemanticType) =
-    match semanticType with
-        | SemList(element) -> [element]
-        | SemPointer(pointee) -> [pointee]
-        | SemTuple(elements) -> elements
-        | SemNamed(_id, _name, arguments) -> arguments
-        | SemCapability(_name, arguments) -> arguments
-        | _ -> []
-
-// Stage 0's `CallResultMayContainArgumentType`: whether a value of the argument's type could be
-// reachable inside the result. An unresolved variable, a rigid type parameter, and a function value
-// (which can have captured anything) all answer yes, and a yes only ever keeps a handed-over reference
-// where it is, so erring this way leaks at worst. A named type is expanded once per type name on a
-// walk, which is what stops a recursive type unfolding forever; its type arguments are walked every
-// time regardless, so the same generic type at two instantiations still has both compared.
-let recursive callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemFunction(_parameter, _result, _row) -> true
-        | resolved ->
-            resolved == argumentType || anyTypeMayContainArgumentType(structuralComponentTypes(resolved))(argumentType)(expanded)(state) || (match resolved with
-                | SemNamed(_id, name, _arguments) ->
-                    if containsName(name)(expanded)
-                    then false
-                    else
-                        match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
-                            | (_found, fieldTypes) -> anyTypeMayContainArgumentType(fieldTypes)(argumentType)(name :: expanded)(state)
-                | _ -> false)
-and anyTypeMayContainArgumentType (candidates: List(SemanticType)) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match candidates with
-        | [] -> false
-        | candidate :: rest -> callResultMayContainArgumentType(candidate)(argumentType)(expanded)(state) || anyTypeMayContainArgumentType(rest)(argumentType)(expanded)(state)
-
 // environment, so `ReuseResetSafety.ash` takes it as a parameter.
 let specializationFieldRelocatable (fieldType: SemanticType) (state: CoreLoweringState) =
     state
@@ -20208,7 +20254,7 @@ let rootPlacedAtBackEdge (rootSlot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTc
             state
             |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
             |> (given (candidates: List(TcoManagedCandidate)) ->
-                !anyBlockingSibling(candidates)(state) && tcoParameterPlaced(rootSlot)(tcoRuntimeManagedListSlotsOf(candidates)(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(candidates)(frame.listActiveSlots))(candidates))
+                managedSlotResult(rootSlot)(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots))([]) || !anyBlockingSibling(candidates)(state) && candidateStrManaged(rootSlot)(candidates))
 
 // Stage 0's `LowerCallTcoTransferPatternBindings`, first half: a tail self-call argument that
 // reads the unchanged successor of a root placed on the reference-counted heap takes one
