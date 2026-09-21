@@ -43,6 +43,7 @@ export (
     type OwnedReleasePlan(..),
     type InlineReleaseSynthesis(..),
     value synthesizeOwnedAggregateRelease,
+    value synthesizeChildDrop,
     type DropperTypes(..),
     value prepareDropperTypes,
     value openDropperBody,
@@ -889,3 +890,13 @@ let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType
                     released
                     |> inlineReleaseResult
                     |> Some
+
+// The inline release of an owned value by its type alone, stage 0's `EmitRuntimeManagedChildDrop`:
+// a tuple or a list is walked, a named type released by the dropper its layout calls for, and a
+// string-like leaf released as one allocation.
+let synthesizeChildDrop (valueTemp: Int) (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
+        | (ids, opened) ->
+            (opened with nextTemp = nextTemp, nextLocal = nextLocal)
+            |> emitChildDrop(valueTemp)(renumberType(ids)(semanticType))
+            |> inlineReleaseResult

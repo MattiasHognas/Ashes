@@ -435,6 +435,9 @@ type CoreProgramState =
     | moveCallSites: List(MoveCallSite)
     | patternOwnerSites: List(PatternOwnerSite)
     | bodyRuntimeManagedByLabel: MapTree(Str, Bool)
+    // The functions whose compiled result is owned under the contract: each normalizes a result of
+    // the contract's types at its return, so a caller that names one takes the result over as it is.
+    | generalRcOwnedResultLabels: List(Str)
     | letLambdaLabels: MapTree(Str, Str)
     // The lambda identity (`lambdaIdentityOf`) recorded under each let-bound function's name,
     // resolving its whole-program result-reach summary among same-named functions.
@@ -518,6 +521,9 @@ type CoreOwnerState =
     | patternOwnerResultTemps: List(Int)
     | retiredLocals: List(Int)
     | ownerReleasePlans: List((Int, SemanticType, OwnedReleasePlan))
+    // The slots holding a value of the contract's types the function owns (a call result), with the
+    // function that made each: released once the function's result holds its own references.
+    | generalRcOwnedSlots: List((Maybe(IrFunctionOrigin), Int, SemanticType))
     | pendingOwnerPlan: Maybe(OwnedReleasePlan)
     // The result types of the calls lowered so far in the current function body whose layout was
     // still unresolved at the call (an arena result was requested in place of a placement
@@ -919,6 +925,14 @@ let withStateSpecializationCandidates value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with specializationCandidates = value))
 
+let stateGeneralRcOwnedResultLabels (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.generalRcOwnedResultLabels)
+
+let withStateGeneralRcOwnedResultLabels value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with generalRcOwnedResultLabels = value))
+
 let stateBodyRuntimeManagedByLabel (state: CoreLoweringState) =
     (let group = state.programState
     in group.bodyRuntimeManagedByLabel)
@@ -1198,6 +1212,14 @@ let stateOwnerReleasePlans (state: CoreLoweringState) =
 let withStateOwnerReleasePlans value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with ownerReleasePlans = value))
+
+let stateGeneralRcOwnedSlots (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.generalRcOwnedSlots)
+
+let withStateGeneralRcOwnedSlots value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcOwnedSlots = value))
 
 let statePendingOwnerPlan (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -1752,6 +1774,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             moveCallSites = [],
             patternOwnerSites = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
+            generalRcOwnedResultLabels = [],
             letLambdaLabels = Ashes.Collection.Map.empty,
             letLambdaIdentities = Ashes.Collection.Map.empty,
             reachSummaries = [],
@@ -1796,6 +1819,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             pendingBorrowedOwners = [],
             patternOwnerResultTemps = [],
             ownerReleasePlans = [],
+            generalRcOwnedSlots = [],
             pendingOwnerPlan = None,
             unresolvedCallResults = [],
             resolvingCallsAgain = false,
@@ -5244,6 +5268,8 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) ->
                 withStateBodyRuntimeManagedByLabel(stateBodyRuntimeManagedByLabel(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
+                withStateGeneralRcOwnedResultLabels(stateGeneralRcOwnedResultLabels(bodyState))(current))
+            |> (given (current: CoreLoweringState) ->
                 withStateFunctionReturnedClosureLabels(stateFunctionReturnedClosureLabels(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 current
@@ -5282,13 +5308,21 @@ let emitClosure label environmentTemp captureTotal stackAllocate state =
                 in
                     let acceptsRuntimeManaged = acceptsRuntimeManagedArgument(label)(tempState)
                     in
-                        let closureState =
-                            if stackAllocate
-                            then
-                                emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(acceptsRuntimeManaged)(false))(tempState)
-                            else
-                                emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)(acceptsRuntimeManaged)(false))(tempState)
-                        in (closureState, closureTemp)
+                        // A closure over a function that normalizes its result at its return says so
+                        // in its header, so a caller that cannot name the callee takes such a result
+                        // over owned instead of retaining it.
+                        let returnsGeneralRcOwned =
+                            tempState
+                            |> stateGeneralRcOwnedResultLabels
+                            |> containsLabel(label)
+                        in
+                            let closureState =
+                                if stackAllocate
+                                then
+                                    emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
+                                else
+                                    emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
+                            in (closureState, closureTemp)
 
 let prepareLambdaBodyState parameter parameterType captures lambdaId origin state =
     (let functionBindings =
@@ -5717,6 +5751,19 @@ let argumentCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
 // The same copy with the synthesized normalization helper standing in for every named type the
 // inline copies do not express, stage 0's `EmitRuntimeManagedTcoDeepCopy` in full.
 let generalCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) = copyPlanOf(true)(semanticType)(state)
+
+// Stage 0's `CanNormalizeIntoOwnedRuntimeValue`: the result types the guarded copy turns into an
+// owned reference-counted value. A list whose heads have no fixed copy is one too when its
+// elements can be copied one by one (a table of string pairs).
+let ownedResultPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> argumentCopyPlanOf(semanticType)(state)
+        | SemList(element) ->
+            match listHeadCopyKindOf(element)(state) with
+                | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
+                | None -> argumentCopyPlanOf(semanticType)(state)
+        | SemNamed(_symbolId, _name, _arguments) -> argumentCopyPlanOf(semanticType)(state)
+        | _ -> None
 
 // The parameter types an entry normalization turns into an owned runtime-managed value, stage
 // 0's `IsRuntimeNormalizableParameterType`: strings, and the ADTs the runtime copies out or
@@ -7822,9 +7869,16 @@ let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state:
             match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | Some(synthesis) -> spliceInlineReleaseWith(emit)(synthesis)(state)
                 | None ->
-                    emit(RcDrop(valueTemp)(semanticType
-                    |> resolveType(state)
-                    |> arenaResultDropTypeName)(-1)(true)(false)(None))(state)
+                    // A type only the normalization helper expresses is released through its own
+                    // dropper even when no constructor owns a heap field, as stage 0's result
+                    // drop routes it; any other single allocation is one typed drop.
+                    match generalCopyPlanOf(semanticType)(state) with
+                        | Some(NormalizerArgumentCopy(_named)) ->
+                            spliceInlineReleaseWith(emit)(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
+                        | _ ->
+                            emit(RcDrop(valueTemp)(semanticType
+                            |> resolveType(state)
+                            |> arenaResultDropTypeName)(-1)(true)(false)(None))(state)
 
 let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
     match children with
@@ -7866,11 +7920,137 @@ let isGeneralRcValueType (semanticType: SemanticType) (state: CoreLoweringState)
         | (None, None) -> !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
         | _ -> false
 
-// Stage 0's `FinishGeneralRcFunctionResult` for a result of the contract's types: the function
-// hands over a reference of its own. A value the body produced owned is taken as it is when its
-// cells turn out reference-counted, and copied when they are still in the arena; any other value
-// is retained or copied.
-let finishGeneralRcFunctionResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+// Stage 0's `RegisterGeneralRcOwnedSlot`: the slot just stored holds a value of the contract's
+// types the function owns. Inside a loop it takes a flag of its own, set while this iteration's
+// value sits in it.
+let registerGeneralRcOwnedSlot (slot: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | None -> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(state), slot, semanticType) :: stateGeneralRcOwnedSlots(state))(state)
+        | Some(_frame) ->
+            match freshLocal(state) with
+                | FreshLocal { state = flagged, local = freshSlot } ->
+                    match freshTemp(flagged) with
+                        | FreshTemp { state = allocated, temp = oneTemp } ->
+                            allocated
+                            |> emit(LoadConstInt(oneTemp)(1))
+                            |> emit(StoreLocal(freshSlot)(oneTemp))
+                            |> (given (stored: CoreLoweringState) -> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(stored), slot, semanticType) :: stateGeneralRcOwnedSlots(stored))(stored))
+
+// The release of one owned value by its type, spliced in from the dropper synthesis.
+let emitOwnedValueChildDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+            spliceInlineRelease(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
+
+// Stage 0's `EmitGeneralRcOwnedSlotDrops` for one slot: a slot that holds a reference-counted
+// value releases it and is cleared; an empty slot, or one whose value is still in the arena, is
+// left as it is.
+let emitGeneralRcOwnedSlotDrop (slot: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = valueState, temp = valueTemp } ->
+            match valueState
+            |> emit(LoadLocal(valueTemp)(slot))
+            |> freshTemp with
+                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                    match zeroState
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> freshTemp with
+                        | FreshTemp { state = presentState, temp = presentTemp } ->
+                            match presentState
+                            |> emit(CmpIntNe(presentTemp)(valueTemp)(zeroTemp))
+                            |> freshLabel("general_rc_owned_absent") with
+                                | FreshLabel { state = labelled, label = skipLabel } ->
+                                    match labelled
+                                    |> emit(JumpIfFalse(presentTemp)(skipLabel))
+                                    |> freshTemp with
+                                        | FreshTemp { state = testedState, temp = referenceCountedTemp } ->
+                                            testedState
+                                            |> emit(IsReferenceCounted(referenceCountedTemp)(valueTemp))
+                                            |> emit(JumpIfFalse(referenceCountedTemp)(skipLabel))
+                                            |> emitOwnedValueChildDrop(valueTemp)(semanticType)
+                                            |> emit(StoreLocal(slot)(zeroTemp))
+                                            |> emit(Label(skipLabel))
+
+let recursive emitGeneralRcOwnedSlotDropsOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> state
+        | (owner, slot, semanticType) :: rest ->
+            if owner == origin
+            then
+                state
+                |> emitGeneralRcOwnedSlotDrop(slot)(semanticType)
+                |> emitGeneralRcOwnedSlotDropsOf(origin)(rest)
+            else emitGeneralRcOwnedSlotDropsOf(origin)(rest)(state)
+
+// The owned slots of the function being finished, released in the order they were registered.
+let emitGeneralRcOwnedSlotDrops (state: CoreLoweringState) =
+    emitGeneralRcOwnedSlotDropsOf(stateActiveFunctionOrigin(state))(state
+    |> stateGeneralRcOwnedSlots
+    |> reverse)(state)
+
+let recursive anyOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> false
+        | (owner, _slot, _semanticType) :: rest -> owner == origin || anyOwnedSlotOf(origin)(rest)
+
+let functionOwnsGeneralRcSlots (state: CoreLoweringState) =
+    state
+    |> stateGeneralRcOwnedSlots
+    |> anyOwnedSlotOf(stateActiveFunctionOrigin(state))
+
+// Stage 0's `IsScalarFieldVariant`: a variant every field of which is inline (an optional integer).
+// The contract does not govern it, since it owns no heap child, and a generic one has no fixed
+// copy-out either, so the normalization helper is what detaches it from a value it may have been
+// read out of.
+let isScalarFieldVariant (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, _name, _arguments) as named ->
+            isGeneralRcAdmissible(named)([])(state) && !anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
+        | _ -> false
+
+// How a result outside the contract's types is detached from the values its function owns: by
+// its fixed copy-out in the arena, where the caller takes it like any fresh result, or by a
+// normalization into an owned reference-counted value.
+type IndependentResultCopy =
+    | ArenaResultCopy(CallCopyOut)
+    | OwnedResultCopy(ArgumentCopyPlan)
+
+// Stage 0's `HasFixedArenaCopyOut` and `CanNormalizeIntoOwnedRuntimeValue` behind
+// `normalizesOwnedResult`, the fixed copy-out first.
+let independentResultCopyOf (bodyType: SemanticType) (state: CoreLoweringState) =
+    match callCopyOutOf(bodyType)(state) with
+        | Some(copyOut) -> Some(ArenaResultCopy(copyOut))
+        | None ->
+            match ownedResultPlanOf(bodyType)(state) with
+                | Some(ScalarArgumentCopy) -> None
+                | Some(plan) -> Some(OwnedResultCopy(plan))
+                | None ->
+                    if isScalarFieldVariant(bodyType)(state)
+                    then
+                        match generalCopyPlanOf(bodyType)(state) with
+                            | Some(plan) -> Some(OwnedResultCopy(plan))
+                            | None -> None
+                    else None
+
+let emitIndependentResultCopy (copy: IndependentResultCopy) (sourceTemp: Int) (state: CoreLoweringState) =
+    match copy with
+        | OwnedResultCopy(plan) ->
+            match emitGuardedDeepCopy(sourceTemp)(plan)(state) with
+                | (copied, resultTemp) -> (markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(copied), resultTemp)
+        | ArenaResultCopy(copyOut) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = copyTemp } ->
+                    (emit(match copyOut with
+                        | ShallowCallCopyOut(sizeBytes) -> CopyOutArena(copyTemp)(sourceTemp)(sizeBytes)(false)(IndependentClone)(None)
+                        | ListCallCopyOut(headCopy) -> CopyOutList(copyTemp)(sourceTemp)(headCopy)(false)(IndependentClone))(allocated), copyTemp)
+
+// Stage 0's `FinishGeneralRcFunctionResult`: a result of the contract's types is made the
+// function's own (a value the body produced owned is taken as it is when its cells turn out
+// reference-counted and copied when they are still in the arena; any other value is retained or
+// copied), and the function is recorded as handing its result over owned. The owned slots are
+// released behind a result they cannot reach: one made independent here, an inline value, or one
+// already reference-counted. Any other result may still point into them, and they are left.
+let finishGeneralRcFunctionResult (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcValueType(bodyType)(state)
     then
         match generalCopyPlanOf(bodyType)(state) with
@@ -7879,8 +8059,30 @@ let finishGeneralRcFunctionResult (bodyTemp: Int) (bodyType: SemanticType) (stat
                 match match runtimeTempStateOf(bodyTemp)(state) with
                     | Some(RuntimeNewlyProduced) -> emitOwnedResultOrCopy(bodyTemp)(plan)(state)
                     | _ -> emitGuardedDeepCopy(bodyTemp)(plan)(state) with
-                    | (copied, resultTemp) -> (markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(copied), resultTemp)
-    else (state, bodyTemp)
+                    | (copied, resultTemp) ->
+                        (copied
+                        |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                        |> (given (marked: CoreLoweringState) -> withStateGeneralRcOwnedResultLabels(label :: stateGeneralRcOwnedResultLabels(marked))(marked))
+                        |> emitGeneralRcOwnedSlotDrops, resultTemp)
+    else
+        if resultSurvivesReset(bodyType)(state) || isRuntimeTemp(bodyTemp)(state)
+        then (emitGeneralRcOwnedSlotDrops(state), bodyTemp)
+        else
+            match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
+                | (true, Some(copy)) ->
+                    match emitIndependentResultCopy(copy)(bodyTemp)(state) with
+                        | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
+                | _ -> (state, bodyTemp)
+
+// Whether the function's result is reference-counted once it is finished, the fact its callers
+// close their call windows on: it was produced so, it is of the contract's types, or it is
+// normalized into an owned value behind the function's owned slots.
+let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    isRuntimeTemp(bodyTemp)(state) || (match (isGeneralRcValueType(bodyType)(state), generalCopyPlanOf(bodyType)(state)) with
+        | (true, Some(_plan)) -> true
+        | _ -> false) || !resultSurvivesReset(bodyType)(state) && functionOwnsGeneralRcSlots(state) && (match independentResultCopyOf(bodyType)(state) with
+        | Some(OwnedResultCopy(_plan)) -> true
+        | _ -> false)
 
 // Stage 0's `LowerLambdaCoreNormalizeRequestedArenaResult`: a callee whose result is
 // reference-counted can be invoked from a body that cannot own such a result (a generic function
@@ -7925,8 +8127,8 @@ let normalizeRequestedArenaResult (bodyTemp: Int) (bodyType: SemanticType) (stat
 
 // What a function does to its result before returning it: a result of the contract's types is
 // made the function's own first, and a caller's request for an arena result is honored after.
-let normalizeFunctionResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
-    match finishGeneralRcFunctionResult(bodyTemp)(bodyType)(state) with
+let normalizeFunctionResult (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match finishGeneralRcFunctionResult(label)(bodyTemp)(bodyType)(state) with
         | (finished, ownedTemp) -> normalizeRequestedArenaResult(ownedTemp)(bodyType)(finished)
 
 // Whether `bodyTemp` is defined by a plain read of local `slot`.
@@ -8238,10 +8440,10 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
             |> reserveTcoExitTransferSlot(label)(loweredTemp)
             |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType) with
                 | (loweredBody, bodyTemp) ->
-                    let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(loweredBody)
+                    let bodyRuntimeManaged = finishedResultRuntimeManaged(bodyTemp)(bodyType)(loweredBody)
                     in
                         let returned =
-                            match normalizeFunctionResult(bodyTemp)(bodyType)(loweredBody) with
+                            match normalizeFunctionResult(label)(bodyTemp)(bodyType)(loweredBody) with
                                 | (normalized, returnedTemp) ->
                                     normalized
                                     |> emit(Return(returnedTemp))
@@ -12331,6 +12533,59 @@ let pinDeferredSelfCallResult (semanticType: SemanticType) (state: CoreLoweringS
                             | (_failed, Some(_error)) -> state
         | _ -> state
 
+// Stage 0's `CalleeReturnsGeneralRcOwned`: a call of such a result type receives its result owned
+// from a function compiled under the contract, reached along the returned-closure chain one hop
+// per application past the first, or from the function being lowered itself, which normalizes its
+// result at its return like any other.
+let calleeReturnsGeneralRcOwned (context: CoreCallContext) (state: CoreLoweringState) =
+    context.selfCallee || (match context.facts with
+        | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
+            match state
+            |> stateFunctionReturnedClosureLabels
+            |> innermostStageLabel(count - 1)(label) with
+                | Some(stageLabel) ->
+                    state
+                    |> stateGeneralRcOwnedResultLabels
+                    |> containsLabel(stageLabel)
+                | None -> false
+        | _ -> false)
+
+// Stage 0's `LowerGeneralRcCallResult`: a call result of the contract's types is owned by the
+// caller once the call's window is reset. It is taken over as it is from a callee known to return
+// it owned and normalized otherwise, since a generic callee's result may borrow its arguments'
+// parts. The value is kept in an owned slot and handed on without a runtime-managed fact.
+let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotted, local = ownedSlot } ->
+            let restored =
+                slotted
+                |> emit(StoreLocal(ownedSlot)(temp))
+                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            in
+                let owned =
+                    if calleeReturnsGeneralRcOwned(context)(restored)
+                    then restored
+                    else
+                        match generalCopyPlanOf(semanticType)(restored) with
+                            | None -> restored
+                            | Some(plan) ->
+                                match freshLabel("general_rc_result_owned")(restored) with
+                                    | FreshLabel { state = labelled, label = ownedLabel } ->
+                                        match emitGuardedDeepCopy(temp)(plan)(labelled) with
+                                            | (copied, copyTemp) ->
+                                                copied
+                                                |> emit(StoreLocal(ownedSlot)(copyTemp))
+                                                |> emit(Label(ownedLabel))
+                in
+                    match owned
+                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                    |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                    |> freshTemp with
+                        | FreshTemp { state = loaded, temp = resultTemp } ->
+                            loaded
+                            |> emit(LoadLocal(resultTemp)(ownedSlot))
+                            |> success(resultTemp)(semanticType)
+
 let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
@@ -12339,39 +12594,45 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
             |> pinDeferredSelfCallResult(semanticType)
             |> freshLocal with
                 | FreshLocal { state = allocated, local = preRestoreSlot } ->
-                    if isRuntimeTemp(temp)(allocated) || resultSurvivesReset(semanticType)(allocated)
+                    if !isGeneralRcValueType(semanticType)(allocated) && (isRuntimeTemp(temp)(allocated) || resultSurvivesReset(semanticType)(allocated))
                     then
                         allocated
                         |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
                         |> success(temp)(semanticType)
                         |> closedCallStage(stage)(false)(false)
                     else
-                        match (callCopyOutOf(semanticType)(allocated), flagTemp >= 0) with
-                            | (Some(copyOut), true) ->
-                                match emitConditionalCallCopyOut(copyOut)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
-                                    | (closed, resultTemp) ->
-                                        closed
-                                        |> success(resultTemp)(semanticType)
-                                        |> closedCallStage(stage)(true)(false)
-                            | (None, _) ->
-                                match genericListDeepCopyPlanOf(context)(semanticType)(allocated) with
-                                    | Some(elementPlan) ->
-                                        match emitCallDeepCopyOut(elementPlan)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
-                                            | (closed, resultTemp) ->
-                                                closed
-                                                |> withStateGenericDeepCopiedListTemps(resultTemp :: stateGenericDeepCopiedListTemps(closed))
-                                                |> success(resultTemp)(semanticType)
-                                                |> closedCallStage(stage)(true)(true)
-                                    | None ->
-                                        match deferCallCopyOut(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(allocated) with
-                                            | (deferred, resultTemp) ->
-                                                deferred
-                                                |> success(resultTemp)(semanticType)
-                                                |> closedCallStage(stage)(false)(false)
-                            | _ ->
-                                allocated
-                                |> success(temp)(semanticType)
-                                |> closedCallStage(stage)(false)(false)
+                        if isGeneralRcValueType(semanticType)(allocated)
+                        then
+                            allocated
+                            |> lowerGeneralRcCallResult(context)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)
+                            |> closedCallStage(stage)(false)(false)
+                        else
+                            match (callCopyOutOf(semanticType)(allocated), flagTemp >= 0) with
+                                | (Some(copyOut), true) ->
+                                    match emitConditionalCallCopyOut(copyOut)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
+                                        | (closed, resultTemp) ->
+                                            closed
+                                            |> success(resultTemp)(semanticType)
+                                            |> closedCallStage(stage)(true)(false)
+                                | (None, _) ->
+                                    match genericListDeepCopyPlanOf(context)(semanticType)(allocated) with
+                                        | Some(elementPlan) ->
+                                            match emitCallDeepCopyOut(elementPlan)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
+                                                | (closed, resultTemp) ->
+                                                    closed
+                                                    |> withStateGenericDeepCopiedListTemps(resultTemp :: stateGenericDeepCopiedListTemps(closed))
+                                                    |> success(resultTemp)(semanticType)
+                                                    |> closedCallStage(stage)(true)(true)
+                                        | None ->
+                                            match deferCallCopyOut(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(allocated) with
+                                                | (deferred, resultTemp) ->
+                                                    deferred
+                                                    |> success(resultTemp)(semanticType)
+                                                    |> closedCallStage(stage)(false)(false)
+                                | _ ->
+                                    allocated
+                                    |> success(temp)(semanticType)
+                                    |> closedCallStage(stage)(false)(false)
 
 // Unifies the result a spine of `arity` applications of the callee produces with the type the
 // context expects of the call, before any argument is lowered: a callee type that is still a
@@ -12481,19 +12742,6 @@ let recursive releaseWithAllParts (consumed: List(CoreConsumedArgument)) =
             then argument with preserveEscapedChildren = false
             else argument) :: releaseWithAllParts(rest)
         | argument :: rest -> argument :: releaseWithAllParts(rest)
-
-// Stage 0's `CanNormalizeIntoOwnedRuntimeValue`: the result types the guarded copy turns into an
-// owned reference-counted value. A list whose heads have no fixed copy is one too when its
-// elements can be copied one by one (a table of string pairs).
-let ownedResultPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemString -> argumentCopyPlanOf(semanticType)(state)
-        | SemList(element) ->
-            match listHeadCopyKindOf(element)(state) with
-                | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
-                | None -> argumentCopyPlanOf(semanticType)(state)
-        | SemNamed(_symbolId, _name, _arguments) -> argumentCopyPlanOf(semanticType)(state)
-        | _ -> None
 
 // Stage 0's `resultCopyCopiesElements`: a list copy-out whose heads are strings or lists copies
 // them, so its result shares nothing with the arguments already.
@@ -15435,10 +15683,10 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                     |> reserveTcoExitTransferSlot(label)(loweredTemp)
                     |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType) with
                         | (typedBody, bodyTemp) ->
-                            let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(typedBody)
+                            let bodyRuntimeManaged = finishedResultRuntimeManaged(bodyTemp)(bodyType)(typedBody)
                             in
                                 let finishedBody =
-                                    match normalizeFunctionResult(bodyTemp)(bodyType)(typedBody) with
+                                    match normalizeFunctionResult(label)(bodyTemp)(bodyType)(typedBody) with
                                         | (normalized, returnedTemp) ->
                                             normalized
                                             |> emit(Return(returnedTemp))
