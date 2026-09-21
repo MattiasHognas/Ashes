@@ -6097,6 +6097,49 @@ let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLowe
         | (_tests, _plan) ->
             emitReferenceOrCopy(sourceTemp)(emitArgumentCopyByCopy(sourceTemp)(plan))(state)
 
+// Stage 0's `EmitRuntimeManagedTcoDeepCopy` of a whole value: a list copied cell by cell is
+// tested again inside the first test and shares the reference-counted suffix it reaches, and the
+// result temp stage 0 reserves before that walk takes over is reserved here too.
+let emitGuardedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (canTestRepresentation, plan) with
+        | (true, ListDeepArgumentCopy(elementPlan)) ->
+            emitReferenceOrCopy(sourceTemp)(given (copying: CoreLoweringState) ->
+                match freshTemp(copying) with
+                    | FreshTemp { state = reserved } -> emitGuardedListDeepCopy(sourceTemp)(elementPlan)(reserved))(state)
+        | (_tests, ScalarArgumentCopy) -> (state, sourceTemp)
+        | (true, _plan) ->
+            emitReferenceOrCopy(sourceTemp)(emitArgumentDeepCopy(sourceTemp)(plan))(state)
+        | (false, _plan) -> emitArgumentDeepCopy(sourceTemp)(plan)(state)
+
+// Stage 0's `EmitOwnedResultOrCopy`: a value the arm built itself is taken as it is when its cell
+// turns out reference-counted, the reference being the arm's own, and copied when the cell is
+// still in the arena.
+let emitOwnedResultOrCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotted, local = resultSlot } ->
+            match slotted
+            |> emit(StoreLocal(resultSlot)(sourceTemp))
+            |> freshTemp with
+                | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+                    match tested
+                    |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
+                    |> freshLabel("general_rc_result_arena_copy") with
+                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                            match freshLabel("general_rc_result_already_owned")(copyLabelled) with
+                                | FreshLabel { state = ownedLabelled, label = ownedLabel } ->
+                                    match ownedLabelled
+                                    |> emit(JumpIfFalse(referenceCountedTemp)(copyLabel))
+                                    |> emit(Jump(ownedLabel))
+                                    |> emit(Label(copyLabel))
+                                    |> emitGuardedDeepCopy(sourceTemp)(plan) with
+                                        | (copied, copyTemp) ->
+                                            match copied
+                                            |> emit(StoreLocal(resultSlot)(copyTemp))
+                                            |> emit(Label(ownedLabel))
+                                            |> freshTemp with
+                                                | FreshTemp { state = resulted, temp = resultTemp } ->
+                                                    (emit(LoadLocal(resultTemp)(resultSlot))(resulted), resultTemp)
+
 // One argument position of a back edge as the runtime-managed reset sees it: the parameter it
 // feeds, the successor value and the parameter's old value, whether the successor was produced
 // on the reference-counted heap, its self-call shape, and the active flag and element type of a
@@ -7783,6 +7826,62 @@ let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state:
                     |> resolveType(state)
                     |> arenaResultDropTypeName)(-1)(true)(false)(None))(state)
 
+let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> false
+        | HeapLayoutChild { childType = childType } :: rest -> !resultSurvivesReset(childType)(state) || anyChildSurvivesNoReset(rest)(state)
+
+// Stage 0's `IsGeneralRcNamedType`: a named type the contract governs, one only the normalization
+// helper expresses, that owns a heap child, and that the recursive-copy path does not already
+// manage on its own terms.
+let isGeneralRcNamedType (named: SemanticType) (state: CoreLoweringState) =
+    match generalCopyPlanOf(named)(state) with
+        | Some(NormalizerArgumentCopy(_type)) ->
+            !canRuntimeManageRecursiveCopyAdt(named)(state) && anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
+        | _ -> false
+
+// Stage 0's `ReachesGeneralRcNamedType`.
+let recursive reachesGeneralRcNamedType (semanticType: SemanticType) (path: List(Str)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(element) -> reachesGeneralRcNamedType(element)(path)(state)
+        | SemTuple(elements) -> anyReachesGeneralRcNamedType(elements)(path)(state)
+        | SemNamed(_symbolId, _name, _arguments) as named ->
+            isGeneralRcNamedType(named)(state) || !containsName(formatSemanticType(named))(path) && anyChildReachesGeneralRcNamedType(heapChildrenOfNamed(named)(state))(formatSemanticType(named) :: path)(state)
+        | _ -> false
+and anyReachesGeneralRcNamedType (types: List(SemanticType)) (path: List(Str)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | semanticType :: rest -> reachesGeneralRcNamedType(semanticType)(path)(state) || anyReachesGeneralRcNamedType(rest)(path)(state)
+and anyChildReachesGeneralRcNamedType (children: List(HeapLayoutChild)) (path: List(Str)) (state: CoreLoweringState) =
+    match children with
+        | [] -> false
+        | HeapLayoutChild { childType = childType } :: rest -> reachesGeneralRcNamedType(childType)(path)(state) || anyChildReachesGeneralRcNamedType(rest)(path)(state)
+
+// Stage 0's `IsGeneralRcValueType`: a resolved type that reaches a named type only the
+// normalization helper expresses and has no fixed copy-out. A value of it follows the contract:
+// passed borrowed, returned owned. A reuse specialization keeps its values in the persistent
+// region and takes no part in it.
+let isGeneralRcValueType (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (stateSpecializationFreshInputs(state), callCopyOutOf(semanticType)(state)) with
+        | (None, None) -> !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
+        | _ -> false
+
+// Stage 0's `FinishGeneralRcFunctionResult` for a result of the contract's types: the function
+// hands over a reference of its own. A value the body produced owned is taken as it is when its
+// cells turn out reference-counted, and copied when they are still in the arena; any other value
+// is retained or copied.
+let finishGeneralRcFunctionResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if isGeneralRcValueType(bodyType)(state)
+    then
+        match generalCopyPlanOf(bodyType)(state) with
+            | None -> (state, bodyTemp)
+            | Some(plan) ->
+                match match runtimeTempStateOf(bodyTemp)(state) with
+                    | Some(RuntimeNewlyProduced) -> emitOwnedResultOrCopy(bodyTemp)(plan)(state)
+                    | _ -> emitGuardedDeepCopy(bodyTemp)(plan)(state) with
+                    | (copied, resultTemp) -> (markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(copied), resultTemp)
+    else (state, bodyTemp)
+
 // Stage 0's `LowerLambdaCoreNormalizeRequestedArenaResult`: a callee whose result is
 // reference-counted can be invoked from a body that cannot own such a result (a generic function
 // applying a closure parameter has no static layout for the result and its own caller later
@@ -7823,6 +7922,12 @@ let normalizeRequestedArenaResult (bodyTemp: Int) (bodyType: SemanticType) (stat
                                                                     | FreshTemp { state = resultState, temp = resultTemp } ->
                                                                         (emit(LoadLocal(resultTemp)(resultSlot))(resultState), resultTemp)
     else (state, bodyTemp)
+
+// What a function does to its result before returning it: a result of the contract's types is
+// made the function's own first, and a caller's request for an arena result is honored after.
+let normalizeFunctionResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match finishGeneralRcFunctionResult(bodyTemp)(bodyType)(state) with
+        | (finished, ownedTemp) -> normalizeRequestedArenaResult(ownedTemp)(bodyType)(finished)
 
 // Whether `bodyTemp` is defined by a plain read of local `slot`.
 let recursive definesSlotRead (bodyTemp: Int) (slot: Int) (reversedInstructions: List(IrInstruction)) =
@@ -8136,7 +8241,7 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
                     let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(loweredBody)
                     in
                         let returned =
-                            match normalizeRequestedArenaResult(bodyTemp)(bodyType)(loweredBody) with
+                            match normalizeFunctionResult(bodyTemp)(bodyType)(loweredBody) with
                                 | (normalized, returnedTemp) ->
                                     normalized
                                     |> emit(Return(returnedTemp))
@@ -12616,49 +12721,6 @@ let recursive shiftPatternOwnerSites (index: Int) (delta: Int) (sites: List(Patt
             then site with siteInsertCount = site.siteInsertCount + delta
             else site) :: shiftPatternOwnerSites(index)(delta)(rest)
 
-// Stage 0's `EmitRuntimeManagedTcoDeepCopy` of a whole value: a list copied cell by cell is
-// tested again inside the first test and shares the reference-counted suffix it reaches, and the
-// result temp stage 0 reserves before that walk takes over is reserved here too.
-let emitGuardedDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    match (canTestRepresentation, plan) with
-        | (true, ListDeepArgumentCopy(elementPlan)) ->
-            emitReferenceOrCopy(sourceTemp)(given (copying: CoreLoweringState) ->
-                match freshTemp(copying) with
-                    | FreshTemp { state = reserved } -> emitGuardedListDeepCopy(sourceTemp)(elementPlan)(reserved))(state)
-        | (_tests, ScalarArgumentCopy) -> (state, sourceTemp)
-        | (true, _plan) ->
-            emitReferenceOrCopy(sourceTemp)(emitArgumentDeepCopy(sourceTemp)(plan))(state)
-        | (false, _plan) -> emitArgumentDeepCopy(sourceTemp)(plan)(state)
-
-// Stage 0's `EmitOwnedResultOrCopy`: a value the arm built itself is taken as it is when its cell
-// turns out reference-counted, the reference being the arm's own, and copied when the cell is
-// still in the arena.
-let emitOwnedResultOrCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    match freshLocal(state) with
-        | FreshLocal { state = slotted, local = resultSlot } ->
-            match slotted
-            |> emit(StoreLocal(resultSlot)(sourceTemp))
-            |> freshTemp with
-                | FreshTemp { state = tested, temp = referenceCountedTemp } ->
-                    match tested
-                    |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
-                    |> freshLabel("general_rc_result_arena_copy") with
-                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
-                            match freshLabel("general_rc_result_already_owned")(copyLabelled) with
-                                | FreshLabel { state = ownedLabelled, label = ownedLabel } ->
-                                    match ownedLabelled
-                                    |> emit(JumpIfFalse(referenceCountedTemp)(copyLabel))
-                                    |> emit(Jump(ownedLabel))
-                                    |> emit(Label(copyLabel))
-                                    |> emitGuardedDeepCopy(sourceTemp)(plan) with
-                                        | (copied, copyTemp) ->
-                                            match copied
-                                            |> emit(StoreLocal(resultSlot)(copyTemp))
-                                            |> emit(Label(ownedLabel))
-                                            |> freshTemp with
-                                                | FreshTemp { state = resulted, temp = resultTemp } ->
-                                                    (emit(LoadLocal(resultTemp)(resultSlot))(resulted), resultTemp)
-
 let emitJoinArmNormalization (arm: MatchArmResult) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
     if arm.armFreshCell
     then emitOwnedResultOrCopy(arm.armStoreTemp)(plan)(state)
@@ -15376,7 +15438,7 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                             let bodyRuntimeManaged = isRuntimeTemp(bodyTemp)(typedBody)
                             in
                                 let finishedBody =
-                                    match normalizeRequestedArenaResult(bodyTemp)(bodyType)(typedBody) with
+                                    match normalizeFunctionResult(bodyTemp)(bodyType)(typedBody) with
                                         | (normalized, returnedTemp) ->
                                             normalized
                                             |> emit(Return(returnedTemp))
