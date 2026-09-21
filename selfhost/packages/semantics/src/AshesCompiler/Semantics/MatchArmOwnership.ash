@@ -37,6 +37,10 @@ type MatchArmResult =
     // store put in the join slot: `-1` for an arm that never reaches the join.
     | armOwned: Bool
     | armStoreTemp: Int
+    // Whether the arm hands on a loop parameter the frame places on the reference-counted heap (the
+    // parameter, or a pattern binding taken out of it), and whether it builds its value itself.
+    | armBorrowsLoopParameter: Bool
+    | armFreshCell: Bool
 
 let recursive unspanned (expression: Expr) =
     match expression with

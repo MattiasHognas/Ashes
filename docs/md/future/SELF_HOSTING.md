@@ -220,10 +220,20 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    with the end-to-end suite green, plain and poisoned; the self-hosted suites and the stage-1 dump
    tool saw it, which is the point of the gate above.
 
-   Stage 1 has no counterpart of the placement these fixes extend (a list accumulator whose
-   self-calls disagree in shape), one of the contract pieces step C left unported. The reproducers
-   are therefore shared lowered-IR fixtures that stage 0 owns and whole-program parity does not list
-   yet; they join it with the port of that placement, which is the next piece of E. After this round
+   Stage 1 had no counterpart of the placement these fixes extend (a list accumulator whose
+   self-calls disagree in shape), one of the contract pieces step C left unported, so the
+   reproducers landed as shared lowered-IR fixtures that stage 0 owned alone. The port followed:
+   stage 1 now classifies an accumulator chosen by a branch, places it beside a sibling that cannot
+   hold it, normalizes the arms of an `if` as it did a `match`'s (in source order, a fresh cell kept
+   rather than retained), keeps a loop's successors without an arena reset when no reset is
+   possible, and retains the children of a let-bound successor of an arena parameter. The four
+   programs match stage 0 byte for byte and are listed in whole-program parity. The port found a
+   leak of stage 1's own making on the way: the owner a `match` keeps its adopted scrutinee in had
+   no binding to take a type name from, so a loop never released a pair a callee returned to it.
+   What is still unported is the path for types only the normalization helper expresses (a
+   recursive variant): stage 1 synthesizes neither that helper nor its dropper and keeps no owned
+   slots for such values, and the rules of the second and third rounds that release an owned value
+   behind a pair, a table of pairs or an optional scalar sit on exactly that. After this round
    the probe's leaked list heads in the first 2 GB of heap fall from 1,020,000 holding 472 MB to
    476,000 holding 177 MB, and its peak from 2,582 MB to 2,507 MB: about 15,000 large roots holding
    800 MB are now the largest class, and the next thing to identify.
