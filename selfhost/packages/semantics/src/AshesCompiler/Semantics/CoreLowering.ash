@@ -11418,13 +11418,21 @@ let isRuntimeManagedCallArgument (argument: Expr) (argumentTemp: Int) (state: Co
 // releases it after the call unless the callee takes it.
 let isFreshRuntimeArgument (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) = isVariableArgument(argument) == false && isRuntimeTemp(argumentTemp)(state)
 
-// Whether the callee normalizes its first parameter on entry, stage 0's
+// Whether the callee normalizes the parameter at `index` on entry, stage 0's
 // `IsKnownRuntimeNormalizedFunctionArgument`: such a callee adopts a fresh argument outright
-// through the ownership flag. Later curried positions are not tracked.
+// through the ownership flag. A later curried position is the stage that many returned closures
+// past the callee's own label.
 let calleeNormalizesArgument (facts: Maybe(CoreCalleeFacts)) (index: Int) (state: CoreLoweringState) =
     match facts with
         | Some(CoreCalleeFacts { label = Some(label) }) ->
-            index == 0 && containsLabel(label)(stateRuntimeNormalizedArgumentLabels(state))
+            match state
+            |> stateFunctionReturnedClosureLabels
+            |> innermostStageLabel(index)(label) with
+                | Some(stage) ->
+                    state
+                    |> stateRuntimeNormalizedArgumentLabels
+                    |> containsLabel(stage)
+                | None -> false
         | _ -> false
 
 // Stage 0's `CalleeResultMayReachParameter`: the argument holds a reference-counted value the
