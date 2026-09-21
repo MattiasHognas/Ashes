@@ -433,16 +433,27 @@ public sealed partial class Lowering
     // these values, and only a parameter placed on the reference-counted heap releases its
     // predecessor and lets the iteration release the owned value the successor was built from. The
     // shape analysis must have classified every self-call at this position: a tail-modulo-cons
-    // function's self-call sits inside a cons and is never classified, so it is excluded.
+    // function's self-call sits inside a cons and is never classified, so it is excluded. A list of
+    // any other heap element is one when a self-call passes a choice between the parameter and a
+    // cons onto it: its cells are built for a successor that is copied at the back edge, and left
+    // in the arena it would keep the consed heads past the owners the back edge releases.
     private bool IsGeneralRcAccumulatorList(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
         => GeneralRcEnabled
             && Environment.GetEnvironmentVariable("GRC_NO_MIXEDLIST") is null
             && !tco.TmcShapePresent
             && !facts.ConsumedListTail
             && !facts.LoopInvariant
-            && IsGeneralRcValueType(list.Element)
-            && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.AccumulatorRebuild)
-                .Contains(facts.ParameterOrdinal);
+            && ((IsGeneralRcValueType(list.Element)
+                    && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.AccumulatorRebuild)
+                        .Contains(facts.ParameterOrdinal))
+                || (IsChoiceAccumulatorElement(list.Element)
+                    && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.ChoiceAccumulatorRebuild)
+                        .Contains(facts.ParameterOrdinal)));
+
+    private bool IsChoiceAccumulatorElement(TypeRef element)
+        => Environment.GetEnvironmentVariable("GRC_NO_BRANCHACCUMULATOR") is null
+            && (IsGeneralRcValueType(element)
+                || (!CanArenaReset(Prune(element)) && CanRuntimeManageTcoListElement(element)));
 
     private bool IsBytesProvenanceEligibleTcoListElement(
         TcoParamStaticFacts facts,
@@ -469,7 +480,7 @@ public sealed partial class Lowering
             && candidateOrdinal < tco.ParamSlots.Count
             && !tco.ParamFacts[tco.ParamSlots[candidateOrdinal]].ConsumedListTail
             && parameterTypes[candidateOrdinal] is { } candidateType
-            && (Prune(candidateType) is TypeRef.TList { Element: var element } && Prune(element) is TypeRef.TStr
+            && (Prune(candidateType) is TypeRef.TList { Element: var element } && IsHeapListAccumulatorElement(element)
                 || (tco.SelfCallParameterFlow is not null && IsGeneralRcValueType(Prune(candidateType))))
                 ? Prune(candidateType)
                 : null;
@@ -492,6 +503,12 @@ public sealed partial class Lowering
 
         return null;
     }
+
+    // A list whose cells the loop builds on the reference-counted heap whatever its placement: one of
+    // strings, or of any element that owns heap parts.
+    private bool IsHeapListAccumulatorElement(TypeRef element)
+        => Prune(element) is TypeRef.TStr
+            || (Environment.GetEnvironmentVariable("GRC_NO_HEAPLISTUNBLOCK") is null && !CanArenaReset(Prune(element)));
 
     // Whether a self-call may pass the accumulator, or a part of it, in the sibling's position: from
     // the body's parameter flow when it was followed, from the sibling's type otherwise.

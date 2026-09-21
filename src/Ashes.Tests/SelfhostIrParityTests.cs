@@ -47,6 +47,10 @@ public sealed class SelfhostIrParityTests
     [Arguments("tco_string_parameter_kept_by_callee_error_result")]
     [Arguments("accumulate_and_reverse_producer")]
     [Arguments("record_head_list_producer")]
+    [Arguments("tco_conditional_accumulator_beside_sibling")]
+    [Arguments("tco_record_pair_child_consed_conditionally")]
+    [Arguments("tco_let_bound_successor_keeps_owned_child")]
+    [Arguments("tco_direct_conditional_accumulator_borrows_child")]
     [Arguments("aggregate_borrowing_owner_kept_by_callee")]
     [Arguments("reuse_path_rebuild_declines_copy")]
     [Arguments("rc_child_of_call_argument_kept_by_callee_result")]
@@ -90,13 +94,15 @@ public sealed class SelfhostIrParityTests
     {
         string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "SelfhostIrParity");
         string source = await File.ReadAllTextAsync(Path.Combine(fixtureDirectory, fixtureName + ".source")).ConfigureAwait(false);
-        string expected = await File.ReadAllTextAsync(Path.Combine(fixtureDirectory, fixtureName + ".ir")).ConfigureAwait(false);
-
         (_, IrProgram ir) = LowerFixture(fixtureName, source);
 
         IReadOnlyList<string> lines = IrTextFormatter.Format(ir, IrDumpStage.Lowered, filter: null);
         string actual = string.Join('\n', lines) + '\n';
 
+        // A new fixture has no dump yet: the update run writes its first one.
+        string expected = UpdateFixtures
+            ? actual
+            : await File.ReadAllTextAsync(Path.Combine(fixtureDirectory, fixtureName + ".ir")).ConfigureAwait(false);
         if (UpdateFixtures)
         {
             string outPath = Path.Combine(fixtureDirectory, fixtureName + ".ir");
@@ -107,8 +113,6 @@ public sealed class SelfhostIrParityTests
             {
                 await File.WriteAllTextAsync(Path.Combine(repoFixtureDir, fixtureName + ".ir"), actual).ConfigureAwait(false);
             }
-
-            expected = actual;
         }
 
         actual.ShouldBe(expected);

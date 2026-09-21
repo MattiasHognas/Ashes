@@ -363,23 +363,46 @@ public sealed partial class Lowering
                 && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
             || TryResolveTcoParameterRead(argument, fieldType, out _) is not null;
 
-    // Whether a requested reference-counted tuple can be one: every element is manageable, one of
-    // the contract's types included, and those are made the tuple's own.
+    // Whether a tuple is a reference-counted one: it was requested, or it holds a reference-counted
+    // element; and every element is manageable, one of the contract's types included, and those are
+    // made the tuple's own.
     private bool PlaceRuntimeManagedTuple(List<LoweredValue> elements, LoweredValueRequest request)
     {
-        bool runtimeManaged = request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple);
+        bool holdsReferenceCounted = HoldsReferenceCountedElement(elements);
+        bool runtimeManaged = request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple)
+            || holdsReferenceCounted;
         for (int i = 0; i < elements.Count && runtimeManaged; i++)
         {
-            runtimeManaged = IsRuntimeManageableTupleElement(elements[i]) || (Environment.GetEnvironmentVariable("GRC_NO_TUPLE") is null && IsGeneralRcValueType(elements[i].Type));
+            runtimeManaged = IsRuntimeManageableTupleElement(elements[i])
+                || (Environment.GetEnvironmentVariable("GRC_NO_TUPLE") is null && IsGeneralRcValueType(elements[i].Type))
+                || (holdsReferenceCounted && IsNormalizableSiblingElement(elements[i]));
         }
 
-        NormalizeGeneralRcTupleElements(elements, runtimeManaged);
+        NormalizeGeneralRcTupleElements(elements, runtimeManaged, holdsReferenceCounted);
         return runtimeManaged;
     }
 
+    // An arena element beside a reference-counted one: copied onto the reference-counted heap, it
+    // lets the tuple own both instead of stranding the reference-counted sibling in the arena.
+    private bool IsNormalizableSiblingElement(LoweredValue element)
+        => Environment.GetEnvironmentVariable("GRC_NO_RCTUPLESIBLING") is null
+            && !ContainsUnresolvedLayoutType(Prune(element.Type), [])
+            && (CanNormalizeIntoOwnedRuntimeValue(element.Type)
+                || (Prune(element.Type) is TypeRef.TList list && CanRuntimeManageTcoListElement(list.Element)));
+
+    // A tuple's store takes a reference to a reference-counted element. An arena tuple can release
+    // nothing, so that reference would outlive the tuple: a function returning its list inside a
+    // pair leaked the list at every call. On the reference-counted heap the tuple owns the element
+    // and whoever matches on it releases both.
+    private bool HoldsReferenceCountedElement(List<LoweredValue> elements)
+        => Environment.GetEnvironmentVariable("GRC_NO_RCTUPLE") is null
+            && elements.Exists(element =>
+                element.Ownership.Representation == LoweredTempRepresentation.RuntimeRc
+                && !CanArenaReset(Prune(element.Type)));
+
     // A reference-counted tuple owns its children: an element of the contract's types (borrowed, or
     // held by an owned slot the function releases) is retained or copied into it.
-    private void NormalizeGeneralRcTupleElements(List<LoweredValue> elements, bool runtimeManaged)
+    private void NormalizeGeneralRcTupleElements(List<LoweredValue> elements, bool runtimeManaged, bool holdsReferenceCounted)
     {
         if (!runtimeManaged)
         {
@@ -388,7 +411,8 @@ public sealed partial class Lowering
 
         for (int i = 0; i < elements.Count; i++)
         {
-            if (!IsRuntimeManageableTupleElement(elements[i]) && IsGeneralRcValueType(elements[i].Type))
+            if (!IsRuntimeManageableTupleElement(elements[i])
+                && (IsGeneralRcValueType(elements[i].Type) || (holdsReferenceCounted && IsNormalizableSiblingElement(elements[i]))))
             {
                 int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(elements[i].Temp, Prune(elements[i].Type));
                 MarkRuntimeManagedTemp(normalizedTemp);

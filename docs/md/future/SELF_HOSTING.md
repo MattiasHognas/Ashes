@@ -92,8 +92,9 @@ flowchart TD
     B --> C[C. Port the ownership changes into stage 1, group by group]
     C --> D[D. Keep the tools, clean the workspace]
     D --> E[E. Finish the leak work under the mirror rule]
-    E --> F[F. Split the oversized self-hosted source files]
-    F --> G[G. Continue with step 1 below]
+    E --> F[F. Bring fannkuch-redux back to its memory footprint]
+    F --> G[G. Split the oversized self-hosted source files]
+    G --> H[H. Continue with step 1 below]
 ```
 
 **Landed so far.** A in #1114. B and C together in #1115 (arena reuse declines a reference-counted
@@ -193,7 +194,41 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    releasing a fresh argument handed to a callee whose result reach is unknown when the result's type
    cannot contain it, and deferring ownership of a closure result whose type is still unresolved.
    Done is the definition above.
-F. **Split the oversized self-hosted source files.** `CoreLowering.ash` is about 22,500 lines, five
+
+   The first round of E went after the largest class in a heap snapshot of the module probe, about
+   430,000 leaked list heads of which 385,000 were lexer tokens, and reduced the lexer to reproducers
+   of a few dozen lines. Its loop threads two list accumulators, conses onto one of them only when a
+   callee's pair carries a value, and returns both in a tuple. Four things went wrong in that shape,
+   and one of them is a miscompile rather than a leak: a callee's pair of records is placed on the
+   reference-counted heap and released at the loop's back edge, while an arena list the loop keeps
+   still points at one of its records, so `main` segfaults on a fifty-line program. What the fixes
+   rest on is the loop protocol, which is worth stating because both of the wrong fixes tried first
+   broke it. A parameter on the reference-counted heap has its successor copied at the back edge, with
+   references of its own, before the iteration's owners are released; so a cell built for it borrows
+   its children, and a retain stored in an arena cell is never released. A parameter left in the arena
+   gets no copy, so a cell that escapes into it must retain what it stores. And a conditional
+   accumulator may be placed on the reference-counted heap only when no consed head reads a loop
+   parameter: a sibling parameter's predecessor is released at the same back edge. That last hazard
+   is guarded, not fixed. Widening the placement to every accumulator of heap elements miscompiled
+   two loops of stage 1 itself (`computeSccs` and `importWordsGo`, which cons a sibling parameter)
+   with the end-to-end suite green, plain and poisoned; the self-hosted suites and the stage-1 dump
+   tool saw it, which is the point of the gate above.
+
+   Stage 1 has no counterpart of the placement these fixes extend (a list accumulator whose
+   self-calls disagree in shape), one of the contract pieces step C left unported. The reproducers
+   are therefore shared lowered-IR fixtures that stage 0 owns and whole-program parity does not list
+   yet; they join it with the port of that placement, which is the next piece of E. After this round
+   the probe's leaked list heads in the first 2 GB of heap fall from 1,020,000 holding 472 MB to
+   476,000 holding 177 MB, and its peak from 2,582 MB to 2,507 MB: about 15,000 large roots holding
+   800 MB are now the largest class, and the next thing to identify.
+F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
+   `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
+   cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
+   in minutes: publish the compiler at a commit (`publishcli.sh`, or `publishref.sh` for a commit
+   that is not checked out) and compare with `challenge_ab.sh`. Find the commit, reduce the program
+   to the loop that grows, and fix the placement; if the footprint cannot be restored without giving
+   up a guarantee the contract needs, record why and what it would take instead.
+G. **Split the oversized self-hosted source files.** `CoreLowering.ash` is about 22,500 lines, five
    times the next largest file (`TypeInference.ash` at 4,400, `Parser.ash` at 3,700, `IrOptimizer.ash`
    at 3,000). Split it into `Lowering.<Concern>.ash` modules, the way the backend's code generator is
    already split into `IrCodegen.<Concern>.ash`, and name each module after the stage-0
@@ -205,7 +240,7 @@ F. **Split the oversized self-hosted source files.** `CoreLowering.ash` is about
    and peak memory do not regress. It comes after the leak work rather than during it, because a
    file this size that is also open on a long-lived branch turns every move into a merge conflict.
    Once the pattern is settled, apply it to any other self-hosted file of several thousand lines.
-G. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
+H. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
    first, prefer splitting `lookupIndexed` into a `Str`-keyed and an `Int`-keyed version over waiting
    for trait dictionary passing; it keeps the diagnostic and unblocks the sweep. The rest of this
    document follows once the fixpoint holds.

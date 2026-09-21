@@ -2935,7 +2935,7 @@ public sealed partial class Lowering
         // staying an unconstrained variable that can never be discharged.
         bool forwardsExpectedType = e is Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda
             or RecursiveGroupExpr or Expr.If or Expr.Match or Expr.Handle or Expr.Call
-            or Expr.ListLit or Expr.Cons
+            or Expr.ListLit or Expr.Cons or Expr.TupleLit
             || e is Expr.QualifiedVar qualifiedTraitMethod && TryGetTraitMethod(qualifiedTraitMethod, out _, out _);
         TypeRef? expectedType = request.ExpectedType;
         var lowered = LowerExprDispatch(
@@ -4127,6 +4127,8 @@ public sealed partial class Lowering
             return loweredAdt;
         }
 
+        request = LoopSuccessorLetRequest(let, request);
+
         if (TryLowerRuntimeManagedLetValue(
                 let,
                 request,
@@ -4136,6 +4138,56 @@ public sealed partial class Lowering
         }
 
         return LowerRemainingLetValue(let, request);
+    }
+
+    // A binding the loop's self-call passes on becomes the next iteration's parameter exactly like
+    // an argument written in place: it escapes every binding scope of this iteration, so an
+    // aggregate it builds retains the owned children it stores, whose owners are still released at
+    // the back edge. A parameter on the reference-counted heap needs none of it: its back edge
+    // copies the successor with references of its own before those owners are released.
+    private LoweredValueRequest LoopSuccessorLetRequest(Expr.Let let, LoweredValueRequest request)
+        => _tcoCtx is { } tco
+            && Environment.GetEnvironmentVariable("GRC_NO_LETSUCCESSOR") is null
+            && SelfCallOrdinalPassing(let.Body, let.Name, tco.SelfName) is { } ordinal
+            && ordinal < tco.ParamSlots.Count
+            && !tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal])
+                ? request with { TransfersRuntimeManagedChildren = true }
+                : request;
+
+    // The position at which a self-call in the expression passes the name, or null.
+    private static int? SelfCallOrdinalPassing(Expr expression, string name, string selfName)
+    {
+        if (expression is Expr.Call { Arg: Expr.Var argument } call
+            && string.Equals(argument.Name, name, StringComparison.Ordinal)
+            && SelfCallArgumentOrdinal(call, selfName) is { } ordinal)
+        {
+            return ordinal;
+        }
+
+        foreach (Expr child in EnumerateChildren(expression))
+        {
+            if (SelfCallOrdinalPassing(child, name, selfName) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? SelfCallArgumentOrdinal(Expr.Call call, string selfName)
+    {
+        int ordinal = 0;
+        Expr root = call.Func;
+        while (root is Expr.Call inner)
+        {
+            root = inner.Func;
+            ordinal++;
+        }
+
+        return root is Expr.Var variable && string.Equals(variable.Name, selfName, StringComparison.Ordinal)
+            ? ordinal
+            : null;
     }
 
     private bool TryLowerRuntimeManagedLetValue(
@@ -11210,7 +11262,7 @@ public sealed partial class Lowering
             // of this iteration exactly like a function result escapes its callee: a runtime-managed
             // owned binding stored inside it (a `let` call result placed in a constructor field) must
             // be retained, because the binding's own release still fires at the back edge.
-            request = request with { TransfersRuntimeManagedChildren = true };
+            request = request with { TransfersRuntimeManagedChildren = !BackEdgeCopiesListSuccessor(tco, index) };
             request = request
                 .AddRuntime(
                     freshClosure,
@@ -11236,6 +11288,19 @@ public sealed partial class Lowering
             _affineAppendCtx = savedAffineCtx;
         }
     }
+
+    // A list accumulator already placed on the reference-counted heap whose successors differ in
+    // shape: its back edge copies the successor with references of its own before the iteration's
+    // owners are released, so an arena cell built for it borrows its children, and a retain stored
+    // in that cell would never be released.
+    private bool BackEdgeCopiesListSuccessor(TcoContext tco, int index)
+        => Environment.GetEnvironmentVariable("GRC_NO_BORROWEDSUCCESSOR") is null
+            && index < tco.ParamSlots.Count
+            && tco.IsRuntimeManagedSlot(tco.ParamSlots[index])
+            && tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TList list
+            && !tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
+            && IsGeneralRcAccumulatorList(tco, tco.ParamFacts[tco.ParamSlots[index]], list);
 
     private Dictionary<string, bool> LowerCallTcoAdtChildBindings(IReadOnlyList<Expr> arguments)
     {
@@ -15167,9 +15232,21 @@ public sealed partial class Lowering
         return CreateLoweredValue(normalizedTemp, lowered.Type);
     }
 
+    // The elements are lowered without the tuple's expected type, each meeting its own part of it as
+    // soon as it is lowered; the whole tuple meets it afterwards, which reports any mismatch.
     private (int, TypeRef) LowerTupleLit(
         Expr.TupleLit tuple,
         LoweredValueRequest request)
+    {
+        (int temp, TypeRef type) = LowerTupleLitElements(tuple, request.WithoutExpectedType(), request);
+        UnifyExpectedType(type, request);
+        return (temp, type);
+    }
+
+    private (int, TypeRef) LowerTupleLitElements(
+        Expr.TupleLit tuple,
+        LoweredValueRequest request,
+        LoweredValueRequest expectedRequest)
     {
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
@@ -15191,6 +15268,7 @@ public sealed partial class Lowering
         {
             Expr element = tuple.Elements[i];
             LoweredValue loweredElement = LowerTupleElement(element, elementRequest);
+            UnifyTupleElementWithExpected(loweredElement.Type, expectedRequest, tuple.Elements.Count, i);
             if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple))
             {
                 loweredElement = NormalizeRuntimeManagedBytesValue(loweredElement);
@@ -15336,6 +15414,28 @@ public sealed partial class Lowering
         return CreateLoweredValue(materialized, lowered.Type);
     }
 
+    // An element meets its own part of the tuple's expected type as soon as it is lowered, so a
+    // constructor whose type arguments only the expected type fixes (a None beside a sibling arm's
+    // Some) has a resolved layout when the tuple is placed. A mismatch is left to the unification of
+    // the whole tuple to report.
+    private void UnifyTupleElementWithExpected(
+        TypeRef elementType,
+        LoweredValueRequest tupleRequest,
+        int elementCount,
+        int index)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_TUPLEELEMENTTYPE") is null
+            && tupleRequest.ExpectedType is { } expected
+            && Prune(expected) is TypeRef.TTuple expectedTuple
+            && expectedTuple.Elements.Count == elementCount)
+        {
+            using (SuppressUnificationDiagnostics())
+            {
+                Unify(elementType, expectedTuple.Elements[index]);
+            }
+        }
+    }
+
     private LoweredValue LowerTupleElement(
         Expr element,
         LoweredValueRequest tupleRequest)
@@ -15380,7 +15480,7 @@ public sealed partial class Lowering
             || value.Ownership.Representation
                 == LoweredTempRepresentation.RuntimeRc
                 && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
-                    || pruned is TypeRef.TList list && CanArenaReset(Prune(list.Element))
+                    || pruned is TypeRef.TList
                     || pruned is TypeRef.TNamedType);
     }
 

@@ -215,7 +215,7 @@ function lambda_3  [SourceFunction from prefixed]
     Return                Source=24   (aggregate_children_retain.ash:15:1)
 
 function _start_main  [ProgramEntry]
-  locals=49 temps=76
+  locals=52 temps=101
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (aggregate_children_retain.ash:1:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (aggregate_children_retain.ash:1:1)
@@ -277,120 +277,184 @@ function _start_main  [ProgramEntry]
     Borrow                Target=30 SourceTemp=29
     LoadLocal             Target=31 Slot=24   (aggregate_children_retain.ash:25:14)
     Borrow                Target=32 SourceTemp=31
-    Alloc                 Target=33 SizeBytes=16   (aggregate_children_retain.ash:25:7)
-    StoreMemOffset        BasePtr=33 OffsetBytes=0 Source=30   (aggregate_children_retain.ash:25:7)
-    StoreMemOffset        BasePtr=33 OffsetBytes=8 Source=32   (aggregate_children_retain.ash:25:7)
+    RcDup                 Target=34 SourceTemp=30 RuntimeManaged=true
+    RcDup                 Target=35 SourceTemp=32 RuntimeManaged=true MayBeEmpty=true
+    Alloc                 Target=33 SizeBytes=16 RuntimeManaged=true   (aggregate_children_retain.ash:25:7)
+    StoreMemOffset        BasePtr=33 OffsetBytes=0 Source=34   (aggregate_children_retain.ash:25:7)
+    StoreMemOffset        BasePtr=33 OffsetBytes=8 Source=35   (aggregate_children_retain.ash:25:7)
     SaveArenaState        CursorLocalSlot=26 EndLocalSlot=27
-    LoadMemOffset         Target=34 BasePtr=33 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
-    LoadMemOffset         Target=35 BasePtr=34 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
-    StoreLocal            Slot=28 Source=35   (aggregate_children_retain.ash:25:1)
-    LoadMemOffset         Target=36 BasePtr=34 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
-    LoadMemOffset         Target=37 BasePtr=33 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
-    LoadConstInt          Target=38 Value=0   (aggregate_children_retain.ash:25:1)
-    CmpIntNe              Target=39 Left=37 Right=38   (aggregate_children_retain.ash:25:1)
-    JumpIfFalse           CondTemp=39 Target=match_arm_cleanup_18   (aggregate_children_retain.ash:25:1)
-    LoadMemOffset         Target=40 BasePtr=37 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
-    LoadMemOffset         Target=41 BasePtr=37 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
-    LoadLocal             Target=42 Slot=28   (aggregate_children_retain.ash:26:46)
-    Borrow                Target=43 SourceTemp=42
-    PrintStr              Source=43   (aggregate_children_retain.ash:26:31)
-    RcDrop                SourceTemp=35 TypeName=String OwnerSlot=28
-    AllocAdt              Target=44 Tag=0 FieldCount=0   (aggregate_children_retain.ash:26:31)
-    StoreLocal            Slot=25 Source=44   (aggregate_children_retain.ash:25:1)
-    RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=29
-    CopyOutArena          DestTemp=46 SrcTemp=44 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=29
+    LoadMemOffset         Target=36 BasePtr=33 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=37 BasePtr=36 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    StoreLocal            Slot=28 Source=37   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=38 BasePtr=36 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=39 BasePtr=33 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    LoadConstInt          Target=40 Value=0   (aggregate_children_retain.ash:25:1)
+    CmpIntNe              Target=41 Left=39 Right=40   (aggregate_children_retain.ash:25:1)
+    JumpIfFalse           CondTemp=41 Target=match_arm_cleanup_18   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=42 BasePtr=39 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    StoreLocal            Slot=29 Source=33   (aggregate_children_retain.ash:25:1)
+    LoadLocal             Target=44 Slot=28   (aggregate_children_retain.ash:26:46)
+    Borrow                Target=45 SourceTemp=44
+    PrintStr              Source=45   (aggregate_children_retain.ash:26:31)
+    RcDrop                SourceTemp=37 TypeName=String OwnerSlot=28
+    AllocAdt              Target=46 Tag=0 FieldCount=0   (aggregate_children_retain.ash:26:31)
     StoreLocal            Slot=25 Source=46   (aggregate_children_retain.ash:25:1)
+    LoadLocal             Target=48 Slot=29   (aggregate_children_retain.ash:25:1)
+    RcIsUnique            Target=49 SourceTemp=48
+    JumpIfFalse           CondTemp=49 Target=rc_drop_tuple_shared_19   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=50 BasePtr=48 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    RcIsUnique            Target=51 SourceTemp=50
+    JumpIfFalse           CondTemp=51 Target=rc_drop_tuple_shared_20   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=52 BasePtr=50 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=52 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=53 BasePtr=50 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=53 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_20:
+    RcDrop                SourceTemp=50 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=54 BasePtr=48 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    StoreLocal            Slot=30 Source=54   (aggregate_children_retain.ash:25:1)
+  rcdrop_list_21:
+    LoadLocal             Target=55 Slot=30   (aggregate_children_retain.ash:25:1)
+    LoadConstInt          Target=56 Value=0   (aggregate_children_retain.ash:25:1)
+    CmpIntNe              Target=57 Left=55 Right=56   (aggregate_children_retain.ash:25:1)
+    JumpIfFalse           CondTemp=57 Target=rcdrop_list_end_23   (aggregate_children_retain.ash:25:1)
+    RcIsUnique            Target=58 SourceTemp=55
+    JumpIfFalse           CondTemp=58 Target=rcdrop_list_shared_22   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=59 BasePtr=55 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=59 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=60 BasePtr=55 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=55 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=60   (aggregate_children_retain.ash:25:1)
+    Jump                  Target=rcdrop_list_21   (aggregate_children_retain.ash:25:1)
+  rcdrop_list_shared_22:
+    RcDrop                SourceTemp=55 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_23   (aggregate_children_retain.ash:25:1)
+  rcdrop_list_end_23:
+  rc_drop_tuple_shared_19:
+    RcDrop                SourceTemp=48 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=31
+    CopyOutArena          DestTemp=61 SrcTemp=46 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=31
+    StoreLocal            Slot=25 Source=61   (aggregate_children_retain.ash:25:1)
     Jump                  Target=match_end_15   (aggregate_children_retain.ash:25:1)
   match_arm_cleanup_18:
-    RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=30
-    ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=30
+    RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=32
+    ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=32
     Jump                  Target=match_next_17   (aggregate_children_retain.ash:25:1)
   match_next_17:
-    SaveArenaState        CursorLocalSlot=31 EndLocalSlot=32
-    LoadConstStr          Target=47 StrLabel=str_0   (aggregate_children_retain.ash:27:27)
-    PrintStr              Source=47   (aggregate_children_retain.ash:27:12)
-    AllocAdt              Target=48 Tag=0 FieldCount=0   (aggregate_children_retain.ash:27:12)
-    IsReferenceCounted    Target=51 SourceTemp=48
-    JumpIfFalse           CondTemp=51 Target=rc_representation_copy_20   (aggregate_children_retain.ash:25:1)
-    RcDup                 Target=52 SourceTemp=48 RuntimeManaged=true
-    StoreLocal            Slot=35 Source=52   (aggregate_children_retain.ash:25:1)
-    Jump                  Target=rc_representation_done_21   (aggregate_children_retain.ash:25:1)
-  rc_representation_copy_20:
-    CopyOutArena          DestTemp=53 SrcTemp=48 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=35 Source=53   (aggregate_children_retain.ash:25:1)
-  rc_representation_done_21:
-    LoadLocal             Target=54 Slot=35   (aggregate_children_retain.ash:25:1)
-    StoreLocal            Slot=25 Source=54   (aggregate_children_retain.ash:25:1)
+    SaveArenaState        CursorLocalSlot=33 EndLocalSlot=34
+    StoreLocal            Slot=35 Source=33   (aggregate_children_retain.ash:25:1)
+    LoadConstStr          Target=62 StrLabel=str_0   (aggregate_children_retain.ash:27:27)
+    PrintStr              Source=62   (aggregate_children_retain.ash:27:12)
+    AllocAdt              Target=63 Tag=0 FieldCount=0   (aggregate_children_retain.ash:27:12)
+    StoreLocal            Slot=25 Source=63   (aggregate_children_retain.ash:25:1)
+    LoadLocal             Target=64 Slot=35   (aggregate_children_retain.ash:25:1)
+    RcIsUnique            Target=65 SourceTemp=64
+    JumpIfFalse           CondTemp=65 Target=rc_drop_tuple_shared_25   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=66 BasePtr=64 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    RcIsUnique            Target=67 SourceTemp=66
+    JumpIfFalse           CondTemp=67 Target=rc_drop_tuple_shared_26   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=68 BasePtr=66 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=68 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=69 BasePtr=66 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=69 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_26:
+    RcDrop                SourceTemp=66 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=70 BasePtr=64 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    StoreLocal            Slot=36 Source=70   (aggregate_children_retain.ash:25:1)
+  rcdrop_list_27:
+    LoadLocal             Target=71 Slot=36   (aggregate_children_retain.ash:25:1)
+    LoadConstInt          Target=72 Value=0   (aggregate_children_retain.ash:25:1)
+    CmpIntNe              Target=73 Left=71 Right=72   (aggregate_children_retain.ash:25:1)
+    JumpIfFalse           CondTemp=73 Target=rcdrop_list_end_29   (aggregate_children_retain.ash:25:1)
+    RcIsUnique            Target=74 SourceTemp=71
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_shared_28   (aggregate_children_retain.ash:25:1)
+    LoadMemOffset         Target=75 BasePtr=71 OffsetBytes=0   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=75 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=76 BasePtr=71 OffsetBytes=8   (aggregate_children_retain.ash:25:1)
+    RcDrop                SourceTemp=71 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=36 Source=76   (aggregate_children_retain.ash:25:1)
+    Jump                  Target=rcdrop_list_27   (aggregate_children_retain.ash:25:1)
+  rcdrop_list_shared_28:
+    RcDrop                SourceTemp=71 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_29   (aggregate_children_retain.ash:25:1)
+  rcdrop_list_end_29:
+  rc_drop_tuple_shared_25:
+    RcDrop                SourceTemp=64 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=33 EndLocalSlot=34 PreRestoreEndSlot=37
+    CopyOutArena          DestTemp=77 SrcTemp=63 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=34 PreRestoreEndSlot=37
+    StoreLocal            Slot=25 Source=77   (aggregate_children_retain.ash:25:1)
     Jump                  Target=match_end_15   (aggregate_children_retain.ash:25:1)
-  match_arm_cleanup_19:
-    RestoreArenaState     CursorLocalSlot=31 EndLocalSlot=32 PreRestoreEndSlot=34
-    ReclaimArenaChunks    SavedEndSlot=32 PreRestoreEndSlot=34
+  match_arm_cleanup_24:
+    RestoreArenaState     CursorLocalSlot=33 EndLocalSlot=34 PreRestoreEndSlot=38
+    ReclaimArenaChunks    SavedEndSlot=34 PreRestoreEndSlot=38
     Jump                  Target=match_none_16   (aggregate_children_retain.ash:25:1)
   match_none_16:
-    LoadConstInt          Target=49 Value=0   (aggregate_children_retain.ash:25:1)
-    StoreLocal            Slot=25 Source=49   (aggregate_children_retain.ash:25:1)
+    LoadConstInt          Target=78 Value=0   (aggregate_children_retain.ash:25:1)
+    StoreLocal            Slot=25 Source=78   (aggregate_children_retain.ash:25:1)
   match_end_15:
-    LoadLocal             Target=50 Slot=25   (aggregate_children_retain.ash:25:1)
-    StoreLocal            Slot=36 Source=50   (aggregate_children_retain.ash:23:1)
-    LoadLocal             Target=55 Slot=24   (aggregate_children_retain.ash:23:1)
-    StoreLocal            Slot=37 Source=55   (aggregate_children_retain.ash:23:1)
-  rcdrop_list_22:
-    LoadLocal             Target=56 Slot=37   (aggregate_children_retain.ash:23:1)
-    LoadConstInt          Target=57 Value=0   (aggregate_children_retain.ash:23:1)
-    CmpIntNe              Target=58 Left=56 Right=57   (aggregate_children_retain.ash:23:1)
-    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_24   (aggregate_children_retain.ash:23:1)
-    RcIsUnique            Target=59 SourceTemp=56
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_23   (aggregate_children_retain.ash:23:1)
-    LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=0   (aggregate_children_retain.ash:23:1)
-    RcDrop                SourceTemp=60 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=61 BasePtr=56 OffsetBytes=8   (aggregate_children_retain.ash:23:1)
-    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=37 Source=61   (aggregate_children_retain.ash:23:1)
-    Jump                  Target=rcdrop_list_22   (aggregate_children_retain.ash:23:1)
-  rcdrop_list_shared_23:
-    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_24   (aggregate_children_retain.ash:23:1)
-  rcdrop_list_end_24:
-    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=38
-    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=38
-    LoadLocal             Target=62 Slot=36   (aggregate_children_retain.ash:23:1)
-    StoreLocal            Slot=39 Source=62   (aggregate_children_retain.ash:21:1)
-    LoadLocal             Target=63 Slot=17   (aggregate_children_retain.ash:21:1)
-    RcIsUnique            Target=64 SourceTemp=63
-    JumpIfFalse           CondTemp=64 Target=rc_drop_tuple_shared_25   (aggregate_children_retain.ash:21:1)
-    LoadMemOffset         Target=65 BasePtr=63 OffsetBytes=0   (aggregate_children_retain.ash:21:1)
-    RcDrop                SourceTemp=65 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=66 BasePtr=63 OffsetBytes=8   (aggregate_children_retain.ash:21:1)
-    RcDrop                SourceTemp=66 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_25:
-    RcDrop                SourceTemp=63 TypeName=Tuple RuntimeManaged=true
-    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=40
-    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=40
-    LoadLocal             Target=67 Slot=39   (aggregate_children_retain.ash:21:1)
-    StoreLocal            Slot=41 Source=67   (aggregate_children_retain.ash:15:1)
-    LoadLocal             Target=68 Slot=11   (aggregate_children_retain.ash:15:1)
-    CleanupResource       SourceTemp=68 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=42
-    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=42
-    LoadLocal             Target=69 Slot=41   (aggregate_children_retain.ash:15:1)
-    StoreLocal            Slot=43 Source=69   (aggregate_children_retain.ash:9:1)
-    LoadLocal             Target=70 Slot=8   (aggregate_children_retain.ash:9:1)
-    CleanupResource       SourceTemp=70 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=44
-    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=44
-    LoadLocal             Target=71 Slot=43   (aggregate_children_retain.ash:9:1)
-    StoreLocal            Slot=45 Source=71   (aggregate_children_retain.ash:3:1)
-    LoadLocal             Target=72 Slot=5   (aggregate_children_retain.ash:3:1)
-    CleanupResource       SourceTemp=72 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=46
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=46
-    LoadLocal             Target=73 Slot=45   (aggregate_children_retain.ash:3:1)
-    StoreLocal            Slot=47 Source=73   (aggregate_children_retain.ash:1:1)
-    LoadLocal             Target=74 Slot=2   (aggregate_children_retain.ash:1:1)
-    CleanupResource       SourceTemp=74 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=48
-    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=48
-    LoadLocal             Target=75 Slot=47   (aggregate_children_retain.ash:1:1)
-    Return                Source=75
+    LoadLocal             Target=79 Slot=25   (aggregate_children_retain.ash:25:1)
+    StoreLocal            Slot=39 Source=79   (aggregate_children_retain.ash:23:1)
+    LoadLocal             Target=80 Slot=24   (aggregate_children_retain.ash:23:1)
+    StoreLocal            Slot=40 Source=80   (aggregate_children_retain.ash:23:1)
+  rcdrop_list_30:
+    LoadLocal             Target=81 Slot=40   (aggregate_children_retain.ash:23:1)
+    LoadConstInt          Target=82 Value=0   (aggregate_children_retain.ash:23:1)
+    CmpIntNe              Target=83 Left=81 Right=82   (aggregate_children_retain.ash:23:1)
+    JumpIfFalse           CondTemp=83 Target=rcdrop_list_end_32   (aggregate_children_retain.ash:23:1)
+    RcIsUnique            Target=84 SourceTemp=81
+    JumpIfFalse           CondTemp=84 Target=rcdrop_list_shared_31   (aggregate_children_retain.ash:23:1)
+    LoadMemOffset         Target=85 BasePtr=81 OffsetBytes=0   (aggregate_children_retain.ash:23:1)
+    RcDrop                SourceTemp=85 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=86 BasePtr=81 OffsetBytes=8   (aggregate_children_retain.ash:23:1)
+    RcDrop                SourceTemp=81 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=40 Source=86   (aggregate_children_retain.ash:23:1)
+    Jump                  Target=rcdrop_list_30   (aggregate_children_retain.ash:23:1)
+  rcdrop_list_shared_31:
+    RcDrop                SourceTemp=81 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_32   (aggregate_children_retain.ash:23:1)
+  rcdrop_list_end_32:
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=41
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=41
+    LoadLocal             Target=87 Slot=39   (aggregate_children_retain.ash:23:1)
+    StoreLocal            Slot=42 Source=87   (aggregate_children_retain.ash:21:1)
+    LoadLocal             Target=88 Slot=17   (aggregate_children_retain.ash:21:1)
+    RcIsUnique            Target=89 SourceTemp=88
+    JumpIfFalse           CondTemp=89 Target=rc_drop_tuple_shared_33   (aggregate_children_retain.ash:21:1)
+    LoadMemOffset         Target=90 BasePtr=88 OffsetBytes=0   (aggregate_children_retain.ash:21:1)
+    RcDrop                SourceTemp=90 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=91 BasePtr=88 OffsetBytes=8   (aggregate_children_retain.ash:21:1)
+    RcDrop                SourceTemp=91 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_33:
+    RcDrop                SourceTemp=88 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=43
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=43
+    LoadLocal             Target=92 Slot=42   (aggregate_children_retain.ash:21:1)
+    StoreLocal            Slot=44 Source=92   (aggregate_children_retain.ash:15:1)
+    LoadLocal             Target=93 Slot=11   (aggregate_children_retain.ash:15:1)
+    CleanupResource       SourceTemp=93 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=45
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=45
+    LoadLocal             Target=94 Slot=44   (aggregate_children_retain.ash:15:1)
+    StoreLocal            Slot=46 Source=94   (aggregate_children_retain.ash:9:1)
+    LoadLocal             Target=95 Slot=8   (aggregate_children_retain.ash:9:1)
+    CleanupResource       SourceTemp=95 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=47
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=47
+    LoadLocal             Target=96 Slot=46   (aggregate_children_retain.ash:9:1)
+    StoreLocal            Slot=48 Source=96   (aggregate_children_retain.ash:3:1)
+    LoadLocal             Target=97 Slot=5   (aggregate_children_retain.ash:3:1)
+    CleanupResource       SourceTemp=97 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=49
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=49
+    LoadLocal             Target=98 Slot=48   (aggregate_children_retain.ash:3:1)
+    StoreLocal            Slot=50 Source=98   (aggregate_children_retain.ash:1:1)
+    LoadLocal             Target=99 Slot=2   (aggregate_children_retain.ash:1:1)
+    CleanupResource       SourceTemp=99 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=51
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=51
+    LoadLocal             Target=100 Slot=50   (aggregate_children_retain.ash:1:1)
+    Return                Source=100
 

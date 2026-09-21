@@ -283,6 +283,12 @@ internal enum TcoParamReuseAffinity
 /// parameter itself, a cons onto it, or a call's result, and at least one of them rebuilds it: an
 /// accumulator whose per-site shapes differ (extended in one arm, handed on in another).
 /// </param>
+/// <param name="ChoiceAccumulatorRebuild">
+/// True when every self-recursive call site passes the parameter itself, a cons onto it, or a
+/// choice (an if or a match) between those, at least one site passes such a choice, and no consed
+/// head reads a loop parameter: a head that is a sibling parameter is released with that
+/// parameter's predecessor at the back edge.
+/// </param>
 internal sealed record TcoParamStructuralFacts(
     int ParameterOrdinal,
     string ParameterName,
@@ -292,7 +298,8 @@ internal sealed record TcoParamStructuralFacts(
     bool BytesProvenanceSafeListRebuild,
     TcoParamUseMode UseMode,
     TcoParamReuseAffinity ReuseAffinity,
-    bool AccumulatorRebuild = false);
+    bool AccumulatorRebuild = false,
+    bool ChoiceAccumulatorRebuild = false);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge
