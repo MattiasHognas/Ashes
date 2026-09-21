@@ -23,7 +23,7 @@ Function: collect
     result fresh: no
   perceus [lambda_4]
     dup:                  21
-    drop:                 12
+    drop:                 13
     uniqueness checks:    7
   perceus [lambda_3]
     dup:                  0

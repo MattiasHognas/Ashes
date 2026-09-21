@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_2  [ClosureHelper from collect]
-  locals=33 temps=144
+  locals=33 temps=145
     LoadEnv               Target=0 Index=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     StoreLocal            Slot=2 Source=0   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
     LoadEnv               Target=1 Index=1   (tco_record_parameter_exit_before_list_accumulator.ash:12:1)
@@ -228,26 +228,29 @@ function lambda_2  [ClosureHelper from collect]
   rc_representation_done_71:
     LoadLocal             Target=137 Slot=32
     SetAdtField           Ptr=132 FieldIndex=0 Source=137 Tagless=true
+    IsReferenceCounted    Target=138 SourceTemp=133
+    JumpIfFalse           CondTemp=138 Target=rc_source_child_in_arena_72
     RcDrop                SourceTemp=133 TypeName=String RuntimeManaged=true
+  rc_source_child_in_arena_72:
     StoreLocal            Slot=31 Source=132
   rc_representation_done_69:
-    LoadLocal             Target=138 Slot=31
-    LoadLocal             Target=139 Slot=7
-    JumpIfFalse           CondTemp=139 Target=rc_tco_drop_inactive_72
-    RcIsUnique            Target=140 SourceTemp=52
-    JumpIfFalse           CondTemp=140 Target=rc_drop_shared_73
-    GetAdtField           Target=141 Ptr=52 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=141 TypeName=String RuntimeManaged=true
-  rc_drop_shared_73:
+    LoadLocal             Target=139 Slot=31
+    LoadLocal             Target=140 Slot=7
+    JumpIfFalse           CondTemp=140 Target=rc_tco_drop_inactive_73
+    RcIsUnique            Target=141 SourceTemp=52
+    JumpIfFalse           CondTemp=141 Target=rc_drop_shared_74
+    GetAdtField           Target=142 Ptr=52 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=142 TypeName=String RuntimeManaged=true
+  rc_drop_shared_74:
     RcDrop                SourceTemp=52 TypeName=State RuntimeManaged=true
-  rc_tco_drop_inactive_72:
+  rc_tco_drop_inactive_73:
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=30
-    StoreLocal            Slot=3 Source=138
-    LoadConstInt          Target=142 Value=1
-    StoreLocal            Slot=7 Source=142
-    StoreLocal            Slot=1 Source=50
+    StoreLocal            Slot=3 Source=139
     LoadConstInt          Target=143 Value=1
-    StoreLocal            Slot=8 Source=143
+    StoreLocal            Slot=7 Source=143
+    StoreLocal            Slot=1 Source=50
+    LoadConstInt          Target=144 Value=1
+    StoreLocal            Slot=8 Source=144
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=30
     RestoreStackPointer   Slot=11   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
     Jump                  Target=lambda_2_body   (tco_record_parameter_exit_before_list_accumulator.ash:15:10)
@@ -531,31 +534,31 @@ function lambda_5  [ClosureHelper from labelBytes]
     StoreLocal            Slot=2 Source=17   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     StoreLocal            Slot=1 Source=16   (tco_record_parameter_exit_before_list_accumulator.ash:20:27)
     LoadLocal             Target=71 Slot=8
-    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_74
+    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_75
     StoreLocal            Slot=32 Source=28
-  rcdrop_list_75:
+  rcdrop_list_76:
     LoadLocal             Target=72 Slot=32
     LoadConstInt          Target=73 Value=0
     CmpIntNe              Target=74 Left=72 Right=73
-    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_77
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_78
     RcIsUnique            Target=75 SourceTemp=72
-    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_76
+    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_77
     LoadMemOffset         Target=76 BasePtr=72 OffsetBytes=0
     RcIsUnique            Target=77 SourceTemp=76
-    JumpIfFalse           CondTemp=77 Target=rc_drop_shared_78
+    JumpIfFalse           CondTemp=77 Target=rc_drop_shared_79
     GetAdtField           Target=78 Ptr=76 FieldIndex=0 Tagless=true
     RcDrop                SourceTemp=78 TypeName=String RuntimeManaged=true
-  rc_drop_shared_78:
+  rc_drop_shared_79:
     RcDrop                SourceTemp=76 TypeName=State RuntimeManaged=true
     LoadMemOffset         Target=79 BasePtr=72 OffsetBytes=8
     RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=32 Source=79
-    Jump                  Target=rcdrop_list_75
-  rcdrop_list_shared_76:
+    Jump                  Target=rcdrop_list_76
+  rcdrop_list_shared_77:
     RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_77
-  rcdrop_list_end_77:
-  rc_tco_drop_inactive_74:
+    Jump                  Target=rcdrop_list_end_78
+  rcdrop_list_end_78:
+  rc_tco_drop_inactive_75:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
     LoadConstInt          Target=80 Value=0
     StoreLocal            Slot=6 Source=80

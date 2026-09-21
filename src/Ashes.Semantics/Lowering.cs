@@ -2383,7 +2383,25 @@ public sealed partial class Lowering
             return;
         }
 
-        TypeRef pruned = Prune(childType);
+        // A successor that is not written as a literal where it is copied (a name bound out of a
+        // tuple, a join) may still hold an arena cell built this iteration: it has no reference
+        // count, and a release would read and write whatever the arena holds before it.
+        if (!CanTestRepresentation || Environment.GetEnvironmentVariable("GRC_NO_SOURCECHILDTEST") is not null)
+        {
+            EmitRuntimeManagedTcoSourceChildDrop(childTemp, Prune(childType));
+            return;
+        }
+
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, childTemp));
+        string arenaLabel = NewLabel("rc_source_child_in_arena");
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, arenaLabel));
+        EmitRuntimeManagedTcoSourceChildDrop(childTemp, Prune(childType));
+        Emit(new IrInst.Label(arenaLabel));
+    }
+
+    private void EmitRuntimeManagedTcoSourceChildDrop(int childTemp, TypeRef pruned)
+    {
         if (pruned is TypeRef.TList list)
         {
             EmitRuntimeManagedListDrop(childTemp, list.Element);
@@ -7222,6 +7240,20 @@ public sealed partial class Lowering
         _runtimeNormalizedFunctionArgumentLabels.Add(label);
     }
 
+    // The results a copy turns into an owned value that keeps nothing of the parameter alive but
+    // references of its own: a record or variant, and a tuple of those and of scalars, which a
+    // function returning its rebuilt value beside a second result hands back.
+    private bool CanOwnResultBehindNormalizedParameter(TypeRef resultType)
+        => resultType switch
+        {
+            TypeRef.TNamedType named => IsRuntimeNormalizableParameterType(named) && CanDeepCopyOutAdt(named),
+            TypeRef.TTuple tuple => Environment.GetEnvironmentVariable("GRC_NO_TUPLEBEHINDPARAM") is null
+                && !ContainsUnresolvedLayoutType(tuple, [])
+                && tuple.Elements.All(element => CanArenaReset(Prune(element))
+                    || (Prune(element) is TypeRef.TNamedType part && CanOwnResultBehindNormalizedParameter(part))),
+            _ => false,
+        };
+
     // A function whose entry normalizes its always-returned parameter owns that parameter, and a
     // result other than the parameter itself only borrows what it reaches of it: a record update
     // shares the parameter's unchanged children, a cons shares its list. Nothing else releases the
@@ -7262,9 +7294,7 @@ public sealed partial class Lowering
             return bodyTemp;
         }
 
-        if (resultType is not TypeRef.TNamedType resultNamed
-            || !IsRuntimeNormalizableParameterType(resultType)
-            || !CanDeepCopyOutAdt(resultNamed))
+        if (!CanOwnResultBehindNormalizedParameter(resultType))
         {
             return bodyTemp;
         }
@@ -13796,6 +13826,12 @@ public sealed partial class Lowering
                         temp, valueType, argument.AdoptionFlagTemp,
                         HandedOverArgumentResultFlag(resultType, valueType, resultCopyFlagTemp));
                 }
+                else
+                {
+                    LowerCallDropHandedOverArgumentResultCannotHold(
+                        temp, valueType, argument.AdoptionFlagTemp, resultType,
+                        calleeCompiledResultVerifiedRuntimeManaged, resultDeepCopied, resultCopiedWithElements);
+                }
 
                 continue;
             }
@@ -13817,6 +13853,47 @@ public sealed partial class Lowering
                     resultType);
             }
         }
+    }
+
+    // A reference handed over for the callee's result to keep is not in a result whose type has no
+    // place for a value of the argument's type: a callee that did not adopt it left it with the
+    // caller, which releases it here. The result may still hold the argument's parts, so the
+    // release is the ordinary consumed argument's, child-preserving when a part could be in it.
+    private void LowerCallDropHandedOverArgumentResultCannotHold(
+        int temp,
+        TypeRef valueType,
+        int adoptionFlagTemp,
+        TypeRef resultType,
+        bool calleeCompiledResultVerifiedRuntimeManaged,
+        bool resultDeepCopied,
+        bool resultCopiedWithElements)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_HANDEDTYPE") is not null
+            || valueType is TypeRef.TFun
+            || ContainsUnresolvedLayoutType(valueType, [])
+            || ContainsUnresolvedLayoutType(Prune(resultType), [])
+            || CallResultMayContainArgumentType(resultType, valueType, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            return;
+        }
+
+        bool resultMayHoldParts = HeapPartTypes(valueType).Exists(part =>
+            CallResultMayContainArgumentType(resultType, part, new HashSet<string>(StringComparer.Ordinal)));
+        string adoptedLabel = NewLabel("rc_handed_over_adopted");
+        string releaseLabel = NewLabel("rc_handed_over_release");
+        Emit(new IrInst.JumpIfFalse(adoptionFlagTemp, releaseLabel));
+        Emit(new IrInst.Jump(adoptedLabel));
+        Emit(new IrInst.Label(releaseLabel));
+        LowerCallDropConsumedRuntimeArgument(
+            temp,
+            valueType,
+            preserveEscapedChildren: resultMayHoldParts,
+            calleeCompiledResultVerifiedRuntimeManaged,
+            resultDeepCopied,
+            elementCopyingFlagTemp: -1,
+            resultCopiedWithElements,
+            resultType);
+        Emit(new IrInst.Label(adoptedLabel));
     }
 
     private void LowerCallDropConsumedRuntimeArgument(

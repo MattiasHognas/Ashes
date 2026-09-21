@@ -94,7 +94,8 @@ flowchart TD
     D --> E[E. Finish the leak work under the mirror rule]
     E --> F[F. Bring fannkuch-redux back to its memory footprint]
     F --> G[G. Split the oversized self-hosted source files]
-    G --> H[H. Continue with step 1 below]
+    G --> H[H. Verify the language server and the debug adapter]
+    H --> I[I. Continue with step 1 below]
 ```
 
 **Landed so far.** A in #1114. B and C together in #1115 (arena reuse declines a reference-counted
@@ -103,7 +104,12 @@ carry whether their function hands over an owned result) and #1119 (the ownershi
 stage 1 brought to parity on every shared program). D is the tools in
 [`scripts/selfhost-dev/`](https://github.com/MattiasHognas/Ashes/blob/main/scripts/selfhost-dev/README.md). With them on `main`, stage 1
 compiles the self-hosted code generator module in 32 s at 2.6 GB peak, against 35 s at 8.9 GB before.
-E is next. The descriptions of A to D below are kept as the record of what was done and why.
+E is under way, its first round in #1122. The descriptions of A to D below are kept as the record of
+what was done and why. The branch `stage0-rc-general-results` they refer to no longer exists:
+everything on it that changes what a program does has landed, and it was deleted rather than kept as
+an archive. The one commit left out, a shortcut that skips the representation test for a value an
+instruction just placed in the arena, changes generated code size and nothing else (measured: no
+effect on memory), and is a separate small change with its own stage-1 mirror if it is wanted.
 
 Two things the vetting in B added to the gate, because the gate as it stood was green through both.
 The ownership branch made k-nucleotide use 37.9 GB instead of 214 MB while every suite passed, so the
@@ -221,6 +227,23 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    the probe's leaked list heads in the first 2 GB of heap fall from 1,020,000 holding 472 MB to
    476,000 holding 177 MB, and its peak from 2,582 MB to 2,507 MB: about 15,000 large roots holding
    800 MB are now the largest class, and the next thing to identify.
+   The second round priced stage 1 per compiled function with an exit census over two generated
+   inputs: about 625 KB stays live for every function compiled, and the largest class came from the
+   self-hosted IR optimizer. Hand-written reproducers of it kept diverging from the real code, so
+   the optimizer itself is now run in a probe project (`optloop.sh`): N rounds over one lowered
+   program in a fraction of a second, leaking about 1 MB per round, with every leaked cell
+   traceable to a source line. It found a second miscompile on `main`, again by way of a leak: the
+   back edge's copy of a dying arena successor released the source's children as references, and
+   when the successor was a name bound out of a tuple rather than a literal, that release ran on an
+   arena cons cell, read the integer before it as a count, and put arena memory on the free list
+   when that integer was 1. Two leaks went with it: a callee returning its rebuilt record beside a
+   second result never released its owned parameter, and a fresh argument handed to a callee whose
+   result type has no place for it was never released (the patch shelved in the first round fits
+   it exactly, and the probe is what it lacked: a measurement). One fix was dropped after
+   measuring: exempting any record threaded through a loop from sibling blocking frees the
+   optimizer's per-instruction pairs, and costs stage 1's own lowering 190 MB, because the state it
+   threads is large and rebuilt every iteration. The probe still leaks 0.9 MB per round from other
+   sites, which is where the next round starts.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
@@ -240,7 +263,17 @@ G. **Split the oversized self-hosted source files.** `CoreLowering.ash` is about
    and peak memory do not regress. It comes after the leak work rather than during it, because a
    file this size that is also open on a long-lived branch turns every move into a merge conflict.
    Once the pattern is settled, apply it to any other self-hosted file of several thousand lines.
-H. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
+H. **Verify the language server and the debug adapter against the current codebase.** The memory
+   work changed the lowering that `Ashes.Lsp` consumes and the code `Ashes.Dap` debugs, the split
+   moved most of the self-hosted lowering between files, and their own test suites exercise
+   neither end to end: `Ashes.Lsp.Tests` drives the server's handlers, not an editor session, and
+   the adapter has no suite that steps through a program built by the current compiler. Open the
+   repository's own sources, the split modules included, and the examples in the VS Code extension
+   and check diagnostics, hover, completion and formatting for errors in the server's log; then
+   debug a program with `--debug` through the adapter under gdb and under lldb (breakpoints, step,
+   locals, a let binding's own position) and check the adapter's log the same way. Anything found
+   is fixed before the fixpoint work starts, with a test at the layer that would have caught it.
+I. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
    first, prefer splitting `lookupIndexed` into a `Str`-keyed and an `Int`-keyed version over waiting
    for trait dictionary passing; it keeps the diagnostic and unblocks the sweep. The rest of this
    document follows once the fixpoint holds.

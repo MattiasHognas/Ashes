@@ -19,7 +19,7 @@ function __deepcopy_2  [AdtDeepCopier]
     Return                Source=0   (tco_record_string_field_into_successor.ash:11:1)
 
 function lambda_1  [ClosureHelper from step]
-  locals=21 temps=75
+  locals=21 temps=76
     LoadEnv               Target=0 Index=0   (tco_record_string_field_into_successor.ash:11:1)
     StoreLocal            Slot=2 Source=0   (tco_record_string_field_into_successor.ash:11:1)
     LoadLocal             Target=21 Slot=1   (tco_record_string_field_into_successor.ash:11:1)
@@ -110,26 +110,29 @@ function lambda_1  [ClosureHelper from step]
   rc_representation_done_19:
     LoadLocal             Target=68 Slot=20
     SetAdtField           Ptr=63 FieldIndex=0 Source=68 Tagless=true
+    IsReferenceCounted    Target=69 SourceTemp=64
+    JumpIfFalse           CondTemp=69 Target=rc_source_child_in_arena_20
     RcDrop                SourceTemp=64 TypeName=String RuntimeManaged=true
+  rc_source_child_in_arena_20:
     StoreLocal            Slot=19 Source=63
   rc_representation_done_17:
-    LoadLocal             Target=69 Slot=19
-    LoadLocal             Target=70 Slot=8
-    JumpIfFalse           CondTemp=70 Target=rc_tco_drop_inactive_20
-    RcIsUnique            Target=71 SourceTemp=18
-    JumpIfFalse           CondTemp=71 Target=rc_drop_shared_21
-    GetAdtField           Target=72 Ptr=18 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
-  rc_drop_shared_21:
+    LoadLocal             Target=70 Slot=19
+    LoadLocal             Target=71 Slot=8
+    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_21
+    RcIsUnique            Target=72 SourceTemp=18
+    JumpIfFalse           CondTemp=72 Target=rc_drop_shared_22
+    GetAdtField           Target=73 Ptr=18 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=73 TypeName=String RuntimeManaged=true
+  rc_drop_shared_22:
     RcDrop                SourceTemp=18 TypeName=State RuntimeManaged=true
-  rc_tco_drop_inactive_20:
+  rc_tco_drop_inactive_21:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=18
-    LoadConstInt          Target=73 Value=0
-    StoreLocal            Slot=6 Source=73
-    StoreLocal            Slot=7 Source=73
-    StoreLocal            Slot=1 Source=69
-    LoadConstInt          Target=74 Value=1
-    StoreLocal            Slot=8 Source=74
+    LoadConstInt          Target=74 Value=0
+    StoreLocal            Slot=6 Source=74
+    StoreLocal            Slot=7 Source=74
+    StoreLocal            Slot=1 Source=70
+    LoadConstInt          Target=75 Value=1
+    StoreLocal            Slot=8 Source=75
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=18
     RestoreStackPointer   Slot=11   (tco_record_string_field_into_successor.ash:14:10)
     Jump                  Target=lambda_1_body   (tco_record_string_field_into_successor.ash:14:10)
