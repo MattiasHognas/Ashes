@@ -35,6 +35,10 @@ function.
 | `s1diff.sh [-b] <fixture>...` | Stage 1's lowered IR of a shared fixture against stage 0's, locations stripped and temp, slot and label numbers normalised, so only the instructions that differ show. `-b` rebuilds the dump tool after a stage-1 edit; `SHOW=n` sets how much of each diff prints. |
 | `c4loop.sh` | The inner loop of a stage-1 port: rebuild the dump tool, run whole-program parity, print the difference size of every program that still differs (`differing.sh`). |
 | `rawdiff.sh <fixture>` | The same comparison with numbers kept: a numbering-only difference. |
+| `s1difffn.sh [-b] <fixture> <binding>` | `s1diff.sh` restricted to the functions lowered from one binding, so a port is checked function by function while the rest of the fixture still differs. |
+| `s1difffns.sh <fixture>...` | After `s1diff.sh` has dumped a fixture, the differing line count of each of its functions: which functions a port still has to reach. |
+| `s1diffprog.sh [-b] <program.ash> [binding]` | The same comparison for any program, stage 0's side taken from `--emit-ir lowered`: a port is driven by the smallest program that shows one rule, before a fixture exists. The dump tool lowers one file, so the program must not import a standard library module. |
+| `s1survey.sh [-b]` | Every shared fixture at once: the ones that differ once numbers are normalised, and the ones that differ only in temp, local or label numbers. Run after each stage-1 edit, it shows what the edit reached and what it disturbed. |
 | `s1dumpat.sh <commit> <source> <out>` | Stage 1's lowered IR of a source file as the lowering stood at a commit. With `normdiff.sh <a> <b>` this makes good-against-bad stage 1 a two-minute check. |
 | `orphanfixtures.sh` | The lowered-IR fixtures the C# parity test does not regenerate, and whether stage 0 still reproduces each. There should be none. |
 | `togglefix.sh <fixture> <pattern>` | Lowers a fixture with a published compiler under each `GRC_NO_*` switch; the switch that restores the old output names the change responsible. |

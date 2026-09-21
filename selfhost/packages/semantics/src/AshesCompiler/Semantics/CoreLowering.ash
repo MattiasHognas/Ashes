@@ -12349,17 +12349,31 @@ let tempIsNewlyProduced (temp: Int) (state: CoreLoweringState) =
         | Some(RuntimeNewlyProduced) -> true
         | _ -> false
 
+// A `Str` loop parameter, which stage 0 places on the reference-counted heap at the loop entry by
+// its type alone, where this lowering admits one only through the affine append analysis. An arm
+// that hands it on borrows from the parameter there, so it is not normalized here either.
+let isStringLoopParameter (name: Str) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | None -> false
+        | Some(frame) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | None -> false
+                | Some(slot) ->
+                    match slotResolvedType(slot)(state.bindings)(state) with
+                        | Some(SemString) -> true
+                        | _ -> false
+
 // Stage 0's `BorrowsLoopParameter`: an arm handing on a loop parameter the frame places on the
 // reference-counted heap, or a pattern binding taken out of one. Its value is reference-counted,
 // but the reference is the parameter's.
 let armBorrowsLoopParameterOf (body: Expr) (state: CoreLoweringState) =
     match tailForwardedVariable(body) with
-        | Some(name) -> loopParameterIsRuntimeManaged(name)(state)
+        | Some(name) -> loopParameterIsRuntimeManaged(name)(state) || isStringLoopParameter(name)(state)
         | None -> false
 
 // Stage 0's `ConstructsFreshCell`: an arm that builds its value itself (a cons, a literal, a
-// constructor application). A reference-counted value it hands on is fresh and its own, so it is
-// kept rather than retained.
+// constructor application, though not a record literal, which stage 0 does not count as one). A
+// reference-counted value it hands on is fresh and its own, so it is kept rather than retained.
 let recursive constructsFreshCell (body: Expr) (state: CoreLoweringState) =
     match body with
         | ExprAt(_span, inner) -> constructsFreshCell(inner)(state)
