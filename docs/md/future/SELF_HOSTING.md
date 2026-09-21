@@ -244,13 +244,12 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    optimizer's per-instruction pairs, and costs stage 1's own lowering 190 MB, because the state it
    threads is large and rebuilt every iteration. The probe still leaks 0.9 MB per round from other
    sites, which is where the next round starts.
-   The third round corrected two readings before it fixed anything. The largest class in the module
-   probe's snapshot, about 18,000 roots keeping 800 MB, is not a leak: the roots are the
-   `LetBindingSyntax` nodes of the program being compiled, held from the arena, which is live data.
-   And the per-function figure from the exit census over-counts for the same reason, since a
-   function's syntax tree and IR are legitimately live when the process exits. What measures a leak
-   is a probe whose input does not change between rounds (`optloop.sh`), and the module probe's
-   peak. The fix of the round is at the function's end: a function releases the values it owns only
+   The third round first misread the largest class in the module probe's snapshot, about 18,000
+   roots keeping 800 MB, as the live syntax tree of the program being compiled; the measurement
+   described after this round shows it is neither. What holds from that round is that an exit
+   census cannot tell live from leaked, since a function's syntax tree and IR are legitimately live
+   when the process exits, and that a probe whose input does not change between rounds
+   (`optloop.sh`) measures a leak where a per-function exit figure does not. The fix of the round is at the function's end: a function releases the values it owns only
    once its result is independent of them, and two kinds of result could never be made so. A list
    whose heads have no fixed copy (a table of string pairs) was not normalizable, which in the
    optimizer left the three largest per-round roots behind; and a variant whose fields are all
@@ -261,6 +260,22 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    probe after this is old versions of the lowering state's persistent maps, kept by arena records
    that hold reference-counted roots: the record-update design question, whose first designed fix
    was unsound, and the subject of the next round.
+   Then the question was asked directly, how much of what stage 1 holds is leaked, and it has a
+   measured answer (`reachat.sh`): interrupt stage 1, write a core, and mark conservatively from the
+   stack, static data and every arena mapping into the reference-counted heap. On the code generator
+   module probe, 9% of the reference-counted heap is reachable and **91% is reachable from nothing**,
+   at 12 seconds (1.09 of 1.19 GB) and near the peak at 28 seconds (1.90 of 2.09 GB) alike, with
+   sampled cells checked by hand against the whole core. Live data is about 190 MB under a 2.5 GB
+   peak. That overturns the third round's first reading: the large 56-byte root class is neither the
+   syntax tree nor live. Those records carry a function's name because they are `PatternWalk`, the
+   state the pattern-binding ownership analysis threads through its mutually recursive walkers:
+   forty dead versions per compiled function in a small input, and the class that claims about half
+   of all the garbage in the probe. Each version is a record update built in the arena, copied onto
+   the reference-counted heap at a call boundary, and never released: the state-threading copy tax
+   and the leak are one mechanism. Arena memory, by contrast, holds almost none of the heap, so
+   "arena records keep reference-counted roots alive" is not where the memory is. The next round
+   reduces the `PatternWalk` shape (a function returning its parameter or an update of it, threaded
+   through a recursive walk) the way the earlier rounds reduced theirs, now with a number to move.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable

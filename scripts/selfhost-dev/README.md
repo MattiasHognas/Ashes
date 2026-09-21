@@ -52,6 +52,20 @@ function.
 | `curryscale.sh <stage1> <k>...` | One `k`-parameter curried function per `k`: exponential growth means a body is lowered again at every nesting level. |
 | `toggleab.sh <program>` | A program compiled under each `GRC_NO_*` switch and run under a memory cap: the switch that changes the exit status or peak memory names the mechanism. |
 
+## How much is leaked
+
+The question "how much of what stage 1 holds is leaked" has a direct answer. Every other census here sees only
+which reference-counted cells no other reference-counted cell points at; it cannot see whether the stack or an
+arena still does, and that misled two rounds of work into calling dead data live.
+
+| Script | What it does |
+|---|---|
+| `reachat.sh <stage1> <seconds> [project.json]` | Interrupts stage 1 at a moment, writes a core file, and marks from the stack, static data and every arena mapping into the reference-counted heap, conservatively. Reports live by count, reachable, and leaked for certain (a lower bound: a stale word in unused arena memory still counts as a pointer; registers are not scanned). Then the garbage as a forest: the unreferenced roots by shape, what each class claims, and sample addresses. Measured on the code generator module probe: 9% reachable, 91% leaked, at 12 s and at 28 s alike. |
+| `probecore.sh <stage1> <seconds> [project.json]`, `probemaps.sh <stage1> <seconds>` | The core file and the memory mappings on their own. Writing the core takes about 2.5 minutes, nearly all of it the kernel walking the inaccessible 4 TB reservation; the census itself runs in under a second. |
+| `reachcensus.c` | The census over an ELF core. The reference-counted region holds only reference-counted cells and is committed in pieces inside one inaccessible reservation; arenas and the stack are ordinary mappings, which is what makes the split exact. `REACH_SAMPLE=<size>` prints leaked payload addresses. |
+| `corefind.sh <binary> <payload-hex>...` | The hand check: gdb's `find` over every writable range outside the heap for a word pointing at a cell the census called leaked. |
+| `tinynamedroots.sh <stage1> <src.ash> <size> [pattern]` | The leaked roots of one size in a small input's exit census that start with a string, with that string. A record is recognised by the name it carries, and the same name many times over means copies, not data. |
+
 ## Reproducers
 
 A leak found in stage 1 is reduced to a program of a few dozen lines with the word `ROUNDS` where its repeat count
@@ -92,7 +106,7 @@ release. Identical leaked objects in power-of-two multiplicities mean repeated w
 |---|---|
 | `mktinyinputs.sh <count>...` | Writes `tiny/loops<count>.ash`, that many copies of one recursive list function: two counts give the census a per-function difference. |
 | `debugstage1.sh <tag>` | Stage 1 built with debug information, for `tinywatch.sh`. The census naming a cell must come from the same binary. |
-| `rcrootsof.c` | `rcrootsof <dump-dir> <size> <count>`: header addresses of roots of one cell size, spread over the address range, to look into with `rcpeek`. Naming a root class before chasing it matters: the largest class of the module probe turned out to be the program's own syntax tree, which is live data, not a leak. |
+| `rcrootsof.c` | `rcrootsof <dump-dir> <size> <count>`: header addresses of roots of one cell size, spread over the address range, to look into with `rcpeek`. A root class is named before it is chased, and named from more than one field: a five-field record starting with a function name was taken for a let binding of the syntax tree and was the pattern-binding walk state. |
 | `tinyrootshape.sh <len> <elem> [tag]`, `tinypeek.sh <depth> <address-hex>...` | Over the last dump: the leaked roots of one shape tallied by nearby strings, and a cell printed as a tree of its words (`rcpeek.c`), which is how a root's type is recognised. |
 | `tinyrun.sh <stage1> <src.ash>` | Compiles one small file with stage 1: exit status, elapsed time, peak memory. |
 | `tinycensus.sh <stage1> <src.ash> [chunks]` | The same under gdb, stopped at process exit: dumps the reference-counted region and prints the size census and the leaked-state census. Everything live at exit is a leak. |
