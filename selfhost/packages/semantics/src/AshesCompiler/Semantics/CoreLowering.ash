@@ -12120,14 +12120,15 @@ let recursive releaseWithAllParts (consumed: List(CoreConsumedArgument)) =
         | argument :: rest -> argument :: releaseWithAllParts(rest)
 
 // Stage 0's `CanNormalizeIntoOwnedRuntimeValue`: the result types the guarded copy turns into an
-// owned reference-counted value.
+// owned reference-counted value. A list whose heads have no fixed copy is one too when its
+// elements can be copied one by one (a table of string pairs).
 let ownedResultPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> argumentCopyPlanOf(semanticType)(state)
         | SemList(element) ->
             match listHeadCopyKindOf(element)(state) with
                 | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
-                | None -> None
+                | None -> argumentCopyPlanOf(semanticType)(state)
         | SemNamed(_symbolId, _name, _arguments) -> argumentCopyPlanOf(semanticType)(state)
         | _ -> None
 
