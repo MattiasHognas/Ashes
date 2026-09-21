@@ -191,6 +191,7 @@ let originKindText kind =
         | CoroutineFrameDropperOrigin -> "CoroutineFrameDropper"
         | ExternalThunkOrigin -> "ExternalThunk"
         | RuntimeManagedAdtDropperOrigin -> "RuntimeManagedAdtDropper"
+        | RuntimeManagedAdtNormalizerOrigin -> "RuntimeManagedAdtNormalizer"
         | ResourceAdtDropperOrigin -> "ResourceAdtDropper"
         | ClosureEnvironmentNormalizerOrigin -> "ClosureEnvironmentNormalizer"
         | RuntimeManagedClosureDropperOrigin -> "RuntimeManagedClosureDropper"

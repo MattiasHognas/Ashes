@@ -25,6 +25,7 @@ export (
     value createCoroutineFrameDropperOrigin,
     value createExternalThunkOrigin,
     value createAdtDropperOrigin,
+    value createAdtNormalizerOrigin,
     value createResourceAdtDropperOrigin,
     value createClosureDropperOrigin,
     value createDeepCopierOrigin,
@@ -514,3 +515,20 @@ let recursive discoverSourceFunctionOrigins (expr: Expr) (enclosingSource: Maybe
                     |> goArms
                     |> append(bodyOrigins)
         | _ -> []
+
+// The origin of a type's normalization helper, owned by the type as its dropper is.
+let createAdtNormalizerOrigin (label: Str) (typeName: Str) =
+    IrFunctionOrigin(
+        generatedLabel = label,
+        originKind = RuntimeManagedAdtNormalizerOrigin,
+        sourceOrigin = None,
+        parentGeneratedLabel = None,
+        compilerOwner = Some(
+            CompilerFunctionOwner(
+                ownerKind = TypeFunctionOwner,
+                ownerName = typeName
+            )
+        ),
+        stableDiscriminator = Some(typeName),
+        generationLocation = None
+    )

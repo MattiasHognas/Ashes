@@ -40,6 +40,7 @@ type IrFunctionOriginKind =
     | CoroutineFrameDropperOrigin
     | ExternalThunkOrigin
     | RuntimeManagedAdtDropperOrigin
+    | RuntimeManagedAdtNormalizerOrigin
     | ResourceAdtDropperOrigin
     | ClosureEnvironmentNormalizerOrigin
     | RuntimeManagedClosureDropperOrigin
