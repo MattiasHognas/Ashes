@@ -3286,6 +3286,14 @@ let transferRuntimeOwner (slot: Int) (temp: Int) (state: CoreLoweringState) =
         |> stateRuntimeOwners
         |> releaseRuntimeOwner(slot))(transferred))
 
+// The owner a match keeps its adopted scrutinee in lives for one arm. No binding names it, so
+// nothing goes out of scope with the arm: once the arm has released it, it is retired here, or a
+// later arm's back edge would release the slot again.
+let retireScrutineeOwner (slot: Int) (state: CoreLoweringState) =
+    withStateRuntimeOwners(state
+    |> stateRuntimeOwners
+    |> releaseRuntimeOwner(slot))(state)
+
 let recursive lookupRuntimeOwner (slot: Int) (owners: List((Int, Bool))) =
     match owners with
         | [] -> None
@@ -13489,10 +13497,12 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
                 | _ ->
                     state
                     |> emitScrutineeListRelease(slot)
+                    |> retireScrutineeOwner(slot)
                     |> emitArmOwnerReleases(body)(rest)
         | ArmScrutineeOwner(slot, typeName, false, _valueTemp, _scrutineeType) :: rest ->
             state
             |> emitOwnedLetRelease(typeName)(slot)
+            |> retireScrutineeOwner(slot)
             |> emitArmOwnerReleases(body)(rest)
         | ArmResourceOwner(name, slot, typeName) :: rest ->
             if armResultIsBinding(name)(body)
@@ -13733,17 +13743,28 @@ let recursive allBindingsSurviveReset (state: CoreLoweringState) (bindings: List
         | [] -> true
         | CoreBinding { scheme = TypeScheme { body = bindingType } } :: rest -> resultSurvivesReset(bindingType)(state) && allBindingsSurviveReset(state)(rest)
 
+// A plain variable pattern binds the whole scrutinee, unless the name is a nullary constructor's
+// (`None`), which the parser writes the same way and which binds nothing.
+let recursive patternBindsWholeScrutineeIn (pattern: Pattern) (state: CoreLoweringState) =
+    match pattern with
+        | PatternAt(_span, inner) -> patternBindsWholeScrutineeIn(inner)(state)
+        | PatternVar(name) ->
+            match constructorLayout(name)(state) with
+                | Some(_layout) -> false
+                | None -> true
+        | _ -> false
+
 // Whether the arm takes the scrutinee owner: every arm does, except one whose plain variable
 // pattern binds the whole scrutinee (stage 0 makes that binding's slot the owner, and the arm
 // may hand it on). A heap value the pattern bound aliases the owner: its own read keeps a
 // reference when the arm result carries it out, and the owner's release covers the rest.
-let armAdoptsScrutinee (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) = patternBindsWholeScrutinee(pattern) == false
+let armAdoptsScrutinee (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) = patternBindsWholeScrutineeIn(pattern)(state) == false
 
 // The slot of the plain variable pattern that binds the whole scrutinee, stage 0's
 // `TryTrackWholeRuntimeManagedMatchBinding`: that binding's own slot becomes the owner instead
 // of a second slot for the same single reference.
 let wholeScrutineeBindingSlot (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
-    if patternBindsWholeScrutinee(pattern)
+    if patternBindsWholeScrutineeIn(pattern)(state)
     then
         match armBindings(length(state.bindings) - length(outerBindings))(state.bindings) with
             | CoreBinding { location = CoreLocal(slot) } :: [] -> Some(slot)

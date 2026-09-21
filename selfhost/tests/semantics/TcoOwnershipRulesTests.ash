@@ -682,6 +682,17 @@ let expectVariantParameterCompactsTheArena unit =
             |> (given (_) -> check("the copier switches on the constructor tag")(countContaining("SwitchTag")(lines) == 1 && countContaining("LoadEnv")(lines) == 1))
             |> (given (_) -> check("the copier rebuilds each constructor's cell")(countContaining("AllocAdt")(lines) == 2 && countContaining("StoreMemOffset")(lines) == 2))))
 
+let matchedPairTwoArmLoopSource = "type Tok =\n    | kind: Int\n    | text: Str\n\ntype Diag =\n    | message: Str\n    | at: Int\n\nlet readNext (position: Int) =\n    if position - position / 7 * 7 == 0\n    then (Tok(kind = 1, text = Ashes.Text.fromInt(position)), Some(Diag(message = \"odd \" + Ashes.Text.fromInt(position), at = position)))\n    else (Tok(kind = 2, text = Ashes.Text.fromInt(position)), None)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        match readNext(n) with\n            | (token, None) -> rounds(n - 1)(total + Ashes.Text.byteLength(token.text))\n            | (token, Some(diagnostic)) -> rounds(n - 1)(total + Ashes.Text.byteLength(token.text) + diagnostic.at)\n\nAshes.IO.print(rounds(30)(0))"
+
+// A loop that matches a pair a callee returned in two arms, each ending in a tail self-call: every
+// arm keeps the pair in an owner of its own and releases it once at its back edge and once at its
+// unreachable lexical exit. The owner has no binding to go out of scope with its arm, so an arm
+// that did not retire it left the next arm's back edge releasing the first arm's slot as well.
+let expectEachArmReleasesItsMatchedPairOnce unit =
+    matchedPairTwoArmLoopSource
+    |> loopLines("[ClosureHelper from rounds]")
+    |> (given (lines) -> check("two tail-calling arms release the matched pair twice each")(countContaining("TypeName=Tuple RuntimeManaged=true")(lines) == 4))
+
 let runTcoOwnershipRulesTests unit =
     unit
     |> expectTailSelfCallArgumentRetainsOwnedBinding
@@ -707,4 +718,5 @@ let runTcoOwnershipRulesTests unit =
     |> (given (_) -> expectForwardedGenericHeadKeepsIdentityMarkers(Unit))
     |> (given (_) -> expectReadBuiltinReleasesFreshCallResult(Unit))
     |> (given (_) -> expectReadBuiltinKeepsOwnedResults(Unit))
+    |> (given (_) -> expectEachArmReleasesItsMatchedPairOnce(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco ownership rule tests passed"))
