@@ -1,0 +1,34 @@
+// A function that owns a call's result and returns an optional integer computed from it: a variant
+// whose fields are all inline is neither one of the contract's types nor, being generic, a type
+// with a fixed copy-out, so the result is detached by the normalization helper and the owned value
+// released behind it.
+type Tree =
+    | Leaf(Str)
+    | Node(Tree, Tree)
+
+let build (n: Int) =
+    Leaf("x")
+    |> Node(n + 1
+    |> Ashes.Text.fromInt
+    |> Leaf)
+    |> Node(Leaf("f" + Ashes.Text.fromInt(n)))
+
+let firstUse (n: Int) =
+    match build(n) with
+        | Node(_, Node(Leaf(text), _)) ->
+            text
+            |> Ashes.Text.byteLength
+            |> Some
+        | _ -> None
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else
+        match firstUse(n) with
+            | Some(value) -> rounds(n - 1)(total + value)
+            | None -> rounds(n - 1)(total)
+
+0
+|> rounds(150)
+|> Ashes.IO.print

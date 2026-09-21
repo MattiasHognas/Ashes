@@ -6136,7 +6136,7 @@ and synthesizeAdtNormalizer (named: SemanticType) (state: CoreLoweringState) =
                         |> stateDropperLabels
                         |> withNormalizerLabel(key)(label))((state with nextLambdaId = state.nextLambdaId + 1))
                     in
-                        match freshLocal(withStateRetiredLocals([])((registered with reversedInstructions = [], nextTemp = 0, nextLocal = 0, currentSpan = None))) with
+                        match freshLocal(withStateRetiredLocals([])((registered with reversedInstructions = [], nextTemp = 0, nextLocal = 0))) with
                             | FreshLocal { state = environmentSlotState } ->
                                 match freshLocal(environmentSlotState) with
                                     | FreshLocal { state = argumentSlotState, local = argumentSlot } ->

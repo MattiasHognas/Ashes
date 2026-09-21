@@ -1,0 +1,641 @@
+IR (lowered)
+============
+
+function __rcnorm_1  [RuntimeManagedAdtNormalizer]
+  locals=7 temps=27
+    LoadLocal             Target=0 Slot=1   (tco_accumulator_of_owned_call_results.ash:10:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_4   (tco_accumulator_of_owned_call_results.ash:10:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Jump                  Target=rc_representation_done_5   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_copy_4:
+    GetAdtTag             Target=3 Ptr=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_6   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rcnorm_ctor_6:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=5 Ptr=0 FieldIndex=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    IsReferenceCounted    Target=6 SourceTemp=5
+    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_9   (tco_accumulator_of_owned_call_results.ash:10:1)
+    RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=7   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Jump                  Target=rc_representation_done_10   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_copy_9:
+    CopyOutArena          DestTemp=8 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=8   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_done_10:
+    LoadLocal             Target=9 Slot=4   (tco_accumulator_of_owned_call_results.ash:10:1)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=9   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=3 Source=4   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Jump                  Target=rcnorm_end_8   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rcnorm_ctor_7:
+    CopyOutArena          DestTemp=10 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=11 Ptr=0 FieldIndex=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=rc_representation_copy_11   (tco_accumulator_of_owned_call_results.ash:10:1)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=13   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Jump                  Target=rc_representation_done_12   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_copy_11:
+    LoadConstInt          Target=15 Value=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    CallKnown             Target=16 FuncLabel=__rcnorm_1 EnvTemp=15 ArgTemp=11   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=5 Source=16   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_done_12:
+    LoadLocal             Target=17 Slot=5   (tco_accumulator_of_owned_call_results.ash:10:1)
+    SetAdtField           Ptr=10 FieldIndex=0 Source=17   (tco_accumulator_of_owned_call_results.ash:10:1)
+    GetAdtField           Target=18 Ptr=0 FieldIndex=1   (tco_accumulator_of_owned_call_results.ash:10:1)
+    IsReferenceCounted    Target=19 SourceTemp=18
+    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_13   (tco_accumulator_of_owned_call_results.ash:10:1)
+    RcDup                 Target=20 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=20   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Jump                  Target=rc_representation_done_14   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_copy_13:
+    LoadConstInt          Target=22 Value=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    CallKnown             Target=23 FuncLabel=__rcnorm_1 EnvTemp=22 ArgTemp=18   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=6 Source=23   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_done_14:
+    LoadLocal             Target=24 Slot=6   (tco_accumulator_of_owned_call_results.ash:10:1)
+    SetAdtField           Ptr=10 FieldIndex=1 Source=24   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=3 Source=10   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Jump                  Target=rcnorm_end_8   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rcnorm_end_8:
+    LoadLocal             Target=25 Slot=3   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=2 Source=25   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_done_5:
+    LoadLocal             Target=26 Slot=2   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Return                Source=26   (tco_accumulator_of_owned_call_results.ash:10:1)
+
+function lambda_0  [SourceFunction from build]
+  locals=11 temps=28
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=0 Value=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=4 Source=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+  lambda_0_body:
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    SaveStackPointer      Slot=7   (tco_accumulator_of_owned_call_results.ash:10:1)
+    LoadLocal             Target=1 Slot=1   (tco_accumulator_of_owned_call_results.ash:11:8)
+    LoadConstInt          Target=2 Value=0   (tco_accumulator_of_owned_call_results.ash:11:12)
+    CmpIntLt              Target=3 Left=1 Right=2   (tco_accumulator_of_owned_call_results.ash:11:8)
+    JumpIfFalse           CondTemp=3 Target=else_0   (tco_accumulator_of_owned_call_results.ash:11:5)
+    LoadConstInt          Target=4 Value=0   (tco_accumulator_of_owned_call_results.ash:12:16)
+    LoadLocal             Target=5 Slot=1   (tco_accumulator_of_owned_call_results.ash:12:10)
+    StoreLocal            Slot=1 Source=4   (tco_accumulator_of_owned_call_results.ash:12:10)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=10
+    RestoreStackPointer   Slot=7   (tco_accumulator_of_owned_call_results.ash:12:10)
+    Jump                  Target=lambda_0_body   (tco_accumulator_of_owned_call_results.ash:12:10)
+    LoadConstInt          Target=6 Value=0   (tco_accumulator_of_owned_call_results.ash:12:10)
+    StoreLocal            Slot=8 Source=6   (tco_accumulator_of_owned_call_results.ash:11:5)
+    Jump                  Target=endif_1   (tco_accumulator_of_owned_call_results.ash:11:5)
+  else_0:
+    LoadConstStr          Target=7 StrLabel=str_0   (tco_accumulator_of_owned_call_results.ash:13:20)
+    LoadLocal             Target=8 Slot=1   (tco_accumulator_of_owned_call_results.ash:13:45)
+    TextFromInt           Target=9 ValueTemp=8   (tco_accumulator_of_owned_call_results.ash:13:26)
+    ConcatStr             Target=10 Left=7 Right=9   (tco_accumulator_of_owned_call_results.ash:13:20)
+    AllocAdt              Target=11 Tag=0 FieldCount=1   (tco_accumulator_of_owned_call_results.ash:13:15)
+    SetAdtField           Ptr=11 FieldIndex=0 Source=10   (tco_accumulator_of_owned_call_results.ash:13:15)
+    LoadLocal             Target=12 Slot=1   (tco_accumulator_of_owned_call_results.ash:13:79)
+    LoadConstInt          Target=13 Value=1   (tco_accumulator_of_owned_call_results.ash:13:83)
+    AddInt                Target=14 Left=12 Right=13   (tco_accumulator_of_owned_call_results.ash:13:79)
+    TextFromInt           Target=15 ValueTemp=14   (tco_accumulator_of_owned_call_results.ash:13:60)
+    AllocAdt              Target=16 Tag=0 FieldCount=1   (tco_accumulator_of_owned_call_results.ash:13:55)
+    SetAdtField           Ptr=16 FieldIndex=0 Source=15   (tco_accumulator_of_owned_call_results.ash:13:55)
+    LoadConstStr          Target=17 StrLabel=str_1   (tco_accumulator_of_owned_call_results.ash:13:93)
+    AllocAdt              Target=18 Tag=0 FieldCount=1   (tco_accumulator_of_owned_call_results.ash:13:88)
+    SetAdtField           Ptr=18 FieldIndex=0 Source=17   (tco_accumulator_of_owned_call_results.ash:13:88)
+    AllocAdt              Target=19 Tag=1 FieldCount=2   (tco_accumulator_of_owned_call_results.ash:13:50)
+    SetAdtField           Ptr=19 FieldIndex=0 Source=16   (tco_accumulator_of_owned_call_results.ash:13:50)
+    SetAdtField           Ptr=19 FieldIndex=1 Source=18   (tco_accumulator_of_owned_call_results.ash:13:50)
+    AllocAdt              Target=20 Tag=1 FieldCount=2   (tco_accumulator_of_owned_call_results.ash:13:10)
+    SetAdtField           Ptr=20 FieldIndex=0 Source=11   (tco_accumulator_of_owned_call_results.ash:13:10)
+    SetAdtField           Ptr=20 FieldIndex=1 Source=19   (tco_accumulator_of_owned_call_results.ash:13:10)
+    StoreLocal            Slot=8 Source=20   (tco_accumulator_of_owned_call_results.ash:11:5)
+  endif_1:
+    LoadLocal             Target=21 Slot=8   (tco_accumulator_of_owned_call_results.ash:11:5)
+    IsReferenceCounted    Target=22 SourceTemp=21
+    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_2   (tco_accumulator_of_owned_call_results.ash:10:1)
+    RcDup                 Target=23 SourceTemp=21 RuntimeManaged=true
+    StoreLocal            Slot=9 Source=23   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Jump                  Target=rc_representation_done_3   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_copy_2:
+    LoadConstInt          Target=25 Value=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    CallKnown             Target=26 FuncLabel=__rcnorm_1 EnvTemp=25 ArgTemp=21   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=9 Source=26   (tco_accumulator_of_owned_call_results.ash:10:1)
+  rc_representation_done_3:
+    LoadLocal             Target=27 Slot=9   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Return                Source=27   (tco_accumulator_of_owned_call_results.ash:10:1)
+
+function __rcdrop_general_4  [RuntimeManagedAdtDropper]
+  locals=2 temps=11
+    LoadLocal             Target=0 Slot=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_41   (tco_accumulator_of_owned_call_results.ash:15:1)
+    GetAdtTag             Target=2 Ptr=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_41   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rcdrop_general_ctor_42:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_general_shared_41   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rcdrop_general_ctor_43:
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=5 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CallKnown             Target=6 FuncLabel=__rcdrop_general_4 EnvTemp=5 ArgTemp=4   (tco_accumulator_of_owned_call_results.ash:15:1)
+    GetAdtField           Target=7 Ptr=0 FieldIndex=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=8 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CallKnown             Target=9 FuncLabel=__rcdrop_general_4 EnvTemp=8 ArgTemp=7   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rcdrop_general_shared_41   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rcdrop_general_shared_41:
+    RcDrop                SourceTemp=0 TypeName=Tree RuntimeManaged=true
+    LoadConstInt          Target=10 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Return                Source=10   (tco_accumulator_of_owned_call_results.ash:15:1)
+
+function lambda_3  [ClosureHelper from trees]
+  locals=37 temps=140
+    LoadEnv               Target=0 Index=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=2 Source=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=26 Slot=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadArgumentOwnership Target=27   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=28 Value=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    AndInt                Target=29 Left=27 Right=28   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=29 Target=rc_arg_normalize_copy_17   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=16 Source=26   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_arg_normalize_done_18   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_arg_normalize_copy_17:
+    IsReferenceCounted    Target=30 SourceTemp=26
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_19   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDup                 Target=31 SourceTemp=26 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=31   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_representation_done_20   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_copy_19:
+    LoadConstInt          Target=33 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=18 Source=26   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=19 Source=33   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=20 Source=33   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_21:
+    LoadLocal             Target=34 Slot=18   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CmpIntNe              Target=35 Left=34 Right=33   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=35 Target=rc_normalize_list_end_22   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadMemOffset         Target=36 BasePtr=34 OffsetBytes=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadMemOffset         Target=37 BasePtr=34 OffsetBytes=8   (tco_accumulator_of_owned_call_results.ash:15:1)
+    IsReferenceCounted    Target=38 SourceTemp=36
+    JumpIfFalse           CondTemp=38 Target=rc_representation_copy_23   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDup                 Target=39 SourceTemp=36 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=39   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_representation_done_24   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_copy_23:
+    LoadConstInt          Target=41 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CallKnown             Target=42 FuncLabel=__rcnorm_1 EnvTemp=41 ArgTemp=36   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=21 Source=42   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_done_24:
+    LoadLocal             Target=43 Slot=21   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Alloc                 Target=44 SizeBytes=16 RuntimeManaged=true   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=44 OffsetBytes=0 Source=43   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=44 OffsetBytes=8 Source=33   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=45 Slot=19   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CmpIntNe              Target=46 Left=45 Right=33   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=46 Target=rc_normalize_list_first_25   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=47 Slot=20   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=47 OffsetBytes=8 Source=44   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_26   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_first_25:
+    StoreLocal            Slot=19 Source=44   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_linked_26:
+    StoreLocal            Slot=20 Source=44   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=18 Source=37   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_normalize_list_21   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_end_22:
+    LoadLocal             Target=48 Slot=19   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=17 Source=48   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_done_20:
+    LoadLocal             Target=49 Slot=17   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=16 Source=49   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_arg_normalize_done_18:
+    LoadLocal             Target=50 Slot=16   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=1 Source=50   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=51 Value=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=6 Source=51   (tco_accumulator_of_owned_call_results.ash:15:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=5 Source=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+  lambda_3_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=2 Slot=2   (tco_accumulator_of_owned_call_results.ash:16:8)
+    LoadConstInt          Target=3 Value=0   (tco_accumulator_of_owned_call_results.ash:16:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_accumulator_of_owned_call_results.ash:16:8)
+    JumpIfFalse           CondTemp=4 Target=else_15   (tco_accumulator_of_owned_call_results.ash:16:5)
+    LoadLocal             Target=5 Slot=1   (tco_accumulator_of_owned_call_results.ash:17:10)
+    StoreLocal            Slot=10 Source=5   (tco_accumulator_of_owned_call_results.ash:16:5)
+    Jump                  Target=endif_16   (tco_accumulator_of_owned_call_results.ash:16:5)
+  else_15:
+    LoadLocal             Target=6 Slot=2   (tco_accumulator_of_owned_call_results.ash:18:16)
+    LoadConstInt          Target=7 Value=1   (tco_accumulator_of_owned_call_results.ash:18:20)
+    SubInt                Target=8 Left=6 Right=7   (tco_accumulator_of_owned_call_results.ash:18:16)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadEnv               Target=9 Index=1   (tco_accumulator_of_owned_call_results.ash:18:23)
+    LoadLocal             Target=10 Slot=2   (tco_accumulator_of_owned_call_results.ash:18:29)
+    LoadMemOffset         Target=11 BasePtr=9 OffsetBytes=16   (tco_accumulator_of_owned_call_results.ash:18:23)
+    LoadConstInt          Target=12 Value=62   (tco_accumulator_of_owned_call_results.ash:18:23)
+    ShrInt                Target=13 Left=11 Right=12   (tco_accumulator_of_owned_call_results.ash:18:23)
+    LoadConstInt          Target=14 Value=1   (tco_accumulator_of_owned_call_results.ash:18:23)
+    LoadConstInt          Target=15 Value=0   (tco_accumulator_of_owned_call_results.ash:18:23)
+    CallClosure           Target=16 ClosureTemp=9 ArgTemp=10 RuntimeManagedArgumentFlagTemp=15   (tco_accumulator_of_owned_call_results.ash:18:23)
+    StoreLocal            Slot=14 Source=16   (tco_accumulator_of_owned_call_results.ash:18:23)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    LoadConstInt          Target=17 Value=1   (tco_accumulator_of_owned_call_results.ash:18:23)
+    StoreLocal            Slot=15 Source=17   (tco_accumulator_of_owned_call_results.ash:18:23)
+    LoadLocal             Target=18 Slot=14   (tco_accumulator_of_owned_call_results.ash:18:23)
+    LoadLocal             Target=20 Slot=1   (tco_accumulator_of_owned_call_results.ash:18:35)
+    Alloc                 Target=21 SizeBytes=16   (tco_accumulator_of_owned_call_results.ash:18:23)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=18   (tco_accumulator_of_owned_call_results.ash:18:23)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=20   (tco_accumulator_of_owned_call_results.ash:18:23)
+    LoadLocal             Target=22 Slot=2   (tco_accumulator_of_owned_call_results.ash:18:10)
+    LoadLocal             Target=23 Slot=1   (tco_accumulator_of_owned_call_results.ash:18:10)
+    StoreLocal            Slot=2 Source=8   (tco_accumulator_of_owned_call_results.ash:18:10)
+    StoreLocal            Slot=1 Source=21   (tco_accumulator_of_owned_call_results.ash:18:10)
+    IsReferenceCounted    Target=96 SourceTemp=21
+    JumpIfFalse           CondTemp=96 Target=rc_representation_copy_55
+    RcDup                 Target=97 SourceTemp=21 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=97
+    Jump                  Target=rc_representation_done_56
+  rc_representation_copy_55:
+    IsReferenceCounted    Target=99 SourceTemp=21
+    JumpIfFalse           CondTemp=99 Target=rc_representation_copy_57
+    RcDup                 Target=100 SourceTemp=21 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=100
+    Jump                  Target=rc_representation_done_58
+  rc_representation_copy_57:
+    LoadConstInt          Target=101 Value=0
+    StoreLocal            Slot=32 Source=21
+    StoreLocal            Slot=33 Source=101
+    StoreLocal            Slot=34 Source=101
+  rc_normalize_list_59:
+    LoadLocal             Target=102 Slot=32
+    CmpIntNe              Target=103 Left=102 Right=101
+    JumpIfFalse           CondTemp=103 Target=rc_normalize_list_end_60
+    IsReferenceCounted    Target=104 SourceTemp=102
+    JumpIfFalse           CondTemp=104 Target=rc_normalize_list_cell_61
+    RcDup                 Target=105 SourceTemp=102 RuntimeManaged=true
+    LoadLocal             Target=106 Slot=33
+    CmpIntNe              Target=107 Left=106 Right=101
+    JumpIfFalse           CondTemp=107 Target=rc_normalize_list_first_62
+    LoadLocal             Target=108 Slot=34
+    StoreMemOffset        BasePtr=108 OffsetBytes=8 Source=105
+    Jump                  Target=rc_normalize_list_linked_63
+  rc_normalize_list_first_62:
+    StoreLocal            Slot=33 Source=105
+  rc_normalize_list_linked_63:
+    StoreLocal            Slot=34 Source=105
+    Jump                  Target=rc_normalize_list_end_60
+  rc_normalize_list_cell_61:
+    LoadMemOffset         Target=109 BasePtr=102 OffsetBytes=0
+    LoadMemOffset         Target=110 BasePtr=102 OffsetBytes=8
+    IsReferenceCounted    Target=111 SourceTemp=109
+    JumpIfFalse           CondTemp=111 Target=rc_representation_copy_64
+    RcDup                 Target=112 SourceTemp=109 RuntimeManaged=true
+    StoreLocal            Slot=35 Source=112
+    Jump                  Target=rc_representation_done_65
+  rc_representation_copy_64:
+    LoadConstInt          Target=114 Value=0
+    CallKnown             Target=115 FuncLabel=__rcnorm_1 EnvTemp=114 ArgTemp=109
+    StoreLocal            Slot=35 Source=115
+  rc_representation_done_65:
+    LoadLocal             Target=116 Slot=35
+    Alloc                 Target=117 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=117 OffsetBytes=0 Source=116
+    StoreMemOffset        BasePtr=117 OffsetBytes=8 Source=101
+    LoadLocal             Target=118 Slot=33
+    CmpIntNe              Target=119 Left=118 Right=101
+    JumpIfFalse           CondTemp=119 Target=rc_normalize_list_first_66
+    LoadLocal             Target=120 Slot=34
+    StoreMemOffset        BasePtr=120 OffsetBytes=8 Source=117
+    Jump                  Target=rc_normalize_list_linked_67
+  rc_normalize_list_first_66:
+    StoreLocal            Slot=33 Source=117
+  rc_normalize_list_linked_67:
+    StoreLocal            Slot=34 Source=117
+    StoreLocal            Slot=32 Source=110
+    Jump                  Target=rc_normalize_list_59
+  rc_normalize_list_end_60:
+    LoadLocal             Target=121 Slot=33
+    StoreLocal            Slot=31 Source=121
+  rc_representation_done_58:
+    LoadLocal             Target=122 Slot=31
+    StoreLocal            Slot=30 Source=122
+  rc_representation_done_56:
+    LoadLocal             Target=123 Slot=30
+    LoadLocal             Target=124 Slot=6
+    JumpIfFalse           CondTemp=124 Target=rc_tco_drop_inactive_68
+    StoreLocal            Slot=36 Source=23
+  rcdrop_list_69:
+    LoadLocal             Target=125 Slot=36
+    LoadConstInt          Target=126 Value=0
+    CmpIntNe              Target=127 Left=125 Right=126
+    JumpIfFalse           CondTemp=127 Target=rcdrop_list_end_71
+    RcIsUnique            Target=128 SourceTemp=125
+    JumpIfFalse           CondTemp=128 Target=rcdrop_list_shared_70
+    LoadMemOffset         Target=129 BasePtr=125 OffsetBytes=0
+    LoadConstInt          Target=130 Value=0
+    CallKnown             Target=131 FuncLabel=__rcdrop_general_4 EnvTemp=130 ArgTemp=129
+    LoadMemOffset         Target=132 BasePtr=125 OffsetBytes=8
+    RcDrop                SourceTemp=125 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=36 Source=132
+    Jump                  Target=rcdrop_list_69
+  rcdrop_list_shared_70:
+    RcDrop                SourceTemp=125 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_71
+  rcdrop_list_end_71:
+  rc_tco_drop_inactive_68:
+    LoadLocal             Target=133 Slot=14
+    LoadConstInt          Target=134 Value=0
+    CmpIntNe              Target=135 Left=133 Right=134
+    JumpIfFalse           CondTemp=135 Target=general_rc_owned_absent_72
+    IsReferenceCounted    Target=136 SourceTemp=133
+    JumpIfFalse           CondTemp=136 Target=general_rc_owned_absent_72
+    LoadConstInt          Target=137 Value=0
+    CallKnown             Target=138 FuncLabel=__rcdrop_general_4 EnvTemp=137 ArgTemp=133
+    StoreLocal            Slot=14 Source=134
+  general_rc_owned_absent_72:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
+    StoreLocal            Slot=1 Source=123
+    LoadConstInt          Target=139 Value=1
+    StoreLocal            Slot=6 Source=139
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=29
+    RestoreStackPointer   Slot=9   (tco_accumulator_of_owned_call_results.ash:18:10)
+    Jump                  Target=lambda_3_body   (tco_accumulator_of_owned_call_results.ash:18:10)
+    LoadConstInt          Target=24 Value=0   (tco_accumulator_of_owned_call_results.ash:18:10)
+    StoreLocal            Slot=10 Source=24   (tco_accumulator_of_owned_call_results.ash:16:5)
+  endif_16:
+    LoadLocal             Target=25 Slot=10   (tco_accumulator_of_owned_call_results.ash:16:5)
+    IsReferenceCounted    Target=52 SourceTemp=25
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_27   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDup                 Target=53 SourceTemp=25 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=53   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_representation_done_28   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_copy_27:
+    IsReferenceCounted    Target=55 SourceTemp=25
+    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_29   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDup                 Target=56 SourceTemp=25 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=56   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_representation_done_30   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_copy_29:
+    LoadConstInt          Target=57 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=24 Source=25   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=25 Source=57   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=26 Source=57   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_31:
+    LoadLocal             Target=58 Slot=24   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CmpIntNe              Target=59 Left=58 Right=57   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=59 Target=rc_normalize_list_end_32   (tco_accumulator_of_owned_call_results.ash:15:1)
+    IsReferenceCounted    Target=60 SourceTemp=58
+    JumpIfFalse           CondTemp=60 Target=rc_normalize_list_cell_33   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDup                 Target=61 SourceTemp=58 RuntimeManaged=true
+    LoadLocal             Target=62 Slot=25   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CmpIntNe              Target=63 Left=62 Right=57   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=63 Target=rc_normalize_list_first_34   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=64 Slot=26   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=64 OffsetBytes=8 Source=61   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_35   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_first_34:
+    StoreLocal            Slot=25 Source=61   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_linked_35:
+    StoreLocal            Slot=26 Source=61   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_normalize_list_end_32   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_cell_33:
+    LoadMemOffset         Target=65 BasePtr=58 OffsetBytes=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadMemOffset         Target=66 BasePtr=58 OffsetBytes=8   (tco_accumulator_of_owned_call_results.ash:15:1)
+    IsReferenceCounted    Target=67 SourceTemp=65
+    JumpIfFalse           CondTemp=67 Target=rc_representation_copy_36   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDup                 Target=68 SourceTemp=65 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=68   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_representation_done_37   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_copy_36:
+    LoadConstInt          Target=70 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CallKnown             Target=71 FuncLabel=__rcnorm_1 EnvTemp=70 ArgTemp=65   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=27 Source=71   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_done_37:
+    LoadLocal             Target=72 Slot=27   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Alloc                 Target=73 SizeBytes=16 RuntimeManaged=true   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=73 OffsetBytes=0 Source=72   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=73 OffsetBytes=8 Source=57   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=74 Slot=25   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CmpIntNe              Target=75 Left=74 Right=57   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=75 Target=rc_normalize_list_first_38   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=76 Slot=26   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=76 OffsetBytes=8 Source=73   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_39   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_first_38:
+    StoreLocal            Slot=25 Source=73   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_linked_39:
+    StoreLocal            Slot=26 Source=73   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=24 Source=66   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rc_normalize_list_31   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_normalize_list_end_32:
+    LoadLocal             Target=77 Slot=25   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=23 Source=77   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_done_30:
+    LoadLocal             Target=78 Slot=23   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=22 Source=78   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rc_representation_done_28:
+    LoadLocal             Target=79 Slot=22   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=80 Slot=14   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=81 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CmpIntNe              Target=82 Left=80 Right=81   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=82 Target=general_rc_owned_absent_40   (tco_accumulator_of_owned_call_results.ash:15:1)
+    IsReferenceCounted    Target=83 SourceTemp=80
+    JumpIfFalse           CondTemp=83 Target=general_rc_owned_absent_40   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=84 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CallKnown             Target=85 FuncLabel=__rcdrop_general_4 EnvTemp=84 ArgTemp=80   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=14 Source=81   (tco_accumulator_of_owned_call_results.ash:15:1)
+  general_rc_owned_absent_40:
+    LoadLocal             Target=86 Slot=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=87 Slot=6   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=87 Target=rc_tco_exit_drop_inactive_44   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=28 Source=86   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rcdrop_list_45:
+    LoadLocal             Target=88 Slot=28   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=89 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CmpIntNe              Target=90 Left=88 Right=89   (tco_accumulator_of_owned_call_results.ash:15:1)
+    JumpIfFalse           CondTemp=90 Target=rcdrop_list_end_47   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcIsUnique            Target=91 SourceTemp=88
+    JumpIfFalse           CondTemp=91 Target=rcdrop_list_shared_46   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadMemOffset         Target=92 BasePtr=88 OffsetBytes=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=93 Value=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    CallKnown             Target=94 FuncLabel=__rcdrop_general_4 EnvTemp=93 ArgTemp=92   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadMemOffset         Target=95 BasePtr=88 OffsetBytes=8   (tco_accumulator_of_owned_call_results.ash:15:1)
+    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=95   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Jump                  Target=rcdrop_list_45   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rcdrop_list_shared_46:
+    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_47   (tco_accumulator_of_owned_call_results.ash:15:1)
+  rcdrop_list_end_47:
+  rc_tco_exit_drop_inactive_44:
+    Return                Source=79   (tco_accumulator_of_owned_call_results.ash:15:1)
+
+function lambda_2  [SourceFunction from trees]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=16   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=1 Slot=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadEnv               Target=4 Index=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (tco_accumulator_of_owned_call_results.ash:15:1)
+    MakeClosure           Target=5 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (tco_accumulator_of_owned_call_results.ash:15:1)
+    Return                Source=5   (tco_accumulator_of_owned_call_results.ash:15:1)
+
+function lambda_6  [ClosureHelper from count]
+  locals=29 temps=50
+    LoadEnv               Target=0 Index=0   (tco_accumulator_of_owned_call_results.ash:20:1)
+    StoreLocal            Slot=2 Source=0   (tco_accumulator_of_owned_call_results.ash:20:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_accumulator_of_owned_call_results.ash:20:1)
+    StoreLocal            Slot=5 Source=1   (tco_accumulator_of_owned_call_results.ash:20:1)
+    StoreLocal            Slot=6 Source=1   (tco_accumulator_of_owned_call_results.ash:20:1)
+    StoreLocal            Slot=7 Source=1   (tco_accumulator_of_owned_call_results.ash:20:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_accumulator_of_owned_call_results.ash:20:1)
+    LoadLocal             Target=2 Slot=2   (tco_accumulator_of_owned_call_results.ash:21:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_accumulator_of_owned_call_results.ash:21:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_51   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadLocal             Target=5 Slot=1   (tco_accumulator_of_owned_call_results.ash:22:17)
+    StoreLocal            Slot=11 Source=5   (tco_accumulator_of_owned_call_results.ash:21:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_48   (tco_accumulator_of_owned_call_results.ash:21:5)
+  match_arm_cleanup_51:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_50   (tco_accumulator_of_owned_call_results.ash:21:5)
+  match_next_50:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_accumulator_of_owned_call_results.ash:21:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_53   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadConstInt          Target=10 Value=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    CmpIntNe              Target=11 Left=8 Right=10   (tco_accumulator_of_owned_call_results.ash:21:5)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_53   (tco_accumulator_of_owned_call_results.ash:21:5)
+    GetAdtTag             Target=12 Ptr=8   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadConstInt          Target=14 Value=1   (tco_accumulator_of_owned_call_results.ash:21:5)
+    CmpIntEq              Target=13 Left=12 Right=14   (tco_accumulator_of_owned_call_results.ash:21:5)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_53   (tco_accumulator_of_owned_call_results.ash:21:5)
+    GetAdtField           Target=15 Ptr=8 FieldIndex=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadConstInt          Target=16 Value=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    CmpIntNe              Target=17 Left=15 Right=16   (tco_accumulator_of_owned_call_results.ash:21:5)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_53   (tco_accumulator_of_owned_call_results.ash:21:5)
+    GetAdtTag             Target=18 Ptr=15   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadConstInt          Target=20 Value=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    CmpIntEq              Target=19 Left=18 Right=20   (tco_accumulator_of_owned_call_results.ash:21:5)
+    JumpIfFalse           CondTemp=19 Target=match_arm_cleanup_53   (tco_accumulator_of_owned_call_results.ash:21:5)
+    GetAdtField           Target=21 Ptr=15 FieldIndex=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    StoreLocal            Slot=18 Source=21   (tco_accumulator_of_owned_call_results.ash:21:5)
+    GetAdtField           Target=22 Ptr=8 FieldIndex=1   (tco_accumulator_of_owned_call_results.ash:21:5)
+    StoreLocal            Slot=19 Source=9   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadLocal             Target=48 Slot=18   (tco_accumulator_of_owned_call_results.ash:20:1)
+    RcDup                 Target=49 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=49   (tco_accumulator_of_owned_call_results.ash:20:1)
+    LoadLocal             Target=23 Slot=19   (tco_accumulator_of_owned_call_results.ash:23:48)
+    Borrow                Target=24 SourceTemp=23
+    LoadLocal             Target=25 Slot=1   (tco_accumulator_of_owned_call_results.ash:23:54)
+    LoadLocal             Target=26 Slot=18   (tco_accumulator_of_owned_call_results.ash:23:84)
+    Borrow                Target=27 SourceTemp=26
+    TextByteLength        Target=28 TextTemp=27   (tco_accumulator_of_owned_call_results.ash:23:62)
+    RcDrop                SourceTemp=21 TypeName=String OwnerSlot=18 RuntimeManaged=true
+    AddInt                Target=29 Left=25 Right=28   (tco_accumulator_of_owned_call_results.ash:23:54)
+    LoadLocal             Target=30 Slot=2   (tco_accumulator_of_owned_call_results.ash:23:42)
+    LoadLocal             Target=31 Slot=1   (tco_accumulator_of_owned_call_results.ash:23:42)
+    StoreLocal            Slot=2 Source=24   (tco_accumulator_of_owned_call_results.ash:23:42)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    StoreLocal            Slot=1 Source=29   (tco_accumulator_of_owned_call_results.ash:23:42)
+    RestoreStackPointer   Slot=10   (tco_accumulator_of_owned_call_results.ash:23:42)
+    Jump                  Target=lambda_6_body   (tco_accumulator_of_owned_call_results.ash:23:42)
+    LoadConstInt          Target=32 Value=0   (tco_accumulator_of_owned_call_results.ash:23:42)
+    StoreLocal            Slot=11 Source=32   (tco_accumulator_of_owned_call_results.ash:21:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_end_48   (tco_accumulator_of_owned_call_results.ash:21:5)
+  match_arm_cleanup_53:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
+    Jump                  Target=match_next_52   (tco_accumulator_of_owned_call_results.ash:21:5)
+  match_next_52:
+    SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
+    LoadConstInt          Target=35 Value=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    CmpIntNe              Target=36 Left=2 Right=35   (tco_accumulator_of_owned_call_results.ash:21:5)
+    JumpIfFalse           CondTemp=36 Target=match_arm_cleanup_54   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadMemOffset         Target=37 BasePtr=2 OffsetBytes=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadMemOffset         Target=38 BasePtr=2 OffsetBytes=8   (tco_accumulator_of_owned_call_results.ash:21:5)
+    StoreLocal            Slot=24 Source=38   (tco_accumulator_of_owned_call_results.ash:21:5)
+    LoadLocal             Target=39 Slot=24   (tco_accumulator_of_owned_call_results.ash:24:30)
+    Borrow                Target=40 SourceTemp=39
+    LoadLocal             Target=41 Slot=1   (tco_accumulator_of_owned_call_results.ash:24:36)
+    LoadLocal             Target=42 Slot=2   (tco_accumulator_of_owned_call_results.ash:24:24)
+    LoadLocal             Target=43 Slot=1   (tco_accumulator_of_owned_call_results.ash:24:24)
+    StoreLocal            Slot=2 Source=40   (tco_accumulator_of_owned_call_results.ash:24:24)
+    RcDrop                SourceTemp=38 TypeName=List OwnerSlot=24
+    StoreLocal            Slot=1 Source=41   (tco_accumulator_of_owned_call_results.ash:24:24)
+    RestoreStackPointer   Slot=10   (tco_accumulator_of_owned_call_results.ash:24:24)
+    Jump                  Target=lambda_6_body   (tco_accumulator_of_owned_call_results.ash:24:24)
+    LoadConstInt          Target=44 Value=0   (tco_accumulator_of_owned_call_results.ash:24:24)
+    StoreLocal            Slot=11 Source=44   (tco_accumulator_of_owned_call_results.ash:21:5)
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=25
+    Jump                  Target=match_end_48   (tco_accumulator_of_owned_call_results.ash:21:5)
+  match_arm_cleanup_54:
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=26
+    Jump                  Target=match_none_49   (tco_accumulator_of_owned_call_results.ash:21:5)
+  match_none_49:
+    LoadConstInt          Target=46 Value=0   (tco_accumulator_of_owned_call_results.ash:21:5)
+    StoreLocal            Slot=11 Source=46   (tco_accumulator_of_owned_call_results.ash:21:5)
+  match_end_48:
+    LoadLocal             Target=47 Slot=11   (tco_accumulator_of_owned_call_results.ash:21:5)
+    Return                Source=47   (tco_accumulator_of_owned_call_results.ash:20:1)
+
+function lambda_5  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_accumulator_of_owned_call_results.ash:20:1)
+    LoadLocal             Target=1 Slot=1   (tco_accumulator_of_owned_call_results.ash:20:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_accumulator_of_owned_call_results.ash:20:1)
+    MakeClosure           Target=4 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=8   (tco_accumulator_of_owned_call_results.ash:20:1)
+    Return                Source=4   (tco_accumulator_of_owned_call_results.ash:20:1)
+
+function _start_main  [ProgramEntry]
+  locals=10 temps=18
+    LoadConstInt          Target=0 Value=0   (tco_accumulator_of_owned_call_results.ash:10:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (tco_accumulator_of_owned_call_results.ash:10:1)
+    StoreLocal            Slot=0 Source=1   (tco_accumulator_of_owned_call_results.ash:10:1)
+    Alloc                 Target=2 SizeBytes=8   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadLocal             Target=3 Slot=0   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=3   (tco_accumulator_of_owned_call_results.ash:15:1)
+    MakeClosure           Target=4 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=8   (tco_accumulator_of_owned_call_results.ash:15:1)
+    StoreLocal            Slot=1 Source=4   (tco_accumulator_of_owned_call_results.ash:15:1)
+    LoadConstInt          Target=5 Value=0   (tco_accumulator_of_owned_call_results.ash:20:1)
+    MakeClosure           Target=6 FuncLabel=lambda_5 EnvPtrTemp=5 EnvSizeBytes=0   (tco_accumulator_of_owned_call_results.ash:20:1)
+    StoreLocal            Slot=2 Source=6   (tco_accumulator_of_owned_call_results.ash:20:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=7 Slot=2   (tco_accumulator_of_owned_call_results.ash:26:16)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=8 Slot=1   (tco_accumulator_of_owned_call_results.ash:26:22)
+    LoadConstInt          Target=9 Value=40   (tco_accumulator_of_owned_call_results.ash:26:28)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (tco_accumulator_of_owned_call_results.ash:26:22)
+    LoadConstInt          Target=11 Value=0   (tco_accumulator_of_owned_call_results.ash:26:32)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (tco_accumulator_of_owned_call_results.ash:26:22)
+    StoreLocal            Slot=8 Source=12   (tco_accumulator_of_owned_call_results.ash:26:22)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=7
+    LoadLocal             Target=13 Slot=8   (tco_accumulator_of_owned_call_results.ash:26:22)
+    CallClosure           Target=14 ClosureTemp=7 ArgTemp=13   (tco_accumulator_of_owned_call_results.ash:26:16)
+    LoadConstInt          Target=15 Value=0   (tco_accumulator_of_owned_call_results.ash:26:37)
+    CallClosure           Target=16 ClosureTemp=14 ArgTemp=15   (tco_accumulator_of_owned_call_results.ash:26:16)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=9
+    PrintInt              Source=16   (tco_accumulator_of_owned_call_results.ash:26:1)
+    AllocAdt              Target=17 Tag=0 FieldCount=0   (tco_accumulator_of_owned_call_results.ash:26:1)
+    Return                Source=17
+

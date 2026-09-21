@@ -1,0 +1,26 @@
+// A loop accumulates the trees a recursive callee returns. A tree is a value only the
+// normalization helper expresses, so the callee hands each one over owned, the loop keeps it in an
+// owned slot, and the accumulator lives on the reference-counted heap: its back edge normalizes
+// the arena cons cell into it, releases the predecessor and the owned slot, and resets the arena,
+// and the loop makes its result its own before its exit releases the accumulator.
+type Tree =
+    | Leaf(Str)
+    | Node(Tree, Tree)
+
+let recursive build (n: Int) =
+    if n < 0
+    then build(0)
+    else Node(Leaf("f" + Ashes.Text.fromInt(n)), Node(Leaf(Ashes.Text.fromInt(n + 1)), Leaf("x")))
+
+let recursive trees (n: Int) (acc: List(Tree)) =
+    if n == 0
+    then acc
+    else trees(n - 1)(build(n) :: acc)
+
+let recursive count (remaining: List(Tree)) (total: Int) =
+    match remaining with
+        | [] -> total
+        | Node(Leaf(name), _) :: rest -> count(rest)(total + Ashes.Text.byteLength(name))
+        | _ :: rest -> count(rest)(total)
+
+Ashes.IO.print(count(trees(40)([]))(0))
