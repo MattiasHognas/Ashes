@@ -63,11 +63,11 @@ Function: count [lambda_3__scalarenv0]
 
 Function: _start_main
   Operations
-    dup:                  0
+    dup:                  6
     drop:                 0
     uniqueness checks:    0
     allocations:          3
     reused allocations:   0
     reuse tokens:         0
-    copies:               1
+    copies:               11
 

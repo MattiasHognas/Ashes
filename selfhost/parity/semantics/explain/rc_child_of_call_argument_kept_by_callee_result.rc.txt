@@ -51,15 +51,65 @@ Function: addTraitImplementation
     reuse tokens:         0
     copies:               1
 
-Function: addImpl [lambda_7]
+Function: __deepcopy_12
   Operations
-    dup:                  1
-    drop:                 1
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: __deepcopy_list_11
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_10
+  Operations
+    dup:                  0
+    drop:                 0
     uniqueness checks:    0
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               1
+
+Function: __deepcopy_list_9
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_8
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: addImpl [lambda_7]
+  Operations
+    dup:                  12
+    drop:                 11
+    uniqueness checks:    5
+    allocations:          5
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               7
 
 Function: addImpl [lambda_6]
   Operations
@@ -83,15 +133,15 @@ Function: addImpl
 
 Function: buildEnv
   Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          1
+    dup:                  2
+    drop:                 30
+    uniqueness checks:    15
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               0
 
-Function: __tospacecopy_adt_9
+Function: __tospacecopy_adt_14
   Operations
     dup:                  0
     drop:                 0
@@ -101,7 +151,7 @@ Function: __tospacecopy_adt_9
     reuse tokens:         0
     copies:               0
 
-Function: churn [lambda_11]
+Function: churn [lambda_16]
   Operations
     dup:                  1
     drop:                 6
@@ -121,7 +171,7 @@ Function: churn
     reuse tokens:         0
     copies:               0
 
-Function: count [lambda_13]
+Function: count [lambda_18]
   Operations
     dup:                  2
     drop:                 9
@@ -151,17 +201,7 @@ Function: firstNames
     reuse tokens:         0
     copies:               8
 
-Function: buildEnv
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          1
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
-Function: churn [lambda_11__scalarenv1]
+Function: churn [lambda_16__scalarenv0]
   Operations
     dup:                  1
     drop:                 6
@@ -171,7 +211,7 @@ Function: churn [lambda_11__scalarenv1]
     reuse tokens:         0
     copies:               3
 
-Function: count [lambda_13__scalarenv2]
+Function: count [lambda_18__scalarenv1]
   Operations
     dup:                  2
     drop:                 9
@@ -181,21 +221,11 @@ Function: count [lambda_13__scalarenv2]
     reuse tokens:         0
     copies:               1
 
-Function: addTraitImplementation [lambda_3__scalarenv3]
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          3
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
 Function: _start_main
   Operations
-    dup:                  1
-    drop:                 4
-    uniqueness checks:    1
+    dup:                  2
+    drop:                 14
+    uniqueness checks:    6
     allocations:          3
     reused allocations:   0
     reuse tokens:         0

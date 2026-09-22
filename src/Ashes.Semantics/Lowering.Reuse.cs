@@ -47,25 +47,6 @@ public sealed partial class Lowering
         return names;
     }
 
-    // The parameters of the lambda chain annotated with a copy-scalar type (an integer of any width,
-    // a float, a rune, a boolean): values with no heap identity, which nothing can alias.
-    private static HashSet<string> CollectCopyScalarAnnotatedParams(Expr.Lambda lam)
-    {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        Expr body = lam;
-        while (body is Expr.Lambda inner)
-        {
-            if (inner.ParamAnnotation is TypeExpr.Named { Name: "Int" or "Float" or "Rune" or "Bool" or "u8" or "u16" or "u32" or "u64" })
-            {
-                names.Add(inner.ParamName);
-            }
-
-            body = inner.Body;
-        }
-
-        return names;
-    }
-
     private static Expr GetInnermostBody(Expr.Lambda lam)
     {
         var body = lam.Body;

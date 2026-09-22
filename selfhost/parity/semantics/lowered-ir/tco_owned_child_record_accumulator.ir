@@ -205,7 +205,7 @@ function lambda_0  [SourceFunction from step]
     Return                Source=4   (tco_owned_child_record_accumulator.ash:11:1)
 
 function _start_main  [ProgramEntry]
-  locals=9 temps=22
+  locals=9 temps=25
     LoadConstInt          Target=0 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_owned_child_record_accumulator.ash:11:1)
     StoreLocal            Slot=0 Source=1   (tco_owned_child_record_accumulator.ash:11:1)
@@ -219,30 +219,33 @@ function _start_main  [ProgramEntry]
     AllocAdt              Target=7 Tag=0 FieldCount=2 Tagless=true   (tco_owned_child_record_accumulator.ash:16:27)
     SetAdtField           Ptr=7 FieldIndex=0 Source=5 Tagless=true   (tco_owned_child_record_accumulator.ash:16:27)
     SetAdtField           Ptr=7 FieldIndex=1 Source=6 Tagless=true   (tco_owned_child_record_accumulator.ash:16:27)
-    CallClosure           Target=8 ClosureTemp=4 ArgTemp=7   (tco_owned_child_record_accumulator.ash:16:13)
+    LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=16   (tco_owned_child_record_accumulator.ash:16:13)
+    LoadConstInt          Target=9 Value=63   (tco_owned_child_record_accumulator.ash:16:13)
+    ShrInt                Target=10 Left=8 Right=9   (tco_owned_child_record_accumulator.ash:16:13)
+    CallClosure           Target=11 ClosureTemp=4 ArgTemp=7   (tco_owned_child_record_accumulator.ash:16:13)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    StoreLocal            Slot=6 Source=8   (tco_owned_child_record_accumulator.ash:16:1)
-    LoadLocal             Target=9 Slot=6   (tco_owned_child_record_accumulator.ash:18:16)
-    GetAdtField           Target=10 Ptr=9 FieldIndex=0 Tagless=true   (tco_owned_child_record_accumulator.ash:18:16)
-    LoadConstStr          Target=11 StrLabel=str_1   (tco_owned_child_record_accumulator.ash:18:30)
-    ConcatStr             Target=12 Left=10 Right=11   (tco_owned_child_record_accumulator.ash:18:16)
-    LoadLocal             Target=13 Slot=6   (tco_owned_child_record_accumulator.ash:18:55)
-    GetAdtField           Target=14 Ptr=13 FieldIndex=1 Tagless=true   (tco_owned_child_record_accumulator.ash:18:55)
-    TextFromInt           Target=15 ValueTemp=14   (tco_owned_child_record_accumulator.ash:18:36)
-    ConcatStr             Target=16 Left=12 Right=15   (tco_owned_child_record_accumulator.ash:18:16)
-    PrintStr              Source=16   (tco_owned_child_record_accumulator.ash:18:1)
-    AllocAdt              Target=17 Tag=0 FieldCount=0   (tco_owned_child_record_accumulator.ash:18:1)
-    StoreLocal            Slot=7 Source=17   (tco_owned_child_record_accumulator.ash:16:1)
-    LoadLocal             Target=18 Slot=6   (tco_owned_child_record_accumulator.ash:16:1)
-    RcIsUnique            Target=19 SourceTemp=18
-    JumpIfFalse           CondTemp=19 Target=rc_drop_shared_15   (tco_owned_child_record_accumulator.ash:16:1)
-    GetAdtField           Target=20 Ptr=18 FieldIndex=0 Tagless=true   (tco_owned_child_record_accumulator.ash:16:1)
-    RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=6 Source=11   (tco_owned_child_record_accumulator.ash:16:1)
+    LoadLocal             Target=12 Slot=6   (tco_owned_child_record_accumulator.ash:18:16)
+    GetAdtField           Target=13 Ptr=12 FieldIndex=0 Tagless=true   (tco_owned_child_record_accumulator.ash:18:16)
+    LoadConstStr          Target=14 StrLabel=str_1   (tco_owned_child_record_accumulator.ash:18:30)
+    ConcatStr             Target=15 Left=13 Right=14   (tco_owned_child_record_accumulator.ash:18:16)
+    LoadLocal             Target=16 Slot=6   (tco_owned_child_record_accumulator.ash:18:55)
+    GetAdtField           Target=17 Ptr=16 FieldIndex=1 Tagless=true   (tco_owned_child_record_accumulator.ash:18:55)
+    TextFromInt           Target=18 ValueTemp=17   (tco_owned_child_record_accumulator.ash:18:36)
+    ConcatStr             Target=19 Left=15 Right=18   (tco_owned_child_record_accumulator.ash:18:16)
+    PrintStr              Source=19   (tco_owned_child_record_accumulator.ash:18:1)
+    AllocAdt              Target=20 Tag=0 FieldCount=0   (tco_owned_child_record_accumulator.ash:18:1)
+    StoreLocal            Slot=7 Source=20   (tco_owned_child_record_accumulator.ash:16:1)
+    LoadLocal             Target=21 Slot=6   (tco_owned_child_record_accumulator.ash:16:1)
+    RcIsUnique            Target=22 SourceTemp=21
+    JumpIfFalse           CondTemp=22 Target=rc_drop_shared_15   (tco_owned_child_record_accumulator.ash:16:1)
+    GetAdtField           Target=23 Ptr=21 FieldIndex=0 Tagless=true   (tco_owned_child_record_accumulator.ash:16:1)
+    RcDrop                SourceTemp=23 TypeName=String RuntimeManaged=true
   rc_drop_shared_15:
-    RcDrop                SourceTemp=18 TypeName=State RuntimeManaged=true
+    RcDrop                SourceTemp=21 TypeName=State RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=8
-    CopyOutArena          DestTemp=21 SrcTemp=17 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=24 SrcTemp=20 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=8
-    Return                Source=21
+    Return                Source=24
 
