@@ -448,6 +448,9 @@ type CoreProgramState =
     | letLambdaIdentities: MapTree(Str, Int)
     // The whole-program result-reach summaries of the program being lowered.
     | reachSummaries: List(ReachSummary)
+    // The heap-layout facts of every declared argument-free named type, by the type's name,
+    // recomputed whenever the constructor layouts change.
+    | heapLayoutFactsByType: MapTree(Str, HeapLayoutFacts)
     // Whether a named type is a single-constructor record with no call copy-out that the entry
     // normalization's copy re-establishes, by the type's text: asked at every call whose result
     // ownership is settled at run time, and answered once per type.
@@ -943,6 +946,14 @@ let stateGeneralRcOwnedResultLabels (state: CoreLoweringState) =
 let withStateGeneralRcOwnedResultLabels value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with generalRcOwnedResultLabels = value))
+
+let stateHeapLayoutFactsByType (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.heapLayoutFactsByType)
+
+let withStateHeapLayoutFactsByType value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with heapLayoutFactsByType = value))
 
 let stateNormalizableRecordTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1767,6 +1778,47 @@ let extendCoverageEnvironment (environment: TypeEnvironment) layouts =
     in
         environment with constructors = append(environment.constructors)(definitions), constructorFieldGroups = append(environment.constructorFieldGroups)(heapConstructorFieldGroups(definitions)))
 
+let recursive schemeResultType (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_parameter, result, _effects) -> schemeResultType(result)
+        | other -> other
+
+let recursive seenLayoutTypeName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest -> candidate == name || seenLayoutTypeName(name)(rest)
+
+// The declared named types that take no type arguments, once each: their layout does not depend on
+// an instantiation, so they are the ones worth classifying ahead of the questions.
+let recursive argumentFreeLayoutTypes (layouts: List(CoreConstructorLayout)) (seen: List(Str)) =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { scheme = TypeScheme { body = body } } :: rest ->
+            match schemeResultType(body) with
+                | SemNamed(_symbolId, name, []) as named ->
+                    if seenLayoutTypeName(name)(seen)
+                    then argumentFreeLayoutTypes(rest)(seen)
+                    else (name, named) :: argumentFreeLayoutTypes(rest)(name :: seen)
+                | _ -> argumentFreeLayoutTypes(rest)(seen)
+
+// The classifier walks a type's whole graph once per question it answers, and lowering asks it at
+// every call site, so the declared argument-free types are classified once whenever the layouts
+// change. A classification that still holds an unresolved type is left out: inference may yet close
+// it, and the live answer must be read then.
+let recursive heapLayoutFactsTableOf (types: List((Str, SemanticType))) (environment: TypeEnvironment) (table: MapTree(Str, HeapLayoutFacts)) =
+    match types with
+        | [] -> table
+        | (name, named) :: rest ->
+            match classifyHeapLayout(named)(environment) with
+                | HeapLayoutFacts { containsUnresolvedType = true } -> heapLayoutFactsTableOf(rest)(environment)(table)
+                | facts ->
+                    table
+                    |> Ashes.Collection.Map.setStr(name)(facts)
+                    |> heapLayoutFactsTableOf(rest)(environment)
+
+let heapLayoutFactsTableFor (layouts: List(CoreConstructorLayout)) (environment: TypeEnvironment) =
+    heapLayoutFactsTableOf(argumentFreeLayoutTypes(layouts)([]))(environment)(Ashes.Collection.Map.empty)
+
 let coverageEnvironmentOf layouts =
     extendCoverageEnvironment(emptyTypeEnvironment(Unit))(layouts)
 
@@ -1798,6 +1850,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         programState = CoreProgramState(
             constructorLayouts = constructorLayouts,
             coverageTypes = coverageEnvironmentOf(constructorLayouts),
+            heapLayoutFactsByType = constructorLayouts
+            |> coverageEnvironmentOf
+            |> heapLayoutFactsTableFor(constructorLayouts),
             dropperTypes = constructorLayouts
             |> constructorInferenceDefinitionsFromLayouts
             |> prepareDropperTypes,
@@ -3916,6 +3971,30 @@ let loweredValueOwnedTypeName lowered =
 
 let coverageEnvironment (state: CoreLoweringState) = stateCoverageTypes(state)
 
+// Recomputes the declared types' layout facts after a type declaration adds constructor layouts.
+let withRefreshedHeapLayoutFacts (state: CoreLoweringState) =
+    state |> withStateHeapLayoutFactsByType(state
+    |> stateCoverageTypes
+    |> heapLayoutFactsTableFor(stateConstructorLayouts(state)))
+
+let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> facts
+                    | None ->
+                        state
+                        |> coverageEnvironment
+                        |> classifyHeapLayout(resolved)
+            | _ ->
+                state
+                |> coverageEnvironment
+                |> classifyHeapLayout(resolved))
+
 let recursive lookupOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
     match plans with
         | [] -> None
@@ -4193,9 +4272,7 @@ let scopeCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
             then Some(ListScopeCopyOut)
             else None
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match state
-            |> coverageEnvironment
-            |> classifyHeapLayout(named) with
+            match heapFactsOf(named)(state) with
                 | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
                     state
                     |> shallowAdtCopySizeBytes(name)
@@ -4504,11 +4581,6 @@ and allInlineCopyLiterals (elements: List(Expr)) =
     match elements with
         | [] -> true
         | element :: rest -> isInlineCopyLiteral(element) && allInlineCopyLiterals(rest)
-
-let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
-    state
-    |> coverageEnvironment
-    |> classifyHeapLayout(resolveType(state)(semanticType))
 
 let recordAdtSupported (facts: HeapLayoutFacts) =
     match facts with
@@ -5715,9 +5787,7 @@ let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Str
                 else
                     match (state
                     |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name), state
-                    |> coverageEnvironment
-                    |> classifyHeapLayout(named)) with
+                    |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
                         | ([], _facts) -> false
                         | (_layouts, HeapLayoutFacts { containsResource = true }) -> false
                         | (_layouts, HeapLayoutFacts { containsUnresolvedType = true }) -> false
@@ -5751,9 +5821,7 @@ let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: Co
                 | Some(plans) -> Some(TupleArgumentCopy(plans))
                 | None -> None
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match state
-            |> coverageEnvironment
-            |> classifyHeapLayout(named) with
+            match heapFactsOf(named)(state) with
                 | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
                     state
                     |> shallowAdtCopySizeBytes(name)
@@ -8261,9 +8329,7 @@ let closeTmcChainLowered (label: Str) (lowered: LoweredCoreValue) =
                 | (closedState, closedTemp) -> LoweredCoreValue(state = closedState, temp = closedTemp, semanticType = bodyType, error = None)
 
 let tcoListElementSupported (element: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> coverageEnvironment
-    |> classifyHeapLayout(element) with
+    match heapFactsOf(element)(state) with
         | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
 
 // Stage 0's `IsRuntimeOwnedCopyTupleLayout`: a tuple every element of which a runtime-managed
@@ -11953,9 +12019,7 @@ let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: C
                 | _ -> consumed
 
 let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> coverageEnvironment
-    |> classifyHeapLayout(semanticType) with
+    match heapFactsOf(semanticType)(state) with
         | HeapLayoutFacts { ownedChildrenDroppable = droppable } -> droppable
 
 // Stage 0's `IsConcretelyRuntimeManageableResultType`: a result type runtime RC holds — a
@@ -12352,9 +12416,7 @@ let emitAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (s
 
 // A recursive-copy or owned-child ADT is released by its own constructor-switching dropper.
 let usesAdtDropper (named: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> coverageEnvironment
-    |> classifyHeapLayout(named) with
+    match heapFactsOf(named)(state) with
         | HeapLayoutFacts { runtimeOwnedChildAdtSupported = true } -> true
         | _ ->
             state
@@ -12376,8 +12438,7 @@ let recursive firstConstructorLayoutOf (typeName: Str) (layouts: List(CoreConstr
 
 let ownedLayoutChildren (constructorName: Maybe(Str)) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
-    |> coverageEnvironment
-    |> classifyHeapLayout(semanticType)
+    |> heapFactsOf(semanticType)
     |> ownedChildrenOf(constructorName)
 
 // Stage 0's `EmitRuntimeManagedChildDrop` family: a string-like leaf is released as one
@@ -23220,6 +23281,7 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                                             |> append(existingLayouts)
                                                             |> constructorInferenceDefinitionsFromLayouts
                                                             |> prepareDropperTypes)
+                                                            |> withRefreshedHeapLayoutFacts
                                                             |> Ok
 
 // The runtime capabilities the compiler provides itself; a user `capability` may not redeclare one.
