@@ -293,10 +293,15 @@ let shapeMerge (observed: Maybe(TcoArgumentShape)) (local: TcoArgumentShape) =
             else Some(TcoOtherShape)
 
 // A list built fresh in the argument itself: a list literal, or a cons chain ending in one.
+// Stage 0's `IsArenaSelfContainedListRebuildExpr`: a tail-call argument that rebuilds its list this
+// iteration. A call result counts, because a function's list result is copied out of the callee's
+// arena scope on return and so shares nothing with the previous iteration.
 let recursive shapeIsFreshList (expression: Expr) =
     match shapeUnspan(expression) with
         | ExprList(_elements, _isMultiline) -> true
+        | ExprCall(_function, _argument, _whitespace, _layout) -> true
         | ExprCons(_head, tail) -> shapeIsFreshList(tail)
+        | ExprLet(_name, _value, body, _quantified, _annotation, _constraints) -> shapeIsFreshList(body)
         | _ -> false
 
 let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
@@ -319,6 +324,11 @@ let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwn
                     then TcoFreshListShape
                     else TcoOtherShape
         | ExprList(_elements, _isMultiline) -> TcoFreshListShape
+        | ExprCall(_function, _argument, _whitespace, _layout) -> TcoFreshListShape
+        | ExprLet(_name, _value, body, _quantified, _annotation, _constraints) ->
+            if shapeIsFreshList(body)
+            then TcoFreshListShape
+            else TcoOtherShape
         | _ -> TcoOtherShape
 
 let recursive shapeObserveArguments (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) (observed: List(Maybe(TcoArgumentShape))) =
