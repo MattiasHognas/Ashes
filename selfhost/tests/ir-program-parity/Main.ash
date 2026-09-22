@@ -295,6 +295,10 @@ let fixtures =
         "fresh_argument_released_behind_unproven_result"
     ]
 
+// `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because
+// the self-hosted lowering emits none of the 152 lines stage 0 emits for a recursive binding group,
+// which waits on the recursive-binding lowering parity. It is named here so the run reports it
+// rather than leaving a gap no count mentions.
 // The fixtures whose stage-0 dump comes from a lowering that registers no trait declarations:
 // there, an operator records no trait requirement, so a recursive binding whose body applies
 // one is never lowered against its closed inferred type. The stage-0 compiler always stitches
@@ -342,7 +346,8 @@ let elaboratedFixtures =
         "tco_parameter_kept_by_borrowing_callee_result",
         "record_update_successor_of_loop_parameter",
         "tco_string_parameter_kept_by_callee_error_result",
-        "accumulate_and_reverse_producer"
+        "accumulate_and_reverse_producer",
+        "mutual_recursion"
     ]
 
 match Ashes.IO.args with

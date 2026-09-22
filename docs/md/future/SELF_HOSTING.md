@@ -96,6 +96,18 @@ flowchart TD
     F --> G[G. Split the oversized self-hosted source files]
     G --> H[H. Verify the language server and the debug adapter]
     H --> I[I. Continue with step 1 below]
+
+    subgraph gaps["The 13 fixtures the whole-program runner names rather than compares"]
+        P2["5: stage 1 admits a loop parameter once the body is lowered, where stage 0 admits it at the entry from the parameter type"]
+        P3["rc_child_of_call_argument_kept_by_callee_result: its own root, 656 lines stage 1 emits and stage 0 does not"]
+        P1["6: the oracle lowers with no trait declarations, so no operator records a requirement (OPT-70)"]
+        P4["mutual_recursion: none of the 152 lines stage 0 emits for a recursive binding group"]
+    end
+
+    P2 --> E
+    P3 --> E
+    P1 --> H
+    P4 --> S3["Waits on the recursive-binding lowering port"]
 ```
 
 **Landed so far.** A in #1114. B and C together in #1115 (arena reuse declines a reference-counted
