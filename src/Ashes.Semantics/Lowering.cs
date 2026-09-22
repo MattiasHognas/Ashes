@@ -7283,10 +7283,12 @@ public sealed partial class Lowering
 
         // A reference-counted result owns its children, so it keeps nothing of the parameter alive
         // unless the parameter itself went into it, which only a bare read of the parameter in a
-        // position other than a call argument can do.
+        // position other than a call argument can do. A bare read the function returns is the one
+        // exception: a reference-counted join with such an arm retained the parameter there (see
+        // NormalizeMixedJoinArms), so the release below hands that reference to the result.
         if (IsRuntimeManagedResultTemp(bodyTemp))
         {
-            if (!ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0))
+            if (!ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0, returned: true))
             {
                 return bodyTemp;
             }
@@ -7315,8 +7317,9 @@ public sealed partial class Lowering
 
     // Whether every use of the parameter in the body reads it without storing it: a field read,
     // the target of a record update or a match, or an argument of a call (a callee borrows it or
-    // takes its own reference). A closure mentioning it at all, and anything unrecognized, fails.
-    private static bool ParameterReadOnlyThroughFieldsOrCalls(Expr expression, string name, int depth)
+    // takes its own reference). With `returned`, a bare read in the position the body returns is
+    // allowed as well. A closure mentioning it at all, and anything unrecognized, fails.
+    private static bool ParameterReadOnlyThroughFieldsOrCalls(Expr expression, string name, int depth, bool returned = false)
     {
         if (depth > 256)
         {
@@ -7327,7 +7330,7 @@ public sealed partial class Lowering
         switch (expression)
         {
             case Expr.Var variable:
-                return !string.Equals(variable.Name, name, StringComparison.Ordinal);
+                return returned || !string.Equals(variable.Name, name, StringComparison.Ordinal);
             case Expr.QualifiedVar or Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit
                 or Expr.StrLit or Expr.RuneLit or Expr.BoolLit:
                 return true;
@@ -7342,16 +7345,16 @@ public sealed partial class Lowering
                     && update.Updates.All(field => ParameterReadOnlyThroughFieldsOrCalls(field.Value, name, next));
             case Expr.Let let:
                 return ParameterReadOnlyThroughFieldsOrCalls(let.Value, name, next)
-                    && (string.Equals(let.Name, name, StringComparison.Ordinal) || ParameterReadOnlyThroughFieldsOrCalls(let.Body, name, next));
+                    && (string.Equals(let.Name, name, StringComparison.Ordinal) || ParameterReadOnlyThroughFieldsOrCalls(let.Body, name, next, returned));
             case Expr.If conditional:
                 return ParameterReadOnlyThroughFieldsOrCalls(conditional.Cond, name, next)
-                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Then, name, next)
-                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Else, name, next);
+                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Then, name, next, returned)
+                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Else, name, next, returned);
             case Expr.Match match:
                 return (IsVariableNamed(match.Value, name) || ParameterReadOnlyThroughFieldsOrCalls(match.Value, name, next))
                     && match.Cases.All(matchCase => PatternBinds(matchCase.Pattern, name)
                         || ((matchCase.Guard is null || ParameterReadOnlyThroughFieldsOrCalls(matchCase.Guard, name, next))
-                            && ParameterReadOnlyThroughFieldsOrCalls(matchCase.Body, name, next)));
+                            && ParameterReadOnlyThroughFieldsOrCalls(matchCase.Body, name, next, returned)));
             case Expr.Lambda lambda:
                 return string.Equals(lambda.ParamName, name, StringComparison.Ordinal)
                     || !ExprMentionsName(lambda.Body, name, 0);
@@ -7646,13 +7649,12 @@ public sealed partial class Lowering
             return false;
         }
 
+        // The callee's own answer comes from the must-reach table, which already followed its
+        // calls to their fixpoint, a recursive or mutually recursive callee included.
         for (int index = 0; index < arguments.Count; index++)
         {
-            if (ResultAlwaysReachesVariable(arguments[index], variableName, callDepth)
-                && ResultAlwaysReachesVariable(
-                    callee.Body,
-                    callee.Params[index],
-                    callDepth + 1))
+            if (CalleeResultMustReachParameter(label, index)
+                && ResultAlwaysReachesVariable(arguments[index], variableName, callDepth))
             {
                 return true;
             }
@@ -10158,12 +10160,23 @@ public sealed partial class Lowering
             return;
         }
 
-        for (int i = 0; i < _inst.Count; i++)
+        BackfillClosureResultOwnership(_inst, label);
+        // A member of a recursive group is captured into its siblings' environments by a stage
+        // lowered before this body, so those closures are written back too.
+        foreach (IrFunction lowered in _funcs)
         {
-            if (_inst[i] is IrInst.MakeClosure { ReturnsRuntimeManaged: false } closure
+            BackfillClosureResultOwnership(lowered.Instructions, label);
+        }
+    }
+
+    private static void BackfillClosureResultOwnership(List<IrInst> instructions, string label)
+    {
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.MakeClosure { ReturnsRuntimeManaged: false } closure
                 && string.Equals(closure.FuncLabel, label, StringComparison.Ordinal))
             {
-                _inst[i] = closure with { ReturnsRuntimeManaged = true };
+                instructions[i] = closure with { ReturnsRuntimeManaged = true };
             }
         }
     }
@@ -12231,14 +12244,8 @@ public sealed partial class Lowering
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
             && runtimeManagedResultFlagTemp >= 0
             && callResultCopyKind is CopyOutKind.Shallow or CopyOutKind.List;
-        // A list copy-out with string or inner-list heads copies the heads too, so the copied
-        // result shares nothing with the consumed arguments' parts either: unconditionally when the
-        // call always copies out, or on the arena branch of a conditional copy-out.
-        bool resultCopyCopiesElements = !runtimeManagedResult
-            && !stableReuseResult
-            && !CanArenaReset(callResultType)
-            && callResultCopyKind == CopyOutKind.List
-            && callResultHeadCopy != IrInst.ListHeadCopyKind.Inline;
+        bool resultCopyCopiesElements = ResultCopyCopiesElements(
+            callResultType, callResultCopyKind, callResultHeadCopy, runtimeManagedResult, stableReuseResult);
         bool calleeCompiledResultVerifiedRuntimeManaged =
             CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count);
         (bool resultCopySeversArgumentReferences, int resultCopyFlagTemp) = ResolveHandedOverReleaseGuard(
@@ -12254,6 +12261,8 @@ public sealed partial class Lowering
         // An owned result of the general contract holds its own reference to every part it keeps.
         (resultCopySeversArgumentReferences, resultCopyFlagTemp) = DeepCopiedResultSevers(
             resultDeepCopied, generalRcResult ? -1 : runtimeManagedResultFlagTemp, resultCopySeversArgumentReferences, resultCopyFlagTemp);
+        (resultCopySeversArgumentReferences, resultCopyFlagTemp, int normalizedOwnedResultTemp) =
+            NormalizedOwnedResultSevers(currentTemp, resultCopySeversArgumentReferences, resultCopyFlagTemp);
         (currentTemp, runtimeManagedResult) = OwnResultBeforeArgumentRelease(currentTemp, callResultType, consumedRuntimeArguments, runtimeManagedResult, runtimeManagedResult || stableReuseResult || resultNormalized || resultDeepCopied || resultCopyCopiesElements || calleeCompiledResultVerifiedRuntimeManaged);
         // The consumed runtime arguments are released only once the result is normalized: an
         // arena-placed result (a generic callee's own cons cells, say) can still reference the
@@ -12269,7 +12278,8 @@ public sealed partial class Lowering
             resultCopyCopiesElements ? runtimeManagedResultFlagTemp : -1,
             resultCopyCopiesElements && runtimeManagedResultFlagTemp < 0,
             resultCopySeversArgumentReferences,
-            resultCopyFlagTemp);
+            resultCopyFlagTemp,
+            normalizedOwnedResultTemp);
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -12376,6 +12386,33 @@ public sealed partial class Lowering
     // The generic list deep copy rebuilds every element and its owned parts on the arena branch
     // of the result flag, so the copied result shares nothing with a handed-over argument either:
     // the reference handed to the callee is released where the copy ran.
+    // A list copy-out with string or inner-list heads copies the heads too, so the copied result
+    // shares nothing with the consumed arguments' parts either: unconditionally when the call
+    // always copies out, or on the arena branch of a conditional copy-out.
+    private bool ResultCopyCopiesElements(
+        TypeRef callResultType,
+        CopyOutKind callResultCopyKind,
+        IrInst.ListHeadCopyKind callResultHeadCopy,
+        bool runtimeManagedResult,
+        bool stableReuseResult)
+        => !runtimeManagedResult
+            && !stableReuseResult
+            && !CanArenaReset(callResultType)
+            && callResultCopyKind == CopyOutKind.List
+            && callResultHeadCopy != IrInst.ListHeadCopyKind.Inline;
+
+    // A result normalized into an owned value on both of its branches holds a handed-over argument
+    // only as itself, so it severs every other reference, and the release is guarded by the result.
+    private (bool Severs, int FlagTemp, int NormalizedOwnedResultTemp) NormalizedOwnedResultSevers(
+        int currentTemp,
+        bool severs,
+        int flagTemp)
+    {
+        bool normalizedOwned = currentTemp == _normalizedOwnedCallResultTemp;
+        _normalizedOwnedCallResultTemp = -1;
+        return normalizedOwned ? (true, -1, currentTemp) : (severs, flagTemp, -1);
+    }
+
     private static (bool Severs, int FlagTemp) DeepCopiedResultSevers(
         bool resultDeepCopied,
         int runtimeManagedResultFlagTemp,
@@ -12910,23 +12947,45 @@ public sealed partial class Lowering
             SubsumeCalleeRow(funType.Row, GetSpan(call));
         }
 
+        // A resolved (Shallow/List) result is adopted by its own returns bit regardless of
+        // AllowsOrdinaryRcPlacement, the same way EmitPerform's PlanPerformResultOwnership
+        // does for a handler arm's result (OPT-49a): adopting a value the callee already
+        // reports as freshly reference-counted needs no scope-based placement decision by
+        // this function, so it stays safe even when this function may execute under a live
+        // handler post (where ordinary, scope-tied placement is not). Excluding it here left
+        // the callee's genuinely reference-counted result copied at ArenaCallBoundary instead
+        // of adopted, leaking the original once nothing released it (OPT-50).
+        TypeRef resultType = Prune(funType.Ret);
+        bool needsResultOwnership = AllowsAsyncIndependentRcPlacement
+            && i == collectedArgs.Count - 1
+            && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, resultType, out _)
+            && ResultOwnershipReadAtRunTime(rootExpr, resultType);
         currentTemp = LowerAppliedClosureCall(
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
-            // A resolved (Shallow/List) result is adopted by its own returns bit regardless of
-            // AllowsOrdinaryRcPlacement, the same way EmitPerform's PlanPerformResultOwnership
-            // does for a handler arm's result (OPT-49a): adopting a value the callee already
-            // reports as freshly reference-counted needs no scope-based placement decision by
-            // this function, so it stays safe even when this function may execute under a live
-            // handler post (where ordinary, scope-tied placement is not). Excluding it here left
-            // the callee's genuinely reference-counted result copied at ArenaCallBoundary instead
-            // of adopted, leaking the original once nothing released it (OPT-50).
-            AllowsAsyncIndependentRcPlacement
-                && i == collectedArgs.Count - 1
-                && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
-                && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
+            needsResultOwnership,
             RequestsArenaResult(funType.Ret),
+            needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
     }
+
+    // The result types whose ownership a call reads from the callee's returns bit when the callee
+    // cannot be resolved statically: the ones with a fixed copy-out, and a record with none that
+    // the entry normalization's copy re-establishes. A loop's non-tail call to itself keeps the
+    // loop's own protocol for its result.
+    private bool ResultOwnershipReadAtRunTime(Expr rootExpr, TypeRef resultType)
+        => GetCallCopyOutKind(resultType, out _, out _) switch
+        {
+            CopyOutKind.Shallow or CopyOutKind.List => true,
+            CopyOutKind.None => IsNormalizableUncoveredRecord(resultType)
+                && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco)),
+            _ => false,
+        };
+
+    // A record with no fixed copy-out that the entry normalization's copy re-establishes.
+    private bool IsNormalizableUncoveredRecord(TypeRef resultType)
+        => resultType is TypeRef.TNamedType
+            && GetCallCopyOutKind(resultType, out _, out _) == CopyOutKind.None
+            && CanNormalizeIntoOwnedRuntimeValue(resultType);
 
     // A call whose result has no static layout here (a generic body applying a closure parameter,
     // or a result type inference has not resolved yet) cannot own a reference-counted result: it
@@ -13129,6 +13188,30 @@ public sealed partial class Lowering
             && argumentIndex < summary.Parameters.Count
             && summary.ResultCannotKeepParameterWhole(summary.Parameters[argumentIndex]);
 
+    // A non-variable argument temp that is a borrowed read of an owned binding (a byte view of
+    // it, a borrowed forward) is that binding's reference, not a fresh result: the binding's own
+    // release covers it, so it is neither transferred to the callee nor released after the call.
+    private bool IsFreshRuntimeArgument(Expr argument, int argumentTemp)
+        => argument is not Expr.Var
+            && IsRuntimeManagedResultTemp(argumentTemp)
+            && !IsBorrowedOwnershipTemp(argumentTemp);
+
+    // A fresh argument the callee may return as its result, handed to a callee not known to adopt
+    // it: with the result owned on every path, the caller keeps the reference and releases it
+    // after the call unless the result is that argument, instead of giving it up for good.
+    private bool KeptWholeUnderOwnedResult(
+        Expr rootExpr,
+        int argumentIndex,
+        int argumentTemp,
+        bool borrowsOnly,
+        bool freshRuntimeArgument,
+        bool resultNormalizedOwned)
+        => resultNormalizedOwned
+            && !borrowsOnly
+            && freshRuntimeArgument
+            && !IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex)
+            && CalleeResultMayKeepParameterWhole(rootExpr, argumentIndex, argumentTemp);
+
     // A fresh argument is released by the caller after the call unless it is transferred. An
     // entry-normalized callee adopts it through the ownership flag; for any other callee whose
     // result keeps the argument itself (a curry stage that stores it into the value it returns),
@@ -13166,6 +13249,7 @@ public sealed partial class Lowering
         int argumentIndex,
         bool needsResultOwnership,
         bool requestsArenaResult,
+        bool resultNormalizedOwned,
         int closureTemp,
         int argumentTemp,
         TypeRef argumentType,
@@ -13178,15 +13262,12 @@ public sealed partial class Lowering
         int originalArgumentTemp = argumentTemp;
         // A value of the general contract is always passed borrowed (see Lowering.GeneralRc).
         bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, argumentIndex) || (Environment.GetEnvironmentVariable("GRC_NO_BORROW") is null && IsGeneralRcValueType(argumentType));
-        // A non-variable argument temp that is a borrowed read of an owned binding (a byte view of
-        // it, a borrowed forward) is that binding's reference, not a fresh result: the binding's own
-        // release covers it, so it is neither transferred to the callee nor released after the call.
-        bool freshRuntimeArgument = argument is not Expr.Var
-            && IsRuntimeManagedResultTemp(originalArgumentTemp)
-            && !IsBorrowedOwnershipTemp(originalArgumentTemp);
+        bool freshRuntimeArgument = IsFreshRuntimeArgument(argument, originalArgumentTemp);
         bool calleeResultMayReachThisParameter = CalleeResultMayReachOrKeepPatternBinding(
             rootExpr, argumentIndex, originalArgumentTemp, argument, argumentType);
-        bool transfersFreshRuntimeArgument = TransfersFreshRuntimeArgument(
+        bool keptWholeUnderOwnedResult = KeptWholeUnderOwnedResult(
+            rootExpr, argumentIndex, originalArgumentTemp, borrowsOnly, freshRuntimeArgument, resultNormalizedOwned);
+        bool transfersFreshRuntimeArgument = !keptWholeUnderOwnedResult && TransfersFreshRuntimeArgument(
             rootExpr, argumentIndex, originalArgumentTemp, borrowsOnly, freshRuntimeArgument);
         argumentTemp = RetainBorrowedLoopArgumentForCalleeResult(
             rootExpr, argumentIndex, argument, argumentTemp, argumentType, borrowsOnly, freshRuntimeArgument, consumedRuntimeArguments);
@@ -13195,7 +13276,7 @@ public sealed partial class Lowering
             argumentType,
             closureTemp,
             borrowsOnly,
-            transfersFreshRuntimeArgument || HandsFreshArgumentOverUnderAdoption(rootExpr, argumentIndex, freshRuntimeArgument, transfersFreshRuntimeArgument),
+            transfersFreshRuntimeArgument || keptWholeUnderOwnedResult || HandsFreshArgumentOverUnderAdoption(rootExpr, argumentIndex, freshRuntimeArgument, transfersFreshRuntimeArgument),
             // A freshly-produced, one-off argument (not a named variable) has no second owner in the
             // caller to protect, so it never needs the forced retain below — ResultReach is a
             // conservative (may-alias) analysis that can say "may reach" for a parameter whose
@@ -13212,7 +13293,8 @@ public sealed partial class Lowering
             RegisterConsumedRuntimeArgument(
                 rootExpr, argumentIndex, originalArgumentTemp, argumentTemp, argumentType,
                 freshRuntimeArgument, transfersFreshRuntimeArgument, calleeResultMayReachThisParameter,
-                retainedForCalleeResult, retainedAdoptionFlagTemp, runtimeManagedArgumentFlagTemp, consumedRuntimeArguments);
+                retainedForCalleeResult, retainedAdoptionFlagTemp, runtimeManagedArgumentFlagTemp, consumedRuntimeArguments,
+                keptWholeUnderOwnedResult);
         }
 
         (AccessorArgumentRcStatus rcStatus, int pendingSlot) =
@@ -13250,7 +13332,8 @@ public sealed partial class Lowering
         bool retainedForCalleeResult,
         int retainedAdoptionFlagTemp,
         int runtimeManagedArgumentFlagTemp,
-        List<ConsumedRuntimeArgument> consumedRuntimeArguments)
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments,
+        bool keptWholeUnderOwnedResult = false)
     {
         if (freshRuntimeArgument && !transfersFreshRuntimeArgument)
         {
@@ -13263,7 +13346,8 @@ public sealed partial class Lowering
             // complete despite the poison is exempt: its result provably holds no more than this
             // argument's components, which is the ordinary consumed-argument release below.
             if (runtimeManagedArgumentFlagTemp >= 0
-                && HandsFreshArgumentOverUnderAdoption(rootExpr, argumentIndex, freshRuntimeArgument, transfersFreshRuntimeArgument))
+                && (keptWholeUnderOwnedResult
+                    || HandsFreshArgumentOverUnderAdoption(rootExpr, argumentIndex, freshRuntimeArgument, transfersFreshRuntimeArgument)))
             {
                 consumedRuntimeArguments.Add(
                     new ConsumedRuntimeArgument(
@@ -13802,7 +13886,8 @@ public sealed partial class Lowering
         int elementCopyingFlagTemp = -1,
         bool resultCopiedWithElements = false,
         bool resultCopySeversArgumentReferences = false,
-        int resultCopyFlagTemp = -1)
+        int resultCopyFlagTemp = -1,
+        int normalizedOwnedResultTemp = -1)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -13825,7 +13910,8 @@ public sealed partial class Lowering
                 {
                     EmitHandedOverArgumentRelease(
                         temp, valueType, argument.AdoptionFlagTemp,
-                        HandedOverArgumentResultFlag(resultType, valueType, resultCopyFlagTemp));
+                        HandedOverArgumentResultFlag(resultType, valueType, resultCopyFlagTemp),
+                        normalizedOwnedResultTemp);
                 }
                 else
                 {
@@ -13941,13 +14027,24 @@ public sealed partial class Lowering
     // flag reads true) consumed the reference itself, and on the owned branch of a conditional
     // copy-out (the result flag reads true) a result that may capture the argument keeps the
     // reference where it is.
-    private void EmitHandedOverArgumentRelease(int temp, TypeRef valueType, int adoptionFlagTemp, int resultCopyFlagTemp)
+    // `resultTemp`, when given, is a result owned on every path that can hold the argument only as
+    // itself: a callee that did not adopt the reference and did not return it left it with the caller.
+    private void EmitHandedOverArgumentRelease(int temp, TypeRef valueType, int adoptionFlagTemp, int resultCopyFlagTemp, int resultTemp = -1)
     {
         string notAdoptedLabel = NewLabel("rc_handed_over_not_adopted");
         string doneLabel = NewLabel("rc_handed_over_done");
         Emit(new IrInst.JumpIfFalse(adoptionFlagTemp, notAdoptedLabel));
         Emit(new IrInst.Jump(doneLabel));
         Emit(new IrInst.Label(notAdoptedLabel));
+        if (resultTemp >= 0)
+        {
+            string releaseLabel = NewLabel("rc_handed_over_not_result");
+            int isResultTemp = NewTemp();
+            Emit(new IrInst.CmpIntEq(isResultTemp, resultTemp, temp));
+            Emit(new IrInst.JumpIfFalse(isResultTemp, releaseLabel));
+            Emit(new IrInst.Jump(doneLabel));
+            Emit(new IrInst.Label(releaseLabel));
+        }
         if (resultCopyFlagTemp >= 0)
         {
             string copiedLabel = NewLabel("rc_handed_over_copied");
@@ -14125,6 +14222,20 @@ public sealed partial class Lowering
     {
         resultNormalized = false;
         resultDeepCopied = false;
+        if (runtimeManagedResultFlagTemp >= 0
+            && Prune(callResultType) is TypeRef.TNamedType
+            && CanNormalizeIntoOwnedRuntimeValue(callResultType))
+        {
+            resultNormalized = true;
+            return LowerCallConditionalNormalizeResult(
+                callWmCursorSlot,
+                callWmEndSlot,
+                callPreRestoreEndSlot,
+                currentTemp,
+                callResultType,
+                runtimeManagedResultFlagTemp);
+        }
+
         if (calleeResultElementIsGeneric
             && Prune(callResultType) is TypeRef.TList deepCopyResultList
             && !CanArenaReset(Prune(deepCopyResultList.Element))
@@ -14257,6 +14368,45 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return resultTemp;
     }
+
+    // A record result with no fixed copy-out (a record holding a list of records) from a callee
+    // whose result ownership is settled only at run time: a callee still being lowered, or one
+    // reached through a closure. The callee's returns bit decides: a reference-counted result is
+    // taken over as it is, an arena one is copied into an owned reference-counted graph, so the
+    // result is owned on both paths and no consumer retains a reference the callee already gave up.
+    private int LowerCallConditionalNormalizeResult(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        TypeRef callResultType,
+        int runtimeManagedResultFlagTemp)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+
+        string copyLabel = NewLabel("call_normalize_arena_result");
+        string ownedLabel = NewLabel("call_owned_result");
+        Emit(new IrInst.JumpIfFalse(runtimeManagedResultFlagTemp, copyLabel));
+        Emit(new IrInst.Jump(ownedLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = EmitRuntimeManagedTcoParamCopyByCopy(currentTemp, Prune(callResultType));
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(ownedLabel));
+        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        MarkRuntimeManagedTemp(resultTemp);
+        _normalizedOwnedCallResultTemp = resultTemp;
+        return resultTemp;
+    }
+
+    // The temp the last conditional normalization produced (temps are numbered per function, so
+    // only the current one is kept): a result owned on both of its branches, which holds a
+    // handed-over argument only as itself.
+    private int _normalizedOwnedCallResultTemp = -1;
 
     // Normalizes an arena-placed call result into an independently owned reference-counted graph,
     // copying list heads according to the resolved head kind.

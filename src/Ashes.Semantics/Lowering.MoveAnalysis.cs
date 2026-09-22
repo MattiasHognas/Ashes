@@ -200,6 +200,9 @@ public sealed partial class Lowering
 
     private static readonly IReadOnlySet<string> EmptyWholeRoots = new HashSet<string>(StringComparer.Ordinal);
 
+    // The parameters each registered function annotates with a copy-scalar type: a value with no
+    // heap identity, which the function's result cannot alias.
+    private readonly Dictionary<FuncKey, HashSet<string>> _maScalarParams = new();
     private readonly Dictionary<FuncKey, ResultReachState> _maResultReach = new();
     private readonly Dictionary<FuncKey, HashSet<FuncKey>> _maResultReachDependents = new();
     private FuncKey? _maCurrentResultReachFunction;
@@ -290,6 +293,8 @@ public sealed partial class Lowering
         _maAmbiguous.Clear();
         ClearOwnershipMemoization();
         _maResultReach.Clear();
+        _maScalarParams.Clear();
+        _maResultMustReach.Clear();
         _maNestedRecursive.Clear();
         _ownershipSummaries.Clear();
         _maExpressionFreshnessAll.Clear();
@@ -321,6 +326,7 @@ public sealed partial class Lowering
             CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal)));
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.handlers", ComputeLiveHandlerEffects);
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.reach", ComputeResultReach);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.must-reach", ComputeResultMustReach);
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.provenance", ComputeFunctionResultProvenanceFixpoint);
         _maAnalyzed = true;
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.inspect-only", ComputeOpenWorldInspectOnlyParams);
@@ -451,6 +457,7 @@ public sealed partial class Lowering
         string name = $"$applied@{span.Start}";
         _maFunctionOrigins[key] = CreateSourceFunctionOrigin(name, span, enclosingSource);
         _maFuncs[key] = (CollectLambdaParams(lambda), GetInnermostBody(lambda));
+        _maScalarParams[key] = CollectCopyScalarAnnotatedParams(lambda);
         _maKeyName[key] = name;
         _maAppliedLambdaKeys[lambda] = key;
     }
@@ -589,6 +596,8 @@ public sealed partial class Lowering
             {
                 _maFuncs[key] = (CollectLambdaParams(lam), GetInnermostBody(lam));
             }
+
+            _maScalarParams[key] = CollectCopyScalarAnnotatedParams(lam);
 
             if (!duplicate)
             {
@@ -3479,12 +3488,15 @@ public sealed partial class Lowering
         FuncKey function,
         (List<string> Params, Expr Body) info)
     {
+        IReadOnlySet<string> scalarParameters = _maScalarParams.GetValueOrDefault(function) ?? EmptyWholeRoots;
         var env = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
         foreach (string parameter in info.Params)
         {
-            env[parameter] = new ResultReachState(
-                new Dictionary<string, int>(StringComparer.Ordinal) { [parameter] = 1 },
-                ResultReachCause.None);
+            env[parameter] = scalarParameters.Contains(parameter)
+                ? ReachBottom()
+                : new ResultReachState(
+                    new Dictionary<string, int>(StringComparer.Ordinal) { [parameter] = 1 },
+                    ResultReachCause.None);
         }
 
         _maReachToken = 0;
