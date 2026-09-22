@@ -12983,7 +12983,7 @@ public sealed partial class Lowering
 
     // A record with no fixed copy-out that the entry normalization's copy re-establishes.
     private bool IsNormalizableUncoveredRecord(TypeRef resultType)
-        => resultType is TypeRef.TNamedType
+        => resultType is TypeRef.TNamedType { Symbol.Constructors.Count: 1 }
             && GetCallCopyOutKind(resultType, out _, out _) == CopyOutKind.None
             && CanNormalizeIntoOwnedRuntimeValue(resultType);
 
