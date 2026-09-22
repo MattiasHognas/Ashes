@@ -19,6 +19,7 @@ export (
     type CoreLlvmTypes(..),
     value coreLlvmTypes,
     value lookupIndexed,
+    value findIndexed,
     value lookupIndexedAll,
     value emitStringParts,
     value emitWriteStrBytesToFd,
@@ -107,6 +108,14 @@ let recursive lookupIndexedIn key env full =
             else lookupIndexedIn(key)(rest)(full)
 
 let lookupIndexed key env = lookupIndexedIn(key)(env)(env)
+
+let recursive findIndexed key env =
+    match env with
+        | [] -> None
+        | (boundKey, value) :: rest ->
+            if boundKey == key
+            then Some(value)
+            else findIndexed(key)(rest)
 
 // Every key's value, in the keys' own order: an instruction carrying a list of operand temps
 // resolves them all at once.

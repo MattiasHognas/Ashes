@@ -86,6 +86,7 @@ under `tests/`.
 | Script | What it does |
 |---|---|
 | `plateau.sh <template.ash> <rounds>...` | Compiles the template at each round count with this checkout's compiler and runs it under a memory cap: exit status, output, time, peak memory. `TOGGLE=NAME=1` compiles under one switch. |
+| `progcensus2.sh <template.ash> <rounds> [chunks]` | The exit census of a template compiled by this checkout's compiler: the reference-counted region dumped at the process's exit, its cells by size and first word, and the unreferenced ones. With `rcgraph2` and `rcpeek` on the dump it names what a reproducer leaves behind per round before any IR is read. |
 | `plateauall.sh <small> <large> <template.ash>...` | `plateau.sh` for several templates at two round counts, plain and with `ASHES_RC_POISON=1`. |
 | `plateauswitches.sh <template.ash> <rounds> <SWITCH>...` | The template with no switch and under each given switch, plain and poisoned: the rule a wrong result depends on. |
 | `plateautoggles.sh <template.ash> <rounds>` | The same over every `GRC_NO_*` switch of the ownership contract. |

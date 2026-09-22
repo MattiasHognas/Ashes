@@ -290,6 +290,7 @@ public sealed partial class Lowering
         _maAmbiguous.Clear();
         ClearOwnershipMemoization();
         _maResultReach.Clear();
+        _maResultMustReach.Clear();
         _maNestedRecursive.Clear();
         _ownershipSummaries.Clear();
         _maExpressionFreshnessAll.Clear();
@@ -321,6 +322,7 @@ public sealed partial class Lowering
             CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal)));
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.handlers", ComputeLiveHandlerEffects);
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.reach", ComputeResultReach);
+        Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.must-reach", ComputeResultMustReach);
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.provenance", ComputeFunctionResultProvenanceFixpoint);
         _maAnalyzed = true;
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.move-analysis.inspect-only", ComputeOpenWorldInspectOnlyParams);

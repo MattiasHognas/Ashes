@@ -301,9 +301,35 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    of all the garbage in the probe. Each version is a record update built in the arena, copied onto
    the reference-counted heap at a call boundary, and never released: the state-threading copy tax
    and the leak are one mechanism. Arena memory, by contrast, holds almost none of the heap, so
-   "arena records keep reference-counted roots alive" is not where the memory is. The next round
-   reduces the `PatternWalk` shape (a function returning its parameter or an update of it, threaded
-   through a recursive walk) the way the earlier rounds reduced theirs, now with a number to move.
+   "arena records keep reference-counted roots alive" is not where the memory is.
+   The `PatternWalk` shape was then reduced to a program of forty lines (a record state threaded
+   through a mutually recursive walk, one walker returning its parameter whole in one arm) that
+   leaked 1.2 KB per round, and its exit census (`progcensus2.sh`) named four defects in stage 0
+   that were one leak. A record result from a callee whose result ownership is settled only at run
+   time (a sibling in the group, a closure parameter) was taken for an arena value and retained
+   again by the join it flowed into; such a result now reads the callee's returns bit like a result
+   with a fixed copy-out does, kept as it is when reference-counted and copied into an owned graph
+   otherwise. A fresh argument was given up to a callee whose result may return it whole even when
+   that callee does not adopt it; it is now handed over under the adoption bit and released after
+   the call unless the callee adopted it or returned it as the result, a pointer comparison. The
+   proof that a result always reaches a parameter recursed into callees with a depth bound and no
+   cycle, so a mutually recursive walker never owned its state; it is now a greatest fixpoint over
+   every registered function, the dual of the may-reach summary. And a function owning its entry
+   parameter refused to release it behind a join that returned the parameter bare, though the join
+   had retained it. Stage 1 mirrors the four rules, and end-to-end tests pin the reproducers.
+   The run-time read had to be narrowed twice before it was sound. It covers single-constructor
+   records only, and only a callee the contract already commits to an owned return
+   (`CalleeReturnsGeneralRcOwned`): a callee that returns a reference-counted value it does not own,
+   the borrowed head of a list it goes on to drop, was taken over and released, and the second call
+   through that path popped a corrupted free list — the self-hosted frontend suite crashed on
+   `tokenize("\"abc")`, reduced to `reproducers/borrowed_list_head_returned_through_helper.ash`.
+   Narrowed that far the rule leaves `recursive_group_threads_record_state` at 700 MB per million
+   rounds against 1220 MB on `main`, and the other reproducers unchanged: the two that still leak
+   are exactly the shape the owned-return guard excludes, so the callee side of the contract is the
+   next round. That reproducer also segfaults under `ASHES_RC_POISON=1` when compiled by `main`,
+   a separate and older defect. Found on the way: stage 1 has taken seven
+   times longer on the probe since the third port (230 seconds against 32), an uncached walk of the
+   heap layout at every admissibility question, to be cached next.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
