@@ -10018,7 +10018,11 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
 
 // A parameter whose self-call shape, copy-ADT layout, or affine analysis could place it on the
 // reference-counted heap: the candidates whose active flag the loop allocates.
-let listActiveSlotCandidate (ordinal: Int) (runtimeManagedOrdinals: List(Int)) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(runtimeManagedOrdinals)
+// Stage 0 counts a list the loop rebuilds fresh at its self call as ownership-shape eligible
+// (`EvaluateTcoListRcEligibility`, `facts.FreshRebuiltList`), so such a parameter gets its active
+// flag at the loop entry like a grown or consumed one, and its placement follows from its type
+// rather than waiting for the body.
+let listActiveSlotCandidate (ordinal: Int) (runtimeManagedOrdinals: List(Int)) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(runtimeManagedOrdinals)
 
 // Stage 0 places a loop parameter on the reference-counted heap only once its type has a
 // resolved layout (`ResolvedLayoutEligible`), so a parameter whose type is still a variable at
@@ -10475,7 +10479,7 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
 let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopShapeAtOrdinal(ordinal)(loop.argumentShapes) with
-        | Some(shape) -> isTcoListShape(shape) || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+        | Some(shape) -> isTcoListShape(shape) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
         | None -> false
 
 // A non-resource ADT whose whole cell has no shallow copy but whose arena deep copy is
