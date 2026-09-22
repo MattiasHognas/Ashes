@@ -17,6 +17,7 @@ import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreBuiltinLowering.freshRcBuiltinCall
 import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.ResultReach.patternBindsName
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
@@ -538,6 +539,8 @@ type ReachRegistry =
 type ReachSummary =
     | function: ReachFunction
     | reach: ResultReachState
+    // The parameters the result reaches on every returning path (stage 0's must-reach table).
+    | mustReach: List(Str)
 
 let recursive stripSpans (expr: Expr) =
     match expr with
@@ -1814,15 +1817,124 @@ let recursive initialTableInto (functions: List(ReachFunction)) (table: ReachTab
 
 let initialTable (functions: List(ReachFunction)) = initialTableInto(functions)(Ashes.Collection.Map.empty)
 
-let summaryOf (table: ReachTable) (function: ReachFunction) = ReachSummary(function = function, reach = lookupTable(function.key)(table))
+// Stage 0's must-reach table: for every registered function, the parameters its result reaches
+// on every path that returns, returned as they are, stored into the value built, or handed to a
+// callee whose own result reaches the matching parameter the same way. The dual of the may-reach
+// summary, computed as a greatest fixpoint: every parameter is assumed reached until some
+// returning path is found that reaches it through nothing, so a recursive or mutually recursive
+// call keeps the property it would have had the callee been written in place.
+let recursive mustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (expr: Expr) =
+    match expr with
+        | ExprAt(_span, inner) -> mustReach(registry)(table)(scope)(name)(inner)
+        | ExprVar(candidate) -> candidate == name
+        | ExprLambda(parameter, body, _annotation) -> parameter != name && mustReach(registry)(table)(scope)(name)(body)
+        | ExprLet(bound, _value, body, _parameters, _annotation, _requirements) ->
+            bound != name && mustReach(registry)(table)(removeScopeName(bound)(scope))(name)(body)
+        | ExprIf(_condition, thenBranch, elseBranch) -> mustReach(registry)(table)(scope)(name)(thenBranch) && mustReach(registry)(table)(scope)(name)(elseBranch)
+        | ExprMatch(_scrutinee, [], _defaultArm) -> false
+        | ExprMatch(_scrutinee, arms, _defaultArm) -> everyArmMustReach(registry)(table)(scope)(name)(arms)
+        | ExprRecord(_constructorName, fields, _multiline) -> anyFieldMustReach(registry)(table)(scope)(name)(fields)
+        | ExprRecordUpdate(target, updates) -> mustReach(registry)(table)(scope)(name)(target) || anyFieldMustReach(registry)(table)(scope)(name)(updates)
+        | ExprTuple(elements) -> anyMustReach(registry)(table)(scope)(name)(elements)
+        | ExprList(elements, _multiline) -> anyMustReach(registry)(table)(scope)(name)(elements)
+        | ExprCons(head, tail) -> mustReach(registry)(table)(scope)(name)(head) || mustReach(registry)(table)(scope)(name)(tail)
+        | ExprCall(_function, _argument, _isSugar, _layout) ->
+            []
+            |> callSpineOf(expr)
+            |> callMustReach(registry)(table)(scope)(name)
+        | _ -> false
+and anyMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (exprs: List(Expr)) =
+    match exprs with
+        | [] -> false
+        | expr :: rest -> mustReach(registry)(table)(scope)(name)(expr) || anyMustReach(registry)(table)(scope)(name)(rest)
+and anyFieldMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> false
+        | (_field, value) :: rest -> mustReach(registry)(table)(scope)(name)(value) || anyFieldMustReach(registry)(table)(scope)(name)(rest)
+and everyArmMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (arms: List((Pattern, Expr, Maybe(Expr)))) =
+    match arms with
+        | [] -> true
+        | (pattern, body, _guard) :: rest -> !patternBindsName(pattern)(name) && mustReach(registry)(table)(scope)(name)(body) && everyArmMustReach(registry)(table)(scope)(name)(rest)
+and callMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (spine: (Expr, List(Expr))) =
+    match spine with
+        | (ExprVar(callee), arguments) ->
+            match lookupConstructor(callee)(registry.constructors) with
+                | Some(_constructor) -> anyMustReach(registry)(table)(scope)(name)(arguments)
+                | None ->
+                    match lookupScope(callee)(scope) with
+                        | Some(key) ->
+                            match (Ashes.Collection.Map.getStr(key)(registry.byKey), Ashes.Collection.Map.getStr(key)(table)) with
+                                | (Some(ReachFunction { parameters = parameters }), Some(reached)) -> length(parameters) == length(arguments) && anyArgumentMustReach(registry)(table)(scope)(name)(arguments)(parameters)(reached)
+                                | _ -> false
+                        | None -> false
+        | _ -> false
+and anyArgumentMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (arguments: List(Expr)) (parameters: List(Str)) (reached: List(Str)) =
+    match (arguments, parameters) with
+        | (argument :: argumentRest, parameter :: parameterRest) -> containsMustReached(parameter)(reached) && mustReach(registry)(table)(scope)(name)(argument) || anyArgumentMustReach(registry)(table)(scope)(name)(argumentRest)(parameterRest)(reached)
+        | _ -> false
+and containsMustReached (parameter: Str) (reached: List(Str)) =
+    match reached with
+        | [] -> false
+        | candidate :: rest -> candidate == parameter || containsMustReached(parameter)(rest)
+
+let recursive mustReachedParameters (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (function: ReachFunction) (parameters: List(Str)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest ->
+            if mustReach(registry)(table)(function.scope)(parameter)(function.body)
+            then parameter :: mustReachedParameters(registry)(table)(function)(rest)
+            else mustReachedParameters(registry)(table)(function)(rest)
+
+// One sweep over every function, narrowing each entry; answers the table and whether any entry shrank.
+let recursive mustReachSweep (registry: ReachRegistry) (functions: List(ReachFunction)) (table: MapTree(Str, List(Str))) (changed: Bool) =
+    match functions with
+        | [] -> (table, changed)
+        | (ReachFunction { key = key } as function) :: rest ->
+            match Ashes.Collection.Map.getStr(key)(table) with
+                | None -> mustReachSweep(registry)(rest)(table)(changed)
+                | Some(reached) ->
+                    let narrowed = mustReachedParameters(registry)(table)(function)(reached)
+                    in
+                        if length(narrowed) == length(reached)
+                        then mustReachSweep(registry)(rest)(table)(changed)
+                        else
+                            mustReachSweep(registry)(rest)(Ashes.Collection.Map.setStr(key)(narrowed)(table))(true)
+
+let recursive mustReachUntilStable (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (fuel: Int) =
+    match mustReachSweep(registry)(registry.functions)(table)(false) with
+        | (narrowed, true) ->
+            if fuel > 0
+            then mustReachUntilStable(registry)(narrowed)(fuel - 1)
+            else narrowed
+        | (stable, false) -> stable
+
+let recursive initialMustReachTable (functions: List(ReachFunction)) (table: MapTree(Str, List(Str))) =
+    match functions with
+        | [] -> table
+        | ReachFunction { key = key, parameters = parameters } :: rest ->
+            table
+            |> Ashes.Collection.Map.setStr(key)(parameters)
+            |> initialMustReachTable(rest)
+
+let computeMustReachTable (registry: ReachRegistry) =
+    mustReachUntilStable(registry)(initialMustReachTable(registry.functions)(Ashes.Collection.Map.empty))(256)
+
+let summaryOf (table: ReachTable) (mustTable: MapTree(Str, List(Str))) (function: ReachFunction) =
+    ReachSummary(
+        function = function,
+        reach = lookupTable(function.key)(table),
+        mustReach = match Ashes.Collection.Map.getStr(function.key)(mustTable) with
+            | Some(reached) -> reached
+            | None -> []
+    )
 
 // The least fixpoint over every registered function: each starts at bottom, and every sweep
 // recomputes each body under the summaries so far, joining the growth in, until a sweep changes
 // nothing.
 let computeReachSummaries (registry: ReachRegistry) =
-    map(256
-    |> sweepUntilStable(registry)(initialTable(registry.functions))
-    |> summaryOf)(registry.functions)
+    map(registry
+    |> computeMustReachTable
+    |> summaryOf(sweepUntilStable(registry)(initialTable(registry.functions))(256)))(registry.functions)
 
 let programReachSummaries (program: ProgramSyntax) =
     program

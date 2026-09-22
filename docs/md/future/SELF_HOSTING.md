@@ -301,9 +301,29 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    of all the garbage in the probe. Each version is a record update built in the arena, copied onto
    the reference-counted heap at a call boundary, and never released: the state-threading copy tax
    and the leak are one mechanism. Arena memory, by contrast, holds almost none of the heap, so
-   "arena records keep reference-counted roots alive" is not where the memory is. The next round
-   reduces the `PatternWalk` shape (a function returning its parameter or an update of it, threaded
-   through a recursive walk) the way the earlier rounds reduced theirs, now with a number to move.
+   "arena records keep reference-counted roots alive" is not where the memory is.
+   The `PatternWalk` shape was then reduced to a program of forty lines (a record state threaded
+   through a mutually recursive walk, one walker returning its parameter whole in one arm) that
+   leaked 1.2 KB per round, and its exit census (`progcensus2.sh`) named four defects in stage 0
+   that were one leak. A record result from a callee whose result ownership is settled only at run
+   time (a sibling in the group, a closure parameter) was taken for an arena value and retained
+   again by the join it flowed into; such a result now reads the callee's returns bit like a result
+   with a fixed copy-out does, kept as it is when reference-counted and copied into an owned graph
+   otherwise. A fresh argument was given up to a callee whose result may return it whole even when
+   that callee does not adopt it; it is now handed over under the adoption bit and released after
+   the call unless the callee adopted it or returned it as the result, a pointer comparison. The
+   proof that a result always reaches a parameter recursed into callees with a depth bound and no
+   cycle, so a mutually recursive walker never owned its state; it is now a greatest fixpoint over
+   every registered function, the dual of the may-reach summary. And a function owning its entry
+   parameter refused to release it behind a join that returned the parameter bare, though the join
+   had retained it. The five reproducers are flat, and end-to-end tests pin them. Stage 1 mirrors
+   the four rules; on its own compilation of the probe the leak at 28 seconds falls from 1001 MB to
+   905 MB and the peak from 3250 MB to 2747 MB, less than stage 0 gains, because a recursive group's
+   members are lowered once by stage 1 with their result types still open, where stage 0 lowers
+   them against resolved types, which leaves the join of a sibling call unnormalized. That group
+   gap, on the older parity list, is the next round. Found on the way: stage 1 has taken seven
+   times longer on the probe since the third port (230 seconds against 32), an uncached walk of the
+   heap layout at every admissibility question, to be cached next.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable

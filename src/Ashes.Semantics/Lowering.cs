@@ -10161,11 +10161,17 @@ public sealed partial class Lowering
         }
 
         BackfillClosureResultOwnership(_inst, label);
-        // A member of a recursive group is captured into its siblings' environments by a stage
-        // lowered before this body, so those closures are written back too.
-        foreach (IrFunction lowered in _funcs)
+        // A member of a recursive group is captured into its siblings' environments by their own
+        // outermost stages, lowered before this body, so the closures in those are written back too.
+        if (label.StartsWith("recgroup_", StringComparison.Ordinal))
         {
-            BackfillClosureResultOwnership(lowered.Instructions, label);
+            foreach (IrFunction lowered in _funcs)
+            {
+                if (lowered.Label.StartsWith("recgroup_", StringComparison.Ordinal))
+                {
+                    BackfillClosureResultOwnership(lowered.Instructions, label);
+                }
+            }
         }
     }
 
