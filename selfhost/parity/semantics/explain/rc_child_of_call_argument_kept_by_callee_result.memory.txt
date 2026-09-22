@@ -74,6 +74,10 @@ Function: buildEnv
     dup:                  2
     drop:                 30
     uniqueness checks:    15
+  perceus [lambda_13__scalarenv0]
+    dup:                  2
+    drop:                 30
+    uniqueness checks:    15
   representation [lambda_13]
     conservative unknown: 14
     region:               3
@@ -93,7 +97,7 @@ Function: churn
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_16__scalarenv0]
+  perceus [lambda_16__scalarenv1]
     dup:                  1
     drop:                 6
     uniqueness checks:    2
@@ -119,7 +123,7 @@ Function: count
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_18__scalarenv1]
+  perceus [lambda_18__scalarenv2]
     dup:                  2
     drop:                 9
     uniqueness checks:    3

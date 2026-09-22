@@ -49,7 +49,7 @@ function lambda_0  [SourceFunction from label]
     Return                Source=12   (lambda_returns_record.ash:5:1)
 
 function _start_main  [ProgramEntry]
-  locals=19 temps=27
+  locals=19 temps=24
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (lambda_returns_record.ash:5:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (lambda_returns_record.ash:5:1)
@@ -59,57 +59,54 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=2 Slot=2   (lambda_returns_record.ash:7:12)
     Borrow                Target=3 SourceTemp=2
     LoadConstInt          Target=4 Value=7   (lambda_returns_record.ash:7:18)
-    LoadMemOffset         Target=5 BasePtr=3 OffsetBytes=16   (lambda_returns_record.ash:7:12)
-    LoadConstInt          Target=6 Value=63   (lambda_returns_record.ash:7:12)
-    ShrInt                Target=7 Left=5 Right=6   (lambda_returns_record.ash:7:12)
-    CallClosure           Target=8 ClosureTemp=3 ArgTemp=4   (lambda_returns_record.ash:7:12)
+    CallClosure           Target=5 ClosureTemp=3 ArgTemp=4   (lambda_returns_record.ash:7:12)
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=7
-    StoreLocal            Slot=8 Source=8   (lambda_returns_record.ash:7:1)
-    LoadLocal             Target=9 Slot=8   (lambda_returns_record.ash:9:7)
-    Borrow                Target=10 SourceTemp=9
+    StoreLocal            Slot=8 Source=5   (lambda_returns_record.ash:7:1)
+    LoadLocal             Target=6 Slot=8   (lambda_returns_record.ash:9:7)
+    Borrow                Target=7 SourceTemp=6
     SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
-    LoadConstInt          Target=11 Value=0   (lambda_returns_record.ash:9:1)
-    CmpIntNe              Target=12 Left=10 Right=11   (lambda_returns_record.ash:9:1)
-    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_5   (lambda_returns_record.ash:9:1)
-    GetAdtField           Target=13 Ptr=10 FieldIndex=0 Tagless=true   (lambda_returns_record.ash:9:1)
-    StoreLocal            Slot=12 Source=13   (lambda_returns_record.ash:9:1)
-    LoadLocal             Target=14 Slot=12   (lambda_returns_record.ash:10:47)
-    Borrow                Target=15 SourceTemp=14
-    PrintStr              Source=15   (lambda_returns_record.ash:10:32)
-    RcDrop                SourceTemp=13 TypeName=String OwnerSlot=12
-    AllocAdt              Target=16 Tag=0 FieldCount=0   (lambda_returns_record.ash:10:32)
-    StoreLocal            Slot=9 Source=16   (lambda_returns_record.ash:9:1)
+    LoadConstInt          Target=8 Value=0   (lambda_returns_record.ash:9:1)
+    CmpIntNe              Target=9 Left=7 Right=8   (lambda_returns_record.ash:9:1)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_5   (lambda_returns_record.ash:9:1)
+    GetAdtField           Target=10 Ptr=7 FieldIndex=0 Tagless=true   (lambda_returns_record.ash:9:1)
+    StoreLocal            Slot=12 Source=10   (lambda_returns_record.ash:9:1)
+    LoadLocal             Target=11 Slot=12   (lambda_returns_record.ash:10:47)
+    Borrow                Target=12 SourceTemp=11
+    PrintStr              Source=12   (lambda_returns_record.ash:10:32)
+    RcDrop                SourceTemp=10 TypeName=String OwnerSlot=12
+    AllocAdt              Target=13 Tag=0 FieldCount=0   (lambda_returns_record.ash:10:32)
+    StoreLocal            Slot=9 Source=13   (lambda_returns_record.ash:9:1)
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
-    CopyOutArena          DestTemp=18 SrcTemp=16 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=15 SrcTemp=13 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
-    StoreLocal            Slot=9 Source=18   (lambda_returns_record.ash:9:1)
+    StoreLocal            Slot=9 Source=15   (lambda_returns_record.ash:9:1)
     Jump                  Target=match_end_3   (lambda_returns_record.ash:9:1)
   match_arm_cleanup_5:
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=14
     Jump                  Target=match_none_4   (lambda_returns_record.ash:9:1)
   match_none_4:
-    LoadConstInt          Target=19 Value=0   (lambda_returns_record.ash:9:1)
-    StoreLocal            Slot=9 Source=19   (lambda_returns_record.ash:9:1)
+    LoadConstInt          Target=16 Value=0   (lambda_returns_record.ash:9:1)
+    StoreLocal            Slot=9 Source=16   (lambda_returns_record.ash:9:1)
   match_end_3:
-    LoadLocal             Target=20 Slot=9   (lambda_returns_record.ash:9:1)
-    StoreLocal            Slot=15 Source=20   (lambda_returns_record.ash:7:1)
-    LoadLocal             Target=21 Slot=8   (lambda_returns_record.ash:7:1)
-    RcIsUnique            Target=22 SourceTemp=21
-    JumpIfFalse           CondTemp=22 Target=rc_drop_shared_6   (lambda_returns_record.ash:7:1)
-    GetAdtField           Target=23 Ptr=21 FieldIndex=0 Tagless=true   (lambda_returns_record.ash:7:1)
-    RcDrop                SourceTemp=23 TypeName=String RuntimeManaged=true
+    LoadLocal             Target=17 Slot=9   (lambda_returns_record.ash:9:1)
+    StoreLocal            Slot=15 Source=17   (lambda_returns_record.ash:7:1)
+    LoadLocal             Target=18 Slot=8   (lambda_returns_record.ash:7:1)
+    RcIsUnique            Target=19 SourceTemp=18
+    JumpIfFalse           CondTemp=19 Target=rc_drop_shared_6   (lambda_returns_record.ash:7:1)
+    GetAdtField           Target=20 Ptr=18 FieldIndex=0 Tagless=true   (lambda_returns_record.ash:7:1)
+    RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true
   rc_drop_shared_6:
-    RcDrop                SourceTemp=21 TypeName=Label RuntimeManaged=true
+    RcDrop                SourceTemp=18 TypeName=Label RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=16
-    LoadLocal             Target=24 Slot=15   (lambda_returns_record.ash:7:1)
-    StoreLocal            Slot=17 Source=24   (lambda_returns_record.ash:5:1)
-    LoadLocal             Target=25 Slot=2   (lambda_returns_record.ash:5:1)
-    CleanupResource       SourceTemp=25 TypeName=Function
+    LoadLocal             Target=21 Slot=15   (lambda_returns_record.ash:7:1)
+    StoreLocal            Slot=17 Source=21   (lambda_returns_record.ash:5:1)
+    LoadLocal             Target=22 Slot=2   (lambda_returns_record.ash:5:1)
+    CleanupResource       SourceTemp=22 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=18
-    LoadLocal             Target=26 Slot=17   (lambda_returns_record.ash:5:1)
-    Return                Source=26
+    LoadLocal             Target=23 Slot=17   (lambda_returns_record.ash:5:1)
+    Return                Source=23
 

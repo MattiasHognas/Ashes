@@ -815,7 +815,7 @@ function lambda_4  [SourceFunction from carry]
     Return                Source=4   (tco_record_field_read_into_successor.ash:21:1)
 
 function _start_main  [ProgramEntry]
-  locals=28 temps=76
+  locals=28 temps=70
     LoadConstInt          Target=0 Value=0   (tco_record_field_read_into_successor.ash:16:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_record_field_read_into_successor.ash:16:1)
     StoreLocal            Slot=0 Source=1   (tco_record_field_read_into_successor.ash:16:1)
@@ -840,122 +840,116 @@ function _start_main  [ProgramEntry]
     AllocAdt              Target=13 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:26:27)
     SetAdtField           Ptr=13 FieldIndex=0 Source=9 Tagless=true   (tco_record_field_read_into_successor.ash:26:27)
     SetAdtField           Ptr=13 FieldIndex=1 Source=12 Tagless=true   (tco_record_field_read_into_successor.ash:26:27)
-    LoadMemOffset         Target=14 BasePtr=6 OffsetBytes=16   (tco_record_field_read_into_successor.ash:26:14)
-    LoadConstInt          Target=15 Value=63   (tco_record_field_read_into_successor.ash:26:14)
-    ShrInt                Target=16 Left=14 Right=15   (tco_record_field_read_into_successor.ash:26:14)
-    CallClosure           Target=17 ClosureTemp=6 ArgTemp=13   (tco_record_field_read_into_successor.ash:26:14)
+    CallClosure           Target=14 ClosureTemp=6 ArgTemp=13   (tco_record_field_read_into_successor.ash:26:14)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
-    StoreLocal            Slot=7 Source=17   (tco_record_field_read_into_successor.ash:26:1)
+    StoreLocal            Slot=7 Source=14   (tco_record_field_read_into_successor.ash:26:1)
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
-    LoadLocal             Target=18 Slot=7   (tco_record_field_read_into_successor.ash:28:15)
-    GetAdtField           Target=19 Ptr=18 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:28:15)
-    StoreLocal            Slot=10 Source=19   (tco_record_field_read_into_successor.ash:28:1)
+    LoadLocal             Target=15 Slot=7   (tco_record_field_read_into_successor.ash:28:15)
+    GetAdtField           Target=16 Ptr=15 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:28:15)
+    StoreLocal            Slot=10 Source=16   (tco_record_field_read_into_successor.ash:28:1)
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
-    LoadLocal             Target=20 Slot=1   (tco_record_field_read_into_successor.ash:30:15)
-    LoadConstInt          Target=21 Value=200000   (tco_record_field_read_into_successor.ash:30:21)
-    CallClosure           Target=22 ClosureTemp=20 ArgTemp=21   (tco_record_field_read_into_successor.ash:30:15)
-    LoadConstStr          Target=23 StrLabel=str_2   (tco_record_field_read_into_successor.ash:30:43)
-    LoadConstInt          Target=24 Value=0   (tco_record_field_read_into_successor.ash:30:59)
-    AllocAdt              Target=25 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:29)
-    SetAdtField           Ptr=25 FieldIndex=0 Source=23 Tagless=true   (tco_record_field_read_into_successor.ash:30:29)
-    SetAdtField           Ptr=25 FieldIndex=1 Source=24 Tagless=true   (tco_record_field_read_into_successor.ash:30:29)
-    CallClosure           Target=26 ClosureTemp=22 ArgTemp=25   (tco_record_field_read_into_successor.ash:30:15)
-    LoadConstStr          Target=27 StrLabel=str_3   (tco_record_field_read_into_successor.ash:30:93)
-    LoadConstInt          Target=28 Value=0   (tco_record_field_read_into_successor.ash:30:106)
-    AllocAdt              Target=29 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:79)
-    SetAdtField           Ptr=29 FieldIndex=0 Source=27 Tagless=true   (tco_record_field_read_into_successor.ash:30:79)
-    SetAdtField           Ptr=29 FieldIndex=1 Source=28 Tagless=true   (tco_record_field_read_into_successor.ash:30:79)
-    LoadConstStr          Target=30 StrLabel=str_4   (tco_record_field_read_into_successor.ash:30:134)
-    LoadConstInt          Target=31 Value=0   (tco_record_field_read_into_successor.ash:30:147)
-    AllocAdt              Target=32 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:120)
-    SetAdtField           Ptr=32 FieldIndex=0 Source=30 Tagless=true   (tco_record_field_read_into_successor.ash:30:120)
-    SetAdtField           Ptr=32 FieldIndex=1 Source=31 Tagless=true   (tco_record_field_read_into_successor.ash:30:120)
-    AllocAdt              Target=33 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:63)
-    SetAdtField           Ptr=33 FieldIndex=0 Source=29 Tagless=true   (tco_record_field_read_into_successor.ash:30:63)
-    SetAdtField           Ptr=33 FieldIndex=1 Source=32 Tagless=true   (tco_record_field_read_into_successor.ash:30:63)
-    LoadMemOffset         Target=34 BasePtr=26 OffsetBytes=16   (tco_record_field_read_into_successor.ash:30:15)
-    LoadConstInt          Target=35 Value=63   (tco_record_field_read_into_successor.ash:30:15)
-    ShrInt                Target=36 Left=34 Right=35   (tco_record_field_read_into_successor.ash:30:15)
-    CallClosure           Target=37 ClosureTemp=26 ArgTemp=33   (tco_record_field_read_into_successor.ash:30:15)
+    LoadLocal             Target=17 Slot=1   (tco_record_field_read_into_successor.ash:30:15)
+    LoadConstInt          Target=18 Value=200000   (tco_record_field_read_into_successor.ash:30:21)
+    CallClosure           Target=19 ClosureTemp=17 ArgTemp=18   (tco_record_field_read_into_successor.ash:30:15)
+    LoadConstStr          Target=20 StrLabel=str_2   (tco_record_field_read_into_successor.ash:30:43)
+    LoadConstInt          Target=21 Value=0   (tco_record_field_read_into_successor.ash:30:59)
+    AllocAdt              Target=22 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:29)
+    SetAdtField           Ptr=22 FieldIndex=0 Source=20 Tagless=true   (tco_record_field_read_into_successor.ash:30:29)
+    SetAdtField           Ptr=22 FieldIndex=1 Source=21 Tagless=true   (tco_record_field_read_into_successor.ash:30:29)
+    CallClosure           Target=23 ClosureTemp=19 ArgTemp=22   (tco_record_field_read_into_successor.ash:30:15)
+    LoadConstStr          Target=24 StrLabel=str_3   (tco_record_field_read_into_successor.ash:30:93)
+    LoadConstInt          Target=25 Value=0   (tco_record_field_read_into_successor.ash:30:106)
+    AllocAdt              Target=26 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:79)
+    SetAdtField           Ptr=26 FieldIndex=0 Source=24 Tagless=true   (tco_record_field_read_into_successor.ash:30:79)
+    SetAdtField           Ptr=26 FieldIndex=1 Source=25 Tagless=true   (tco_record_field_read_into_successor.ash:30:79)
+    LoadConstStr          Target=27 StrLabel=str_4   (tco_record_field_read_into_successor.ash:30:134)
+    LoadConstInt          Target=28 Value=0   (tco_record_field_read_into_successor.ash:30:147)
+    AllocAdt              Target=29 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:120)
+    SetAdtField           Ptr=29 FieldIndex=0 Source=27 Tagless=true   (tco_record_field_read_into_successor.ash:30:120)
+    SetAdtField           Ptr=29 FieldIndex=1 Source=28 Tagless=true   (tco_record_field_read_into_successor.ash:30:120)
+    AllocAdt              Target=30 Tag=0 FieldCount=2 Tagless=true   (tco_record_field_read_into_successor.ash:30:63)
+    SetAdtField           Ptr=30 FieldIndex=0 Source=26 Tagless=true   (tco_record_field_read_into_successor.ash:30:63)
+    SetAdtField           Ptr=30 FieldIndex=1 Source=29 Tagless=true   (tco_record_field_read_into_successor.ash:30:63)
+    CallClosure           Target=31 ClosureTemp=23 ArgTemp=30   (tco_record_field_read_into_successor.ash:30:15)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    StoreLocal            Slot=16 Source=37   (tco_record_field_read_into_successor.ash:30:1)
+    StoreLocal            Slot=16 Source=31   (tco_record_field_read_into_successor.ash:30:1)
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
-    LoadLocal             Target=38 Slot=16   (tco_record_field_read_into_successor.ash:32:16)
-    GetAdtField           Target=39 Ptr=38 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:32:16)
-    StoreLocal            Slot=19 Source=39   (tco_record_field_read_into_successor.ash:32:1)
-    LoadLocal             Target=40 Slot=10   (tco_record_field_read_into_successor.ash:34:16)
-    GetAdtField           Target=41 Ptr=40 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:34:16)
-    RcDrop                SourceTemp=19 TypeName=State OwnerSlot=10
-    LoadConstStr          Target=42 StrLabel=str_5   (tco_record_field_read_into_successor.ash:34:32)
-    ConcatStr             Target=43 Left=41 Right=42   (tco_record_field_read_into_successor.ash:34:16)
-    LoadLocal             Target=44 Slot=19   (tco_record_field_read_into_successor.ash:34:38)
-    GetAdtField           Target=45 Ptr=44 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:34:38)
-    ConcatStr             Target=46 Left=43 Right=45   (tco_record_field_read_into_successor.ash:34:16)
-    LoadConstStr          Target=47 StrLabel=str_5   (tco_record_field_read_into_successor.ash:34:55)
-    ConcatStr             Target=48 Left=46 Right=47   (tco_record_field_read_into_successor.ash:34:16)
-    LoadLocal             Target=49 Slot=19   (tco_record_field_read_into_successor.ash:34:80)
-    GetAdtField           Target=50 Ptr=49 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:34:80)
-    RcDrop                SourceTemp=39 TypeName=State OwnerSlot=19
-    TextFromInt           Target=51 ValueTemp=50   (tco_record_field_read_into_successor.ash:34:61)
-    ConcatStr             Target=52 Left=48 Right=51   (tco_record_field_read_into_successor.ash:34:16)
-    PrintStr              Source=52   (tco_record_field_read_into_successor.ash:34:1)
-    AllocAdt              Target=53 Tag=0 FieldCount=0   (tco_record_field_read_into_successor.ash:34:1)
-    StoreLocal            Slot=20 Source=53   (tco_record_field_read_into_successor.ash:32:1)
+    LoadLocal             Target=32 Slot=16   (tco_record_field_read_into_successor.ash:32:16)
+    GetAdtField           Target=33 Ptr=32 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:32:16)
+    StoreLocal            Slot=19 Source=33   (tco_record_field_read_into_successor.ash:32:1)
+    LoadLocal             Target=34 Slot=10   (tco_record_field_read_into_successor.ash:34:16)
+    GetAdtField           Target=35 Ptr=34 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:34:16)
+    RcDrop                SourceTemp=16 TypeName=State OwnerSlot=10
+    LoadConstStr          Target=36 StrLabel=str_5   (tco_record_field_read_into_successor.ash:34:32)
+    ConcatStr             Target=37 Left=35 Right=36   (tco_record_field_read_into_successor.ash:34:16)
+    LoadLocal             Target=38 Slot=19   (tco_record_field_read_into_successor.ash:34:38)
+    GetAdtField           Target=39 Ptr=38 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:34:38)
+    ConcatStr             Target=40 Left=37 Right=39   (tco_record_field_read_into_successor.ash:34:16)
+    LoadConstStr          Target=41 StrLabel=str_5   (tco_record_field_read_into_successor.ash:34:55)
+    ConcatStr             Target=42 Left=40 Right=41   (tco_record_field_read_into_successor.ash:34:16)
+    LoadLocal             Target=43 Slot=19   (tco_record_field_read_into_successor.ash:34:80)
+    GetAdtField           Target=44 Ptr=43 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:34:80)
+    RcDrop                SourceTemp=33 TypeName=State OwnerSlot=19
+    TextFromInt           Target=45 ValueTemp=44   (tco_record_field_read_into_successor.ash:34:61)
+    ConcatStr             Target=46 Left=42 Right=45   (tco_record_field_read_into_successor.ash:34:16)
+    PrintStr              Source=46   (tco_record_field_read_into_successor.ash:34:1)
+    AllocAdt              Target=47 Tag=0 FieldCount=0   (tco_record_field_read_into_successor.ash:34:1)
+    StoreLocal            Slot=20 Source=47   (tco_record_field_read_into_successor.ash:32:1)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
-    CopyOutArena          DestTemp=55 SrcTemp=53 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=49 SrcTemp=47 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
-    StoreLocal            Slot=22 Source=55   (tco_record_field_read_into_successor.ash:30:1)
-    LoadLocal             Target=56 Slot=16   (tco_record_field_read_into_successor.ash:30:1)
-    RcIsUnique            Target=57 SourceTemp=56
-    JumpIfFalse           CondTemp=57 Target=rc_drop_shared_64   (tco_record_field_read_into_successor.ash:30:1)
-    GetAdtField           Target=58 Ptr=56 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
-    RcIsUnique            Target=59 SourceTemp=58
-    JumpIfFalse           CondTemp=59 Target=rc_drop_shared_65   (tco_record_field_read_into_successor.ash:30:1)
-    GetAdtField           Target=60 Ptr=58 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
-    RcDrop                SourceTemp=60 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=22 Source=49   (tco_record_field_read_into_successor.ash:30:1)
+    LoadLocal             Target=50 Slot=16   (tco_record_field_read_into_successor.ash:30:1)
+    RcIsUnique            Target=51 SourceTemp=50
+    JumpIfFalse           CondTemp=51 Target=rc_drop_shared_64   (tco_record_field_read_into_successor.ash:30:1)
+    GetAdtField           Target=52 Ptr=50 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
+    RcIsUnique            Target=53 SourceTemp=52
+    JumpIfFalse           CondTemp=53 Target=rc_drop_shared_65   (tco_record_field_read_into_successor.ash:30:1)
+    GetAdtField           Target=54 Ptr=52 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
+    RcDrop                SourceTemp=54 TypeName=String RuntimeManaged=true
   rc_drop_shared_65:
-    RcDrop                SourceTemp=58 TypeName=State RuntimeManaged=true
-    GetAdtField           Target=61 Ptr=56 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
-    RcIsUnique            Target=62 SourceTemp=61
-    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_66   (tco_record_field_read_into_successor.ash:30:1)
-    GetAdtField           Target=63 Ptr=61 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
-    RcDrop                SourceTemp=63 TypeName=String RuntimeManaged=true
+    RcDrop                SourceTemp=52 TypeName=State RuntimeManaged=true
+    GetAdtField           Target=55 Ptr=50 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
+    RcIsUnique            Target=56 SourceTemp=55
+    JumpIfFalse           CondTemp=56 Target=rc_drop_shared_66   (tco_record_field_read_into_successor.ash:30:1)
+    GetAdtField           Target=57 Ptr=55 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:30:1)
+    RcDrop                SourceTemp=57 TypeName=String RuntimeManaged=true
   rc_drop_shared_66:
-    RcDrop                SourceTemp=61 TypeName=State RuntimeManaged=true
+    RcDrop                SourceTemp=55 TypeName=State RuntimeManaged=true
   rc_drop_shared_64:
-    RcDrop                SourceTemp=56 TypeName=Pair RuntimeManaged=true
+    RcDrop                SourceTemp=50 TypeName=Pair RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=23
-    LoadLocal             Target=64 Slot=22   (tco_record_field_read_into_successor.ash:30:1)
-    StoreLocal            Slot=24 Source=64   (tco_record_field_read_into_successor.ash:28:1)
+    LoadLocal             Target=58 Slot=22   (tco_record_field_read_into_successor.ash:30:1)
+    StoreLocal            Slot=24 Source=58   (tco_record_field_read_into_successor.ash:28:1)
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=25
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=25
-    LoadLocal             Target=66 Slot=24   (tco_record_field_read_into_successor.ash:28:1)
-    StoreLocal            Slot=26 Source=66   (tco_record_field_read_into_successor.ash:26:1)
-    LoadLocal             Target=67 Slot=7   (tco_record_field_read_into_successor.ash:26:1)
-    RcIsUnique            Target=68 SourceTemp=67
-    JumpIfFalse           CondTemp=68 Target=rc_drop_shared_67   (tco_record_field_read_into_successor.ash:26:1)
-    GetAdtField           Target=69 Ptr=67 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
-    RcIsUnique            Target=70 SourceTemp=69
-    JumpIfFalse           CondTemp=70 Target=rc_drop_shared_68   (tco_record_field_read_into_successor.ash:26:1)
-    GetAdtField           Target=71 Ptr=69 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
-    RcDrop                SourceTemp=71 TypeName=String RuntimeManaged=true
+    LoadLocal             Target=60 Slot=24   (tco_record_field_read_into_successor.ash:28:1)
+    StoreLocal            Slot=26 Source=60   (tco_record_field_read_into_successor.ash:26:1)
+    LoadLocal             Target=61 Slot=7   (tco_record_field_read_into_successor.ash:26:1)
+    RcIsUnique            Target=62 SourceTemp=61
+    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_67   (tco_record_field_read_into_successor.ash:26:1)
+    GetAdtField           Target=63 Ptr=61 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
+    RcIsUnique            Target=64 SourceTemp=63
+    JumpIfFalse           CondTemp=64 Target=rc_drop_shared_68   (tco_record_field_read_into_successor.ash:26:1)
+    GetAdtField           Target=65 Ptr=63 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
+    RcDrop                SourceTemp=65 TypeName=String RuntimeManaged=true
   rc_drop_shared_68:
-    RcDrop                SourceTemp=69 TypeName=State RuntimeManaged=true
-    GetAdtField           Target=72 Ptr=67 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
-    RcIsUnique            Target=73 SourceTemp=72
-    JumpIfFalse           CondTemp=73 Target=rc_drop_shared_69   (tco_record_field_read_into_successor.ash:26:1)
-    GetAdtField           Target=74 Ptr=72 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
-    RcDrop                SourceTemp=74 TypeName=String RuntimeManaged=true
+    RcDrop                SourceTemp=63 TypeName=State RuntimeManaged=true
+    GetAdtField           Target=66 Ptr=61 FieldIndex=1 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
+    RcIsUnique            Target=67 SourceTemp=66
+    JumpIfFalse           CondTemp=67 Target=rc_drop_shared_69   (tco_record_field_read_into_successor.ash:26:1)
+    GetAdtField           Target=68 Ptr=66 FieldIndex=0 Tagless=true   (tco_record_field_read_into_successor.ash:26:1)
+    RcDrop                SourceTemp=68 TypeName=String RuntimeManaged=true
   rc_drop_shared_69:
-    RcDrop                SourceTemp=72 TypeName=State RuntimeManaged=true
+    RcDrop                SourceTemp=66 TypeName=State RuntimeManaged=true
   rc_drop_shared_67:
-    RcDrop                SourceTemp=67 TypeName=Pair RuntimeManaged=true
+    RcDrop                SourceTemp=61 TypeName=Pair RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=27
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=27
-    LoadLocal             Target=75 Slot=26   (tco_record_field_read_into_successor.ash:26:1)
-    Return                Source=75
+    LoadLocal             Target=69 Slot=26   (tco_record_field_read_into_successor.ash:26:1)
+    Return                Source=69
 

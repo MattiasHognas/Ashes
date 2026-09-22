@@ -201,7 +201,17 @@ Function: firstNames
     reuse tokens:         0
     copies:               8
 
-Function: churn [lambda_16__scalarenv0]
+Function: buildEnv
+  Operations
+    dup:                  2
+    drop:                 30
+    uniqueness checks:    15
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: churn [lambda_16__scalarenv1]
   Operations
     dup:                  1
     drop:                 6
@@ -211,7 +221,7 @@ Function: churn [lambda_16__scalarenv0]
     reuse tokens:         0
     copies:               3
 
-Function: count [lambda_18__scalarenv1]
+Function: count [lambda_18__scalarenv2]
   Operations
     dup:                  2
     drop:                 9

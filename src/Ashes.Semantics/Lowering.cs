@@ -12959,7 +12959,7 @@ public sealed partial class Lowering
         bool needsResultOwnership = AllowsAsyncIndependentRcPlacement
             && i == collectedArgs.Count - 1
             && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, resultType, out _)
-            && ResultOwnershipReadAtRunTime(rootExpr, resultType);
+            && ResultOwnershipReadAtRunTime(rootExpr, collectedArgs.Count, resultType);
         currentTemp = LowerAppliedClosureCall(
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,
@@ -12970,16 +12970,22 @@ public sealed partial class Lowering
 
     // The result types whose ownership a call reads from the callee's returns bit when the callee
     // cannot be resolved statically: the ones with a fixed copy-out, and a record with none that
-    // the entry normalization's copy re-establishes. A loop's non-tail call to itself keeps the
-    // loop's own protocol for its result.
-    private bool ResultOwnershipReadAtRunTime(Expr rootExpr, TypeRef resultType)
+    // the entry normalization's copy re-establishes, unless the callee's compiled body already
+    // answers. A loop's non-tail call to itself keeps the loop's own protocol for its result.
+    private bool ResultOwnershipReadAtRunTime(Expr rootExpr, int argumentCount, TypeRef resultType)
         => GetCallCopyOutKind(resultType, out _, out _) switch
         {
             CopyOutKind.Shallow or CopyOutKind.List => true,
             CopyOutKind.None => IsNormalizableUncoveredRecord(resultType)
-                && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco)),
+                && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
+                && !CompiledResultRuntimeManaged(rootExpr, argumentCount),
             _ => false,
         };
+
+    private bool CompiledResultRuntimeManaged(Expr rootExpr, int argumentCount)
+        => TryResolveKnownFunctionLabel(rootExpr, out string label)
+            && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
+            && runtimeManaged;
 
     // A record with no fixed copy-out that the entry normalization's copy re-establishes.
     private bool IsNormalizableUncoveredRecord(TypeRef resultType)

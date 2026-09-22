@@ -715,78 +715,75 @@ function __deepcopy_10  [AdtDeepCopier]
     Return                Source=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
 
 function lambda_9  [SourceFunction from parseProgram]
-  locals=34 temps=85
+  locals=34 temps=82
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadEnv               Target=0 Index=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:18)
     Borrow                Target=1 SourceTemp=0
     LoadLocal             Target=2 Slot=1   (aggregate_borrowing_owner_kept_by_callee.ash:33:22)
-    LoadMemOffset         Target=3 BasePtr=1 OffsetBytes=16   (aggregate_borrowing_owner_kept_by_callee.ash:33:18)
-    LoadConstInt          Target=4 Value=63   (aggregate_borrowing_owner_kept_by_callee.ash:33:18)
-    ShrInt                Target=5 Left=3 Right=4   (aggregate_borrowing_owner_kept_by_callee.ash:33:18)
-    CallClosure           Target=6 ClosureTemp=1 ArgTemp=2   (aggregate_borrowing_owner_kept_by_callee.ash:33:18)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (aggregate_borrowing_owner_kept_by_callee.ash:33:18)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
-    StoreLocal            Slot=7 Source=6   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    StoreLocal            Slot=7 Source=3   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
     SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
-    LoadLocal             Target=7 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:35:24)
-    GetAdtField           Target=8 Ptr=7 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:35:24)
-    LoadConstInt          Target=9 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:35:38)
-    RcDup                 Target=11 SourceTemp=8 RuntimeManaged=true MayBeEmpty=true
-    Alloc                 Target=10 SizeBytes=16   (aggregate_borrowing_owner_kept_by_callee.ash:35:23)
-    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=11   (aggregate_borrowing_owner_kept_by_callee.ash:35:23)
-    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=9   (aggregate_borrowing_owner_kept_by_callee.ash:35:23)
-    StoreLocal            Slot=10 Source=10   (aggregate_borrowing_owner_kept_by_callee.ash:35:9)
+    LoadLocal             Target=4 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:35:24)
+    GetAdtField           Target=5 Ptr=4 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:35:24)
+    LoadConstInt          Target=6 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:35:38)
+    RcDup                 Target=8 SourceTemp=5 RuntimeManaged=true MayBeEmpty=true
+    Alloc                 Target=7 SizeBytes=16   (aggregate_borrowing_owner_kept_by_callee.ash:35:23)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (aggregate_borrowing_owner_kept_by_callee.ash:35:23)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=6   (aggregate_borrowing_owner_kept_by_callee.ash:35:23)
+    StoreLocal            Slot=10 Source=7   (aggregate_borrowing_owner_kept_by_callee.ash:35:9)
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
-    LoadEnv               Target=12 Index=1   (aggregate_borrowing_owner_kept_by_callee.ash:37:19)
-    Borrow                Target=13 SourceTemp=12
-    LoadLocal             Target=14 Slot=10   (aggregate_borrowing_owner_kept_by_callee.ash:37:24)
-    Borrow                Target=15 SourceTemp=14
-    LoadLocal             Target=16 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:37:19)
-    RcDup                 Target=17 SourceTemp=16 RuntimeManaged=true
-    CallClosure           Target=18 ClosureTemp=13 ArgTemp=15   (aggregate_borrowing_owner_kept_by_callee.ash:37:19)
+    LoadEnv               Target=9 Index=1   (aggregate_borrowing_owner_kept_by_callee.ash:37:19)
+    Borrow                Target=10 SourceTemp=9
+    LoadLocal             Target=11 Slot=10   (aggregate_borrowing_owner_kept_by_callee.ash:37:24)
+    Borrow                Target=12 SourceTemp=11
+    LoadLocal             Target=13 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:37:19)
+    RcDup                 Target=14 SourceTemp=13 RuntimeManaged=true
+    CallClosure           Target=15 ClosureTemp=10 ArgTemp=12   (aggregate_borrowing_owner_kept_by_callee.ash:37:19)
     SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
-    LoadMemOffset         Target=19 BasePtr=18 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
-    StoreLocal            Slot=17 Source=19   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
-    LoadMemOffset         Target=20 BasePtr=18 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
-    RcDrop                SourceTemp=10 TypeName=Tuple OwnerSlot=10
+    LoadMemOffset         Target=16 BasePtr=15 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
+    StoreLocal            Slot=17 Source=16   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
+    LoadMemOffset         Target=17 BasePtr=15 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
+    RcDrop                SourceTemp=7 TypeName=Tuple OwnerSlot=10
     SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
-    LoadEnv               Target=21 Index=2   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    Borrow                Target=22 SourceTemp=21
-    LoadLocal             Target=23 Slot=17   (aggregate_borrowing_owner_kept_by_callee.ash:38:54)
-    Borrow                Target=24 SourceTemp=23
-    LoadMemOffset         Target=25 BasePtr=22 OffsetBytes=16   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    LoadConstInt          Target=26 Value=63   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    ShrInt                Target=27 Left=25 Right=26   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    RcDup                 Target=84 SourceTemp=24   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    CallClosure           Target=28 ClosureTemp=22 ArgTemp=24   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    StoreLocal            Slot=21 Source=28   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    LoadEnv               Target=18 Index=2   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    Borrow                Target=19 SourceTemp=18
+    LoadLocal             Target=20 Slot=17   (aggregate_borrowing_owner_kept_by_callee.ash:38:54)
+    Borrow                Target=21 SourceTemp=20
+    LoadMemOffset         Target=22 BasePtr=19 OffsetBytes=16   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    LoadConstInt          Target=23 Value=63   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    ShrInt                Target=24 Left=22 Right=23   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    RcDup                 Target=81 SourceTemp=21   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    CallClosure           Target=25 ClosureTemp=19 ArgTemp=21   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    StoreLocal            Slot=21 Source=25   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=20
-    JumpIfFalse           CondTemp=27 Target=call_copy_arena_result_84   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    JumpIfFalse           CondTemp=24 Target=call_copy_arena_result_84   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
     Jump                  Target=call_reclaim_owned_result_85   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
   call_copy_arena_result_84:
-    CopyOutList           DestTemp=29 SrcTemp=28 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    StoreLocal            Slot=21 Source=29   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    CopyOutList           DestTemp=26 SrcTemp=25 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    StoreLocal            Slot=21 Source=26   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
   call_reclaim_owned_result_85:
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=20
-    LoadLocal             Target=30 Slot=21   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    LoadLocal             Target=31 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:38:75)
-    GetAdtField           Target=32 Ptr=31 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:75)
-    IsReferenceCounted    Target=33 SourceTemp=32
-    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_86   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
-    RcDup                 Target=34 SourceTemp=32 RuntimeManaged=true
-    StoreLocal            Slot=22 Source=34   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    LoadLocal             Target=27 Slot=21   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
+    LoadLocal             Target=28 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:38:75)
+    GetAdtField           Target=29 Ptr=28 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:75)
+    IsReferenceCounted    Target=30 SourceTemp=29
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_86   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=31   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
     Jump                  Target=rc_representation_done_87   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
   rc_representation_copy_86:
-    CopyOutList           DestTemp=35 SrcTemp=32 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
-    StoreLocal            Slot=22 Source=35   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    CopyOutList           DestTemp=32 SrcTemp=29 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    StoreLocal            Slot=22 Source=32   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
   rc_representation_done_87:
-    LoadLocal             Target=36 Slot=22   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
-    AllocAdt              Target=37 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
-    SetAdtField           Ptr=37 FieldIndex=0 Source=30 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
-    RcDrop                SourceTemp=19 TypeName=Tuple OwnerSlot=17
-    SetAdtField           Ptr=37 FieldIndex=1 Source=36 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
-    StoreLocal            Slot=14 Source=37   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
+    LoadLocal             Target=33 Slot=22   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    AllocAdt              Target=34 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    SetAdtField           Ptr=34 FieldIndex=0 Source=27 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    RcDrop                SourceTemp=16 TypeName=Tuple OwnerSlot=17
+    SetAdtField           Ptr=34 FieldIndex=1 Source=33 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:38:32)
+    StoreLocal            Slot=14 Source=34   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
     RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=23
     Jump                  Target=match_end_81   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
@@ -795,123 +792,123 @@ function lambda_9  [SourceFunction from parseProgram]
     ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=24
     Jump                  Target=match_none_82   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
   match_none_82:
-    LoadConstInt          Target=39 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
-    StoreLocal            Slot=14 Source=39   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
+    LoadConstInt          Target=36 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
+    StoreLocal            Slot=14 Source=36   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
   match_end_81:
-    LoadLocal             Target=40 Slot=14   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
-    StoreLocal            Slot=25 Source=40   (aggregate_borrowing_owner_kept_by_callee.ash:35:9)
+    LoadLocal             Target=37 Slot=14   (aggregate_borrowing_owner_kept_by_callee.ash:37:13)
+    StoreLocal            Slot=25 Source=37   (aggregate_borrowing_owner_kept_by_callee.ash:35:9)
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=26
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=26
-    LoadLocal             Target=42 Slot=25   (aggregate_borrowing_owner_kept_by_callee.ash:35:9)
-    StoreLocal            Slot=27 Source=42   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    LoadLocal             Target=43 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcIsUnique            Target=44 SourceTemp=43
-    JumpIfFalse           CondTemp=44 Target=rc_drop_shared_88   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    GetAdtField           Target=45 Ptr=43 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    StoreLocal            Slot=28 Source=45   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadLocal             Target=39 Slot=25   (aggregate_borrowing_owner_kept_by_callee.ash:35:9)
+    StoreLocal            Slot=27 Source=39   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadLocal             Target=40 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcIsUnique            Target=41 SourceTemp=40
+    JumpIfFalse           CondTemp=41 Target=rc_drop_shared_88   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    GetAdtField           Target=42 Ptr=40 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    StoreLocal            Slot=28 Source=42   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
   rcdrop_list_89:
-    LoadLocal             Target=46 Slot=28   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    LoadConstInt          Target=47 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    CmpIntNe              Target=48 Left=46 Right=47   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_91   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcIsUnique            Target=49 SourceTemp=46
-    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_90   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    LoadMemOffset         Target=50 BasePtr=46 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcIsUnique            Target=51 SourceTemp=50
-    JumpIfFalse           CondTemp=51 Target=rc_drop_shared_92   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    GetAdtField           Target=52 Ptr=50 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcDrop                SourceTemp=52 TypeName=String RuntimeManaged=true
+    LoadLocal             Target=43 Slot=28   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadConstInt          Target=44 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    CmpIntNe              Target=45 Left=43 Right=44   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    JumpIfFalse           CondTemp=45 Target=rcdrop_list_end_91   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcIsUnique            Target=46 SourceTemp=43
+    JumpIfFalse           CondTemp=46 Target=rcdrop_list_shared_90   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadMemOffset         Target=47 BasePtr=43 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcIsUnique            Target=48 SourceTemp=47
+    JumpIfFalse           CondTemp=48 Target=rc_drop_shared_92   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    GetAdtField           Target=49 Ptr=47 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcDrop                SourceTemp=49 TypeName=String RuntimeManaged=true
   rc_drop_shared_92:
-    RcDrop                SourceTemp=50 TypeName=Token RuntimeManaged=true
-    LoadMemOffset         Target=53 BasePtr=46 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=28 Source=53   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcDrop                SourceTemp=47 TypeName=Token RuntimeManaged=true
+    LoadMemOffset         Target=50 BasePtr=43 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=50   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
     Jump                  Target=rcdrop_list_89   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
   rcdrop_list_shared_90:
-    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_91   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
   rcdrop_list_end_91:
-    GetAdtField           Target=54 Ptr=43 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    StoreLocal            Slot=29 Source=54   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    GetAdtField           Target=51 Ptr=40 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    StoreLocal            Slot=29 Source=51   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
   rcdrop_list_93:
-    LoadLocal             Target=55 Slot=29   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    LoadConstInt          Target=56 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    CmpIntNe              Target=57 Left=55 Right=56   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    JumpIfFalse           CondTemp=57 Target=rcdrop_list_end_95   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcIsUnique            Target=58 SourceTemp=55
-    JumpIfFalse           CondTemp=58 Target=rcdrop_list_shared_94   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    LoadMemOffset         Target=59 BasePtr=55 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcDrop                SourceTemp=59 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=60 BasePtr=55 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    RcDrop                SourceTemp=55 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=29 Source=60   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadLocal             Target=52 Slot=29   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadConstInt          Target=53 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    CmpIntNe              Target=54 Left=52 Right=53   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    JumpIfFalse           CondTemp=54 Target=rcdrop_list_end_95   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcIsUnique            Target=55 SourceTemp=52
+    JumpIfFalse           CondTemp=55 Target=rcdrop_list_shared_94   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadMemOffset         Target=56 BasePtr=52 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcDrop                SourceTemp=56 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=57 BasePtr=52 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    RcDrop                SourceTemp=52 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=57   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
     Jump                  Target=rcdrop_list_93   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
   rcdrop_list_shared_94:
-    RcDrop                SourceTemp=55 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=52 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_95   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
   rcdrop_list_end_95:
   rc_drop_shared_88:
-    RcDrop                SourceTemp=43 TypeName=Lexed RuntimeManaged=true
+    RcDrop                SourceTemp=40 TypeName=Lexed RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=30
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=30
-    LoadLocal             Target=61 Slot=27   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
-    LoadArgumentOwnership Target=62   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    LoadConstInt          Target=63 Value=1   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    ShrInt                Target=64 Left=62 Right=63   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    JumpIfFalse           CondTemp=64 Target=rc_result_owned_96   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    Alloc                 Target=65 SizeBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    MakeClosure           Target=66 FuncLabel=__deepcopy_10 EnvPtrTemp=65 EnvSizeBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    StoreMemOffset        BasePtr=65 OffsetBytes=0 Source=66   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    CallClosure           Target=67 ClosureTemp=66 ArgTemp=61   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    RcIsUnique            Target=68 SourceTemp=61
-    JumpIfFalse           CondTemp=68 Target=rc_drop_shared_98   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    GetAdtField           Target=69 Ptr=61 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    StoreLocal            Slot=32 Source=69   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadLocal             Target=58 Slot=27   (aggregate_borrowing_owner_kept_by_callee.ash:33:6)
+    LoadArgumentOwnership Target=59   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadConstInt          Target=60 Value=1   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    ShrInt                Target=61 Left=59 Right=60   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    JumpIfFalse           CondTemp=61 Target=rc_result_owned_96   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    Alloc                 Target=62 SizeBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    MakeClosure           Target=63 FuncLabel=__deepcopy_10 EnvPtrTemp=62 EnvSizeBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    StoreMemOffset        BasePtr=62 OffsetBytes=0 Source=63   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    CallClosure           Target=64 ClosureTemp=63 ArgTemp=58   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcIsUnique            Target=65 SourceTemp=58
+    JumpIfFalse           CondTemp=65 Target=rc_drop_shared_98   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    GetAdtField           Target=66 Ptr=58 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    StoreLocal            Slot=32 Source=66   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rcdrop_list_99:
-    LoadLocal             Target=70 Slot=32   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    LoadConstInt          Target=71 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    CmpIntNe              Target=72 Left=70 Right=71   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    JumpIfFalse           CondTemp=72 Target=rcdrop_list_end_101   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    RcIsUnique            Target=73 SourceTemp=70
-    JumpIfFalse           CondTemp=73 Target=rcdrop_list_shared_100   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    LoadMemOffset         Target=74 BasePtr=70 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    RcDrop                SourceTemp=74 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=75 BasePtr=70 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    RcDrop                SourceTemp=70 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=32 Source=75   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadLocal             Target=67 Slot=32   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadConstInt          Target=68 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    CmpIntNe              Target=69 Left=67 Right=68   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_end_101   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcIsUnique            Target=70 SourceTemp=67
+    JumpIfFalse           CondTemp=70 Target=rcdrop_list_shared_100   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadMemOffset         Target=71 BasePtr=67 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcDrop                SourceTemp=71 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=72 BasePtr=67 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=72   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
     Jump                  Target=rcdrop_list_99   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rcdrop_list_shared_100:
-    RcDrop                SourceTemp=70 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_101   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rcdrop_list_end_101:
-    GetAdtField           Target=76 Ptr=61 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    StoreLocal            Slot=33 Source=76   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    GetAdtField           Target=73 Ptr=58 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    StoreLocal            Slot=33 Source=73   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rcdrop_list_102:
-    LoadLocal             Target=77 Slot=33   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    LoadConstInt          Target=78 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    CmpIntNe              Target=79 Left=77 Right=78   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    JumpIfFalse           CondTemp=79 Target=rcdrop_list_end_104   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    RcIsUnique            Target=80 SourceTemp=77
-    JumpIfFalse           CondTemp=80 Target=rcdrop_list_shared_103   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    LoadMemOffset         Target=81 BasePtr=77 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    RcDrop                SourceTemp=81 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=82 BasePtr=77 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=33 Source=82   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadLocal             Target=74 Slot=33   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadConstInt          Target=75 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    CmpIntNe              Target=76 Left=74 Right=75   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    JumpIfFalse           CondTemp=76 Target=rcdrop_list_end_104   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcIsUnique            Target=77 SourceTemp=74
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_shared_103   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadMemOffset         Target=78 BasePtr=74 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcDrop                SourceTemp=78 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=79 BasePtr=74 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=33 Source=79   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
     Jump                  Target=rcdrop_list_102   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rcdrop_list_shared_103:
-    RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_104   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rcdrop_list_end_104:
   rc_drop_shared_98:
-    RcDrop                SourceTemp=61 TypeName=Program RuntimeManaged=true
-    StoreLocal            Slot=31 Source=67   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    RcDrop                SourceTemp=58 TypeName=Program RuntimeManaged=true
+    StoreLocal            Slot=31 Source=64   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
     Jump                  Target=rc_result_done_97   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rc_result_owned_96:
-    StoreLocal            Slot=31 Source=61   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    StoreLocal            Slot=31 Source=58   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
   rc_result_done_97:
-    LoadLocal             Target=83 Slot=31   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    Return                Source=83   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadLocal             Target=80 Slot=31   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    Return                Source=80   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
 
 function lambda_12  [ClosureHelper from count]
   locals=27 temps=53
@@ -1071,7 +1068,7 @@ function lambda_11  [SourceFunction from count]
     Return                Source=4   (aggregate_borrowing_owner_kept_by_callee.ash:40:1)
 
 function _start_main  [ProgramEntry]
-  locals=36 temps=61
+  locals=36 temps=58
     LoadConstInt          Target=0 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:13:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:13:1)
     StoreLocal            Slot=0 Source=1   (aggregate_borrowing_owner_kept_by_callee.ash:13:1)
@@ -1115,94 +1112,91 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=22 Slot=13   (aggregate_borrowing_owner_kept_by_callee.ash:45:15)
     Borrow                Target=23 SourceTemp=22
     LoadConstInt          Target=24 Value=3   (aggregate_borrowing_owner_kept_by_callee.ash:45:28)
-    LoadMemOffset         Target=25 BasePtr=23 OffsetBytes=16   (aggregate_borrowing_owner_kept_by_callee.ash:45:15)
-    LoadConstInt          Target=26 Value=63   (aggregate_borrowing_owner_kept_by_callee.ash:45:15)
-    ShrInt                Target=27 Left=25 Right=26   (aggregate_borrowing_owner_kept_by_callee.ash:45:15)
-    CallClosure           Target=28 ClosureTemp=23 ArgTemp=24   (aggregate_borrowing_owner_kept_by_callee.ash:45:15)
+    CallClosure           Target=25 ClosureTemp=23 ArgTemp=24   (aggregate_borrowing_owner_kept_by_callee.ash:45:15)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=19
-    StoreLocal            Slot=20 Source=28   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    StoreLocal            Slot=20 Source=25   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
     SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
-    LoadLocal             Target=29 Slot=14   (aggregate_borrowing_owner_kept_by_callee.ash:47:16)
-    LoadLocal             Target=30 Slot=20   (aggregate_borrowing_owner_kept_by_callee.ash:47:22)
-    GetAdtField           Target=31 Ptr=30 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:47:22)
-    CallClosure           Target=32 ClosureTemp=29 ArgTemp=31   (aggregate_borrowing_owner_kept_by_callee.ash:47:16)
-    LoadConstInt          Target=33 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:47:37)
-    CallClosure           Target=34 ClosureTemp=32 ArgTemp=33   (aggregate_borrowing_owner_kept_by_callee.ash:47:16)
+    LoadLocal             Target=26 Slot=14   (aggregate_borrowing_owner_kept_by_callee.ash:47:16)
+    LoadLocal             Target=27 Slot=20   (aggregate_borrowing_owner_kept_by_callee.ash:47:22)
+    GetAdtField           Target=28 Ptr=27 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:47:22)
+    CallClosure           Target=29 ClosureTemp=26 ArgTemp=28   (aggregate_borrowing_owner_kept_by_callee.ash:47:16)
+    LoadConstInt          Target=30 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:47:37)
+    CallClosure           Target=31 ClosureTemp=29 ArgTemp=30   (aggregate_borrowing_owner_kept_by_callee.ash:47:16)
     RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=23
-    PrintInt              Source=34   (aggregate_borrowing_owner_kept_by_callee.ash:47:1)
-    AllocAdt              Target=35 Tag=0 FieldCount=0   (aggregate_borrowing_owner_kept_by_callee.ash:47:1)
-    StoreLocal            Slot=24 Source=35   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    LoadLocal             Target=36 Slot=20   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    RcIsUnique            Target=37 SourceTemp=36
-    JumpIfFalse           CondTemp=37 Target=rc_drop_shared_119   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    GetAdtField           Target=38 Ptr=36 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    StoreLocal            Slot=25 Source=38   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    PrintInt              Source=31   (aggregate_borrowing_owner_kept_by_callee.ash:47:1)
+    AllocAdt              Target=32 Tag=0 FieldCount=0   (aggregate_borrowing_owner_kept_by_callee.ash:47:1)
+    StoreLocal            Slot=24 Source=32   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    LoadLocal             Target=33 Slot=20   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    RcIsUnique            Target=34 SourceTemp=33
+    JumpIfFalse           CondTemp=34 Target=rc_drop_shared_119   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    GetAdtField           Target=35 Ptr=33 FieldIndex=0 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    StoreLocal            Slot=25 Source=35   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
   rcdrop_list_120:
-    LoadLocal             Target=39 Slot=25   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    LoadConstInt          Target=40 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    CmpIntNe              Target=41 Left=39 Right=40   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_122   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    RcIsUnique            Target=42 SourceTemp=39
-    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_121   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    RcDrop                SourceTemp=43 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=44 BasePtr=39 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=25 Source=44   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    LoadLocal             Target=36 Slot=25   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    LoadConstInt          Target=37 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    CmpIntNe              Target=38 Left=36 Right=37   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    JumpIfFalse           CondTemp=38 Target=rcdrop_list_end_122   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    RcIsUnique            Target=39 SourceTemp=36
+    JumpIfFalse           CondTemp=39 Target=rcdrop_list_shared_121   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    LoadMemOffset         Target=40 BasePtr=36 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    RcDrop                SourceTemp=40 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=41 BasePtr=36 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=41   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
     Jump                  Target=rcdrop_list_120   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
   rcdrop_list_shared_121:
-    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_122   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
   rcdrop_list_end_122:
-    GetAdtField           Target=45 Ptr=36 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    StoreLocal            Slot=26 Source=45   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    GetAdtField           Target=42 Ptr=33 FieldIndex=1 Tagless=true   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    StoreLocal            Slot=26 Source=42   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
   rcdrop_list_123:
-    LoadLocal             Target=46 Slot=26   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    LoadConstInt          Target=47 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    CmpIntNe              Target=48 Left=46 Right=47   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_125   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    RcIsUnique            Target=49 SourceTemp=46
-    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_124   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    LoadMemOffset         Target=50 BasePtr=46 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    RcDrop                SourceTemp=50 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=51 BasePtr=46 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
-    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=26 Source=51   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    LoadLocal             Target=43 Slot=26   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    LoadConstInt          Target=44 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    CmpIntNe              Target=45 Left=43 Right=44   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    JumpIfFalse           CondTemp=45 Target=rcdrop_list_end_125   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    RcIsUnique            Target=46 SourceTemp=43
+    JumpIfFalse           CondTemp=46 Target=rcdrop_list_shared_124   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    LoadMemOffset         Target=47 BasePtr=43 OffsetBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    RcDrop                SourceTemp=47 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=48 BasePtr=43 OffsetBytes=8   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
+    RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=26 Source=48   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
     Jump                  Target=rcdrop_list_123   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
   rcdrop_list_shared_124:
-    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_125   (aggregate_borrowing_owner_kept_by_callee.ash:45:1)
   rcdrop_list_end_125:
   rc_drop_shared_119:
-    RcDrop                SourceTemp=36 TypeName=Program RuntimeManaged=true
+    RcDrop                SourceTemp=33 TypeName=Program RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=27
-    CopyOutArena          DestTemp=52 SrcTemp=35 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=49 SrcTemp=32 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=27
-    StoreLocal            Slot=28 Source=52   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    LoadLocal             Target=53 Slot=13   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    CleanupResource       SourceTemp=53 TypeName=Function
+    StoreLocal            Slot=28 Source=49   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    LoadLocal             Target=50 Slot=13   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    CleanupResource       SourceTemp=50 TypeName=Function
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=29
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=29
-    LoadLocal             Target=54 Slot=28   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
-    StoreLocal            Slot=30 Source=54   (aggregate_borrowing_owner_kept_by_callee.ash:30:1)
-    LoadLocal             Target=55 Slot=10   (aggregate_borrowing_owner_kept_by_callee.ash:30:1)
-    CleanupResource       SourceTemp=55 TypeName=Function
+    LoadLocal             Target=51 Slot=28   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
+    StoreLocal            Slot=30 Source=51   (aggregate_borrowing_owner_kept_by_callee.ash:30:1)
+    LoadLocal             Target=52 Slot=10   (aggregate_borrowing_owner_kept_by_callee.ash:30:1)
+    CleanupResource       SourceTemp=52 TypeName=Function
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=31
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=31
-    LoadLocal             Target=56 Slot=30   (aggregate_borrowing_owner_kept_by_callee.ash:30:1)
-    StoreLocal            Slot=32 Source=56   (aggregate_borrowing_owner_kept_by_callee.ash:25:1)
-    LoadLocal             Target=57 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:25:1)
-    CleanupResource       SourceTemp=57 TypeName=Function
+    LoadLocal             Target=53 Slot=30   (aggregate_borrowing_owner_kept_by_callee.ash:30:1)
+    StoreLocal            Slot=32 Source=53   (aggregate_borrowing_owner_kept_by_callee.ash:25:1)
+    LoadLocal             Target=54 Slot=7   (aggregate_borrowing_owner_kept_by_callee.ash:25:1)
+    CleanupResource       SourceTemp=54 TypeName=Function
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=33
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=33
-    LoadLocal             Target=58 Slot=32   (aggregate_borrowing_owner_kept_by_callee.ash:25:1)
-    StoreLocal            Slot=34 Source=58   (aggregate_borrowing_owner_kept_by_callee.ash:23:1)
-    LoadLocal             Target=59 Slot=4   (aggregate_borrowing_owner_kept_by_callee.ash:23:1)
-    CleanupResource       SourceTemp=59 TypeName=Function
+    LoadLocal             Target=55 Slot=32   (aggregate_borrowing_owner_kept_by_callee.ash:25:1)
+    StoreLocal            Slot=34 Source=55   (aggregate_borrowing_owner_kept_by_callee.ash:23:1)
+    LoadLocal             Target=56 Slot=4   (aggregate_borrowing_owner_kept_by_callee.ash:23:1)
+    CleanupResource       SourceTemp=56 TypeName=Function
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=35
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=35
-    LoadLocal             Target=60 Slot=34   (aggregate_borrowing_owner_kept_by_callee.ash:23:1)
-    Return                Source=60
+    LoadLocal             Target=57 Slot=34   (aggregate_borrowing_owner_kept_by_callee.ash:23:1)
+    Return                Source=57
 

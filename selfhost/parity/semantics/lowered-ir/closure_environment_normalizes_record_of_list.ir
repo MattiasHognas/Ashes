@@ -535,7 +535,7 @@ function lambda_6  [SourceFunction from mk]
     Return                Source=13   (closure_environment_normalizes_record_of_list.ash:14:1)
 
 function lambda_7  [SourceFunction from build]
-  locals=22 temps=78
+  locals=22 temps=69
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (closure_environment_normalizes_record_of_list.ash:16:25)
     Borrow                Target=1 SourceTemp=0
@@ -563,103 +563,94 @@ function lambda_7  [SourceFunction from build]
     ShrInt                Target=16 Left=14 Right=15   (closure_environment_normalizes_record_of_list.ash:16:39)
     LoadConstInt          Target=17 Value=1   (closure_environment_normalizes_record_of_list.ash:16:39)
     AndInt                Target=18 Left=16 Right=17   (closure_environment_normalizes_record_of_list.ash:16:39)
-    LoadMemOffset         Target=19 BasePtr=9 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:39)
-    LoadConstInt          Target=20 Value=63   (closure_environment_normalizes_record_of_list.ash:16:39)
-    ShrInt                Target=21 Left=19 Right=20   (closure_environment_normalizes_record_of_list.ash:16:39)
-    CallClosure           Target=22 ClosureTemp=9 ArgTemp=13 RuntimeManagedArgumentFlagTemp=18   (closure_environment_normalizes_record_of_list.ash:16:39)
+    CallClosure           Target=19 ClosureTemp=9 ArgTemp=13 RuntimeManagedArgumentFlagTemp=18   (closure_environment_normalizes_record_of_list.ash:16:39)
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=11
-    LoadMemOffset         Target=23 BasePtr=3 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:32)
-    LoadConstInt          Target=24 Value=62   (closure_environment_normalizes_record_of_list.ash:16:32)
-    ShrInt                Target=25 Left=23 Right=24   (closure_environment_normalizes_record_of_list.ash:16:32)
-    LoadConstInt          Target=26 Value=1   (closure_environment_normalizes_record_of_list.ash:16:32)
-    AndInt                Target=27 Left=25 Right=26   (closure_environment_normalizes_record_of_list.ash:16:32)
-    CallClosure           Target=28 ClosureTemp=3 ArgTemp=22 RuntimeManagedArgumentFlagTemp=27   (closure_environment_normalizes_record_of_list.ash:16:32)
+    LoadMemOffset         Target=20 BasePtr=3 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:32)
+    LoadConstInt          Target=21 Value=62   (closure_environment_normalizes_record_of_list.ash:16:32)
+    ShrInt                Target=22 Left=20 Right=21   (closure_environment_normalizes_record_of_list.ash:16:32)
+    LoadConstInt          Target=23 Value=1   (closure_environment_normalizes_record_of_list.ash:16:32)
+    AndInt                Target=24 Left=22 Right=23   (closure_environment_normalizes_record_of_list.ash:16:32)
+    CallClosure           Target=25 ClosureTemp=3 ArgTemp=19 RuntimeManagedArgumentFlagTemp=24   (closure_environment_normalizes_record_of_list.ash:16:32)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
-    LoadEnv               Target=29 Index=1   (closure_environment_normalizes_record_of_list.ash:16:86)
-    Borrow                Target=30 SourceTemp=29
-    LoadConstStr          Target=31 StrLabel=str_1   (closure_environment_normalizes_record_of_list.ash:16:89)
-    CallClosure           Target=32 ClosureTemp=30 ArgTemp=31   (closure_environment_normalizes_record_of_list.ash:16:86)
+    LoadEnv               Target=26 Index=1   (closure_environment_normalizes_record_of_list.ash:16:86)
+    Borrow                Target=27 SourceTemp=26
+    LoadConstStr          Target=28 StrLabel=str_1   (closure_environment_normalizes_record_of_list.ash:16:89)
+    CallClosure           Target=29 ClosureTemp=27 ArgTemp=28   (closure_environment_normalizes_record_of_list.ash:16:86)
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
-    LoadMemOffset         Target=33 BasePtr=28 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:32)
-    LoadConstInt          Target=34 Value=62   (closure_environment_normalizes_record_of_list.ash:16:32)
-    ShrInt                Target=35 Left=33 Right=34   (closure_environment_normalizes_record_of_list.ash:16:32)
-    LoadConstInt          Target=36 Value=1   (closure_environment_normalizes_record_of_list.ash:16:32)
-    AndInt                Target=37 Left=35 Right=36   (closure_environment_normalizes_record_of_list.ash:16:32)
-    LoadMemOffset         Target=38 BasePtr=28 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:32)
-    LoadConstInt          Target=39 Value=63   (closure_environment_normalizes_record_of_list.ash:16:32)
-    ShrInt                Target=40 Left=38 Right=39   (closure_environment_normalizes_record_of_list.ash:16:32)
-    CallClosure           Target=41 ClosureTemp=28 ArgTemp=32 RuntimeManagedArgumentFlagTemp=37   (closure_environment_normalizes_record_of_list.ash:16:32)
+    LoadMemOffset         Target=30 BasePtr=25 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:32)
+    LoadConstInt          Target=31 Value=62   (closure_environment_normalizes_record_of_list.ash:16:32)
+    ShrInt                Target=32 Left=30 Right=31   (closure_environment_normalizes_record_of_list.ash:16:32)
+    LoadConstInt          Target=33 Value=1   (closure_environment_normalizes_record_of_list.ash:16:32)
+    AndInt                Target=34 Left=32 Right=33   (closure_environment_normalizes_record_of_list.ash:16:32)
+    CallClosure           Target=35 ClosureTemp=25 ArgTemp=29 RuntimeManagedArgumentFlagTemp=34   (closure_environment_normalizes_record_of_list.ash:16:32)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=15
-    LoadMemOffset         Target=42 BasePtr=1 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:25)
-    LoadConstInt          Target=43 Value=62   (closure_environment_normalizes_record_of_list.ash:16:25)
-    ShrInt                Target=44 Left=42 Right=43   (closure_environment_normalizes_record_of_list.ash:16:25)
-    LoadConstInt          Target=45 Value=1   (closure_environment_normalizes_record_of_list.ash:16:25)
-    AndInt                Target=46 Left=44 Right=45   (closure_environment_normalizes_record_of_list.ash:16:25)
-    CallClosure           Target=47 ClosureTemp=1 ArgTemp=41 RuntimeManagedArgumentFlagTemp=46   (closure_environment_normalizes_record_of_list.ash:16:25)
+    LoadMemOffset         Target=36 BasePtr=1 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:25)
+    LoadConstInt          Target=37 Value=62   (closure_environment_normalizes_record_of_list.ash:16:25)
+    ShrInt                Target=38 Left=36 Right=37   (closure_environment_normalizes_record_of_list.ash:16:25)
+    LoadConstInt          Target=39 Value=1   (closure_environment_normalizes_record_of_list.ash:16:25)
+    AndInt                Target=40 Left=38 Right=39   (closure_environment_normalizes_record_of_list.ash:16:25)
+    CallClosure           Target=41 ClosureTemp=1 ArgTemp=35 RuntimeManagedArgumentFlagTemp=40   (closure_environment_normalizes_record_of_list.ash:16:25)
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
-    LoadEnv               Target=48 Index=1   (closure_environment_normalizes_record_of_list.ash:16:101)
-    Borrow                Target=49 SourceTemp=48
-    LoadConstStr          Target=50 StrLabel=str_2   (closure_environment_normalizes_record_of_list.ash:16:104)
-    CallClosure           Target=51 ClosureTemp=49 ArgTemp=50   (closure_environment_normalizes_record_of_list.ash:16:101)
+    LoadEnv               Target=42 Index=1   (closure_environment_normalizes_record_of_list.ash:16:101)
+    Borrow                Target=43 SourceTemp=42
+    LoadConstStr          Target=44 StrLabel=str_2   (closure_environment_normalizes_record_of_list.ash:16:104)
+    CallClosure           Target=45 ClosureTemp=43 ArgTemp=44   (closure_environment_normalizes_record_of_list.ash:16:101)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=18
-    LoadMemOffset         Target=52 BasePtr=47 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:25)
-    LoadConstInt          Target=53 Value=62   (closure_environment_normalizes_record_of_list.ash:16:25)
-    ShrInt                Target=54 Left=52 Right=53   (closure_environment_normalizes_record_of_list.ash:16:25)
-    LoadConstInt          Target=55 Value=1   (closure_environment_normalizes_record_of_list.ash:16:25)
-    AndInt                Target=56 Left=54 Right=55   (closure_environment_normalizes_record_of_list.ash:16:25)
-    LoadMemOffset         Target=57 BasePtr=47 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:25)
-    LoadConstInt          Target=58 Value=63   (closure_environment_normalizes_record_of_list.ash:16:25)
-    ShrInt                Target=59 Left=57 Right=58   (closure_environment_normalizes_record_of_list.ash:16:25)
-    CallClosure           Target=60 ClosureTemp=47 ArgTemp=51 RuntimeManagedArgumentFlagTemp=56   (closure_environment_normalizes_record_of_list.ash:16:25)
+    LoadMemOffset         Target=46 BasePtr=41 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:16:25)
+    LoadConstInt          Target=47 Value=62   (closure_environment_normalizes_record_of_list.ash:16:25)
+    ShrInt                Target=48 Left=46 Right=47   (closure_environment_normalizes_record_of_list.ash:16:25)
+    LoadConstInt          Target=49 Value=1   (closure_environment_normalizes_record_of_list.ash:16:25)
+    AndInt                Target=50 Left=48 Right=49   (closure_environment_normalizes_record_of_list.ash:16:25)
+    CallClosure           Target=51 ClosureTemp=41 ArgTemp=45 RuntimeManagedArgumentFlagTemp=50   (closure_environment_normalizes_record_of_list.ash:16:25)
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=19
-    LoadArgumentOwnership Target=61   (closure_environment_normalizes_record_of_list.ash:16:1)
-    LoadConstInt          Target=62 Value=1   (closure_environment_normalizes_record_of_list.ash:16:1)
-    ShrInt                Target=63 Left=61 Right=62   (closure_environment_normalizes_record_of_list.ash:16:1)
-    JumpIfFalse           CondTemp=63 Target=rc_result_owned_75   (closure_environment_normalizes_record_of_list.ash:16:1)
-    Alloc                 Target=64 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
-    MakeClosure           Target=65 FuncLabel=__deepcopy_2 EnvPtrTemp=64 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
-    StoreMemOffset        BasePtr=64 OffsetBytes=0 Source=65   (closure_environment_normalizes_record_of_list.ash:16:1)
-    CallClosure           Target=66 ClosureTemp=65 ArgTemp=60   (closure_environment_normalizes_record_of_list.ash:16:1)
-    RcIsUnique            Target=67 SourceTemp=60
-    JumpIfFalse           CondTemp=67 Target=rc_drop_shared_77   (closure_environment_normalizes_record_of_list.ash:16:1)
-    GetAdtField           Target=68 Ptr=60 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:16:1)
-    StoreLocal            Slot=21 Source=68   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadArgumentOwnership Target=52   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadConstInt          Target=53 Value=1   (closure_environment_normalizes_record_of_list.ash:16:1)
+    ShrInt                Target=54 Left=52 Right=53   (closure_environment_normalizes_record_of_list.ash:16:1)
+    JumpIfFalse           CondTemp=54 Target=rc_result_owned_75   (closure_environment_normalizes_record_of_list.ash:16:1)
+    Alloc                 Target=55 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
+    MakeClosure           Target=56 FuncLabel=__deepcopy_2 EnvPtrTemp=55 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
+    StoreMemOffset        BasePtr=55 OffsetBytes=0 Source=56   (closure_environment_normalizes_record_of_list.ash:16:1)
+    CallClosure           Target=57 ClosureTemp=56 ArgTemp=51   (closure_environment_normalizes_record_of_list.ash:16:1)
+    RcIsUnique            Target=58 SourceTemp=51
+    JumpIfFalse           CondTemp=58 Target=rc_drop_shared_77   (closure_environment_normalizes_record_of_list.ash:16:1)
+    GetAdtField           Target=59 Ptr=51 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:16:1)
+    StoreLocal            Slot=21 Source=59   (closure_environment_normalizes_record_of_list.ash:16:1)
   rcdrop_list_78:
-    LoadLocal             Target=69 Slot=21   (closure_environment_normalizes_record_of_list.ash:16:1)
-    LoadConstInt          Target=70 Value=0   (closure_environment_normalizes_record_of_list.ash:16:1)
-    CmpIntNe              Target=71 Left=69 Right=70   (closure_environment_normalizes_record_of_list.ash:16:1)
-    JumpIfFalse           CondTemp=71 Target=rcdrop_list_end_80   (closure_environment_normalizes_record_of_list.ash:16:1)
-    RcIsUnique            Target=72 SourceTemp=69
-    JumpIfFalse           CondTemp=72 Target=rcdrop_list_shared_79   (closure_environment_normalizes_record_of_list.ash:16:1)
-    LoadMemOffset         Target=73 BasePtr=69 OffsetBytes=0   (closure_environment_normalizes_record_of_list.ash:16:1)
-    RcIsUnique            Target=74 SourceTemp=73
-    JumpIfFalse           CondTemp=74 Target=rc_drop_shared_81   (closure_environment_normalizes_record_of_list.ash:16:1)
-    GetAdtField           Target=75 Ptr=73 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:16:1)
-    RcDrop                SourceTemp=75 TypeName=String RuntimeManaged=true
+    LoadLocal             Target=60 Slot=21   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadConstInt          Target=61 Value=0   (closure_environment_normalizes_record_of_list.ash:16:1)
+    CmpIntNe              Target=62 Left=60 Right=61   (closure_environment_normalizes_record_of_list.ash:16:1)
+    JumpIfFalse           CondTemp=62 Target=rcdrop_list_end_80   (closure_environment_normalizes_record_of_list.ash:16:1)
+    RcIsUnique            Target=63 SourceTemp=60
+    JumpIfFalse           CondTemp=63 Target=rcdrop_list_shared_79   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadMemOffset         Target=64 BasePtr=60 OffsetBytes=0   (closure_environment_normalizes_record_of_list.ash:16:1)
+    RcIsUnique            Target=65 SourceTemp=64
+    JumpIfFalse           CondTemp=65 Target=rc_drop_shared_81   (closure_environment_normalizes_record_of_list.ash:16:1)
+    GetAdtField           Target=66 Ptr=64 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:16:1)
+    RcDrop                SourceTemp=66 TypeName=String RuntimeManaged=true
   rc_drop_shared_81:
-    RcDrop                SourceTemp=73 TypeName=Inst RuntimeManaged=true
-    LoadMemOffset         Target=76 BasePtr=69 OffsetBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
-    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=21 Source=76   (closure_environment_normalizes_record_of_list.ash:16:1)
+    RcDrop                SourceTemp=64 TypeName=Inst RuntimeManaged=true
+    LoadMemOffset         Target=67 BasePtr=60 OffsetBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
+    RcDrop                SourceTemp=60 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=21 Source=67   (closure_environment_normalizes_record_of_list.ash:16:1)
     Jump                  Target=rcdrop_list_78   (closure_environment_normalizes_record_of_list.ash:16:1)
   rcdrop_list_shared_79:
-    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=60 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_80   (closure_environment_normalizes_record_of_list.ash:16:1)
   rcdrop_list_end_80:
   rc_drop_shared_77:
-    RcDrop                SourceTemp=60 TypeName=Body RuntimeManaged=true
-    StoreLocal            Slot=20 Source=66   (closure_environment_normalizes_record_of_list.ash:16:1)
+    RcDrop                SourceTemp=51 TypeName=Body RuntimeManaged=true
+    StoreLocal            Slot=20 Source=57   (closure_environment_normalizes_record_of_list.ash:16:1)
     Jump                  Target=rc_result_done_76   (closure_environment_normalizes_record_of_list.ash:16:1)
   rc_result_owned_75:
-    StoreLocal            Slot=20 Source=60   (closure_environment_normalizes_record_of_list.ash:16:1)
+    StoreLocal            Slot=20 Source=51   (closure_environment_normalizes_record_of_list.ash:16:1)
   rc_result_done_76:
-    LoadLocal             Target=77 Slot=20   (closure_environment_normalizes_record_of_list.ash:16:1)
-    Return                Source=77   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadLocal             Target=68 Slot=20   (closure_environment_normalizes_record_of_list.ash:16:1)
+    Return                Source=68   (closure_environment_normalizes_record_of_list.ash:16:1)
 
 function lambda_9  [ClosureHelper from weigh]
   locals=34 temps=90
@@ -942,7 +933,7 @@ function lambda_10  [SourceFunction from describe]
     Return                Source=19   (closure_environment_normalizes_record_of_list.ash:23:1)
 
 function _start_main  [ProgramEntry]
-  locals=29 temps=51
+  locals=29 temps=48
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (closure_environment_normalizes_record_of_list.ash:12:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 AcceptsRuntimeManagedArgument=true   (closure_environment_normalizes_record_of_list.ash:12:1)
@@ -977,79 +968,76 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=17 Slot=8   (closure_environment_normalizes_record_of_list.ash:27:25)
     Borrow                Target=18 SourceTemp=17
     LoadConstStr          Target=19 StrLabel=str_3   (closure_environment_normalizes_record_of_list.ash:27:31)
-    LoadMemOffset         Target=20 BasePtr=18 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:27:25)
-    LoadConstInt          Target=21 Value=63   (closure_environment_normalizes_record_of_list.ash:27:25)
-    ShrInt                Target=22 Left=20 Right=21   (closure_environment_normalizes_record_of_list.ash:27:25)
-    CallClosure           Target=23 ClosureTemp=18 ArgTemp=19   (closure_environment_normalizes_record_of_list.ash:27:25)
+    CallClosure           Target=20 ClosureTemp=18 ArgTemp=19   (closure_environment_normalizes_record_of_list.ash:27:25)
     RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=17
     ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=17
-    LoadMemOffset         Target=24 BasePtr=16 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:27:16)
-    LoadConstInt          Target=25 Value=62   (closure_environment_normalizes_record_of_list.ash:27:16)
-    ShrInt                Target=26 Left=24 Right=25   (closure_environment_normalizes_record_of_list.ash:27:16)
-    LoadConstInt          Target=27 Value=1   (closure_environment_normalizes_record_of_list.ash:27:16)
-    AndInt                Target=28 Left=26 Right=27   (closure_environment_normalizes_record_of_list.ash:27:16)
-    StoreLocal            Slot=18 Source=23   (closure_environment_normalizes_record_of_list.ash:27:16)
-    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_109   (closure_environment_normalizes_record_of_list.ash:27:16)
-    RcDup                 Target=29 SourceTemp=23 RuntimeManaged=true
-    StoreLocal            Slot=18 Source=29   (closure_environment_normalizes_record_of_list.ash:27:16)
+    LoadMemOffset         Target=21 BasePtr=16 OffsetBytes=16   (closure_environment_normalizes_record_of_list.ash:27:16)
+    LoadConstInt          Target=22 Value=62   (closure_environment_normalizes_record_of_list.ash:27:16)
+    ShrInt                Target=23 Left=21 Right=22   (closure_environment_normalizes_record_of_list.ash:27:16)
+    LoadConstInt          Target=24 Value=1   (closure_environment_normalizes_record_of_list.ash:27:16)
+    AndInt                Target=25 Left=23 Right=24   (closure_environment_normalizes_record_of_list.ash:27:16)
+    StoreLocal            Slot=18 Source=20   (closure_environment_normalizes_record_of_list.ash:27:16)
+    JumpIfFalse           CondTemp=25 Target=rc_call_argument_not_retained_109   (closure_environment_normalizes_record_of_list.ash:27:16)
+    RcDup                 Target=26 SourceTemp=20 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=26   (closure_environment_normalizes_record_of_list.ash:27:16)
   rc_call_argument_not_retained_109:
-    LoadLocal             Target=30 Slot=18   (closure_environment_normalizes_record_of_list.ash:27:16)
-    CallClosure           Target=31 ClosureTemp=16 ArgTemp=30 RuntimeManagedArgumentFlagTemp=28   (closure_environment_normalizes_record_of_list.ash:27:16)
+    LoadLocal             Target=27 Slot=18   (closure_environment_normalizes_record_of_list.ash:27:16)
+    CallClosure           Target=28 ClosureTemp=16 ArgTemp=27 RuntimeManagedArgumentFlagTemp=25   (closure_environment_normalizes_record_of_list.ash:27:16)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=19
-    RcIsUnique            Target=32 SourceTemp=23
-    JumpIfFalse           CondTemp=32 Target=rc_drop_shared_110   (closure_environment_normalizes_record_of_list.ash:27:16)
-    GetAdtField           Target=33 Ptr=23 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:27:16)
-    StoreLocal            Slot=20 Source=33   (closure_environment_normalizes_record_of_list.ash:27:16)
+    RcIsUnique            Target=29 SourceTemp=20
+    JumpIfFalse           CondTemp=29 Target=rc_drop_shared_110   (closure_environment_normalizes_record_of_list.ash:27:16)
+    GetAdtField           Target=30 Ptr=20 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:27:16)
+    StoreLocal            Slot=20 Source=30   (closure_environment_normalizes_record_of_list.ash:27:16)
   rcdrop_list_111:
-    LoadLocal             Target=34 Slot=20   (closure_environment_normalizes_record_of_list.ash:27:16)
-    LoadConstInt          Target=35 Value=0   (closure_environment_normalizes_record_of_list.ash:27:16)
-    CmpIntNe              Target=36 Left=34 Right=35   (closure_environment_normalizes_record_of_list.ash:27:16)
-    JumpIfFalse           CondTemp=36 Target=rcdrop_list_end_113   (closure_environment_normalizes_record_of_list.ash:27:16)
-    RcIsUnique            Target=37 SourceTemp=34
-    JumpIfFalse           CondTemp=37 Target=rcdrop_list_shared_112   (closure_environment_normalizes_record_of_list.ash:27:16)
-    LoadMemOffset         Target=38 BasePtr=34 OffsetBytes=0   (closure_environment_normalizes_record_of_list.ash:27:16)
-    RcIsUnique            Target=39 SourceTemp=38
-    JumpIfFalse           CondTemp=39 Target=rc_drop_shared_114   (closure_environment_normalizes_record_of_list.ash:27:16)
-    GetAdtField           Target=40 Ptr=38 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:27:16)
-    RcDrop                SourceTemp=40 TypeName=String RuntimeManaged=true
+    LoadLocal             Target=31 Slot=20   (closure_environment_normalizes_record_of_list.ash:27:16)
+    LoadConstInt          Target=32 Value=0   (closure_environment_normalizes_record_of_list.ash:27:16)
+    CmpIntNe              Target=33 Left=31 Right=32   (closure_environment_normalizes_record_of_list.ash:27:16)
+    JumpIfFalse           CondTemp=33 Target=rcdrop_list_end_113   (closure_environment_normalizes_record_of_list.ash:27:16)
+    RcIsUnique            Target=34 SourceTemp=31
+    JumpIfFalse           CondTemp=34 Target=rcdrop_list_shared_112   (closure_environment_normalizes_record_of_list.ash:27:16)
+    LoadMemOffset         Target=35 BasePtr=31 OffsetBytes=0   (closure_environment_normalizes_record_of_list.ash:27:16)
+    RcIsUnique            Target=36 SourceTemp=35
+    JumpIfFalse           CondTemp=36 Target=rc_drop_shared_114   (closure_environment_normalizes_record_of_list.ash:27:16)
+    GetAdtField           Target=37 Ptr=35 FieldIndex=0 Tagless=true   (closure_environment_normalizes_record_of_list.ash:27:16)
+    RcDrop                SourceTemp=37 TypeName=String RuntimeManaged=true
   rc_drop_shared_114:
-    RcDrop                SourceTemp=38 TypeName=Inst RuntimeManaged=true
-    LoadMemOffset         Target=41 BasePtr=34 OffsetBytes=8   (closure_environment_normalizes_record_of_list.ash:27:16)
-    RcDrop                SourceTemp=34 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=20 Source=41   (closure_environment_normalizes_record_of_list.ash:27:16)
+    RcDrop                SourceTemp=35 TypeName=Inst RuntimeManaged=true
+    LoadMemOffset         Target=38 BasePtr=31 OffsetBytes=8   (closure_environment_normalizes_record_of_list.ash:27:16)
+    RcDrop                SourceTemp=31 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=20 Source=38   (closure_environment_normalizes_record_of_list.ash:27:16)
     Jump                  Target=rcdrop_list_111   (closure_environment_normalizes_record_of_list.ash:27:16)
   rcdrop_list_shared_112:
-    RcDrop                SourceTemp=34 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=31 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_113   (closure_environment_normalizes_record_of_list.ash:27:16)
   rcdrop_list_end_113:
   rc_drop_shared_110:
-    RcDrop                SourceTemp=23 TypeName=Body RuntimeManaged=true
-    PrintInt              Source=31   (closure_environment_normalizes_record_of_list.ash:27:1)
-    AllocAdt              Target=42 Tag=0 FieldCount=0   (closure_environment_normalizes_record_of_list.ash:27:1)
-    StoreLocal            Slot=21 Source=42   (closure_environment_normalizes_record_of_list.ash:23:1)
-    LoadLocal             Target=43 Slot=12   (closure_environment_normalizes_record_of_list.ash:23:1)
-    CleanupResource       SourceTemp=43 TypeName=Function
+    RcDrop                SourceTemp=20 TypeName=Body RuntimeManaged=true
+    PrintInt              Source=28   (closure_environment_normalizes_record_of_list.ash:27:1)
+    AllocAdt              Target=39 Tag=0 FieldCount=0   (closure_environment_normalizes_record_of_list.ash:27:1)
+    StoreLocal            Slot=21 Source=39   (closure_environment_normalizes_record_of_list.ash:23:1)
+    LoadLocal             Target=40 Slot=12   (closure_environment_normalizes_record_of_list.ash:23:1)
+    CleanupResource       SourceTemp=40 TypeName=Function
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=22
-    CopyOutArena          DestTemp=44 SrcTemp=42 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=41 SrcTemp=39 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=22
-    StoreLocal            Slot=23 Source=44   (closure_environment_normalizes_record_of_list.ash:16:1)
-    LoadLocal             Target=45 Slot=8   (closure_environment_normalizes_record_of_list.ash:16:1)
-    CleanupResource       SourceTemp=45 TypeName=Function
+    StoreLocal            Slot=23 Source=41   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadLocal             Target=42 Slot=8   (closure_environment_normalizes_record_of_list.ash:16:1)
+    CleanupResource       SourceTemp=42 TypeName=Function
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=24
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=24
-    LoadLocal             Target=46 Slot=23   (closure_environment_normalizes_record_of_list.ash:16:1)
-    StoreLocal            Slot=25 Source=46   (closure_environment_normalizes_record_of_list.ash:14:1)
-    LoadLocal             Target=47 Slot=5   (closure_environment_normalizes_record_of_list.ash:14:1)
-    CleanupResource       SourceTemp=47 TypeName=Function
+    LoadLocal             Target=43 Slot=23   (closure_environment_normalizes_record_of_list.ash:16:1)
+    StoreLocal            Slot=25 Source=43   (closure_environment_normalizes_record_of_list.ash:14:1)
+    LoadLocal             Target=44 Slot=5   (closure_environment_normalizes_record_of_list.ash:14:1)
+    CleanupResource       SourceTemp=44 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=26
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=26
-    LoadLocal             Target=48 Slot=25   (closure_environment_normalizes_record_of_list.ash:14:1)
-    StoreLocal            Slot=27 Source=48   (closure_environment_normalizes_record_of_list.ash:12:1)
-    LoadLocal             Target=49 Slot=2   (closure_environment_normalizes_record_of_list.ash:12:1)
-    CleanupResource       SourceTemp=49 TypeName=Function
+    LoadLocal             Target=45 Slot=25   (closure_environment_normalizes_record_of_list.ash:14:1)
+    StoreLocal            Slot=27 Source=45   (closure_environment_normalizes_record_of_list.ash:12:1)
+    LoadLocal             Target=46 Slot=2   (closure_environment_normalizes_record_of_list.ash:12:1)
+    CleanupResource       SourceTemp=46 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=28
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=28
-    LoadLocal             Target=50 Slot=27   (closure_environment_normalizes_record_of_list.ash:12:1)
-    Return                Source=50
+    LoadLocal             Target=47 Slot=27   (closure_environment_normalizes_record_of_list.ash:12:1)
+    Return                Source=47
 

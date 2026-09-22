@@ -325,7 +325,7 @@ function lambda_7  [SourceFunction from weigh]
     Return                Source=15   (parameter_released_behind_pair_result.ash:21:1)
 
 function _start_main  [ProgramEntry]
-  locals=22 temps=39
+  locals=22 temps=36
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (parameter_released_behind_pair_result.ash:13:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (parameter_released_behind_pair_result.ash:13:1)
@@ -358,51 +358,48 @@ function _start_main  [ProgramEntry]
     SetAdtField           Ptr=17 FieldIndex=0 Source=12 Tagless=true   (parameter_released_behind_pair_result.ash:25:1)
     SetAdtField           Ptr=17 FieldIndex=1 Source=13 Tagless=true   (parameter_released_behind_pair_result.ash:25:1)
     SetAdtField           Ptr=17 FieldIndex=2 Source=16 Tagless=true   (parameter_released_behind_pair_result.ash:25:1)
-    LoadMemOffset         Target=18 BasePtr=11 OffsetBytes=16   (parameter_released_behind_pair_result.ash:25:1)
-    LoadConstInt          Target=19 Value=63   (parameter_released_behind_pair_result.ash:25:1)
-    ShrInt                Target=20 Left=18 Right=19   (parameter_released_behind_pair_result.ash:25:1)
-    CallClosure           Target=21 ClosureTemp=11 ArgTemp=17   (parameter_released_behind_pair_result.ash:25:1)
+    CallClosure           Target=18 ClosureTemp=11 ArgTemp=17   (parameter_released_behind_pair_result.ash:25:1)
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
-    LoadMemOffset         Target=22 BasePtr=9 OffsetBytes=16   (parameter_released_behind_pair_result.ash:25:1)
-    LoadConstInt          Target=23 Value=62   (parameter_released_behind_pair_result.ash:25:1)
-    ShrInt                Target=24 Left=22 Right=23   (parameter_released_behind_pair_result.ash:25:1)
-    LoadConstInt          Target=25 Value=1   (parameter_released_behind_pair_result.ash:25:1)
-    AndInt                Target=26 Left=24 Right=25   (parameter_released_behind_pair_result.ash:25:1)
-    StoreLocal            Slot=14 Source=21   (parameter_released_behind_pair_result.ash:25:1)
-    JumpIfFalse           CondTemp=26 Target=rc_call_argument_not_retained_28   (parameter_released_behind_pair_result.ash:25:1)
-    RcDup                 Target=27 SourceTemp=21 RuntimeManaged=true
-    StoreLocal            Slot=14 Source=27   (parameter_released_behind_pair_result.ash:25:1)
+    LoadMemOffset         Target=19 BasePtr=9 OffsetBytes=16   (parameter_released_behind_pair_result.ash:25:1)
+    LoadConstInt          Target=20 Value=62   (parameter_released_behind_pair_result.ash:25:1)
+    ShrInt                Target=21 Left=19 Right=20   (parameter_released_behind_pair_result.ash:25:1)
+    LoadConstInt          Target=22 Value=1   (parameter_released_behind_pair_result.ash:25:1)
+    AndInt                Target=23 Left=21 Right=22   (parameter_released_behind_pair_result.ash:25:1)
+    StoreLocal            Slot=14 Source=18   (parameter_released_behind_pair_result.ash:25:1)
+    JumpIfFalse           CondTemp=23 Target=rc_call_argument_not_retained_28   (parameter_released_behind_pair_result.ash:25:1)
+    RcDup                 Target=24 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=14 Source=24   (parameter_released_behind_pair_result.ash:25:1)
   rc_call_argument_not_retained_28:
-    LoadLocal             Target=28 Slot=14   (parameter_released_behind_pair_result.ash:25:1)
-    CallClosure           Target=29 ClosureTemp=9 ArgTemp=28 RuntimeManagedArgumentFlagTemp=26   (parameter_released_behind_pair_result.ash:25:1)
+    LoadLocal             Target=25 Slot=14   (parameter_released_behind_pair_result.ash:25:1)
+    CallClosure           Target=26 ClosureTemp=9 ArgTemp=25 RuntimeManagedArgumentFlagTemp=23   (parameter_released_behind_pair_result.ash:25:1)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=15
-    RcIsUnique            Target=30 SourceTemp=21
-    JumpIfFalse           CondTemp=30 Target=rc_drop_shared_29   (parameter_released_behind_pair_result.ash:25:1)
-    GetAdtField           Target=31 Ptr=21 FieldIndex=2 Tagless=true   (parameter_released_behind_pair_result.ash:25:1)
-    RcDrop                SourceTemp=31 TypeName=Where RuntimeManaged=true
+    RcIsUnique            Target=27 SourceTemp=18
+    JumpIfFalse           CondTemp=27 Target=rc_drop_shared_29   (parameter_released_behind_pair_result.ash:25:1)
+    GetAdtField           Target=28 Ptr=18 FieldIndex=2 Tagless=true   (parameter_released_behind_pair_result.ash:25:1)
+    RcDrop                SourceTemp=28 TypeName=Where RuntimeManaged=true
   rc_drop_shared_29:
-    RcDrop                SourceTemp=21 TypeName=Instr RuntimeManaged=true
-    PrintInt              Source=29   (parameter_released_behind_pair_result.ash:25:1)
-    AllocAdt              Target=32 Tag=0 FieldCount=0   (parameter_released_behind_pair_result.ash:25:1)
-    StoreLocal            Slot=16 Source=32   (parameter_released_behind_pair_result.ash:21:1)
-    LoadLocal             Target=33 Slot=8   (parameter_released_behind_pair_result.ash:21:1)
-    CleanupResource       SourceTemp=33 TypeName=Function
+    RcDrop                SourceTemp=18 TypeName=Instr RuntimeManaged=true
+    PrintInt              Source=26   (parameter_released_behind_pair_result.ash:25:1)
+    AllocAdt              Target=29 Tag=0 FieldCount=0   (parameter_released_behind_pair_result.ash:25:1)
+    StoreLocal            Slot=16 Source=29   (parameter_released_behind_pair_result.ash:21:1)
+    LoadLocal             Target=30 Slot=8   (parameter_released_behind_pair_result.ash:21:1)
+    CleanupResource       SourceTemp=30 TypeName=Function
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=17
-    CopyOutArena          DestTemp=34 SrcTemp=32 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=31 SrcTemp=29 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=17
-    StoreLocal            Slot=18 Source=34   (parameter_released_behind_pair_result.ash:15:1)
-    LoadLocal             Target=35 Slot=5   (parameter_released_behind_pair_result.ash:15:1)
-    CleanupResource       SourceTemp=35 TypeName=Function
+    StoreLocal            Slot=18 Source=31   (parameter_released_behind_pair_result.ash:15:1)
+    LoadLocal             Target=32 Slot=5   (parameter_released_behind_pair_result.ash:15:1)
+    CleanupResource       SourceTemp=32 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=19
-    LoadLocal             Target=36 Slot=18   (parameter_released_behind_pair_result.ash:15:1)
-    StoreLocal            Slot=20 Source=36   (parameter_released_behind_pair_result.ash:13:1)
-    LoadLocal             Target=37 Slot=2   (parameter_released_behind_pair_result.ash:13:1)
-    CleanupResource       SourceTemp=37 TypeName=Function
+    LoadLocal             Target=33 Slot=18   (parameter_released_behind_pair_result.ash:15:1)
+    StoreLocal            Slot=20 Source=33   (parameter_released_behind_pair_result.ash:13:1)
+    LoadLocal             Target=34 Slot=2   (parameter_released_behind_pair_result.ash:13:1)
+    CleanupResource       SourceTemp=34 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=21
-    LoadLocal             Target=38 Slot=20   (parameter_released_behind_pair_result.ash:13:1)
-    Return                Source=38
+    LoadLocal             Target=35 Slot=20   (parameter_released_behind_pair_result.ash:13:1)
+    Return                Source=35
 
