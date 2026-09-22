@@ -316,12 +316,18 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    cycle, so a mutually recursive walker never owned its state; it is now a greatest fixpoint over
    every registered function, the dual of the may-reach summary. And a function owning its entry
    parameter refused to release it behind a join that returned the parameter bare, though the join
-   had retained it. The five reproducers are flat, and end-to-end tests pin them. Stage 1 mirrors
-   the four rules; on its own compilation of the probe the leak at 28 seconds falls from 1001 MB to
-   905 MB and the peak from 3250 MB to 2747 MB, less than stage 0 gains, because a recursive group's
-   members are lowered once by stage 1 with their result types still open, where stage 0 lowers
-   them against resolved types, which leaves the join of a sibling call unnormalized. That group
-   gap, on the older parity list, is the next round. Found on the way: stage 1 has taken seven
+   had retained it. Stage 1 mirrors the four rules, and end-to-end tests pin the reproducers.
+   The run-time read had to be narrowed twice before it was sound. It covers single-constructor
+   records only, and only a callee the contract already commits to an owned return
+   (`CalleeReturnsGeneralRcOwned`): a callee that returns a reference-counted value it does not own,
+   the borrowed head of a list it goes on to drop, was taken over and released, and the second call
+   through that path popped a corrupted free list — the self-hosted frontend suite crashed on
+   `tokenize("\"abc")`, reduced to `reproducers/borrowed_list_head_returned_through_helper.ash`.
+   Narrowed that far the rule leaves `recursive_group_threads_record_state` at 700 MB per million
+   rounds against 1220 MB on `main`, and the other reproducers unchanged: the two that still leak
+   are exactly the shape the owned-return guard excludes, so the callee side of the contract is the
+   next round. That reproducer also segfaults under `ASHES_RC_POISON=1` when compiled by `main`,
+   a separate and older defect. Found on the way: stage 1 has taken seven
    times longer on the probe since the third port (230 seconds against 32), an uncached walk of the
    heap layout at every admissibility question, to be cached next.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on

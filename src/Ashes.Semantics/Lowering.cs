@@ -12983,6 +12983,7 @@ public sealed partial class Lowering
         {
             CopyOutKind.Shallow or CopyOutKind.List => true,
             CopyOutKind.None => IsNormalizableUncoveredRecord(resultType)
+                && CalleeReturnsGeneralRcOwned(rootExpr, argumentCount, resultType)
                 && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
                 && !CompiledResultRuntimeManaged(rootExpr, argumentCount),
             _ => false,
@@ -14381,11 +14382,11 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
-    // A record result with no fixed copy-out (a record holding a list of records) from a callee
-    // whose result ownership is settled only at run time: a callee still being lowered, or one
-    // reached through a closure. The callee's returns bit decides: a reference-counted result is
-    // taken over as it is, an arena one is copied into an owned reference-counted graph, so the
-    // result is owned on both paths and no consumer retains a reference the callee already gave up.
+    // A record result with no fixed copy-out (a record holding a list of records) from a callee that
+    // hands its result over owned but whose placement is settled only at run time: a callee still
+    // being lowered, or one reached through a closure. An arena result is copied into an owned
+    // reference-counted graph, a reference-counted one is taken over as it is, so the result is
+    // owned on both paths and no consumer retains a reference the callee already gave up.
     private int LowerCallConditionalNormalizeResult(
         int callWmCursorSlot,
         int callWmEndSlot,
@@ -14396,7 +14397,6 @@ public sealed partial class Lowering
     {
         int resultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
 
         string copyLabel = NewLabel("call_normalize_arena_result");
         string ownedLabel = NewLabel("call_owned_result");
@@ -14406,6 +14406,10 @@ public sealed partial class Lowering
         int copiedTemp = EmitRuntimeManagedTcoParamCopyByCopy(currentTemp, Prune(callResultType));
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(ownedLabel));
+        // The copy walks the result's children, and a child's own normalization allocates: the arena
+        // is rewound only once every path is past that, or the rewound cursor would hand the copy
+        // the bytes it is still reading from.
+        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
 
         int resultTemp = NewTemp();

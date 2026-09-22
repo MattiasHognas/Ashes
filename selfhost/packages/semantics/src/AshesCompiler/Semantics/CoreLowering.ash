@@ -12035,11 +12035,28 @@ let insideTcoLoop (state: CoreLoweringState) =
         | Some(_frame) -> true
         | None -> false
 
+// Stage 0's `CalleeReturnsGeneralRcOwned`: a call of such a result type receives its result owned
+// from a function compiled under the contract, reached along the returned-closure chain one hop
+// per application past the first, or from the function being lowered itself, which normalizes its
+// result at its return like any other.
+let calleeReturnsGeneralRcOwned (context: CoreCallContext) (state: CoreLoweringState) =
+    context.selfCallee || (match context.facts with
+        | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
+            match state
+            |> stateFunctionReturnedClosureLabels
+            |> innermostStageLabel(count - 1)(label) with
+                | Some(stageLabel) ->
+                    state
+                    |> stateGeneralRcOwnedResultLabels
+                    |> containsLabel(stageLabel)
+                | None -> false
+        | _ -> false)
+
 let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     if hasCallCopyOut(resultType)(state)
     then (state, true, false)
     else
-        if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state)
+        if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || calleeReturnsGeneralRcOwned(context)(state) == false
         then (state, false, false)
         else
             match isNormalizableUncoveredRecord(resultType)(state) with
@@ -12967,23 +12984,6 @@ let pinDeferredSelfCallResult (semanticType: SemanticType) (state: CoreLoweringS
                             | (bound, None) -> bound
                             | (_failed, Some(_error)) -> state
         | _ -> state
-
-// Stage 0's `CalleeReturnsGeneralRcOwned`: a call of such a result type receives its result owned
-// from a function compiled under the contract, reached along the returned-closure chain one hop
-// per application past the first, or from the function being lowered itself, which normalizes its
-// result at its return like any other.
-let calleeReturnsGeneralRcOwned (context: CoreCallContext) (state: CoreLoweringState) =
-    context.selfCallee || (match context.facts with
-        | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
-            match state
-            |> stateFunctionReturnedClosureLabels
-            |> innermostStageLabel(count - 1)(label) with
-                | Some(stageLabel) ->
-                    state
-                    |> stateGeneralRcOwnedResultLabels
-                    |> containsLabel(stageLabel)
-                | None -> false
-        | _ -> false)
 
 // The branch on a closure's owned-result flag ahead of the normalization: set, the result is taken
 // over as it is; clear, or with no closure to ask, it is normalized.

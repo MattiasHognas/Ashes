@@ -43,9 +43,9 @@ Function: extend
 
 Function: scan [lambda_4]
   Operations
-    dup:                  23
+    dup:                  24
     drop:                 62
-    uniqueness checks:    20
+    uniqueness checks:    19
     allocations:          2
     reused allocations:   0
     reuse tokens:         0

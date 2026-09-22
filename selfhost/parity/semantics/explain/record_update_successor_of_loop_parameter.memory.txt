@@ -58,9 +58,9 @@ Function: scan
     state: consumed, move-safe yes
     result fresh: no
   perceus [lambda_4]
-    dup:                  23
+    dup:                  24
     drop:                 62
-    uniqueness checks:    20
+    uniqueness checks:    19
   perceus [lambda_3]
     dup:                  0
     drop:                 0
@@ -68,7 +68,7 @@ Function: scan
   representation [lambda_4]
     conservative unknown: 6
     region:               3
-    runtime rc:           55
+    runtime rc:           47
     copy value:           4
   representation [lambda_3]
     conservative unknown: 2

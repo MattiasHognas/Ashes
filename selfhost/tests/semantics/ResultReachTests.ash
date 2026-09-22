@@ -19,12 +19,22 @@ let parsedExpression source =
         | ExpressionParseResult { expression = expression, diagnostics = [] } -> expression
         | ExpressionParseResult { diagnostics = diagnostics } -> test.fail("expression should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
 
+// The callee table as the walk consults it: each known function's parameter chain and the
+// parameters its result always reaches, as the reach analysis's must-reach table answers them.
+let recursive calleeTable (callees: List((Str, List(Str), List(Str)))) (name: Str) =
+    match callees with
+        | [] -> None
+        | (candidate, parameters, reached) :: rest ->
+            if candidate == name
+            then Some((parameters, reached))
+            else calleeTable(rest)(name)
+
 let reaches constructors callees source variable =
-    resultAlwaysReachesVariable(constructors)(callees)(parsedExpression(source))(variable)
+    resultAlwaysReachesVariable(constructors)(calleeTable(callees))(parsedExpression(source))(variable)
 
 let plainReaches source variable = reaches([])([])(source)(variable)
 
-let wrapCallee unit = [("wrap", ["s"], parsedExpression("[s]"))]
+let wrapCallee unit = [("wrap", ["s"], ["s"])]
 
 let testVariableItselfReaches unit =
     "s"
@@ -146,11 +156,10 @@ let testOverAppliedKnownCalleeDoesNotReach unit =
     |> reaches([])(wrapCallee(Unit))("wrap(s)(1)")
     |> test.assertEqual(false)
 
-// A callee forwarding the argument to itself never bottoms out; the walk gives up at its depth
-// bound instead of looping.
-let testSelfForwardingCalleeStopsAtDepthBound unit =
+// A callee whose result the must-reach table does not answer for the parameter does not forward it.
+let testCalleeNotReachingItsParameterDoesNotReach unit =
     "s"
-    |> reaches([])([("loop", ["s"], parsedExpression("loop(s)"))])("loop(s)")
+    |> reaches([])([("loop", ["s"], [])])("loop(s)")
     |> test.assertEqual(false)
 
 let parsedProgram source =
@@ -380,7 +389,7 @@ let runResultReachTests unit =
     |> testKnownCalleeReachesThroughItsParameter
     |> testKnownCalleeWithOtherArgumentDoesNotReach
     |> testOverAppliedKnownCalleeDoesNotReach
-    |> testSelfForwardingCalleeStopsAtDepthBound
+    |> testCalleeNotReachingItsParameterDoesNotReach
     |> testStringParameterEntryNormalization
     |> testStringParameterClosureFlag
     |> testRecordParameterEntryNormalization

@@ -22,9 +22,9 @@ Function: collect
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_4]
-    dup:                  20
-    drop:                 17
-    uniqueness checks:    10
+    dup:                  21
+    drop:                 13
+    uniqueness checks:    7
   perceus [lambda_3]
     dup:                  0
     drop:                 0
@@ -34,8 +34,8 @@ Function: collect
     drop:                 0
     uniqueness checks:    0
   representation [lambda_4]
-    conservative unknown: 15
-    region:               13
+    conservative unknown: 14
+    region:               14
     runtime rc:           81
     copy value:           5
   representation [lambda_3]

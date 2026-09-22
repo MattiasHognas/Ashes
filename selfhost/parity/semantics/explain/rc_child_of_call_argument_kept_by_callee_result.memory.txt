@@ -8,9 +8,9 @@ Function: addImpl
     env: consumed, move-safe yes
     result fresh: no
   perceus [lambda_7]
-    dup:                  12
-    drop:                 11
-    uniqueness checks:    5
+    dup:                  1
+    drop:                 1
+    uniqueness checks:    0
   perceus [lambda_6]
     dup:                  0
     drop:                 0
@@ -20,9 +20,9 @@ Function: addImpl
     drop:                 0
     uniqueness checks:    0
   representation [lambda_7]
-    conservative unknown: 21
-    region:               26
-    runtime rc:           40
+    conservative unknown: 16
+    region:               8
+    runtime rc:           7
     copy value:           5
   representation [lambda_6]
     conservative unknown: 2
@@ -55,6 +55,10 @@ Function: addTraitImplementation
     dup:                  1
     drop:                 0
     uniqueness checks:    0
+  perceus [lambda_3__scalarenv3]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
   representation [lambda_3]
     conservative unknown: 6
     region:               3
@@ -70,18 +74,17 @@ Function: buildEnv
   ownership
     unit: borrowed, move-safe no
     result fresh: yes
-  perceus [lambda_13]
-    dup:                  2
-    drop:                 30
-    uniqueness checks:    15
-  perceus [lambda_13__scalarenv0]
-    dup:                  2
-    drop:                 30
-    uniqueness checks:    15
-  representation [lambda_13]
-    conservative unknown: 14
-    region:               3
-    runtime rc:           7
+  perceus [lambda_8]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  perceus [lambda_8__scalarenv0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_8]
+    conservative unknown: 16
+    region:               1
     copy value:           3
 
 Function: churn
@@ -89,24 +92,24 @@ Function: churn
     n: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_16]
+  perceus [lambda_11]
     dup:                  1
     drop:                 6
     uniqueness checks:    2
-  perceus [lambda_15]
+  perceus [lambda_10]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_16__scalarenv1]
+  perceus [lambda_11__scalarenv1]
     dup:                  1
     drop:                 6
     uniqueness checks:    2
-  representation [lambda_16]
+  representation [lambda_11]
     conservative unknown: 2
     region:               3
     runtime rc:           11
     copy value:           7
-  representation [lambda_15]
+  representation [lambda_10]
     region:               3
     copy value:           1
 
@@ -115,22 +118,22 @@ Function: count
     items: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_18]
+  perceus [lambda_13]
     dup:                  2
     drop:                 9
     uniqueness checks:    3
-  perceus [lambda_17]
+  perceus [lambda_12]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_18__scalarenv2]
+  perceus [lambda_13__scalarenv2]
     dup:                  2
     drop:                 9
     uniqueness checks:    3
-  representation [lambda_18]
+  representation [lambda_13]
     runtime rc:           7
     copy value:           6
-  representation [lambda_17]
+  representation [lambda_12]
     conservative unknown: 1
     region:               3
 
@@ -138,11 +141,11 @@ Function: firstNames
   ownership
     impls: consumed, move-safe yes
     result fresh: yes
-  perceus [lambda_19]
+  perceus [lambda_14]
     dup:                  11
     drop:                 29
     uniqueness checks:    12
-  representation [lambda_19]
+  representation [lambda_14]
     conservative unknown: 9
     region:               5
     runtime rc:           38
