@@ -429,6 +429,20 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    The cost to watch is the same at every stage: a value that used to live and die in the arena now
    pays a reference count, and an arena value handed to an adopting callee is copied once. The
    `challenges/` programs and stage 1's compile time are what decide whether a stage lands.
+
+   Stages 1 and 2 exist behind `GRC_OWN_KEPT` and `GRC_PROMOTE_SIBLINGS`, off by default. They close
+   all three B-shaped reproducers, poisoned runs included. Stage 1 needed one thing the design did
+   not name: a closure built before its function's entry normalization was decided carried a stale
+   adoption bit, so callers never handed a fresh argument over; closures are now marked once the
+   program is lowered, as the owned-result bit already was. Handing an argument over under the flag
+   instead of transferring it, the other obvious piece, crashed the real parser (a callee that keeps
+   the parameter on some paths does not normalize it) and is not part of it. On the real parser both
+   stages do what they say, `parserStateWithTokens` now adopts its token list and returns a
+   reference-counted state, and the leak stays the same size, in a different shape: the token lists
+   reach it in the arena, so its entry normalization copies them whole, and no caller releases the
+   state that owns the copy. That is stage 3, and it comes with the copy cost made concrete: unless
+   the lexer's list and the lists the parser builds are reference-counted to begin with, every
+   adoption is a full copy.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
