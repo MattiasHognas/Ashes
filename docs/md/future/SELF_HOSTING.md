@@ -342,6 +342,25 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    a separate and older defect. Found on the way: stage 1 has taken seven
    times longer on the probe since the third port (230 seconds against 32), an uncached walk of the
    heap layout at every admissibility question, to be cached next.
+   The self-hosted optimizer's pass shape (`reproducers/optimizer_pass_state_and_rewritten_instruction.ash`,
+   1380 MB at 100,000 rounds) was taken for an unreleased tuple: the callee's result pair was
+   thought to keep its instruction shared, so the list's drop kept every child. The lowered and
+   final IR both release the pair, and a variant that uses neither half of it leaks the same, so
+   the census was read again: containers are freed and their children are not, and the children
+   come from two unrelated leaks, each now a program of a dozen lines. A record parameter kept by
+   an outer curried stage (`make (loc) (k)`) was copied onto the reference-counted heap at entry
+   and the copy moved into an arena closure environment that nothing releases; it regressed in
+   #622, found by bisecting the reproducer over published compilers. The outer stage no longer
+   normalizes: the parameter reaches the result only as a capture of the next stage's closure,
+   whose environment normalizer copies or retains it once the closure escapes. This is also the
+   root cause of OPT-85's lowering-state probe (`stateleak`, 32 MB at 4,000 rounds on `main`, now
+   8 MB), which was attacked from the other side, by giving the adopting environment a dropper,
+   and that miscompiled five of the six self-hosted suites; this side passes all six. The other leak is older than August: a tuple consed onto a list inside a
+   tuple result inherited the enclosing tuple's request for a reference-counted representation,
+   while the list cell holding it stayed in the arena, so the arena reset reclaimed the cell and
+   left the tuple. An arena list's element no longer takes that request. Both rules are mirrored
+   in stage 1, and the optimizer reproducer, `loop_state_and_rewrite_pair` (1228 MB) and
+   `record_state_list_field_grown_by_callee_pair` (312 MB) now stay at 8 MB with unchanged output.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
