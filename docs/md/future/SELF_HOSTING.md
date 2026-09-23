@@ -361,6 +361,29 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    left the tuple. An arena list's element no longer takes that request. Both rules are mirrored
    in stage 1, and the optimizer reproducer, `loop_state_and_rewrite_pair` (1228 MB) and
    `record_state_list_field_grown_by_callee_pair` (312 MB) now stay at 8 MB with unchanged output.
+   A loop accumulator with an arm that resets it to nil (`direct_successor_with_reset_arm`, 1752 MB)
+   was never an accumulator edge, so the list stayed in the arena holding retained elements; nil is
+   one now, and a nested join normalized in place no longer counts as borrowing the loop parameter,
+   which had the outer join retain it a second time. Stage 1 needed only the first rule.
+   None of this moved the module probe (2767 MB on `main`, 2750 MB after, 91% of the heap still
+   leaked), and the census said why. Roots claiming 390 of the leaked megabytes are token lists, and
+   the real parser, run in a probe (`parseloop.sh`), leaves 166 MB behind after one parse of a
+   3,700-line file and 83 MB for each parse after, against 0.5 MB for lexing alone. The parser threads
+   its state as a tuple of the token list, the diagnostics, the source bytes and a flag. That tuple
+   lives in the arena (the byte view and a list whose representation is unknown at the tuple keep it
+   there), while the token lists put into it are fresh reference-counted results
+   (`List.append`, per declaration and per nested `let`). A call that hands a fresh list to a function
+   returning it inside such a tuple transfers ownership to a callee that owns nothing, and every
+   later state rebuild drops the arena tuple's reference to the old head cell. Reduced:
+   `list_parameter_returned_inside_tuple.ash`. Three local rules were tried and reverted, each
+   measured on the real parser: normalizing list parameters, an all-inline variant as a tuple
+   sibling, and copying a transferred fresh list into the arena (which fixes both reproducers, and
+   makes the parser worse, because its arena lists are copied back onto the reference-counted heap
+   downstream). The same shape is behind the lexer's leaked token kinds, the recursive group's
+   sibling result and the closure-parameter result: an owned reference-counted value stored in an
+   arena aggregate nothing releases. That is the ownership contract's open question (which values
+   a result owns, and who releases what an arena aggregate holds), and the next round is its design,
+   not another local rule.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
