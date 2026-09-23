@@ -169,6 +169,9 @@ int main(int argc, char **argv) {
         }
         typedef struct { uint32_t size; int ptr; size_t roots; uint64_t bytes; uint64_t sample[2]; } Class;
         static Class classes[8192]; size_t nclasses = 0;
+        // REACH_TOP=<size>: the roots of that size claiming the most, and how their claims are spread.
+        uint32_t topsize = getenv("REACH_TOP") ? (uint32_t)atoi(getenv("REACH_TOP")) : 0;
+        uint64_t topaddr[600] = { 0 }, topbytes[600] = { 0 }; size_t spread[5] = { 0 }; uint64_t spreadbytes[5] = { 0 };
         for (size_t i = 0; i < ncells; i++) {
             if (!cells[i].live || (cells[i].mark & 1) || indegree[i] != 0) continue;
             const uint8_t *p = heapbytes(cells[i].addr, cells[i].size);
@@ -179,6 +182,7 @@ int main(int argc, char **argv) {
             if (k == nclasses) { if (nclasses == 8192) continue; classes[nclasses].size = cells[i].size; classes[nclasses].ptr = isptr; nclasses++; }
             if (classes[k].roots < 2 || (classes[k].roots % 5003) == 0) classes[k].sample[classes[k].roots % 2] = cells[i].addr + 16;
             classes[k].roots++;
+            uint64_t before = classes[k].bytes;
             cells[i].mark |= 4; push(i);
             while (sp > 0) {
                 size_t c = stack[--sp]; classes[k].bytes += cells[c].size;
@@ -189,6 +193,19 @@ int main(int argc, char **argv) {
                     if (t >= 0 && cells[t].live && !(cells[t].mark & 5)) { cells[t].mark |= 4; push((size_t)t); }
                 }
             }
+            if (topsize && cells[i].size == topsize && isptr) {
+                uint64_t got = classes[k].bytes - before;
+                int band = got < 128 ? 0 : got < 1024 ? 1 : got < 16384 ? 2 : got < 262144 ? 3 : 4;
+                spread[band]++; spreadbytes[band] += got;
+                int low = 0; for (int t = 1; t < 600; t++) if (topbytes[t] < topbytes[low]) low = t;
+                if (got > topbytes[low]) { topbytes[low] = got; topaddr[low] = cells[i].addr + 16; }
+            }
+        }
+        if (topsize) {
+            const char *bands[5] = { "<128 B", "<1 KB", "<16 KB", "<256 KB", ">=256 KB" };
+            printf("roots of size %u with a pointer first, by claim:\n", topsize);
+            for (int b = 0; b < 5; b++) printf("  %-9s %9zu roots claim %8.1f MB\n", bands[b], spread[b], spreadbytes[b] / 1048576.0);
+            for (int t = 0; t < 600; t++) if (topbytes[t]) printf("  top root payload %llx claims %.1f MB\n", (unsigned long long)topaddr[t], topbytes[t] / 1048576.0);
         }
         uint64_t claimed = 0; for (size_t k = 0; k < nclasses; k++) claimed += classes[k].bytes;
         printf("garbage roots by shape (each claims what it reaches first; %.1f MB of the leak is in cycles only):\n", (leaked - claimed) / mb);
