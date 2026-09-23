@@ -176,10 +176,13 @@ public sealed partial class Lowering
     private readonly Dictionary<List<IrInst>, HashSet<int>> _parameterBorrowingJoinTempsByBody =
         new(ReferenceEqualityComparer.Instance);
 
-    // Nil joins as a reference-counted list too, but it owns nothing and borrows from nothing.
+    // Nil joins as a reference-counted list too, but it owns nothing and borrows from nothing. A
+    // nested join normalized in place borrowed from a parameter before its arms were retained, and
+    // holds its own reference since.
     private bool BorrowsLoopParameter(JoinArm arm)
         => (arm.JoinsRuntimeManaged && !(arm.Body is { } body && IsEmptyListLiteral(body)))
             || (arm.Store is { } store
+                && !IsNormalizedJoinTemp(store.Source)
                 && _parameterBorrowingJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
                 && temps.Contains(store.Source));
 
