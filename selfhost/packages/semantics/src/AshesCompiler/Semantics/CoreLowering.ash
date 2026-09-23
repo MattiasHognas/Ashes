@@ -9024,11 +9024,15 @@ let loneRecursiveBindingNames (state: CoreLoweringState) =
         | name :: [] -> [name]
         | _ -> []
 
+// A curried stage whose body is the next stage never normalizes: its parameter reaches the result
+// only as a capture of that stage's closure, whose environment normalizer copies or retains it
+// once the closure escapes. An owned entry copy would instead sit in an arena closure environment
+// that is never released.
 let normalizesAlwaysReturnedParameter parameter body label parameterType (state: CoreLoweringState) =
     match entryNormalizationPlanOf(parameterType)(state) with
         | None -> false
         | Some(_plan) ->
-            !acceptsRuntimeManagedArgument(label)(state) && resultAlwaysReachesVariable(state
+            !acceptsRuntimeManagedArgument(label)(state) && !letValueIsLambda(body) && resultAlwaysReachesVariable(state
             |> stateConstructorLayouts
             |> constructorLayoutNames)(mustReachCallee(loneRecursiveBindingNames(state))(state))(body)(parameter)
 
@@ -16894,10 +16898,11 @@ let allocateListCell headTemp tailTemp elementType (runtimeManaged: Bool) state 
 // The request a list element or cons head is lowered under, stage 0's
 // `LowerRuntimeManagedListElement`: the list's own flags stay, the element type is expected, and
 // a runtime list asks a fresh string producer for a runtime string and a tuple literal for a
-// runtime tuple.
+// runtime tuple. An arena list drops the tuple flag it inherits: the tuple enclosing the list
+// asked for it, and a reference-counted tuple in an arena cons cell is reclaimed unreleased.
 let listElementRequest (request: ConsumerRequest) (elementType: Maybe(SemanticType)) (transfers: Bool) (element: Expr) (state: CoreLoweringState) =
     match request with
-        | ConsumerRequest { runtimeString = parentString, runtimeList = runtimeList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, runtimeRecord = parentRecord } -> emptyConsumerRequest with expectedType = elementType, runtimeString = parentString || runtimeList && isFreshStringChild(element)(state), runtimeList = runtimeList, runtimeTuple = parentTuple || runtimeList && isTupleLiteral(element), runtimeAdt = parentAdt || runtimeList && isFreshRuntimeManageableAdtExpression(element)(state), runtimeRecord = parentRecord || runtimeList && isRecordLiteral(element) && isFreshRuntimeManageableRecordTree(element)(state), transfersRuntimeManagedChildren = transfers
+        | ConsumerRequest { runtimeString = parentString, runtimeList = runtimeList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, runtimeRecord = parentRecord } -> emptyConsumerRequest with expectedType = elementType, runtimeString = parentString || runtimeList && isFreshStringChild(element)(state), runtimeList = runtimeList, runtimeTuple = runtimeList && (parentTuple || isTupleLiteral(element)), runtimeAdt = parentAdt || runtimeList && isFreshRuntimeManageableAdtExpression(element)(state), runtimeRecord = parentRecord || runtimeList && isRecordLiteral(element) && isFreshRuntimeManageableRecordTree(element)(state), transfersRuntimeManagedChildren = transfers
 
 let requestsRuntimeList (request: ConsumerRequest) =
     match request with

@@ -7462,8 +7462,13 @@ public sealed partial class Lowering
     // Decided before the body is lowered (so the body's aggregates can count a read of the
     // parameter as a fresh owned child) and again after it, when the parameter's type may have
     // resolved further; the later decision can only add the normalization, never withdraw it.
+    // A curried stage whose body is the next stage never normalizes: its parameter reaches the
+    // result only as a capture of that stage's closure, whose environment normalizer copies or
+    // retains it once the closure escapes. An owned entry copy would instead sit in an arena
+    // closure environment that is never released.
     private bool NormalizesAlwaysReturnedParameter(Expr.Lambda lambda, string label, TypeRef argumentType)
         => !_runtimeNormalizedFunctionArgumentLabels.Contains(label)
+            && lambda.Body is not Expr.Lambda
             && IsRuntimeNormalizableParameterType(Prune(argumentType))
             && ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName);
 
@@ -15294,6 +15299,19 @@ public sealed partial class Lowering
         return (tailTemp, Prune(tailType));
     }
 
+    // The tuple representation an arena list's request carries was asked for by the tuple
+    // enclosing the list, not by the list. Inherited by a tuple element, it would place a
+    // reference-counted tuple in an arena cons cell, which is reclaimed without releasing it.
+    private static LoweredValueRequest WithoutEnclosingTupleRepresentation(
+        LoweredValueRequest listRequest,
+        bool runtimeManagedList)
+        => runtimeManagedList
+            ? listRequest
+            : listRequest with
+            {
+                RuntimeRepresentation = listRequest.RuntimeRepresentation & ~LoweredValueRuntimeRepresentation.Tuple,
+            };
+
     private LoweredValue LowerRuntimeManagedListElement(
         Expr element,
         LoweredValueRequest listRequest,
@@ -15301,6 +15319,7 @@ public sealed partial class Lowering
     {
         bool runtimeManagedList = listRequest.EmitsRuntime(
             LoweredValueRuntimeRepresentation.List);
+        listRequest = WithoutEnclosingTupleRepresentation(listRequest, runtimeManagedList);
         LoweredValueRequest elementRequest = listRequest
             .WithoutExpectedType()
             .AddRuntime(
