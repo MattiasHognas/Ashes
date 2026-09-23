@@ -1,0 +1,12 @@
+{
+  "name": "stage1-parseloop",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "dependencies": {
+    "frontend": { "path": "@ROOT@/selfhost/packages/frontend" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "@ROOT@/selfhost/packages/frontend" }
+  }
+}
