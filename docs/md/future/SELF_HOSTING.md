@@ -384,6 +384,51 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    arena aggregate nothing releases. That is the ownership contract's open question (which values
    a result owns, and who releases what an arena aggregate holds), and the next round is its design,
    not another local rule.
+
+   **The design for that round.** The invariant to establish is the dual of the representation
+   test's: *an arena value never holds the only reference to a reference-counted value.* Arena
+   memory holding a borrowed reference is fine, since its owner outlives it; holding the only one is
+   a leak by construction, because nothing releases what an arena cell points at. The only reference
+   ends up there in three ways, each with a reproducer:
+
+   ```mermaid
+   flowchart LR
+       A["A fresh call result stored<br/>into an arena aggregate"] --> L["Only reference<br/>held by arena"]
+       B["A fresh argument transferred<br/>to a callee that does not adopt it,<br/>whose result keeps it"] --> L
+       C["An owned result of a type the<br/>contract does not govern, threaded<br/>through a group sibling or a closure"] --> L
+   ```
+
+   A is `record_with_call_result_field_beside_optional_in_tuple` and the lexer's token kinds; B is
+   `list_parameter_returned_inside_tuple` and the parser's state; C is
+   `group_sibling_result_passed_to_recursive_call` and `record_result_through_closure_parameter`.
+   Two ways out were measured and rejected. Demoting the value into the arena (a deep copy, the
+   original released) closes both B reproducers and makes the parser five times worse, because an
+   arena list flowing on into reference-counted code is copied back at every such point. Promoting
+   the aggregate onto the reference-counted heap works wherever it applies (the two-parameter B
+   shape, the optional-scalar A shape), and fails only where the promotion is refused: a sibling the
+   normalizer cannot take (a byte view), a list whose representation is unknown at the aggregate, or
+   a read of a parameter the aggregate does not own.
+
+   So the direction is promotion, made total, in three stages, each landed on its own with the
+   reproducers, the parse probe, the six suites, the poisoned end-to-end run, the `challenges/`
+   programs and the module probe as its gate:
+
+   1. **A callee that keeps a parameter whole owns it.** Entry normalization covers every
+      runtime-manageable parameter type, lists included, so such a callee adopts a fresh argument
+      and copies a borrowed one; a read of the adopted parameter is an owned element of the
+      aggregate storing it; and "transfer to a callee whose result keeps it" disappears, since every
+      such callee now adopts. This closes B.
+   2. **An aggregate holding an owned element is promoted, whatever its siblings.** Borrowed
+      reference-counted siblings are retained, arena siblings copied onto the reference-counted
+      heap, and a byte view is retained or copied like a string. This closes A and the parser's
+      four-field state.
+   3. **Such a result is owned by the caller.** The contract's owned-result commitment extends to
+      every aggregate its callee promoted, so the caller keeps it in an owned slot or reads the
+      closure's owned-return bit. This closes C.
+
+   The cost to watch is the same at every stage: a value that used to live and die in the arena now
+   pays a reference count, and an arena value handed to an adopting callee is copied once. The
+   `challenges/` programs and stage 1's compile time are what decide whether a stage lands.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
