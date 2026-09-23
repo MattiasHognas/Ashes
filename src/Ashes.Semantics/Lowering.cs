@@ -7573,8 +7573,15 @@ public sealed partial class Lowering
         {
             TypeRef.TStr => true,
             TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named),
+            TypeRef.TList list when OwnsKeptPiece(1) => CanRuntimeManageTcoListElement(list.Element),
             _ => false,
         };
+
+    // Stage 1 of the arena-aggregate ownership design (SELF_HOSTING.md): a callee that keeps a
+    // parameter whole owns it.
+    private static bool OwnsKeptParameters => Environment.GetEnvironmentVariable("GRC_OWN_KEPT") is not null;
+
+    private static bool OwnsKeptPiece(int piece) => OwnsKeptParameters && Environment.GetEnvironmentVariable("GRC_OWN_KEPT_NO" + piece) is null;
 
     private bool ResultAlwaysReachesVariable(
         Expr expression,
@@ -15733,8 +15740,24 @@ public sealed partial class Lowering
             .AddRuntime(
                 runtimeManagedTuple && element is Expr.RecordLit,
                 LoweredValueRuntimeRepresentation.Record);
-        return LowerExpr(element, elementRequest);
+        LoweredValue lowered = LowerExpr(element, elementRequest);
+        if (OwnsKeptPiece(2) && IsNormalizedAlwaysReturnedParameterRead(element))
+        {
+            MarkRuntimeManagedTemp(lowered.Temp, type: lowered.Type);
+            lowered = CreateLoweredValue(lowered.Temp, lowered.Type);
+        }
+
+        return lowered;
     }
+
+    // A read of the parameter the entry normalization owns, of any type: the aggregate storing it
+    // takes the owned value over.
+    private bool IsNormalizedAlwaysReturnedParameterRead(Expr expression)
+        => _normalizedAlwaysReturnedParameter is (string name, int slot, TypeRef _)
+            && expression is Expr.Var variable
+            && string.Equals(variable.Name, name, StringComparison.Ordinal)
+            && Lookup(variable.Name) is Binding.Local { Slot: int readSlot }
+            && readSlot == slot;
 
     private bool IsRuntimeManageableTupleElement(LoweredValue value)
     {

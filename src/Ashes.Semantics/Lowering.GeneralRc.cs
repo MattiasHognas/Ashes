@@ -257,17 +257,29 @@ public sealed partial class Lowering
         {
             for (int i = 0; i < instructions.Count; i++)
             {
-                instructions[i] = instructions[i] switch
+                instructions[i] = MarkClosureAdoption(instructions[i] switch
                 {
                     IrInst.MakeClosure closure when _generalRcOwnedResultLabels.Contains(closure.FuncLabel) =>
                         closure with { ReturnsGeneralRcOwned = true },
                     IrInst.MakeClosureStack closure when _generalRcOwnedResultLabels.Contains(closure.FuncLabel) =>
                         closure with { ReturnsGeneralRcOwned = true },
                     IrInst other => other,
-                };
+                });
             }
         }
     }
+
+    // A closure built before its function's entry normalization was decided carries a stale
+    // adoption bit; the function adopts a handed-over argument all the same.
+    private IrInst MarkClosureAdoption(IrInst instruction)
+        => instruction switch
+        {
+            IrInst.MakeClosure closure when OwnsKeptPiece(4) && _runtimeNormalizedFunctionArgumentLabels.Contains(closure.FuncLabel) =>
+                closure with { AcceptsRuntimeManagedArgument = true },
+            IrInst.MakeClosureStack closure when OwnsKeptPiece(4) && _runtimeNormalizedFunctionArgumentLabels.Contains(closure.FuncLabel) =>
+                closure with { AcceptsRuntimeManagedArgument = true },
+            _ => instruction,
+        };
 
     /// <summary>
     /// For a call result an indirect closure application produced, the flag its closure's header

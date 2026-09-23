@@ -391,7 +391,12 @@ public sealed partial class Lowering
         => Environment.GetEnvironmentVariable("GRC_NO_RCTUPLESIBLING") is null
             && !ContainsUnresolvedLayoutType(Prune(element.Type), [])
             && (CanNormalizeIntoOwnedRuntimeValue(element.Type)
+                || (PromotesOverStringSiblings && Prune(element.Type) is TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt)
                 || (Prune(element.Type) is TypeRef.TList list && CanRuntimeManageTcoListElement(list.Element)));
+
+    // Stage 2 of the arena-aggregate ownership design (SELF_HOSTING.md): an aggregate holding an
+    // owned element is promoted over string-like siblings, which are retained or copied like a string.
+    private static bool PromotesOverStringSiblings => Environment.GetEnvironmentVariable("GRC_PROMOTE_SIBLINGS") is not null;
 
     // A tuple's store takes a reference to a reference-counted element. An arena tuple can release
     // nothing, so that reference would outlive the tuple: a function returning its list inside a
