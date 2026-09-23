@@ -445,6 +445,13 @@ let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens:
                                         )
     in split(tokens)([])(false)(0)(0)(0))
 
+// The token lists a declaration is parsed from and merged back into, typed so their cells are
+// reference-counted like the lexer's own list, rather than built by the generic append.
+let recursive parserAppendTokens (front: List(Token)) (back: List(Token)) =
+    match front with
+        | [] -> back
+        | token :: rest -> token :: parserAppendTokens(rest)(back)
+
 let recursive parserTokensBeforeEof (tokens: List(Token)) =
     match tokens with
         | [] -> []
@@ -2023,7 +2030,7 @@ and parserParseFlatExpressionValue sourceBytes declarationColumn state =
                 let temporaryState =
                     parserStateWithTokens(
                         state,
-                        appendList(valueTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
+                        parserAppendTokens(valueTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
                     )
                 in
                     match parserParseExpression(temporaryState) with
@@ -2034,7 +2041,7 @@ and parserParseFlatExpressionValue sourceBytes declarationColumn state =
                                 |> parserTokensBeforeEof
                             in
                                 (value, remainingTokens
-                                |> appendList(unconsumed)
+                                |> parserAppendTokens(unconsumed)
                                 |> parserStateWithTokens(afterValue))
 and parserBuildLetExpression start recursiveBinding name value body parameters annotation requirements =
     (let expression =
@@ -2450,7 +2457,7 @@ let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBinding
                         | token :: _ -> token.position
                         | [] -> 0
                 in
-                    let temporaryTokens = appendList(valueTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
+                    let temporaryTokens = parserAppendTokens(valueTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
                     in
                         let temporaryState = parserStateWithTokens(state)(temporaryTokens)
                         in
@@ -2461,7 +2468,7 @@ let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBinding
                                         |> parserStateTokens
                                         |> parserTokensBeforeEof
                                     in
-                                        let mergedTokens = appendList(unconsumed)(remainingTokens)
+                                        let mergedTokens = parserAppendTokens(unconsumed)(remainingTokens)
                                         in (value, parserStateWithTokens(afterValue)(mergedTokens)))
 
 let parserParseTopLevelValue sourceBytes declarationColumn state =
@@ -2935,7 +2942,7 @@ and parserParseDelimitedTypeValue sourceBytes declarationColumn state =
                 let temporaryState =
                     parserStateWithTokens(
                         state,
-                        appendList(typeTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
+                        parserAppendTokens(typeTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
                     )
                 in
                     match parserParseTypeExpressionState(temporaryState) with
@@ -2947,7 +2954,7 @@ and parserParseDelimitedTypeValue sourceBytes declarationColumn state =
                             in
                                 (typeExpression, parserStateWithTokens(
                                     afterType,
-                                    appendList(unconsumed)(remainingTokens)
+                                    parserAppendTokens(unconsumed)(remainingTokens)
                                 ))
 and parserParseOptionalTypeArguments state =
     if parserCurrentKind(state) != LParen
