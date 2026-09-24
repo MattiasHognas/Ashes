@@ -6640,7 +6640,9 @@ public sealed partial class Lowering
         bool normalizeStaticStringBranches = ShouldNormalizeStaticStringIfBranches(iff, request);
 
         int slot = NewLocal();
+        EnterGeneralRcBranch(endLabel, 0);
         var (tTemp, thenType) = LowerIfBranchIntoSlot(iff.Then, iff.Else, request, null, normalizeStaticStringBranches, slot, out IrInst.StoreLocal thenStore);
+        LeaveGeneralRcBranch();
 
         Emit(new IrInst.Jump(endLabel));
         Emit(new IrInst.Label(elseLabel));
@@ -6649,7 +6651,9 @@ public sealed partial class Lowering
         _reuseTokens.AddRange(reuseTokensAtIf);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        EnterGeneralRcBranch(endLabel, 1);
         var (eTemp, elseType) = LowerIfBranchIntoSlot(iff.Else, iff.Then, request, thenType, normalizeStaticStringBranches, slot, out IrInst.StoreLocal elseStore);
+        LeaveGeneralRcBranch();
 
         // if expression result: put into a temp (phi) by storing chosen into target
         int target = NewTemp();

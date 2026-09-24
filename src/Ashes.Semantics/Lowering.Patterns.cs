@@ -137,9 +137,10 @@ public sealed partial class Lowering
         bool runtimeManaged = uniform || normalized;
         // An arm returning a runtime-managed TCO parameter is RC but OWNED (the parameter's own drop
         // machinery releases it), so it must not count toward the all-fresh join property.
-        bool allNewlyProduced = runtimeManagedResultArms is not null
+        bool allNewlyProduced = (runtimeManagedResultArms is not null
             && runtimeManagedResultArms.Count == cases.Count
-            && runtimeManagedResultArms.All(arm => arm.NewlyProduced);
+            && runtimeManagedResultArms.All(arm => arm.NewlyProduced))
+            || (joinArms is not null && ReachingArmsAllNewlyProduced(joinArms));
         RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged, allNewlyProduced);
     }
 
@@ -886,11 +887,13 @@ public sealed partial class Lowering
         // Each case body IS in tail position (if the match itself is)
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var armCredits = BeginExclusiveBranch(cases.Where((_, j) => j != i).Select(c => c.Body));
+        EnterGeneralRcBranch(endLabel, i);
         var (bodyTemp, bodyType) = LowerMatchArmExpressionWithReuseContext(
             cases[i].Body,
             reuseContext.TokensBefore,
             normalizeStaticStringArms,
             request);
+        LeaveGeneralRcBranch();
         foreach (string name in reuseContext.AddedLinearNames)
         {
             _linearReuseNames.Remove(name);

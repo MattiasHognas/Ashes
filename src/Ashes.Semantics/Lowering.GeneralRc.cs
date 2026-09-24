@@ -119,7 +119,40 @@ public sealed partial class Lowering
     // its successors' reach by their being the loop's own parameters.
     // Predecessor marks the slot holding what a call's owned slot held before this iteration stored
     // it again: an earlier iteration's value, left to a successor, that the loop still owns.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false);
+    // Branches names the match arms and if branches the slot was stored inside, outermost first.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null);
+
+    // One arm of a match or branch of an if, by the join it belongs to.
+    private readonly record struct GeneralRcBranch(string Join, int Arm);
+
+    // The arms and branches being lowered, outermost first.
+    private readonly List<GeneralRcBranch> _generalRcBranches = [];
+
+    private void EnterGeneralRcBranch(string join, int arm) => _generalRcBranches.Add(new GeneralRcBranch(join, arm));
+
+    private void LeaveGeneralRcBranch() => _generalRcBranches.RemoveAt(_generalRcBranches.Count - 1);
+
+    // Whether a slot stored inside these branches can hold this iteration's value where the current
+    // branches are: not when the two sit in different arms of the same join, which one iteration
+    // never both runs. A value an earlier iteration left there is released at its own arm's back
+    // edge or at the loop's exit.
+    private bool SharesIterationWith(GeneralRcBranch[]? branches)
+    {
+        if (branches is null)
+        {
+            return true;
+        }
+
+        for (int i = 0; i < branches.Length && i < _generalRcBranches.Count; i++)
+        {
+            if (branches[i] != _generalRcBranches[i])
+            {
+                return !string.Equals(branches[i].Join, _generalRcBranches[i].Join, StringComparison.Ordinal);
+            }
+        }
+
+        return true;
+    }
 
     // Registers the owned slot just stored, marking it this iteration's when it sits in a loop.
     private void RegisterGeneralRcOwnedSlot(int slot, TypeRef type)
@@ -134,7 +167,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(freshSlot, oneTemp));
         }
 
-        _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(slot, type, loop, freshSlot));
+        _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(slot, type, loop, freshSlot, Branches: [.. _generalRcBranches]));
     }
 
     // Inside a loop, moves what the owned slot about to be stored still holds into a slot of its own:
@@ -159,7 +192,7 @@ public sealed partial class Lowering
     {
         if (predecessorSlot >= 0)
         {
-            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true));
+            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches]));
         }
     }
 
@@ -353,7 +386,7 @@ public sealed partial class Lowering
     private void RecordGeneralRcBackEdgeSlots(int pendingId, TcoContext tco, IReadOnlyList<Expr> arguments, IReadOnlyList<int> argumentTemps)
     {
         List<GeneralRcOwnedSlot> loopSlots = _generalRcOwnedSlots
-            .Where(owned => ReferenceEquals(owned.Loop, tco))
+            .Where(owned => ReferenceEquals(owned.Loop, tco) && (Environment.GetEnvironmentVariable("TMP_ALL_ARMS") is not null || SharesIterationWith(owned.Branches)))
             .ToList();
         _generalRcBackEdgeSlots[pendingId] = loopSlots;
         _generalRcBackEdgeParameterParts[pendingId] = arguments
