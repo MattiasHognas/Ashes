@@ -199,13 +199,16 @@ int main(int argc, char **argv) {
                 uint64_t len; memcpy(&len, p + 16, 8);
                 if (len > 0 && len + 24 <= cells[i].size) printf("string root %.*s\n", (int)(len < 40 ? len : 40), (const char *)p + 24);
             }
-            // REACH_SHAPE=<size>: every root of that size with a pointer first, one line per root naming the size
-            // of the cell each of its first two words points at (0 for a word that is not a cell), for `sort |
-            // uniq -c` to tell a list cell from a pair and name what it holds.
-            if (getenv("REACH_SHAPE") && cells[i].size == (uint32_t)atoi(getenv("REACH_SHAPE")) && isptr && p) {
+            // REACH_SHAPE=<size>: every root of that size, one line per root naming what its first two words hold:
+            // the size of the cell a word points at, or `=` and the word itself when it is not a cell (for an ADT's
+            // first word, its tag), for `sort | uniq -c` to tell a list cell from a pair and name what it holds.
+            if (getenv("REACH_SHAPE") && cells[i].size == (uint32_t)atoi(getenv("REACH_SHAPE")) && p) {
                 uint64_t second = 0; memcpy(&second, p + 24, 8);
                 long a = findcell(first), b = findcell(second);
-                printf("shape root %u %u %s @ %llx\n", a >= 0 ? cells[a].size : 0, b >= 0 ? cells[b].size : 0, second == 0 ? "nil" : b >= 0 ? "cell" : "int", (unsigned long long)(cells[i].addr + 16));
+                char left[32], right[32];
+                if (a >= 0) snprintf(left, sizeof left, "%u", cells[a].size); else snprintf(left, sizeof left, "=%lld", (long long)first);
+                if (b >= 0) snprintf(right, sizeof right, "%u", cells[b].size); else snprintf(right, sizeof right, "=%lld", (long long)second);
+                printf("shape root %s %s @ %llx\n", left, right, (unsigned long long)(cells[i].addr + 16));
             }
             if (topsize && cells[i].size == topsize && isptr) {
                 uint64_t got = classes[k].bytes - before;
