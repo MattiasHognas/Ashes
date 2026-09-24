@@ -17140,24 +17140,32 @@ let isNormalizableSiblingElement (semanticType: SemanticType) (state: CoreLoweri
 let recursive allTupleElementsPlaceable (copiesSiblings: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (elements, temps, semanticTypes) with
         | ([], [], []) -> true
-        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || copiesSiblings && isNormalizableSiblingElement(semanticType)(state)) && allTupleElementsPlaceable(copiesSiblings)(restElements)(restTemps)(restTypes)(state)
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || isGeneralRcValueType(semanticType)(state) || copiesSiblings && isNormalizableSiblingElement(semanticType)(state)) && allTupleElementsPlaceable(copiesSiblings)(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
-// Stage 0's `NormalizeGeneralRcTupleElements` for the siblings of a reference-counted element:
-// each arena sibling is retained or copied into an owned value, and the tuple stores that.
-let recursive normalizeTupleSiblings (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+// Whether the tuple's element is made its own on the reference-counted heap: one of the contract's
+// types, or an arena sibling of a reference-counted element.
+let normalizesTupleElement (copiesSiblings: Bool) (semanticType: SemanticType) (state: CoreLoweringState) =
+    isGeneralRcValueType(semanticType)(state) || copiesSiblings && (match ownedResultPlanOf(semanticType)(state) with
+        | Some(_plan) -> true
+        | None -> false)
+
+// Stage 0's `NormalizeGeneralRcTupleElements`: each element of the contract's types, and each arena
+// sibling of a reference-counted element, is retained or copied into an owned value, and the tuple
+// stores that.
+let recursive normalizeTupleSiblings (copiesSiblings: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (elements, temps, semanticTypes) with
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
-            match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state), ownedResultPlanOf(semanticType)(state)) with
+            match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || !normalizesTupleElement(copiesSiblings)(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
                 | (false, Some(plan)) ->
                     match emitGuardedDeepCopy(temp)(plan)(state) with
                         | (copied, copyTemp) ->
                             match copied
                             |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
-                            |> normalizeTupleSiblings(restElements)(restTemps)(restTypes) with
+                            |> normalizeTupleSiblings(copiesSiblings)(restElements)(restTemps)(restTypes) with
                                 | (normalized, rest) -> (normalized, copyTemp :: rest)
                 | _ ->
-                    match normalizeTupleSiblings(restElements)(restTemps)(restTypes)(state) with
+                    match normalizeTupleSiblings(copiesSiblings)(restElements)(restTemps)(restTypes)(state) with
                         | (normalized, rest) -> (normalized, temp :: rest)
         | _ -> (state, [])
 
@@ -17178,9 +17186,7 @@ let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered 
                 | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
                     if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
                     then
-                        match if holdsReferenceCounted
-                        then normalizeTupleSiblings(elements)(loweredTemps)(semanticTypes)(reservedState)
-                        else (reservedState, loweredTemps) with
+                        match normalizeTupleSiblings(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
                             | (normalizedState, temps) -> finishPlacedTuple(elements)(temps)(semanticTypes)(tupleTemp)(true)(transfers)(normalizedState)
                     else finishPlacedTuple(elements)(loweredTemps)(semanticTypes)(tupleTemp)(false)(transfers)(reservedState)
 
