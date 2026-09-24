@@ -22483,19 +22483,18 @@ let recursive closePendingTopLevelItems (pending: List(PendingTopLevelClose)) (l
         | ([], _lowered) -> lowered
         | (close :: rest, LoweredCoreValue { state = failedState, error = Some(_error) }) -> closePendingTopLevelItems(rest)((lowered with state = restoreBindings(close.closeOuterBindings)(failedState)))
         | (close :: rest, LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }) ->
-            let restored = restoreBindings(close.closeOuterBindings)(bodyState)
-            in
-                if close.closeBracket
-                then
-                    match closeOwnedLetBracket(close.closeOwnedTypeName)(close.closeOwnerSlot)(close.closeCursorSlot)(close.closeEndSlot)(resultTemp)(resultType)((restored with currentSpan = close.closeSpan)) with
-                        | (closed, finalTemp) ->
-                            closed
-                            |> finishClosedLetResult(finalTemp)(resultType)
-                            |> closePendingTopLevelItems(rest)
-                else
-                    restored
-                    |> success(resultTemp)(resultType)
-                    |> closePendingTopLevelItems(rest)
+            if close.closeBracket
+            then
+                match closeOwnedLetBracket(close.closeOwnedTypeName)(close.closeOwnerSlot)(close.closeCursorSlot)(close.closeEndSlot)(resultTemp)(resultType)((bodyState with bindings = close.closeOuterBindings, currentSpan = close.closeSpan)) with
+                    | (closed, finalTemp) ->
+                        closed
+                        |> finishClosedLetResult(finalTemp)(resultType)
+                        |> closePendingTopLevelItems(rest)
+            else
+                bodyState
+                |> restoreBindings(close.closeOuterBindings)
+                |> success(resultTemp)(resultType)
+                |> closePendingTopLevelItems(rest)
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
 // fully-saturated call to a known field-carrying constructor (see

@@ -735,43 +735,39 @@ let lexerFixedToken (bytes: Bytes) (byteCount: Int) (position: Int) =
                 | 125 -> lexerFixed(RBrace)("}")(position)(1)
                 | _ -> None)
 
-let lexerReadNext (bytes: Bytes) (byteCount: Int) (position: Int) =
-    match lexerFixedToken(bytes)(byteCount)(position) with
-        | Some(token) -> (token, None)
-        | None ->
-            let value = lexerByteAt(bytes)(position)
-            in
-                if value == 34
-                then lexerReadString(bytes)(byteCount)(position)
+// A token that may come with a diagnostic: a string, a rune, a number, or a character no token
+// starts with. Fixed tokens and identifiers never do, and the scan reads them on their own.
+let lexerReadWithDiagnostic (bytes: Bytes) (byteCount: Int) (position: Int) =
+    (let value = lexerByteAt(bytes)(position)
+    in
+        if value == 34
+        then lexerReadString(bytes)(byteCount)(position)
+        else
+            if value == 39
+            then lexerReadRune(bytes)(byteCount)(position)
+            else
+                if lexerIsAsciiDigit(value)
+                then lexerReadNumber(bytes)(byteCount)(position)
                 else
-                    if value == 39
-                    then lexerReadRune(bytes)(byteCount)(position)
-                    else
-                        if lexerIdentifierStartWidth(bytes)(byteCount)(position) > 0
-                        then (lexerReadIdentifier(bytes)(byteCount)(position), None)
+                    let badWidth =
+                        if value < 128
+                        then 1
                         else
-                            if lexerIsAsciiDigit(value)
-                            then lexerReadNumber(bytes)(byteCount)(position)
-                            else
-                                let badWidth =
-                                    if value < 128
-                                    then 1
-                                    else
-                                        match lexerSourceRune(bytes)(byteCount)(position) with
-                                            | (_rune, _text, width) -> width
-                                in
-                                    let text = lexerSlice(bytes)(position)(badWidth)
-                                    in
-                                        (lexerToken(
-                                            Bad,
-                                            text,
-                                            0,
-                                            0.0,
-                                            position,
-                                            badWidth
-                                        ), "Unexpected character: '" + text + "'."
-                                        |> lexerDiagnostic(position)(badWidth)
-                                        |> Some)
+                            match lexerSourceRune(bytes)(byteCount)(position) with
+                                | (_rune, _text, width) -> width
+                    in
+                        let text = lexerSlice(bytes)(position)(badWidth)
+                        in
+                            (lexerToken(
+                                Bad,
+                                text,
+                                0,
+                                0.0,
+                                position,
+                                badWidth
+                            ), "Unexpected character: '" + text + "'."
+                            |> lexerDiagnostic(position)(badWidth)
+                            |> Some))
 
 let recursive lexerScan (bytes: Bytes) (byteCount: Int) (position: Int) (tokens: List(Token)) (diagnostics: List(DiagnosticEntry)) =
     (let nextPosition = lexerSkipTrivia(bytes)(byteCount)(position)
@@ -783,16 +779,24 @@ let recursive lexerScan (bytes: Bytes) (byteCount: Int) (position: Int) (tokens:
                 []
             ), diagnostics = reverseLexerValues(diagnostics)([]))
         else
-            match lexerReadNext(bytes)(byteCount)(nextPosition) with
-                | (token, nextDiagnostic) ->
-                    let publishedToken = token
-                    in
-                        let nextDiagnostics =
-                            match nextDiagnostic with
-                                | None -> diagnostics
-                                | Some(value) -> value :: diagnostics
+            match lexerFixedToken(bytes)(byteCount)(nextPosition) with
+                | Some(token) ->
+                    lexerScan(bytes)(byteCount)(tokenEnd(token))(token :: tokens)(diagnostics)
+                | None ->
+                    if lexerIdentifierStartWidth(bytes)(byteCount)(nextPosition) > 0
+                    then
+                        let token = lexerReadIdentifier(bytes)(byteCount)(nextPosition)
                         in
-                            lexerScan(bytes)(byteCount)(tokenEnd(token))(publishedToken :: tokens)(nextDiagnostics))
+                            lexerScan(bytes)(byteCount)(tokenEnd(token))(token :: tokens)(diagnostics)
+                    else
+                        match lexerReadWithDiagnostic(bytes)(byteCount)(nextPosition) with
+                            | (token, nextDiagnostic) ->
+                                let nextDiagnostics =
+                                    match nextDiagnostic with
+                                        | None -> diagnostics
+                                        | Some(value) -> value :: diagnostics
+                                in
+                                    lexerScan(bytes)(byteCount)(tokenEnd(token))(token :: tokens)(nextDiagnostics))
 
 let tokenize source =
     (let bytes = Ashes.Byte.fromText(source)

@@ -317,41 +317,6 @@ let parserStartsSourceLine bytes position =
 
 let parserSourceColumn bytes position = position - parserLineStart(bytes)(position)
 
-let parserPreviousCompletesCall (reversedTokens: List(Token)) =
-    (let recursive findCallOpen (remaining: List(Token)) depth =
-        match remaining with
-            | [] -> false
-            | token :: tail ->
-                match token.kind with
-                    | RParen -> findCallOpen(tail)(depth + 1)
-                    | LParen ->
-                        if depth == 1
-                        then
-                            match tail with
-                                | functionToken :: _ ->
-                                    match functionToken.kind with
-                                        | Ident -> true
-                                        | RParen -> true
-                                        | _ -> false
-                                | [] -> false
-                        else findCallOpen(tail)(depth - 1)
-                    | _ -> findCallOpen(tail)(depth)
-    in
-        match reversedTokens with
-            | token :: _ ->
-                if token.kind == RParen
-                then findCallOpen(reversedTokens)(0)
-                else false
-            | [] -> false)
-
-// An indented line after a completed call `f(x)` starts the trailing expression only when its first
-// token could begin a whitespace-application argument; a continuation such as `then`, `else`, `in`,
-// `with`, a pipe, or an operator keeps the value going.
-let parserStartsIndentedTrailingExpression (token: Token) (reversedTokens: List(Token)) =
-    if parserIsWhitespaceArgument(token.kind)
-    then parserPreviousCompletesCall(reversedTokens)
-    else false
-
 let parserStartsDeclarationBinding (tokens: List(Token)) =
     match tokens with
         | pipe :: name :: equals :: _ ->
@@ -375,16 +340,23 @@ let parserNonNegativeDepth depth =
     then 0
     else depth
 
-let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens: List(Token)) =
-    (let recursive split (remaining: List(Token)) reversed sawToken parenthesisDepth bracketDepth braceDepth =
+// How many tokens the top-level value ahead spans: up to EOF, or up to the first token outside every
+// delimiter that starts a source line at or left of the declaration column, starts a binding pipe,
+// or starts a trailing expression after a completed call. An indented line after a completed call
+// `f(x)` starts the trailing expression only when its first token could begin a whitespace-
+// application argument; a continuation such as `then`, `else`, `in`, `with`, a pipe, or an operator
+// keeps the value going. `openers` holds, for each open parenthesis, whether the token before it can
+// be called, and `completesCall` whether the last token closed such a call.
+let parserTopLevelValueLength bytes declarationColumn splitBindingPipes (tokens: List(Token)) =
+    (let recursive measure (remaining: List(Token)) count previousCallable (openers: List(Bool)) completesCall parenthesisDepth bracketDepth braceDepth =
         match remaining with
-            | [] -> (reverseList(reversed), [])
+            | [] -> count
             | token :: tail ->
                 if token.kind == EOF
-                then (reverseList(reversed), remaining)
+                then count
                 else
                     let atBoundary =
-                        if !sawToken
+                        if count == 0
                         then false
                         else
                             if parenthesisDepth != 0
@@ -408,14 +380,14 @@ let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens:
                                                     else
                                                         if column <= declarationColumn
                                                         then true
-                                                        else parserStartsIndentedTrailingExpression(token)(reversed)
+                                                        else completesCall && parserIsWhitespaceArgument(token.kind)
                                                 else
                                                     if column <= declarationColumn
                                                     then true
-                                                    else parserStartsIndentedTrailingExpression(token)(reversed)
+                                                    else completesCall && parserIsWhitespaceArgument(token.kind)
                     in
                         if atBoundary
-                        then (reverseList(reversed), remaining)
+                        then count
                         else
                             let nextParenthesisDepth =
                                 match token.kind with
@@ -435,15 +407,33 @@ let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens:
                                             | RBrace -> parserNonNegativeDepth(braceDepth - 1)
                                             | _ -> braceDepth
                                     in
-                                        split(
-                                            tail,
-                                            token :: reversed,
-                                            true,
-                                            nextParenthesisDepth,
-                                            nextBracketDepth,
-                                            nextBraceDepth
-                                        )
-    in split(tokens)([])(false)(0)(0)(0))
+                                        match token.kind with
+                                            | LParen -> measure(tail)(count + 1)(false)(previousCallable :: openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
+                                            | RParen ->
+                                                match openers with
+                                                    | callable :: outer -> measure(tail)(count + 1)(true)(outer)(callable)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
+                                                    | [] -> measure(tail)(count + 1)(true)([])(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
+                                            | Ident -> measure(tail)(count + 1)(true)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
+                                            | _ -> measure(tail)(count + 1)(false)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
+    in measure(tokens)(0)(false)([])(false)(0)(0)(0))
+
+// The first `count` tokens, then an EOF at the position of the token after them (`0` past the end):
+// the tokens a top-level value is parsed from on its own.
+let recursive parserTokensThenEof (tokens: List(Token)) count =
+    match tokens with
+        | [] -> parserSyntheticToken(EOF)(0) :: []
+        | token :: tail ->
+            if count == 0
+            then parserSyntheticToken(EOF)(token.position) :: []
+            else token :: parserTokensThenEof(tail)(count - 1)
+
+let recursive parserDropTokens (tokens: List(Token)) count =
+    if count == 0
+    then tokens
+    else
+        match tokens with
+            | [] -> []
+            | _ :: tail -> parserDropTokens(tail)(count - 1)
 
 // The token lists a declaration is parsed from and merged back into, typed so their cells are
 // reference-counted like the lexer's own list, rather than built by the generic append.
@@ -2018,20 +2008,16 @@ and parserParseParenthesizedFlatBody sourceBytes state =
                                                                                 requirements
                                                                             ), afterBody)
 and parserParseFlatExpressionValue sourceBytes declarationColumn state =
-    match state
-    |> parserStateTokens
-    |> parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(false) with
-        | (valueTokens, remainingTokens) ->
-            let boundaryPosition =
-                match remainingTokens with
-                    | token :: _ -> token.position
-                    | [] -> 0
+    (let tokens = parserStateTokens(state)
+    in
+        let valueLength = parserTopLevelValueLength(sourceBytes)(declarationColumn)(false)(tokens)
+        in
+            let remainingTokens = parserDropTokens(tokens)(valueLength)
             in
                 let temporaryState =
-                    parserStateWithTokens(
-                        state,
-                        parserAppendTokens(valueTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
-                    )
+                    valueLength
+                    |> parserTokensThenEof(tokens)
+                    |> parserStateWithTokens(state)
                 in
                     match parserParseExpression(temporaryState) with
                         | (value, afterValue) ->
@@ -2042,7 +2028,7 @@ and parserParseFlatExpressionValue sourceBytes declarationColumn state =
                             in
                                 (value, remainingTokens
                                 |> parserAppendTokens(unconsumed)
-                                |> parserStateWithTokens(afterValue))
+                                |> parserStateWithTokens(afterValue)))
 and parserBuildLetExpression start recursiveBinding name value body parameters annotation requirements =
     (let expression =
         if recursiveBinding
@@ -2450,26 +2436,23 @@ and parserBadPrimary state =
 let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBindingPipes state =
     (let tokens = parserStateTokens(state)
     in
-        match parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(splitBindingPipes)(tokens) with
-            | (valueTokens, remainingTokens) ->
-                let boundaryPosition =
-                    match remainingTokens with
-                        | token :: _ -> token.position
-                        | [] -> 0
+        let valueLength = parserTopLevelValueLength(sourceBytes)(declarationColumn)(splitBindingPipes)(tokens)
+        in
+            let remainingTokens = parserDropTokens(tokens)(valueLength)
+            in
+                let temporaryTokens = parserTokensThenEof(tokens)(valueLength)
                 in
-                    let temporaryTokens = parserAppendTokens(valueTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
+                    let temporaryState = parserStateWithTokens(state)(temporaryTokens)
                     in
-                        let temporaryState = parserStateWithTokens(state)(temporaryTokens)
-                        in
-                            match parserParseExpression(temporaryState) with
-                                | (value, afterValue) ->
-                                    let unconsumed =
-                                        afterValue
-                                        |> parserStateTokens
-                                        |> parserTokensBeforeEof
-                                    in
-                                        let mergedTokens = parserAppendTokens(unconsumed)(remainingTokens)
-                                        in (value, parserStateWithTokens(afterValue)(mergedTokens)))
+                        match parserParseExpression(temporaryState) with
+                            | (value, afterValue) ->
+                                let unconsumed =
+                                    afterValue
+                                    |> parserStateTokens
+                                    |> parserTokensBeforeEof
+                                in
+                                    let mergedTokens = parserAppendTokens(unconsumed)(remainingTokens)
+                                    in (value, parserStateWithTokens(afterValue)(mergedTokens)))
 
 let parserParseTopLevelValue sourceBytes declarationColumn state =
     parserParseDelimitedTopLevelValue(
@@ -2930,20 +2913,16 @@ and parserParseCapabilityOperations sourceBytes declarationColumn reversed state
                                 afterName
                             )
 and parserParseDelimitedTypeValue sourceBytes declarationColumn state =
-    match state
-    |> parserStateTokens
-    |> parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(true) with
-        | (typeTokens, remainingTokens) ->
-            let boundaryPosition =
-                match remainingTokens with
-                    | token :: _ -> token.position
-                    | [] -> 0
+    (let tokens = parserStateTokens(state)
+    in
+        let typeLength = parserTopLevelValueLength(sourceBytes)(declarationColumn)(true)(tokens)
+        in
+            let remainingTokens = parserDropTokens(tokens)(typeLength)
             in
                 let temporaryState =
-                    parserStateWithTokens(
-                        state,
-                        parserAppendTokens(typeTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
-                    )
+                    typeLength
+                    |> parserTokensThenEof(tokens)
+                    |> parserStateWithTokens(state)
                 in
                     match parserParseTypeExpressionState(temporaryState) with
                         | (typeExpression, afterType) ->
@@ -2955,7 +2934,7 @@ and parserParseDelimitedTypeValue sourceBytes declarationColumn state =
                                 (typeExpression, parserStateWithTokens(
                                     afterType,
                                     parserAppendTokens(unconsumed)(remainingTokens)
-                                ))
+                                )))
 and parserParseOptionalTypeArguments state =
     if parserCurrentKind(state) != LParen
     then ([], state)
