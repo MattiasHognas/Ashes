@@ -18182,10 +18182,7 @@ let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: Semanti
                     | Some(inlinePlan) ->
                         let plan = entryCopyPlanOf(fieldType)(inlinePlan)(state)
                         in
-                            match if canTestRepresentation
-                            then
-                                emitReferenceOrCopy(temp)(emitArgumentDeepCopy(temp)(plan))(state)
-                            else emitArgumentDeepCopy(temp)(plan)(state) with
+                            match emitGuardedDeepCopy(temp)(plan)(state) with
                                 | (copied, copiedTemp) ->
                                     copied
                                     |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
