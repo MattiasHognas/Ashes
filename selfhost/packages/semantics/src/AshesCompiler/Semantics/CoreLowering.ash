@@ -560,6 +560,9 @@ type CoreOwnerState =
     // The result temp a function already made its own at its return, with that function: a loop
     // finishes its result ahead of its exit drops, and the return must not finish it again.
     | generalRcFinishedResult: Maybe((Maybe(IrFunctionOrigin), Int))
+    // The result a function's tail-modulo-cons spine closed into, with that function: a spine its
+    // own cells built, taken over at the return rather than retained again.
+    | closedProducerChain: Maybe((Maybe(IrFunctionOrigin), Int))
     | pendingOwnerPlan: Maybe(OwnedReleasePlan)
     // The result types of the calls lowered so far in the current function body whose layout was
     // still unresolved at the call (an arena result was requested in place of a placement
@@ -1320,6 +1323,18 @@ let withGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcFinishedResult = Some((stateActiveFunctionOrigin(state), temp))))
 
+let withClosedProducerChain (temp: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with closedProducerChain = Some((stateActiveFunctionOrigin(state), temp))))
+
+// Whether `temp` is the spine the function being lowered closed its tail-modulo-cons chain into.
+let isClosedProducerChain (temp: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in
+        match group.closedProducerChain with
+            | Some((origin, closed)) -> closed == temp && origin == stateActiveFunctionOrigin(state)
+            | None -> false)
+
 // Whether `temp` is the result the function being lowered already made its own.
 let isGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -1989,6 +2004,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             generalRcPredecessorSlots = [],
             generalRcFreshSlots = [],
             generalRcFinishedResult = None,
+            closedProducerChain = None,
             pendingOwnerPlan = None,
             unresolvedCallResults = [],
             resolvingCallsAgain = false,
@@ -8511,8 +8527,7 @@ let tempIsProducedOwned (temp: Int) (state: CoreLoweringState) =
         | Some(RuntimeNewlyProduced) -> true
         | _ -> false
 
-let finishGeneralRcFunctionResult (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
-    finishGeneralRcFunctionResultAs(tempIsProducedOwned(bodyTemp)(state))(label)(bodyTemp)(bodyType)(state)
+let finishGeneralRcFunctionResult (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) = finishGeneralRcFunctionResultAs(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(bodyTemp)(bodyType)(state)
 
 // Whether the function's result is reference-counted once it is finished, the fact its callers
 // close their call windows on: it was produced so, it is of the contract's types, or it is
@@ -8606,10 +8621,21 @@ let carryRuntimeTempState (fromTemp: Int) (toTemp: Int) (state: CoreLoweringStat
         | Some(runtimeState) -> markRuntimeTemp(toTemp)(runtimeState)(state)
         | None -> state
 
+// The result of a chain that built no cell: the body's value, which under the contract holds a
+// reference of its own when the body did not produce it (a borrowed parameter), as the last cell's
+// tail does.
+let emitEmptyChainResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if isRuntimeTemp(bodyTemp)(state) || !isGeneralRcValueType(bodyType)(state)
+    then (state, bodyTemp)
+    else
+        match generalCopyPlanOf(bodyType)(state) with
+            | Some(plan) -> emitArgumentCopy(bodyTemp)(plan)(state)
+            | None -> (state, bodyTemp)
+
 // The branch stage 0 emits in `LowerLambdaCoreCloseTmcChain`: with a pending cell, the body's value
 // fills its still-nil tail and the spine head becomes the result; with none, the body's value is the
-// result unchanged.
-let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (joinSlot: Int) (emptyLabel: Str) (doneLabel: Str) (state: CoreLoweringState) =
+// result.
+let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (bodyType: SemanticType) (joinSlot: Int) (emptyLabel: Str) (doneLabel: Str) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = destState, temp = destTemp } ->
             match freshTemp(destState) with
@@ -8620,7 +8646,7 @@ let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (joinSlo
                                 | FreshTemp { state = spineState, temp = spineTemp } ->
                                     match freshTemp(spineState) with
                                         | FreshTemp { state = outState, temp = outTemp } ->
-                                            (outState
+                                            match outState
                                             |> emit(LoadLocal(destTemp)(destSlot))
                                             |> emit(LoadConstInt(zeroTemp)(0))
                                             |> emit(CmpIntNe(condTemp)(destTemp)(zeroTemp))
@@ -8630,17 +8656,21 @@ let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (joinSlo
                                             |> emit(StoreLocal(joinSlot)(spineTemp))
                                             |> emit(Jump(doneLabel))
                                             |> emit(Label(emptyLabel))
-                                            |> emit(StoreLocal(joinSlot)(bodyTemp))
-                                            |> emit(Label(doneLabel))
-                                            |> emit(LoadLocal(outTemp)(joinSlot))
-                                            |> carryRuntimeTempState(bodyTemp)(outTemp), outTemp)
+                                            |> emitEmptyChainResult(bodyTemp)(bodyType) with
+                                                | (emptied, emptyTemp) ->
+                                                    (emptied
+                                                    |> emit(StoreLocal(joinSlot)(emptyTemp))
+                                                    |> emit(Label(doneLabel))
+                                                    |> emit(LoadLocal(outTemp)(joinSlot))
+                                                    |> carryRuntimeTempState(bodyTemp)(outTemp)
+                                                    |> withClosedProducerChain(outTemp), outTemp)
 
 // Closes a tail-modulo-constructor spine at the function's single return, before any ownership
 // finalization: from here on the function's result IS the spine and the body value is only the last
 // cell's tail, so the returned-root transfer, the exit drops, and the result-ownership bit the call
 // site branches on all have to see the spine. Only the loop that owns this label closes, so a nested
 // binding lowered under an enclosing loop's frame leaves that loop's chain alone.
-let closeTmcChain (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
+let closeTmcChain (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match stateTcoLoopFrame(state) with
         | Some(CoreTcoLoopFrame { bodyLabel = bodyLabel, tmcDestSlot = destSlot, tmcResultSlot = resultSlot }) ->
             if destSlot < 0 || !containsName(bodyLabel)(stateTmcActivatedLabels(state)) || bodyLabel != label + "_body"
@@ -8651,7 +8681,7 @@ let closeTmcChain (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
                         match freshLabel("tmc_close_empty")(joinState) with
                             | FreshLabel { state = emptyState, label = emptyLabel } ->
                                 match freshLabel("tmc_close_done")(emptyState) with
-                                    | FreshLabel { state = doneState, label = doneLabel } -> emitTmcChainClose(destSlot)(resultSlot)(bodyTemp)(joinSlot)(emptyLabel)(doneLabel)(doneState)
+                                    | FreshLabel { state = doneState, label = doneLabel } -> emitTmcChainClose(destSlot)(resultSlot)(bodyTemp)(bodyType)(joinSlot)(emptyLabel)(doneLabel)(doneState)
         | None -> (state, bodyTemp)
 
 // `closeTmcChain` applied to a lowered body, so a caller can close the spine without restructuring
@@ -8660,7 +8690,7 @@ let closeTmcChainLowered (label: Str) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = state, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            match closeTmcChain(label)(bodyTemp)(state) with
+            match closeTmcChain(label)(bodyTemp)(bodyType)(state) with
                 | (closedState, closedTemp) -> LoweredCoreValue(state = closedState, temp = closedTemp, semanticType = bodyType, error = None)
 
 let tcoListElementSupported (element: SemanticType) (state: CoreLoweringState) =
@@ -10350,7 +10380,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs)
             |> recordTcoNormalizedArgumentLabel(label)(entries)
             |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-            |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state))(label)(bodyTemp)(semanticType)
+            |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(bodyTemp)(semanticType)
             |> (given (finished: (CoreLoweringState, Int)) ->
                 match finished with
                     | (finishedState, resultTemp) ->
