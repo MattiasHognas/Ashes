@@ -12128,8 +12128,9 @@ let keptWholeUnderOwnedResult facts index argument argumentTemp (resultNormalize
 // the contract's types is always passed borrowed, whatever the callee's own summary says; the type
 // test only runs for an argument whose hand-off it can change (a reference-counted one, one read
 // from a loop parameter, or a fresh one), since it walks the type and every call argument passes
-// here.
-let argumentHandOffOf facts index argument argumentType argumentTemp (resultNormalizedOwned: Bool) state =
+// here. A function's call to itself has no summary yet (stage 0's `GetOwnershipSummaryForCallRoot`
+// answers nothing for a bound name), so no reach of it retains a borrowed loop argument.
+let argumentHandOffOf facts (selfCallee: Bool) index argument argumentType argumentTemp (resultNormalizedOwned: Bool) state =
     match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state), argumentRootSlotOf(argument)(state), isFreshRuntimeArgument(argument)(argumentTemp)(state)) with
         | (runtimeArgument, rootSlot, fresh) ->
             let calleeBorrows = calleeParameterBorrows(facts)(index)
@@ -12146,7 +12147,7 @@ let argumentHandOffOf facts index argument argumentType argumentTemp (resultNorm
                             transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
                             keptWholeUnderOwnedResult = keptWhole,
                             normalizes = calleeNormalizesArgument(facts)(index)(state),
-                            borrowedReach = rootSlot != None && calleeResultReachesArgument(facts)(index),
+                            borrowedReach = rootSlot != None && !selfCallee && calleeResultReachesArgument(facts)(index),
                             cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
                             pendingRootSlot = if runtimeArgument
                             then None
@@ -12619,7 +12620,7 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
                     match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
                         | (decidedState, readsResult, resultNormalizedOwned) ->
                             decidedState
-                            |> argumentHandOffOf(context.facts)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
+                            |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
                             |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
@@ -24365,6 +24366,26 @@ let numberDeferredLabels (state: CoreLoweringState) (entryInstructions: List(IrI
                     match numberFunctionsLabels(functions)(groups)(numbering)([]) with
                         | (numberedFunctions, _final) -> (numberedEntry, numberedFunctions)
 
+// Stage 0's `MarkGeneralRcOwnedResultClosures`: once the whole program is lowered, every closure over
+// a function that normalizes its result at its return says so in its header, a recursive function's
+// own closure (built before its body was finished) included, so a caller that cannot name the callee
+// takes such a result over owned instead of retaining it.
+let markOwnedResultClosure (labels: List(Str)) (instruction: IrInstruction) =
+    match instruction with
+        | IrInstruction { instruction = MakeClosure(target, funcLabel, environmentTemp, environmentSize, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument, false), location = location } ->
+            if containsLabel(funcLabel)(labels)
+            then IrInstruction(instruction = MakeClosure(target)(funcLabel)(environmentTemp)(environmentSize)(runtimeManaged)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(true), location = location)
+            else instruction
+        | IrInstruction { instruction = MakeClosureStack(target, funcLabel, environmentTemp, environmentSize, returnsRuntimeManaged, acceptsRuntimeManagedArgument, false), location = location } ->
+            if containsLabel(funcLabel)(labels)
+            then IrInstruction(instruction = MakeClosureStack(target)(funcLabel)(environmentTemp)(environmentSize)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(true), location = location)
+            else instruction
+        | _ -> instruction
+
+let markOwnedResultClosures (labels: List(Str)) (functions: List(IrFunction)) =
+    map((given (function_: IrFunction) ->
+        function_ with instructions = map(markOwnedResultClosure(labels))(function_.instructions)))(functions)
+
 let buildProgram lowered =
     match resolveLoweredPendingBlocks(lowered) with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
@@ -24381,7 +24402,13 @@ let buildProgram lowered =
                             |> reverse)(operatorDefaultedVariables([]
                             |> sealedOperatorTypes(sealedOperatorDefaults)
                             |> append(pendingOperatorTypes(pendingOperatorDefaults)([])))(state))(state)
-                            |> numberDeferredLabels(state)(deferredEntryInstructions) with
+                            |> numberDeferredLabels(state)(deferredEntryInstructions)
+                            |> (given (numbered: (List(IrInstruction), List(IrFunction))) ->
+                                match numbered with
+                                    | (numberedEntry, numberedFunctions) ->
+                                        (map(state
+                                        |> stateGeneralRcOwnedResultLabels
+                                        |> markOwnedResultClosure)(numberedEntry), markOwnedResultClosures(stateGeneralRcOwnedResultLabels(state))(numberedFunctions))) with
                                 | (resolvedEntryInstructions, resolvedFunctions) ->
                                     let entry =
                                         IrFunction(
