@@ -4350,6 +4350,54 @@ let buildIsReferenceCountedModule name context =
     |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
     |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
 
+// A reference-counted nullary constructor carries only its tag: every allocation of one tag is
+// the same immortal cell, never unique, and retains and releases leave it alone. Prints `true`,
+// `true`, `false`, `true`, `2`.
+let buildImmortalNullaryModule name context =
+    [
+        false
+        |> AllocAdt(0)(2)(0)(true)
+        |> irOf,
+        false
+        |> AllocAdt(1)(2)(0)(true)
+        |> irOf,
+        1
+        |> CmpIntEq(2)(0)
+        |> irOf,
+        irOf(PrintBool(2)),
+        false
+        |> AllocAdt(3)(3)(0)(true)
+        |> irOf,
+        3
+        |> CmpIntNe(4)(0)
+        |> irOf,
+        irOf(PrintBool(4)),
+        0
+        |> RcIsUnique(5)
+        |> irOf,
+        irOf(PrintBool(5)),
+        0
+        |> IsReferenceCounted(6)
+        |> irOf,
+        irOf(PrintBool(6)),
+        None
+        |> RcDrop(0)("Choice")(0)(true)(false)
+        |> irOf,
+        None
+        |> RcDrop(1)("Choice")(0)(true)(false)
+        |> irOf,
+        1
+        |> GetAdtTag(7)
+        |> irOf,
+        irOf(PrintInt(7)),
+        0
+        |> LoadConstInt(8)
+        |> irOf,
+        irOf(Return(8))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(9))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
 // The `mayBeEmpty` forms: `RcDup` and `RcDrop` on the null pointer (the empty list) touch no
 // header, and the same forms on a present cell still retain and release it (two drops after one
 // dup free it exactly once). Prints `7`.
@@ -4723,6 +4771,8 @@ let buildRcClosureDropModule name context =
 let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
 
 let testIsReferenceCounted unit = assertProgramPrintsLines(buildIsReferenceCountedModule)("selfhostBackendIsReferenceCounted")("selfhost_backend_is_reference_counted_e2e")(["true", "false", "false", "5"])
+
+let testImmortalNullary unit = assertProgramPrintsLines(buildImmortalNullaryModule)("selfhostBackendImmortalNullary")("selfhost_backend_immortal_nullary_e2e")(["true", "true", "false", "true", "2"])
 
 // `CopyFfiBytes` over the four ranges stage 0's `EmitCopyFfiBytes` distinguishes. A foreign
 // pointer is any `i64` address, so the copy path reads a string literal's own payload (its bytes
@@ -5510,6 +5560,7 @@ let run shipped =
     |> testCopyOutListScopedInnerLists
     |> testRcDupDrop
     |> testIsReferenceCounted
+    |> testImmortalNullary
     |> testCopyFfiBytes
     |> testRcMayBeEmpty
     |> testRcStructuralDrop

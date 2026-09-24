@@ -2563,6 +2563,9 @@ public sealed partial class Lowering
             Expr.Cons { Tail: Expr.Var tail } cons => parameterScope.TryGetValue(tail.Name, out int tailOrdinal)
                 && tailOrdinal == ordinal
                 && !ReadsLoopParameter(cons.Head, parameterScope),
+            // A fresh list (nil resets the accumulator) holds nothing of the predecessor's, as long
+            // as none of its elements reads a loop parameter.
+            Expr.ListLit fresh => fresh.Elements.All(element => !ReadsLoopParameter(element, parameterScope)),
             _ => IsBranchingAccumulatorEdge(arm, parameterName, ordinal, parameterScope),
         };
 

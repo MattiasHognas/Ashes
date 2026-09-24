@@ -345,8 +345,14 @@ let recursive shapeReadsLoopParameter (expression: Expr) (shadowed: List(Str)) (
         | [] -> false
         | parameter :: rest -> !shapeContainsName(parameter)(shadowed) && exprReadsName(parameter)(expression) || shapeReadsLoopParameter(expression)(shadowed)(rest)
 
+let recursive shapeElementsReadNoLoopParameter (elements: List(Expr)) (shadowed: List(Str)) (parameters: List(Str)) =
+    match elements with
+        | [] -> true
+        | element :: rest -> !shapeReadsLoopParameter(element)(shadowed)(parameters) && shapeElementsReadNoLoopParameter(rest)(shadowed)(parameters)
+
 // Stage 0's `IsAccumulatorEdgeArm` and `IsBranchingAccumulatorEdge`: an arm hands the parameter at
-// `index` on or conses onto it a head that reads no loop parameter, and a choice between such arms
+// `index` on, conses onto it a head that reads no loop parameter, or replaces it with a fresh list
+// none of whose elements reads one (nil resets the accumulator), and a choice between such arms
 // (an `if`, or a `match` none of whose patterns rebinds the parameter's name) is an accumulator
 // edge itself.
 let recursive shapeIsAccumulatorArm (arm: Expr) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
@@ -356,6 +362,7 @@ let recursive shapeIsAccumulatorArm (arm: Expr) (index: Int) (name: Str) (shadow
             match shapeUnspan(tail) with
                 | ExprVar(tailName) -> shapeResolveParameter(tailName)(shadowed)(parameters) == Some(index) && !shapeReadsLoopParameter(head)(shadowed)(parameters)
                 | _ -> false
+        | ExprList(elements, _isMultiline) -> shapeElementsReadNoLoopParameter(elements)(shadowed)(parameters)
         | other -> shapeIsChoiceEdge(other)(index)(name)(shadowed)(parameters)
 and shapeIsChoiceEdge (expression: Expr) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
     match shapeUnspan(expression) with

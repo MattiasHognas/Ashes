@@ -176,10 +176,13 @@ public sealed partial class Lowering
     private readonly Dictionary<List<IrInst>, HashSet<int>> _parameterBorrowingJoinTempsByBody =
         new(ReferenceEqualityComparer.Instance);
 
-    // Nil joins as a reference-counted list too, but it owns nothing and borrows from nothing.
+    // Nil joins as a reference-counted list too, but it owns nothing and borrows from nothing. A
+    // nested join normalized in place borrowed from a parameter before its arms were retained, and
+    // holds its own reference since.
     private bool BorrowsLoopParameter(JoinArm arm)
         => (arm.JoinsRuntimeManaged && !(arm.Body is { } body && IsEmptyListLiteral(body)))
             || (arm.Store is { } store
+                && !IsNormalizedJoinTemp(store.Source)
                 && _parameterBorrowingJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
                 && temps.Contains(store.Source));
 
@@ -388,7 +391,12 @@ public sealed partial class Lowering
         => Environment.GetEnvironmentVariable("GRC_NO_RCTUPLESIBLING") is null
             && !ContainsUnresolvedLayoutType(Prune(element.Type), [])
             && (CanNormalizeIntoOwnedRuntimeValue(element.Type)
+                || (PromotesOverStringSiblings && Prune(element.Type) is TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt)
                 || (Prune(element.Type) is TypeRef.TList list && CanRuntimeManageTcoListElement(list.Element)));
+
+    // Stage 2 of the arena-aggregate ownership design (SELF_HOSTING.md): an aggregate holding an
+    // owned element is promoted over string-like siblings, which are retained or copied like a string.
+    private static bool PromotesOverStringSiblings => Environment.GetEnvironmentVariable("GRC_PROMOTE_SIBLINGS") is not null;
 
     // A tuple's store takes a reference to a reference-counted element. An arena tuple can release
     // nothing, so that reference would outlive the tuple: a function returning its list inside a

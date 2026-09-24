@@ -178,6 +178,11 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false, bool tagless = false)
     {
+        if (runtimeManaged && fieldCount == 0 && !tagless)
+        {
+            return EmitImmortalNullaryAdt(state, tag);
+        }
+
         int valueSizeBytes = HeapLayouts.AdtLayout(tagless).AllocationSizeBytes(fieldCount);
         LlvmValueHandle ptr = runtimeManaged
             ? EmitRuntimeRcAlloc(state, valueSizeBytes, "rc_adt")
@@ -185,6 +190,45 @@ internal static partial class LlvmCodegen
 
         StoreAdtTag(state, ptr, tag, tagless, $"adt_tag_{tag}");
         return ptr;
+    }
+
+    /// <summary>
+    /// A reference-counted nullary constructor: one cell per tag, allocated inside the
+    /// reference-counted region the first time it is needed and marked immortal, so every later
+    /// use shares it, retains and releases skip it, and a uniqueness test never lets it be reused in
+    /// place. It carries nothing but its tag, so sharing it is unobservable.
+    /// </summary>
+    private static LlvmValueHandle EmitImmortalNullaryAdt(LlvmCodegenState state, int tag)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        string name = "__ashes_rc_nullary_" + tag.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        LlvmValueHandle slot = state.Target.GetOrAddNamedGlobal(name, () =>
+        {
+            LlvmValueHandle global = LlvmApi.AddGlobal(state.Target.Module, state.I64, name);
+            LlvmApi.SetInitializer(global, LlvmApi.ConstInt(state.I64, 0, 0));
+            LlvmApi.SetLinkage(global, LlvmLinkage.Internal);
+            return global;
+        });
+        LlvmValueHandle cached = LlvmApi.BuildLoad2(builder, state.I64, slot, "rc_nullary_cached");
+        LlvmValueHandle missing = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, cached,
+            LlvmApi.ConstInt(state.I64, 0, 0), "rc_nullary_missing");
+        LlvmBasicBlockHandle createBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rc_nullary_create");
+        LlvmBasicBlockHandle readyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rc_nullary_ready");
+        LlvmApi.BuildCondBr(builder, missing, createBlock, readyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, createBlock);
+        int valueSizeBytes = HeapLayouts.AdtLayout(tagless: false).AllocationSizeBytes(0);
+        LlvmValueHandle created = NormalizeToI64(state, EmitRuntimeRcAlloc(state, valueSizeBytes, "rc_nullary"));
+        StoreAdtTag(state, created, tag, tagless: false, "rc_nullary_tag");
+        LlvmValueHandle createdBase = LlvmApi.BuildSub(builder, created,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_nullary_base");
+        StoreMemory(state, createdBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            LlvmApi.ConstInt(state.I64, RuntimeRcImmortalSentinel, 0), "rc_nullary_immortal");
+        LlvmApi.BuildStore(builder, created, slot);
+        LlvmApi.BuildBr(builder, readyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, readyBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, slot, "rc_nullary");
     }
 
     /// <summary>

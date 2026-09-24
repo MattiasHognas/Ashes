@@ -24,7 +24,6 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import Ashes.Collection.List.map
-import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
 export (
@@ -715,17 +714,19 @@ let heapDropKind (semanticType: SemanticType) (environment: TypeEnvironment) =
                 | SemFunction(_argument, _result, _capabilityRow) -> DropClosure
                 | _ -> UnsupportedChildDrop)
 
-let recursive heapChildrenOf (fields: List((Maybe(Str), SemanticType))) (index: Int) (environment: TypeEnvironment) =
-    match fields with
-        | [] -> []
-        | (constructorName, fieldType) :: rest ->
+// The children of one constructor's fields (`None` for a list or tuple), in field order, ahead of
+// `tail`: built straight onto it rather than from a list of pairs and a concatenation.
+let recursive heapChildrenOnto (constructorName: Maybe(Str)) (fieldTypes: List(SemanticType)) (index: Int) (environment: TypeEnvironment) (tail: List(HeapLayoutChild)) =
+    match fieldTypes with
+        | [] -> tail
+        | fieldType :: rest ->
             HeapLayoutChild(
                 constructorName = constructorName,
                 fieldIndex = index,
                 childType = fieldType,
                 dropKind = heapDropKind(fieldType)(environment),
                 copyKind = heapStructuralCopyKind(fieldType)(environment)
-            ) :: heapChildrenOf(rest)(index + 1)(environment)
+            ) :: heapChildrenOnto(constructorName)(rest)(index + 1)(environment)(tail)
 
 let recursive heapNamedTypeChildren (grouped: List((Str, List(SemanticType)))) (environment: TypeEnvironment) =
     match grouped with
@@ -733,13 +734,12 @@ let recursive heapNamedTypeChildren (grouped: List((Str, List(SemanticType)))) (
         | (constructorName, fieldTypes) :: rest ->
             environment
             |> heapNamedTypeChildren(rest)
-            |> append(heapChildrenOf(map(given (fieldType) -> (Some(constructorName), fieldType))(fieldTypes))(0)(environment))
+            |> heapChildrenOnto(Some(constructorName))(fieldTypes)(0)(environment)
 
 let heapLayoutChildren (resolved: SemanticType) (environment: TypeEnvironment) =
     match resolved with
-        | SemList(element) -> heapChildrenOf([(None, element), (None, resolved)])(0)(environment)
-        | SemTuple(elements) ->
-            heapChildrenOf(map(given (element) -> (None, element))(elements))(0)(environment)
+        | SemList(element) -> heapChildrenOnto(None)([element, resolved])(0)(environment)([])
+        | SemTuple(elements) -> heapChildrenOnto(None)(elements)(0)(environment)([])
         | SemNamed(_symbolId, _name, _arguments) ->
             heapNamedTypeChildren(heapNamedTypeConstructors(resolved)(environment))(environment)
         | _ -> []

@@ -66,9 +66,6 @@ let containsName (name: Str) (names: NameSet) =
 
 let addName (name: Str) (names: NameSet) = Ashes.Collection.Map.setStr(name)(true)(names)
 
-let keepFirst (key: Str) value map =
-    Ashes.Collection.Map.upsertStr(key)(value)(given (existing) -> existing)(map)
-
 let targetsOf (adj: Adjacency) (name: Str) =
     match Ashes.Collection.Map.getStr(name)(adj) with
         | Some(targets) -> targets
@@ -133,7 +130,7 @@ let recursive adjacencyOf (nodes: List(ProvenanceFunctionNode)) (adj: Adjacency)
         | [] -> adj
         | ProvenanceFunctionNode { functionName = name, forwardTargets = targets } :: tail ->
             adj
-            |> keepFirst(name)(targets)
+            |> Ashes.Collection.Map.upsertStr(name)(targets)(given (existing) -> existing)
             |> adjacencyOf(tail)
 
 let recursive factsOf (nodes: List(ProvenanceFunctionNode)) (facts: MapTree(Str, NodeFacts)) =
@@ -141,7 +138,7 @@ let recursive factsOf (nodes: List(ProvenanceFunctionNode)) (facts: MapTree(Str,
         | [] -> facts
         | ProvenanceFunctionNode { functionName = name, hasDirectEligibleResult = d, hasRejectedResult = r, consideredArmCount = a, directBytesProvenances = b, hasUnknownBytesResult = u } :: tail ->
             facts
-            |> keepFirst(name)(NodeFacts(factDirect = d, factRejected = r, factArms = a, factBytes = b, factUnknownBytes = u))
+            |> Ashes.Collection.Map.upsertStr(name)(NodeFacts(factDirect = d, factRejected = r, factArms = a, factBytes = b, factUnknownBytes = u))(given (existing) -> existing)
             |> factsOf(tail)
 
 let recursive unambiguousOf (nodes: List(ProvenanceFunctionNode)) (targets: MapTree(Str, Maybe(Str))) =
@@ -149,7 +146,7 @@ let recursive unambiguousOf (nodes: List(ProvenanceFunctionNode)) (targets: MapT
         | [] -> targets
         | ProvenanceFunctionNode { functionName = name, unambiguousForwardTarget = unambiguous } :: tail ->
             targets
-            |> keepFirst(name)(unambiguous)
+            |> Ashes.Collection.Map.upsertStr(name)(unambiguous)(given (existing) -> existing)
             |> unambiguousOf(tail)
 
 // The reverse adjacency Kosaraju's second pass walks: every function naming `target` among its
@@ -164,7 +161,7 @@ let recursive addPredecessor (name: Str) (targets: List(Str)) (added: NameSet) (
             else
                 predecessors
                 |> Ashes.Collection.Map.upsertStr(target)([name])(given (existing) -> name :: existing)
-                |> addPredecessor(name)(rest)(addName(target)(added))
+                |> addPredecessor(name)(rest)(Ashes.Collection.Map.setStr(target)(true)(added))
 
 let recursive predecessorsOf (reversedNodes: List(ProvenanceFunctionNode)) (predecessors: Adjacency) =
     match reversedNodes with
@@ -196,7 +193,7 @@ let recursive computePostOrder (roots: List(Str)) (stack: List(DfsFrame)) (adj: 
             if containsName(name)(visited)
             then computePostOrder(roots)(Visit(more) :: rest)(adj)(visited)(postOrder)
             else
-                computePostOrder(roots)(Visit(targetsOf(adj)(name)) :: Exit(name) :: Visit(more) :: rest)(adj)(addName(name)(visited))(postOrder)
+                computePostOrder(roots)(Visit(targetsOf(adj)(name)) :: Exit(name) :: Visit(more) :: rest)(adj)(Ashes.Collection.Map.setStr(name)(true)(visited))(postOrder)
         | Exit(name) :: rest -> computePostOrder(roots)(rest)(adj)(visited)(name :: postOrder)
         | [] ->
             match roots with
@@ -212,7 +209,7 @@ let recursive computeSccs (order: List(Str)) (stack: List(List(Str))) (predecess
             if containsName(name)(visited)
             then computeSccs(order)(more :: rest)(predecessors)(visited)(component)(components)
             else
-                computeSccs(order)(targetsOf(predecessors)(name) :: more :: rest)(predecessors)(addName(name)(visited))(name :: component)(components)
+                computeSccs(order)(targetsOf(predecessors)(name) :: more :: rest)(predecessors)(Ashes.Collection.Map.setStr(name)(true)(visited))(name :: component)(components)
         | [] ->
             let finished =
                 match component with
@@ -242,7 +239,7 @@ let recursive addMemberIds (members: List(Str)) (currentId: Int) (ids: MapTree(S
         | [] -> ids
         | member :: rest ->
             ids
-            |> keepFirst(member)(currentId)
+            |> Ashes.Collection.Map.upsertStr(member)(currentId)(given (existing) -> existing)
             |> addMemberIds(rest)(currentId)
 
 let recursive componentIdsOf (components: List(List(Str))) (currentId: Int) (ids: MapTree(Str, Int)) =

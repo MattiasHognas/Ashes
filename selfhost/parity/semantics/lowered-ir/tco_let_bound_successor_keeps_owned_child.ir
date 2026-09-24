@@ -146,499 +146,859 @@ function __deepcopy_list_8  [ListDeepCopier]
     Return                Source=11   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
 
 function lambda_6  [ClosureHelper from scan]
-  locals=56 temps=219
+  locals=83 temps=358
     LoadEnv               Target=0 Index=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     StoreLocal            Slot=2 Source=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     LoadEnv               Target=1 Index=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     StoreLocal            Slot=3 Source=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     LoadEnv               Target=2 Index=2   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     StoreLocal            Slot=4 Source=2   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadLocal             Target=134 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    IsReferenceCounted    Target=135 SourceTemp=134
-    JumpIfFalse           CondTemp=135 Target=rc_representation_copy_42   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDup                 Target=136 SourceTemp=134 RuntimeManaged=true
-    StoreLocal            Slot=44 Source=136   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rc_representation_done_43   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_representation_copy_42:
-    LoadConstInt          Target=138 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=45 Source=134   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=46 Source=138   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=47 Source=138   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_normalize_list_44:
-    LoadLocal             Target=139 Slot=45   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntNe              Target=140 Left=139 Right=138   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=140 Target=rc_normalize_list_end_45   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=141 BasePtr=139 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=142 BasePtr=139 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    IsReferenceCounted    Target=143 SourceTemp=141
-    JumpIfFalse           CondTemp=143 Target=rc_representation_copy_46   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDup                 Target=144 SourceTemp=141 RuntimeManaged=true
-    StoreLocal            Slot=48 Source=144   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rc_representation_done_47   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_representation_copy_46:
-    CopyOutArena          DestTemp=146 SrcTemp=141 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=147 Ptr=141 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    IsReferenceCounted    Target=148 SourceTemp=147
-    JumpIfFalse           CondTemp=148 Target=rc_representation_copy_48   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDup                 Target=149 SourceTemp=147 RuntimeManaged=true
-    StoreLocal            Slot=49 Source=149   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rc_representation_done_49   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_representation_copy_48:
-    CopyOutArena          DestTemp=150 SrcTemp=147 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=49 Source=150   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_representation_done_49:
-    LoadLocal             Target=151 Slot=49   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    SetAdtField           Ptr=146 FieldIndex=1 Source=151 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=48 Source=146   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_representation_done_47:
-    LoadLocal             Target=152 Slot=48   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Alloc                 Target=153 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=153 OffsetBytes=0 Source=152   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=153 OffsetBytes=8 Source=138   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadLocal             Target=154 Slot=46   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntNe              Target=155 Left=154 Right=138   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=155 Target=rc_normalize_list_first_50   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadLocal             Target=156 Slot=47   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=156 OffsetBytes=8 Source=153   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rc_normalize_list_linked_51   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_normalize_list_first_50:
-    StoreLocal            Slot=46 Source=153   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_normalize_list_linked_51:
-    StoreLocal            Slot=47 Source=153   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=45 Source=142   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rc_normalize_list_44   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_normalize_list_end_45:
-    LoadLocal             Target=157 Slot=46   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=44 Source=157   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_representation_done_43:
-    LoadLocal             Target=158 Slot=44   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=4 Source=158   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=159 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=8 Source=159   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=207 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    IsReferenceCounted    Target=208 SourceTemp=207
+    JumpIfFalse           CondTemp=208 Target=rc_representation_copy_78   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDup                 Target=209 SourceTemp=207 RuntimeManaged=true
+    StoreLocal            Slot=61 Source=209   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_representation_done_79   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_copy_78:
+    LoadConstInt          Target=211 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=62 Source=207   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=63 Source=211   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=64 Source=211   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_80:
+    LoadLocal             Target=212 Slot=62   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=213 Left=212 Right=211   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=213 Target=rc_normalize_list_end_81   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=214 BasePtr=212 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=215 BasePtr=212 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    IsReferenceCounted    Target=216 SourceTemp=214
+    JumpIfFalse           CondTemp=216 Target=rc_representation_copy_82   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDup                 Target=217 SourceTemp=214 RuntimeManaged=true
+    StoreLocal            Slot=65 Source=217   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_representation_done_83   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_copy_82:
+    CopyOutArena          DestTemp=219 SrcTemp=214 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=220 Ptr=214 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    IsReferenceCounted    Target=221 SourceTemp=220
+    JumpIfFalse           CondTemp=221 Target=rc_representation_copy_84   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDup                 Target=222 SourceTemp=220 RuntimeManaged=true
+    StoreLocal            Slot=66 Source=222   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_representation_done_85   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_copy_84:
+    CopyOutArena          DestTemp=223 SrcTemp=220 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=66 Source=223   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_done_85:
+    LoadLocal             Target=224 Slot=66   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    SetAdtField           Ptr=219 FieldIndex=1 Source=224 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=65 Source=219   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_done_83:
+    LoadLocal             Target=225 Slot=65   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=226 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=226 OffsetBytes=0 Source=225   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=226 OffsetBytes=8 Source=211   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=227 Slot=63   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=228 Left=227 Right=211   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=228 Target=rc_normalize_list_first_86   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=229 Slot=64   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=229 OffsetBytes=8 Source=226   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_87   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_first_86:
+    StoreLocal            Slot=63 Source=226   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_linked_87:
+    StoreLocal            Slot=64 Source=226   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=62 Source=215   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_80   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_end_81:
+    LoadLocal             Target=230 Slot=63   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=61 Source=230   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_done_79:
+    LoadLocal             Target=231 Slot=61   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=4 Source=231   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=232 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=8 Source=232   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=233 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadArgumentOwnership Target=234   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=235 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    AndInt                Target=236 Left=234 Right=235   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=236 Target=rc_arg_normalize_copy_88   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=67 Source=233   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_arg_normalize_done_89   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_arg_normalize_copy_88:
+    IsReferenceCounted    Target=237 SourceTemp=233
+    JumpIfFalse           CondTemp=237 Target=rc_representation_copy_90   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDup                 Target=238 SourceTemp=233 RuntimeManaged=true
+    StoreLocal            Slot=68 Source=238   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_representation_done_91   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_copy_90:
+    LoadConstInt          Target=240 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=69 Source=233   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=70 Source=240   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=71 Source=240   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_92:
+    LoadLocal             Target=241 Slot=69   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=242 Left=241 Right=240   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=242 Target=rc_normalize_list_end_93   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=243 BasePtr=241 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=244 BasePtr=241 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    IsReferenceCounted    Target=245 SourceTemp=243
+    JumpIfFalse           CondTemp=245 Target=rc_representation_copy_94   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDup                 Target=246 SourceTemp=243 RuntimeManaged=true
+    StoreLocal            Slot=72 Source=246   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_representation_done_95   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_copy_94:
+    CopyOutArena          DestTemp=248 SrcTemp=243 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=249 Ptr=243 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    IsReferenceCounted    Target=250 SourceTemp=249
+    JumpIfFalse           CondTemp=250 Target=rc_representation_copy_96   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDup                 Target=251 SourceTemp=249 RuntimeManaged=true
+    StoreLocal            Slot=73 Source=251   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_representation_done_97   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_copy_96:
+    CopyOutArena          DestTemp=252 SrcTemp=249 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=73 Source=252   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_done_97:
+    LoadLocal             Target=253 Slot=73   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    SetAdtField           Ptr=248 FieldIndex=0 Source=253 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=72 Source=248   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_done_95:
+    LoadLocal             Target=254 Slot=72   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=255 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=255 OffsetBytes=0 Source=254   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=255 OffsetBytes=8 Source=240   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=256 Slot=70   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=257 Left=256 Right=240   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=257 Target=rc_normalize_list_first_98   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=258 Slot=71   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=258 OffsetBytes=8 Source=255   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_linked_99   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_first_98:
+    StoreLocal            Slot=70 Source=255   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_linked_99:
+    StoreLocal            Slot=71 Source=255   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=69 Source=244   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_normalize_list_92   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_normalize_list_end_93:
+    LoadLocal             Target=259 Slot=70   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=68 Source=259   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_representation_done_91:
+    LoadLocal             Target=260 Slot=68   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=67 Source=260   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_arg_normalize_done_89:
+    LoadLocal             Target=261 Slot=67   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=1 Source=261   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=262 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=9 Source=262   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
     LoadConstInt          Target=3 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     StoreLocal            Slot=7 Source=3   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   lambda_6_body:
-    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
-    SaveStackPointer      Slot=11   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    SaveStackPointer      Slot=12   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     LoadLocal             Target=4 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:16:8)
     LoadLocal             Target=5 Slot=3   (tco_let_bound_successor_keeps_owned_child.ash:16:20)
     CmpIntGe              Target=6 Left=4 Right=5   (tco_let_bound_successor_keeps_owned_child.ash:16:8)
     JumpIfFalse           CondTemp=6 Target=else_5   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
     LoadLocal             Target=7 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:17:11)
     LoadLocal             Target=8 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:17:19)
-    IsReferenceCounted    Target=10 SourceTemp=8
-    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_7   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    RcDup                 Target=11 SourceTemp=8 RuntimeManaged=true
-    StoreLocal            Slot=13 Source=11   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_representation_done_8   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_copy_7:
-    IsReferenceCounted    Target=13 SourceTemp=8
-    JumpIfFalse           CondTemp=13 Target=rc_representation_copy_9   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    RcDup                 Target=14 SourceTemp=8 RuntimeManaged=true
-    StoreLocal            Slot=14 Source=14   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_representation_done_10   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_copy_9:
-    LoadConstInt          Target=15 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=15 Source=8   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=16 Source=15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=17 Source=15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_normalize_list_11:
-    LoadLocal             Target=16 Slot=15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    CmpIntNe              Target=17 Left=16 Right=15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    JumpIfFalse           CondTemp=17 Target=rc_normalize_list_end_12   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    IsReferenceCounted    Target=18 SourceTemp=16
-    JumpIfFalse           CondTemp=18 Target=rc_normalize_list_cell_13   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    RcDup                 Target=19 SourceTemp=16 RuntimeManaged=true
-    LoadLocal             Target=20 Slot=16   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    CmpIntNe              Target=21 Left=20 Right=15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    JumpIfFalse           CondTemp=21 Target=rc_normalize_list_first_14   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    LoadLocal             Target=22 Slot=17   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=19   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_normalize_list_linked_15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_normalize_list_first_14:
-    StoreLocal            Slot=16 Source=19   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_normalize_list_linked_15:
-    StoreLocal            Slot=17 Source=19   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_normalize_list_end_12   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_normalize_list_cell_13:
-    LoadMemOffset         Target=23 BasePtr=16 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    LoadMemOffset         Target=24 BasePtr=16 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    IsReferenceCounted    Target=25 SourceTemp=23
-    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_16   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    RcDup                 Target=26 SourceTemp=23 RuntimeManaged=true
-    StoreLocal            Slot=18 Source=26   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_representation_done_17   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_copy_16:
-    CopyOutArena          DestTemp=28 SrcTemp=23 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=29 Ptr=23 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    IsReferenceCounted    Target=30 SourceTemp=29
-    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_18   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
-    StoreLocal            Slot=19 Source=31   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_representation_done_19   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_copy_18:
-    CopyOutArena          DestTemp=32 SrcTemp=29 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=19 Source=32   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_done_19:
-    LoadLocal             Target=33 Slot=19   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    SetAdtField           Ptr=28 FieldIndex=0 Source=33 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=18 Source=28   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_done_17:
-    LoadLocal             Target=34 Slot=18   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Alloc                 Target=35 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=34   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreMemOffset        BasePtr=35 OffsetBytes=8 Source=15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    LoadLocal             Target=36 Slot=16   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    CmpIntNe              Target=37 Left=36 Right=15   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    JumpIfFalse           CondTemp=37 Target=rc_normalize_list_first_20   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    LoadLocal             Target=38 Slot=17   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreMemOffset        BasePtr=38 OffsetBytes=8 Source=35   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_normalize_list_linked_21   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_normalize_list_first_20:
-    StoreLocal            Slot=16 Source=35   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_normalize_list_linked_21:
-    StoreLocal            Slot=17 Source=35   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=15 Source=24   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    Jump                  Target=rc_normalize_list_11   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_normalize_list_end_12:
-    LoadLocal             Target=39 Slot=16   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=14 Source=39   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_done_10:
-    LoadLocal             Target=40 Slot=14   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=13 Source=40   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-  rc_representation_done_8:
-    LoadLocal             Target=41 Slot=13   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    RcDup                 Target=42 SourceTemp=7 RuntimeManaged=true MayBeEmpty=true
-    RcDup                 Target=43 SourceTemp=41
+    RcDup                 Target=10 SourceTemp=7 RuntimeManaged=true MayBeEmpty=true
+    RcDup                 Target=11 SourceTemp=8 RuntimeManaged=true MayBeEmpty=true
     Alloc                 Target=9 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=42   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=43   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
-    StoreLocal            Slot=12 Source=9   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=10   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=11   (tco_let_bound_successor_keeps_owned_child.ash:17:10)
+    StoreLocal            Slot=13 Source=9   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
     Jump                  Target=endif_6   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
   else_5:
-    SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
-    LoadEnv               Target=44 Index=3   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
-    Borrow                Target=45 SourceTemp=44
-    LoadLocal             Target=46 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:19:24)
-    LoadMemOffset         Target=47 BasePtr=45 OffsetBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
-    LoadConstInt          Target=48 Value=62   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
-    ShrInt                Target=49 Left=47 Right=48   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
-    LoadConstInt          Target=50 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
-    LoadConstInt          Target=51 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
-    CallClosure           Target=52 ClosureTemp=45 ArgTemp=46 RuntimeManagedArgumentFlagTemp=51   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
-    RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=22
-    SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
-    LoadMemOffset         Target=53 BasePtr=52 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    StoreLocal            Slot=26 Source=53   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    LoadMemOffset         Target=54 BasePtr=52 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    StoreLocal            Slot=27 Source=54   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    StoreLocal            Slot=28 Source=52   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    SaveArenaState        CursorLocalSlot=29 EndLocalSlot=30
-    LoadLocal             Target=55 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:22:24)
-    LoadLocal             Target=56 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:22:35)
-    LoadConstInt          Target=57 Value=7   (tco_let_bound_successor_keeps_owned_child.ash:22:46)
-    DivInt                Target=58 Left=56 Right=57   (tco_let_bound_successor_keeps_owned_child.ash:22:35)
-    LoadConstInt          Target=59 Value=7   (tco_let_bound_successor_keeps_owned_child.ash:22:50)
-    MulInt                Target=60 Left=58 Right=59   (tco_let_bound_successor_keeps_owned_child.ash:22:35)
-    SubInt                Target=61 Left=55 Right=60   (tco_let_bound_successor_keeps_owned_child.ash:22:24)
-    LoadConstInt          Target=62 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:22:55)
-    CmpIntEq              Target=63 Left=61 Right=62   (tco_let_bound_successor_keeps_owned_child.ash:22:24)
-    JumpIfFalse           CondTemp=63 Target=else_25   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
-    LoadLocal             Target=64 Slot=27   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
-    Borrow                Target=65 SourceTemp=64
-    RcDup                 Target=66 SourceTemp=65 RuntimeManaged=true
-    RcDrop                SourceTemp=54 TypeName=Diag OwnerSlot=27
-    LoadLocal             Target=67 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:23:40)
-    RcDup                 Target=68 SourceTemp=67
-    Alloc                 Target=69 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
-    StoreMemOffset        BasePtr=69 OffsetBytes=0 Source=66   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
-    StoreMemOffset        BasePtr=69 OffsetBytes=8 Source=68   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
-    StoreLocal            Slot=31 Source=69   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
-    Jump                  Target=endif_26   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
-  else_25:
-    RcDrop                SourceTemp=54 TypeName=Diag OwnerSlot=27
-    LoadLocal             Target=70 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:25:28)
-    LoadConstInt          Target=71 Value=1000   (tco_let_bound_successor_keeps_owned_child.ash:25:40)
-    CmpIntEq              Target=72 Left=70 Right=71   (tco_let_bound_successor_keeps_owned_child.ash:25:28)
-    JumpIfFalse           CondTemp=72 Target=else_27   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
-    LoadConstInt          Target=73 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:26:30)
-    StoreLocal            Slot=32 Source=73   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
-    Jump                  Target=endif_28   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
-  else_27:
-    LoadLocal             Target=74 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:27:30)
-    StoreLocal            Slot=32 Source=74   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
-  endif_28:
-    LoadLocal             Target=75 Slot=32   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
-    StoreLocal            Slot=31 Source=75   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
-  endif_26:
-    LoadLocal             Target=76 Slot=31   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
-    StoreLocal            Slot=33 Source=76   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
-    LoadLocal             Target=77 Slot=3   (tco_let_bound_successor_keeps_owned_child.ash:28:25)
-    LoadLocal             Target=78 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:28:32)
-    LoadConstInt          Target=79 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:28:43)
-    AddInt                Target=80 Left=78 Right=79   (tco_let_bound_successor_keeps_owned_child.ash:28:32)
-    LoadLocal             Target=81 Slot=26   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Borrow                Target=82 SourceTemp=81
-    RcDup                 Target=83 SourceTemp=82 RuntimeManaged=true
-    RcDrop                SourceTemp=53 TypeName=Tok OwnerSlot=26
-    LoadLocal             Target=84 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:28:55)
-    IsReferenceCounted    Target=85 SourceTemp=84
-    StoreLocal            Slot=34 Source=84   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    LoadConstInt          Target=86 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    CmpIntEq              Target=87 Left=84 Right=86   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    OrInt                 Target=88 Left=85 Right=87   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    JumpIfFalse           CondTemp=88 Target=rc_tail_copy_30   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Jump                  Target=rc_tail_done_29   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_tail_copy_30:
-    LoadConstInt          Target=90 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreLocal            Slot=35 Source=84   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreLocal            Slot=36 Source=90   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreLocal            Slot=37 Source=90   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_normalize_list_31:
-    LoadLocal             Target=91 Slot=35   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    CmpIntNe              Target=92 Left=91 Right=90   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    JumpIfFalse           CondTemp=92 Target=rc_normalize_list_end_32   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    LoadMemOffset         Target=93 BasePtr=91 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    LoadMemOffset         Target=94 BasePtr=91 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    IsReferenceCounted    Target=95 SourceTemp=93
-    JumpIfFalse           CondTemp=95 Target=rc_representation_copy_33   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    RcDup                 Target=96 SourceTemp=93 RuntimeManaged=true
-    StoreLocal            Slot=38 Source=96   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Jump                  Target=rc_representation_done_34   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_representation_copy_33:
-    CopyOutArena          DestTemp=98 SrcTemp=93 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=99 Ptr=93 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    IsReferenceCounted    Target=100 SourceTemp=99
-    JumpIfFalse           CondTemp=100 Target=rc_representation_copy_35   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    RcDup                 Target=101 SourceTemp=99 RuntimeManaged=true
-    StoreLocal            Slot=39 Source=101   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Jump                  Target=rc_representation_done_36   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_representation_copy_35:
-    CopyOutArena          DestTemp=102 SrcTemp=99 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=39 Source=102   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_representation_done_36:
-    LoadLocal             Target=103 Slot=39   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    SetAdtField           Ptr=98 FieldIndex=1 Source=103 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreLocal            Slot=38 Source=98   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_representation_done_34:
-    LoadLocal             Target=104 Slot=38   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Alloc                 Target=105 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreMemOffset        BasePtr=105 OffsetBytes=0 Source=104   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreMemOffset        BasePtr=105 OffsetBytes=8 Source=90   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    LoadLocal             Target=106 Slot=36   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    CmpIntNe              Target=107 Left=106 Right=90   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    JumpIfFalse           CondTemp=107 Target=rc_normalize_list_first_37   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    LoadLocal             Target=108 Slot=37   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreMemOffset        BasePtr=108 OffsetBytes=8 Source=105   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Jump                  Target=rc_normalize_list_linked_38   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_normalize_list_first_37:
-    StoreLocal            Slot=36 Source=105   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_normalize_list_linked_38:
-    StoreLocal            Slot=37 Source=105   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreLocal            Slot=35 Source=94   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Jump                  Target=rc_normalize_list_31   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_normalize_list_end_32:
-    LoadLocal             Target=109 Slot=36   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreLocal            Slot=34 Source=109   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-  rc_tail_done_29:
-    LoadLocal             Target=110 Slot=34   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    Alloc                 Target=111 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreMemOffset        BasePtr=111 OffsetBytes=0 Source=83   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    StoreMemOffset        BasePtr=111 OffsetBytes=8 Source=110   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
-    LoadLocal             Target=112 Slot=33   (tco_let_bound_successor_keeps_owned_child.ash:28:63)
-    Borrow                Target=113 SourceTemp=112
-    LoadLocal             Target=114 Slot=3   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    LoadLocal             Target=115 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    LoadLocal             Target=116 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    LoadLocal             Target=117 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    StoreLocal            Slot=3 Source=77   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    StoreLocal            Slot=2 Source=80   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    StoreLocal            Slot=4 Source=111   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    StoreLocal            Slot=1 Source=113   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    RcDrop                SourceTemp=76 TypeName=List OwnerSlot=33
-    LoadLocal             Target=210 Slot=28
-    RcIsUnique            Target=211 SourceTemp=210
-    JumpIfFalse           CondTemp=211 Target=rc_drop_tuple_shared_134
-    LoadMemOffset         Target=212 BasePtr=210 OffsetBytes=0
-    RcIsUnique            Target=213 SourceTemp=212
-    JumpIfFalse           CondTemp=213 Target=rc_drop_shared_135
-    GetAdtField           Target=214 Ptr=212 FieldIndex=1 Tagless=true
-    RcDrop                SourceTemp=214 TypeName=String RuntimeManaged=true
-  rc_drop_shared_135:
-    RcDrop                SourceTemp=212 TypeName=Tok RuntimeManaged=true
-    LoadMemOffset         Target=215 BasePtr=210 OffsetBytes=8
-    RcIsUnique            Target=216 SourceTemp=215
-    JumpIfFalse           CondTemp=216 Target=rc_drop_shared_136
-    GetAdtField           Target=217 Ptr=215 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=217 TypeName=String RuntimeManaged=true
-  rc_drop_shared_136:
-    RcDrop                SourceTemp=215 TypeName=Diag RuntimeManaged=true
-  rc_drop_tuple_shared_134:
-    RcDrop                SourceTemp=210 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=4 Source=111
-    LoadConstInt          Target=218 Value=1
-    StoreLocal            Slot=8 Source=218
-    RestoreStackPointer   Slot=11   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadEnv               Target=12 Index=3   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:19:24)
+    LoadMemOffset         Target=15 BasePtr=13 OffsetBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
+    LoadConstInt          Target=16 Value=62   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
+    ShrInt                Target=17 Left=15 Right=16   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
+    LoadConstInt          Target=18 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
+    LoadConstInt          Target=19 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
+    CallClosure           Target=20 ClosureTemp=13 ArgTemp=14 RuntimeManagedArgumentFlagTemp=19   (tco_let_bound_successor_keeps_owned_child.ash:19:15)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
+    SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
+    LoadMemOffset         Target=21 BasePtr=20 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    StoreLocal            Slot=20 Source=21   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    LoadMemOffset         Target=22 BasePtr=20 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    StoreLocal            Slot=21 Source=22   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    StoreLocal            Slot=22 Source=20   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    SaveArenaState        CursorLocalSlot=23 EndLocalSlot=24
+    LoadLocal             Target=23 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:22:24)
+    LoadLocal             Target=24 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:22:35)
+    LoadConstInt          Target=25 Value=7   (tco_let_bound_successor_keeps_owned_child.ash:22:46)
+    DivInt                Target=26 Left=24 Right=25   (tco_let_bound_successor_keeps_owned_child.ash:22:35)
+    LoadConstInt          Target=27 Value=7   (tco_let_bound_successor_keeps_owned_child.ash:22:50)
+    MulInt                Target=28 Left=26 Right=27   (tco_let_bound_successor_keeps_owned_child.ash:22:35)
+    SubInt                Target=29 Left=23 Right=28   (tco_let_bound_successor_keeps_owned_child.ash:22:24)
+    LoadConstInt          Target=30 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:22:55)
+    CmpIntEq              Target=31 Left=29 Right=30   (tco_let_bound_successor_keeps_owned_child.ash:22:24)
+    JumpIfFalse           CondTemp=31 Target=else_10   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    LoadLocal             Target=32 Slot=21   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
+    Borrow                Target=33 SourceTemp=32
+    LoadLocal             Target=34 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:23:40)
+    Alloc                 Target=35 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
+    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=33   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
+    StoreMemOffset        BasePtr=35 OffsetBytes=8 Source=34   (tco_let_bound_successor_keeps_owned_child.ash:23:26)
+    StoreLocal            Slot=41 Source=35   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    IsReferenceCounted    Target=107 SourceTemp=35
+    JumpIfFalse           CondTemp=107 Target=general_rc_result_arena_copy_44   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=general_rc_result_already_owned_45   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  general_rc_result_arena_copy_44:
+    IsReferenceCounted    Target=108 SourceTemp=35
+    JumpIfFalse           CondTemp=108 Target=rc_representation_copy_46   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    RcDup                 Target=109 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=42 Source=109   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_representation_done_47   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_copy_46:
+    IsReferenceCounted    Target=111 SourceTemp=35
+    JumpIfFalse           CondTemp=111 Target=rc_representation_copy_48   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    RcDup                 Target=112 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=43 Source=112   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_representation_done_49   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_copy_48:
+    LoadConstInt          Target=113 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=44 Source=35   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=45 Source=113   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=46 Source=113   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_normalize_list_50:
+    LoadLocal             Target=114 Slot=44   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    CmpIntNe              Target=115 Left=114 Right=113   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    JumpIfFalse           CondTemp=115 Target=rc_normalize_list_end_51   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    IsReferenceCounted    Target=116 SourceTemp=114
+    JumpIfFalse           CondTemp=116 Target=rc_normalize_list_cell_52   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    RcDup                 Target=117 SourceTemp=114 RuntimeManaged=true
+    LoadLocal             Target=118 Slot=45   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    CmpIntNe              Target=119 Left=118 Right=113   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    JumpIfFalse           CondTemp=119 Target=rc_normalize_list_first_53   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    LoadLocal             Target=120 Slot=46   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreMemOffset        BasePtr=120 OffsetBytes=8 Source=117   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_normalize_list_linked_54   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_normalize_list_first_53:
+    StoreLocal            Slot=45 Source=117   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_normalize_list_linked_54:
+    StoreLocal            Slot=46 Source=117   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_normalize_list_end_51   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_normalize_list_cell_52:
+    LoadMemOffset         Target=121 BasePtr=114 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    LoadMemOffset         Target=122 BasePtr=114 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    IsReferenceCounted    Target=123 SourceTemp=121
+    JumpIfFalse           CondTemp=123 Target=rc_representation_copy_55   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    RcDup                 Target=124 SourceTemp=121 RuntimeManaged=true
+    StoreLocal            Slot=47 Source=124   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_representation_done_56   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_copy_55:
+    CopyOutArena          DestTemp=126 SrcTemp=121 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=127 Ptr=121 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    IsReferenceCounted    Target=128 SourceTemp=127
+    JumpIfFalse           CondTemp=128 Target=rc_representation_copy_57   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    RcDup                 Target=129 SourceTemp=127 RuntimeManaged=true
+    StoreLocal            Slot=48 Source=129   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_representation_done_58   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_copy_57:
+    CopyOutArena          DestTemp=130 SrcTemp=127 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=48 Source=130   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_done_58:
+    LoadLocal             Target=131 Slot=48   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    SetAdtField           Ptr=126 FieldIndex=0 Source=131 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=47 Source=126   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_done_56:
+    LoadLocal             Target=132 Slot=47   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Alloc                 Target=133 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreMemOffset        BasePtr=133 OffsetBytes=0 Source=132   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreMemOffset        BasePtr=133 OffsetBytes=8 Source=113   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    LoadLocal             Target=134 Slot=45   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    CmpIntNe              Target=135 Left=134 Right=113   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    JumpIfFalse           CondTemp=135 Target=rc_normalize_list_first_59   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    LoadLocal             Target=136 Slot=46   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreMemOffset        BasePtr=136 OffsetBytes=8 Source=133   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_normalize_list_linked_60   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_normalize_list_first_59:
+    StoreLocal            Slot=45 Source=133   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_normalize_list_linked_60:
+    StoreLocal            Slot=46 Source=133   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=44 Source=122   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=rc_normalize_list_50   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_normalize_list_end_51:
+    LoadLocal             Target=137 Slot=45   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=43 Source=137   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_done_49:
+    LoadLocal             Target=138 Slot=43   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=42 Source=138   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  rc_representation_done_47:
+    LoadLocal             Target=139 Slot=42   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=41 Source=139   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  general_rc_result_already_owned_45:
+    LoadLocal             Target=140 Slot=41   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=25 Source=140   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    Jump                  Target=endif_11   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  else_10:
+    LoadLocal             Target=36 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:25:28)
+    LoadConstInt          Target=37 Value=1000   (tco_let_bound_successor_keeps_owned_child.ash:25:40)
+    CmpIntEq              Target=38 Left=36 Right=37   (tco_let_bound_successor_keeps_owned_child.ash:25:28)
+    JumpIfFalse           CondTemp=38 Target=else_12   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadConstInt          Target=39 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:26:30)
+    IsReferenceCounted    Target=42 SourceTemp=39
+    JumpIfFalse           CondTemp=42 Target=rc_representation_copy_14   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=43 SourceTemp=39 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=43   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_15   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_14:
+    IsReferenceCounted    Target=45 SourceTemp=39
+    JumpIfFalse           CondTemp=45 Target=rc_representation_copy_16   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=46 SourceTemp=39 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=46   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_17   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_16:
+    LoadConstInt          Target=47 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=29 Source=39   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=30 Source=47   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=31 Source=47   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_18:
+    LoadLocal             Target=48 Slot=29   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    CmpIntNe              Target=49 Left=48 Right=47   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_end_19   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    IsReferenceCounted    Target=50 SourceTemp=48
+    JumpIfFalse           CondTemp=50 Target=rc_normalize_list_cell_20   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=51 SourceTemp=48 RuntimeManaged=true
+    LoadLocal             Target=52 Slot=30   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    CmpIntNe              Target=53 Left=52 Right=47   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    JumpIfFalse           CondTemp=53 Target=rc_normalize_list_first_21   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadLocal             Target=54 Slot=31   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=51   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_linked_22   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_first_21:
+    StoreLocal            Slot=30 Source=51   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_linked_22:
+    StoreLocal            Slot=31 Source=51   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_end_19   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_cell_20:
+    LoadMemOffset         Target=55 BasePtr=48 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadMemOffset         Target=56 BasePtr=48 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    IsReferenceCounted    Target=57 SourceTemp=55
+    JumpIfFalse           CondTemp=57 Target=rc_representation_copy_23   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=58 SourceTemp=55 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=58   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_24   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_23:
+    CopyOutArena          DestTemp=60 SrcTemp=55 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=61 Ptr=55 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    IsReferenceCounted    Target=62 SourceTemp=61
+    JumpIfFalse           CondTemp=62 Target=rc_representation_copy_25   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=63 SourceTemp=61 RuntimeManaged=true
+    StoreLocal            Slot=33 Source=63   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_26   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_25:
+    CopyOutArena          DestTemp=64 SrcTemp=61 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=33 Source=64   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_26:
+    LoadLocal             Target=65 Slot=33   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    SetAdtField           Ptr=60 FieldIndex=0 Source=65 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=32 Source=60   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_24:
+    LoadLocal             Target=66 Slot=32   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Alloc                 Target=67 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=67 OffsetBytes=0 Source=66   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=67 OffsetBytes=8 Source=47   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadLocal             Target=68 Slot=30   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    CmpIntNe              Target=69 Left=68 Right=47   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    JumpIfFalse           CondTemp=69 Target=rc_normalize_list_first_27   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadLocal             Target=70 Slot=31   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=70 OffsetBytes=8 Source=67   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_linked_28   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_first_27:
+    StoreLocal            Slot=30 Source=67   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_linked_28:
+    StoreLocal            Slot=31 Source=67   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=29 Source=56   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_18   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_end_19:
+    LoadLocal             Target=71 Slot=30   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=28 Source=71   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_17:
+    LoadLocal             Target=72 Slot=28   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=27 Source=72   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_15:
+    LoadLocal             Target=73 Slot=27   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=26 Source=73   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=endif_13   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  else_12:
+    LoadLocal             Target=40 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:27:30)
+    IsReferenceCounted    Target=74 SourceTemp=40
+    JumpIfFalse           CondTemp=74 Target=rc_representation_copy_29   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=75 SourceTemp=40 RuntimeManaged=true
+    StoreLocal            Slot=34 Source=75   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_30   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_29:
+    IsReferenceCounted    Target=77 SourceTemp=40
+    JumpIfFalse           CondTemp=77 Target=rc_representation_copy_31   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=78 SourceTemp=40 RuntimeManaged=true
+    StoreLocal            Slot=35 Source=78   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_32   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_31:
+    LoadConstInt          Target=79 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=36 Source=40   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=37 Source=79   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=38 Source=79   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_33:
+    LoadLocal             Target=80 Slot=36   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    CmpIntNe              Target=81 Left=80 Right=79   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    JumpIfFalse           CondTemp=81 Target=rc_normalize_list_end_34   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    IsReferenceCounted    Target=82 SourceTemp=80
+    JumpIfFalse           CondTemp=82 Target=rc_normalize_list_cell_35   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=83 SourceTemp=80 RuntimeManaged=true
+    LoadLocal             Target=84 Slot=37   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    CmpIntNe              Target=85 Left=84 Right=79   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    JumpIfFalse           CondTemp=85 Target=rc_normalize_list_first_36   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadLocal             Target=86 Slot=38   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=86 OffsetBytes=8 Source=83   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_linked_37   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_first_36:
+    StoreLocal            Slot=37 Source=83   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_linked_37:
+    StoreLocal            Slot=38 Source=83   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_end_34   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_cell_35:
+    LoadMemOffset         Target=87 BasePtr=80 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadMemOffset         Target=88 BasePtr=80 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    IsReferenceCounted    Target=89 SourceTemp=87
+    JumpIfFalse           CondTemp=89 Target=rc_representation_copy_38   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=90 SourceTemp=87 RuntimeManaged=true
+    StoreLocal            Slot=39 Source=90   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_39   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_38:
+    CopyOutArena          DestTemp=92 SrcTemp=87 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=93 Ptr=87 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    IsReferenceCounted    Target=94 SourceTemp=93
+    JumpIfFalse           CondTemp=94 Target=rc_representation_copy_40   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    RcDup                 Target=95 SourceTemp=93 RuntimeManaged=true
+    StoreLocal            Slot=40 Source=95   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_representation_done_41   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_copy_40:
+    CopyOutArena          DestTemp=96 SrcTemp=93 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=40 Source=96   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_41:
+    LoadLocal             Target=97 Slot=40   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    SetAdtField           Ptr=92 FieldIndex=0 Source=97 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=39 Source=92   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_39:
+    LoadLocal             Target=98 Slot=39   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Alloc                 Target=99 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=99 OffsetBytes=0 Source=98   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=99 OffsetBytes=8 Source=79   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadLocal             Target=100 Slot=37   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    CmpIntNe              Target=101 Left=100 Right=79   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    JumpIfFalse           CondTemp=101 Target=rc_normalize_list_first_42   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    LoadLocal             Target=102 Slot=38   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreMemOffset        BasePtr=102 OffsetBytes=8 Source=99   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_linked_43   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_first_42:
+    StoreLocal            Slot=37 Source=99   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_linked_43:
+    StoreLocal            Slot=38 Source=99   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=36 Source=88   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    Jump                  Target=rc_normalize_list_33   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_normalize_list_end_34:
+    LoadLocal             Target=103 Slot=37   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=35 Source=103   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_32:
+    LoadLocal             Target=104 Slot=35   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=34 Source=104   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  rc_representation_done_30:
+    LoadLocal             Target=105 Slot=34   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=26 Source=105   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+  endif_13:
+    LoadLocal             Target=41 Slot=26   (tco_let_bound_successor_keeps_owned_child.ash:25:25)
+    StoreLocal            Slot=25 Source=41   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+  endif_11:
+    LoadLocal             Target=106 Slot=25   (tco_let_bound_successor_keeps_owned_child.ash:22:21)
+    StoreLocal            Slot=49 Source=106   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    LoadLocal             Target=141 Slot=3   (tco_let_bound_successor_keeps_owned_child.ash:28:25)
+    LoadLocal             Target=142 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:28:32)
+    LoadConstInt          Target=143 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:28:43)
+    AddInt                Target=144 Left=142 Right=143   (tco_let_bound_successor_keeps_owned_child.ash:28:32)
+    LoadLocal             Target=145 Slot=20   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Borrow                Target=146 SourceTemp=145
+    RcDup                 Target=147 SourceTemp=146 RuntimeManaged=true
+    RcDrop                SourceTemp=21 TypeName=Tok OwnerSlot=20
+    LoadLocal             Target=148 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:28:55)
+    IsReferenceCounted    Target=149 SourceTemp=148
+    StoreLocal            Slot=50 Source=148   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    LoadConstInt          Target=150 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    CmpIntEq              Target=151 Left=148 Right=150   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    OrInt                 Target=152 Left=149 Right=151   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    JumpIfFalse           CondTemp=152 Target=rc_tail_copy_62   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Jump                  Target=rc_tail_done_61   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_tail_copy_62:
+    LoadConstInt          Target=154 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreLocal            Slot=51 Source=148   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreLocal            Slot=52 Source=154   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreLocal            Slot=53 Source=154   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_normalize_list_63:
+    LoadLocal             Target=155 Slot=51   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    CmpIntNe              Target=156 Left=155 Right=154   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    JumpIfFalse           CondTemp=156 Target=rc_normalize_list_end_64   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    LoadMemOffset         Target=157 BasePtr=155 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    LoadMemOffset         Target=158 BasePtr=155 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    IsReferenceCounted    Target=159 SourceTemp=157
+    JumpIfFalse           CondTemp=159 Target=rc_representation_copy_65   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    RcDup                 Target=160 SourceTemp=157 RuntimeManaged=true
+    StoreLocal            Slot=54 Source=160   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Jump                  Target=rc_representation_done_66   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_representation_copy_65:
+    CopyOutArena          DestTemp=162 SrcTemp=157 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=163 Ptr=157 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    IsReferenceCounted    Target=164 SourceTemp=163
+    JumpIfFalse           CondTemp=164 Target=rc_representation_copy_67   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    RcDup                 Target=165 SourceTemp=163 RuntimeManaged=true
+    StoreLocal            Slot=55 Source=165   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Jump                  Target=rc_representation_done_68   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_representation_copy_67:
+    CopyOutArena          DestTemp=166 SrcTemp=163 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=55 Source=166   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_representation_done_68:
+    LoadLocal             Target=167 Slot=55   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    SetAdtField           Ptr=162 FieldIndex=1 Source=167 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreLocal            Slot=54 Source=162   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_representation_done_66:
+    LoadLocal             Target=168 Slot=54   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Alloc                 Target=169 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreMemOffset        BasePtr=169 OffsetBytes=0 Source=168   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreMemOffset        BasePtr=169 OffsetBytes=8 Source=154   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    LoadLocal             Target=170 Slot=52   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    CmpIntNe              Target=171 Left=170 Right=154   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    JumpIfFalse           CondTemp=171 Target=rc_normalize_list_first_69   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    LoadLocal             Target=172 Slot=53   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreMemOffset        BasePtr=172 OffsetBytes=8 Source=169   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Jump                  Target=rc_normalize_list_linked_70   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_normalize_list_first_69:
+    StoreLocal            Slot=52 Source=169   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_normalize_list_linked_70:
+    StoreLocal            Slot=53 Source=169   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreLocal            Slot=51 Source=158   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Jump                  Target=rc_normalize_list_63   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_normalize_list_end_64:
+    LoadLocal             Target=173 Slot=52   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreLocal            Slot=50 Source=173   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+  rc_tail_done_61:
+    LoadLocal             Target=174 Slot=50   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    Alloc                 Target=175 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreMemOffset        BasePtr=175 OffsetBytes=0 Source=147   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    StoreMemOffset        BasePtr=175 OffsetBytes=8 Source=174   (tco_let_bound_successor_keeps_owned_child.ash:28:46)
+    LoadLocal             Target=176 Slot=49   (tco_let_bound_successor_keeps_owned_child.ash:28:63)
+    Borrow                Target=177 SourceTemp=176
+    RcDup                 Target=178 SourceTemp=177 RuntimeManaged=true MayBeEmpty=true
+    LoadLocal             Target=179 Slot=3   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    LoadLocal             Target=180 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    LoadLocal             Target=181 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    LoadLocal             Target=182 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    StoreLocal            Slot=3 Source=141   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    StoreLocal            Slot=2 Source=144   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    StoreLocal            Slot=4 Source=175   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    StoreLocal            Slot=1 Source=178   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    LoadLocal             Target=330 Slot=9
+    JumpIfFalse           CondTemp=330 Target=rc_tco_drop_inactive_189
+    StoreLocal            Slot=81 Source=182
+  rcdrop_list_190:
+    LoadLocal             Target=331 Slot=81
+    LoadConstInt          Target=332 Value=0
+    CmpIntNe              Target=333 Left=331 Right=332
+    JumpIfFalse           CondTemp=333 Target=rcdrop_list_end_192
+    RcIsUnique            Target=334 SourceTemp=331
+    JumpIfFalse           CondTemp=334 Target=rcdrop_list_shared_191
+    LoadMemOffset         Target=335 BasePtr=331 OffsetBytes=0
+    RcIsUnique            Target=336 SourceTemp=335
+    JumpIfFalse           CondTemp=336 Target=rc_drop_shared_193
+    GetAdtField           Target=337 Ptr=335 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=337 TypeName=String RuntimeManaged=true
+  rc_drop_shared_193:
+    RcDrop                SourceTemp=335 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=338 BasePtr=331 OffsetBytes=8
+    RcDrop                SourceTemp=331 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=81 Source=338
+    Jump                  Target=rcdrop_list_190
+  rcdrop_list_shared_191:
+    RcDrop                SourceTemp=331 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_192
+  rcdrop_list_end_192:
+  rc_tco_drop_inactive_189:
+    LoadLocal             Target=339 Slot=49
+    StoreLocal            Slot=82 Source=339
+  rcdrop_list_194:
+    LoadLocal             Target=340 Slot=82
+    LoadConstInt          Target=341 Value=0
+    CmpIntNe              Target=342 Left=340 Right=341
+    JumpIfFalse           CondTemp=342 Target=lambda_6_rc_edge_21_139
+    RcIsUnique            Target=343 SourceTemp=340
+    JumpIfFalse           CondTemp=343 Target=rcdrop_list_shared_195
+    LoadMemOffset         Target=344 BasePtr=340 OffsetBytes=0
+    RcIsUnique            Target=345 SourceTemp=344
+    JumpIfFalse           CondTemp=345 Target=rc_drop_shared_197
+    GetAdtField           Target=346 Ptr=344 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=346 TypeName=String RuntimeManaged=true
+  rc_drop_shared_197:
+    RcDrop                SourceTemp=344 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=347 BasePtr=340 OffsetBytes=8
+    RcDrop                SourceTemp=340 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=82 Source=347
+    Jump                  Target=rcdrop_list_194
+  rcdrop_list_shared_195:
+    RcDrop                SourceTemp=340 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=22 TypeName=Diag OwnerSlot=21
+    Jump                  Target=rcdrop_list_end_196
+  rcdrop_list_end_196:
+    LoadLocal             Target=348 Slot=22
+    RcIsUnique            Target=349 SourceTemp=348
+    JumpIfFalse           CondTemp=349 Target=rc_drop_tuple_shared_198
+    LoadMemOffset         Target=350 BasePtr=348 OffsetBytes=0
+    RcIsUnique            Target=351 SourceTemp=350
+    JumpIfFalse           CondTemp=351 Target=rc_drop_shared_199
+    GetAdtField           Target=352 Ptr=350 FieldIndex=1 Tagless=true
+    RcDrop                SourceTemp=352 TypeName=String RuntimeManaged=true
+  rc_drop_shared_199:
+    RcDrop                SourceTemp=350 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=353 BasePtr=348 OffsetBytes=8
+    RcIsUnique            Target=354 SourceTemp=353
+    JumpIfFalse           CondTemp=354 Target=rc_drop_shared_200
+    GetAdtField           Target=355 Ptr=353 FieldIndex=0 Tagless=true
+    RcDrop                SourceTemp=355 TypeName=String RuntimeManaged=true
+  rc_drop_shared_200:
+    RcDrop                SourceTemp=353 TypeName=Diag RuntimeManaged=true
+  rc_drop_tuple_shared_198:
+    RcDrop                SourceTemp=348 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=4 Source=175
+    LoadConstInt          Target=356 Value=1
+    StoreLocal            Slot=8 Source=356
+    StoreLocal            Slot=1 Source=178
+    LoadConstInt          Target=357 Value=1
+    StoreLocal            Slot=9 Source=357
+    RestoreStackPointer   Slot=12   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
     Jump                  Target=lambda_6_body   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    LoadConstInt          Target=118 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    StoreLocal            Slot=40 Source=118   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
-    RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=41
-    ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=41
-    LoadLocal             Target=120 Slot=40   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
-    StoreLocal            Slot=23 Source=120   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    LoadLocal             Target=123 Slot=28   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    RcIsUnique            Target=124 SourceTemp=123
-    JumpIfFalse           CondTemp=124 Target=rc_drop_tuple_shared_39   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    LoadMemOffset         Target=125 BasePtr=123 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    RcIsUnique            Target=126 SourceTemp=125
-    JumpIfFalse           CondTemp=126 Target=rc_drop_shared_40   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    GetAdtField           Target=127 Ptr=125 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    RcDrop                SourceTemp=127 TypeName=String RuntimeManaged=true
-  rc_drop_shared_40:
-    RcDrop                SourceTemp=125 TypeName=Tok RuntimeManaged=true
-    LoadMemOffset         Target=128 BasePtr=123 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    RcIsUnique            Target=129 SourceTemp=128
-    JumpIfFalse           CondTemp=129 Target=rc_drop_shared_41   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    GetAdtField           Target=130 Ptr=128 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    RcDrop                SourceTemp=130 TypeName=String RuntimeManaged=true
-  rc_drop_shared_41:
-    RcDrop                SourceTemp=128 TypeName=Diag RuntimeManaged=true
-  rc_drop_tuple_shared_39:
-    RcDrop                SourceTemp=123 TypeName=Tuple RuntimeManaged=true
-    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=42
-    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=42
-    Jump                  Target=match_end_22   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-  match_arm_cleanup_24:
-    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=43
-    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=43
-    Jump                  Target=match_none_23   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-  match_none_23:
-    LoadConstInt          Target=131 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    StoreLocal            Slot=23 Source=131   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-  match_end_22:
-    LoadLocal             Target=132 Slot=23   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
-    StoreLocal            Slot=12 Source=132   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
-  endif_6:
-    LoadLocal             Target=133 Slot=12   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
-    LoadConstInt          Target=160 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=50 Source=160   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadLocal             Target=161 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadLocal             Target=162 Slot=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntEq              Target=163 Left=161 Right=133   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadLocal             Target=164 Slot=50   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntEq              Target=165 Left=164 Right=160   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    AndInt                Target=166 Left=162 Right=163   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    AndInt                Target=167 Left=166 Right=165   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=167 Target=rc_tco_exit_transfer_not_selected_52   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=168 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=50 Source=168   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rc_tco_exit_transfer_done_53   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_tco_exit_transfer_not_selected_52:
-    LoadLocal             Target=169 Slot=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=169 Target=rc_tco_exit_drop_inactive_54   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=51 Source=161   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_55:
-    LoadLocal             Target=170 Slot=51   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=171 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntNe              Target=172 Left=170 Right=171   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=172 Target=rcdrop_list_end_57   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=173 SourceTemp=170
-    JumpIfFalse           CondTemp=173 Target=rcdrop_list_shared_56   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=174 BasePtr=170 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=175 SourceTemp=174
-    JumpIfFalse           CondTemp=175 Target=rc_drop_shared_58   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    GetAdtField           Target=176 Ptr=174 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=176 TypeName=String RuntimeManaged=true
-  rc_drop_shared_58:
-    RcDrop                SourceTemp=174 TypeName=Tok RuntimeManaged=true
-    LoadMemOffset         Target=177 BasePtr=170 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=170 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=51 Source=177   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rcdrop_list_55   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_shared_56:
-    RcDrop                SourceTemp=170 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_57   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_end_57:
-  rc_tco_exit_drop_inactive_54:
-  rc_tco_exit_transfer_done_53:
-    LoadArgumentOwnership Target=178   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=179 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    ShrInt                Target=180 Left=178 Right=179   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=180 Target=rc_result_owned_59   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Alloc                 Target=181 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=182 BasePtr=133 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Alloc                 Target=183 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    MakeClosure           Target=184 FuncLabel=__deepcopy_list_7 EnvPtrTemp=183 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=183 OffsetBytes=0 Source=184   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CallClosure           Target=185 ClosureTemp=184 ArgTemp=182   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=181 OffsetBytes=0 Source=185   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=186 BasePtr=133 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Alloc                 Target=187 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    MakeClosure           Target=188 FuncLabel=__deepcopy_list_8 EnvPtrTemp=187 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=187 OffsetBytes=0 Source=188   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CallClosure           Target=189 ClosureTemp=188 ArgTemp=186   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=181 OffsetBytes=8 Source=189   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=190 SourceTemp=133
-    JumpIfFalse           CondTemp=190 Target=rc_drop_tuple_shared_61   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=191 BasePtr=133 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=53 Source=191   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_62:
-    LoadLocal             Target=192 Slot=53   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=193 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntNe              Target=194 Left=192 Right=193   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=194 Target=rcdrop_list_end_64   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=195 SourceTemp=192
-    JumpIfFalse           CondTemp=195 Target=rcdrop_list_shared_63   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=196 BasePtr=192 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=183 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
+    StoreLocal            Slot=56 Source=183   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    LoadLocal             Target=184 Slot=49   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    StoreLocal            Slot=57 Source=184   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+  rcdrop_list_71:
+    LoadLocal             Target=185 Slot=57   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    LoadConstInt          Target=186 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    CmpIntNe              Target=187 Left=185 Right=186   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    JumpIfFalse           CondTemp=187 Target=rcdrop_list_end_73   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    RcIsUnique            Target=188 SourceTemp=185
+    JumpIfFalse           CondTemp=188 Target=rcdrop_list_shared_72   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    LoadMemOffset         Target=189 BasePtr=185 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    RcIsUnique            Target=190 SourceTemp=189
+    JumpIfFalse           CondTemp=190 Target=rc_drop_shared_74   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    GetAdtField           Target=191 Ptr=189 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    RcDrop                SourceTemp=191 TypeName=String RuntimeManaged=true
+  rc_drop_shared_74:
+    RcDrop                SourceTemp=189 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=192 BasePtr=185 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    RcDrop                SourceTemp=185 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=57 Source=192   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    Jump                  Target=rcdrop_list_71   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+  rcdrop_list_shared_72:
+    RcDrop                SourceTemp=185 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_73   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+  rcdrop_list_end_73:
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=58
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=58
+    LoadLocal             Target=193 Slot=56   (tco_let_bound_successor_keeps_owned_child.ash:21:17)
+    StoreLocal            Slot=17 Source=193   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    LoadLocal             Target=196 Slot=22   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
     RcIsUnique            Target=197 SourceTemp=196
-    JumpIfFalse           CondTemp=197 Target=rc_drop_shared_65   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    GetAdtField           Target=198 Ptr=196 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=198 TypeName=String RuntimeManaged=true
-  rc_drop_shared_65:
-    RcDrop                SourceTemp=196 TypeName=Tok RuntimeManaged=true
-    LoadMemOffset         Target=199 BasePtr=192 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=192 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=53 Source=199   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rcdrop_list_62   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_shared_63:
-    RcDrop                SourceTemp=192 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_64   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_end_64:
-    LoadMemOffset         Target=200 BasePtr=133 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=54 Source=200   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_66:
-    LoadLocal             Target=201 Slot=54   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=202 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntNe              Target=203 Left=201 Right=202   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=203 Target=rcdrop_list_end_68   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=204 SourceTemp=201
-    JumpIfFalse           CondTemp=204 Target=rcdrop_list_shared_67   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=205 BasePtr=201 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=206 SourceTemp=205
-    JumpIfFalse           CondTemp=206 Target=rc_drop_shared_69   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    GetAdtField           Target=207 Ptr=205 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=207 TypeName=String RuntimeManaged=true
-  rc_drop_shared_69:
-    RcDrop                SourceTemp=205 TypeName=Diag RuntimeManaged=true
-    LoadMemOffset         Target=208 BasePtr=201 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=201 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=54 Source=208   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rcdrop_list_66   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_shared_67:
-    RcDrop                SourceTemp=201 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_68   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rcdrop_list_end_68:
-  rc_drop_tuple_shared_61:
-    RcDrop                SourceTemp=133 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=52 Source=181   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Jump                  Target=rc_result_done_60   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_result_owned_59:
-    StoreLocal            Slot=52 Source=133   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-  rc_result_done_60:
-    LoadLocal             Target=209 Slot=52   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Return                Source=209   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=197 Target=rc_drop_tuple_shared_75   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    LoadMemOffset         Target=198 BasePtr=196 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    RcIsUnique            Target=199 SourceTemp=198
+    JumpIfFalse           CondTemp=199 Target=rc_drop_shared_76   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    GetAdtField           Target=200 Ptr=198 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    RcDrop                SourceTemp=200 TypeName=String RuntimeManaged=true
+  rc_drop_shared_76:
+    RcDrop                SourceTemp=198 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=201 BasePtr=196 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    RcIsUnique            Target=202 SourceTemp=201
+    JumpIfFalse           CondTemp=202 Target=rc_drop_shared_77   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    GetAdtField           Target=203 Ptr=201 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    RcDrop                SourceTemp=203 TypeName=String RuntimeManaged=true
+  rc_drop_shared_77:
+    RcDrop                SourceTemp=201 TypeName=Diag RuntimeManaged=true
+  rc_drop_tuple_shared_75:
+    RcDrop                SourceTemp=196 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=59
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=59
+    Jump                  Target=match_end_7   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=60
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=60
+    Jump                  Target=match_none_8   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+  match_none_8:
+    LoadConstInt          Target=204 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    StoreLocal            Slot=17 Source=204   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+  match_end_7:
+    LoadLocal             Target=205 Slot=17   (tco_let_bound_successor_keeps_owned_child.ash:19:9)
+    StoreLocal            Slot=13 Source=205   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
+  endif_6:
+    LoadLocal             Target=206 Slot=13   (tco_let_bound_successor_keeps_owned_child.ash:16:5)
+    LoadConstInt          Target=263 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=74 Source=263   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=264 Slot=4   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=265 Slot=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntEq              Target=266 Left=264 Right=206   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=267 Slot=74   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntEq              Target=268 Left=267 Right=263   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    AndInt                Target=269 Left=265 Right=266   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    AndInt                Target=270 Left=269 Right=268   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=270 Target=rc_tco_exit_transfer_not_selected_100   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=271 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=74 Source=271   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_tco_exit_transfer_done_101   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_tco_exit_transfer_not_selected_100:
+    LoadLocal             Target=272 Slot=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=272 Target=rc_tco_exit_drop_inactive_102   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=75 Source=264   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_103:
+    LoadLocal             Target=273 Slot=75   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=274 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=275 Left=273 Right=274   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=275 Target=rcdrop_list_end_105   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=276 SourceTemp=273
+    JumpIfFalse           CondTemp=276 Target=rcdrop_list_shared_104   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=277 BasePtr=273 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=278 SourceTemp=277
+    JumpIfFalse           CondTemp=278 Target=rc_drop_shared_106   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    GetAdtField           Target=279 Ptr=277 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=279 TypeName=String RuntimeManaged=true
+  rc_drop_shared_106:
+    RcDrop                SourceTemp=277 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=280 BasePtr=273 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=273 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=75 Source=280   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rcdrop_list_103   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_shared_104:
+    RcDrop                SourceTemp=273 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_105   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_end_105:
+  rc_tco_exit_drop_inactive_102:
+  rc_tco_exit_transfer_done_101:
+    LoadLocal             Target=281 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=282 Slot=9   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntEq              Target=283 Left=281 Right=206   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=284 Slot=74   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntEq              Target=285 Left=284 Right=263   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    AndInt                Target=286 Left=282 Right=283   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    AndInt                Target=287 Left=286 Right=285   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=287 Target=rc_tco_exit_transfer_not_selected_107   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=288 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=74 Source=288   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_tco_exit_transfer_done_108   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_tco_exit_transfer_not_selected_107:
+    LoadLocal             Target=289 Slot=9   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=289 Target=rc_tco_exit_drop_inactive_109   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=76 Source=281   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_110:
+    LoadLocal             Target=290 Slot=76   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=291 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=292 Left=290 Right=291   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=292 Target=rcdrop_list_end_112   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=293 SourceTemp=290
+    JumpIfFalse           CondTemp=293 Target=rcdrop_list_shared_111   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=294 BasePtr=290 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=295 SourceTemp=294
+    JumpIfFalse           CondTemp=295 Target=rc_drop_shared_113   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    GetAdtField           Target=296 Ptr=294 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=296 TypeName=String RuntimeManaged=true
+  rc_drop_shared_113:
+    RcDrop                SourceTemp=294 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=297 BasePtr=290 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=290 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=76 Source=297   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rcdrop_list_110   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_shared_111:
+    RcDrop                SourceTemp=290 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_112   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_end_112:
+  rc_tco_exit_drop_inactive_109:
+  rc_tco_exit_transfer_done_108:
+    LoadArgumentOwnership Target=298   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=299 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    ShrInt                Target=300 Left=298 Right=299   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=300 Target=rc_result_owned_114   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=301 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=302 BasePtr=206 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=303 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    MakeClosure           Target=304 FuncLabel=__deepcopy_list_7 EnvPtrTemp=303 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=303 OffsetBytes=0 Source=304   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CallClosure           Target=305 ClosureTemp=304 ArgTemp=302   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=301 OffsetBytes=0 Source=305   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=306 BasePtr=206 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=307 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    MakeClosure           Target=308 FuncLabel=__deepcopy_list_8 EnvPtrTemp=307 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=307 OffsetBytes=0 Source=308   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CallClosure           Target=309 ClosureTemp=308 ArgTemp=306   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=301 OffsetBytes=8 Source=309   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=310 SourceTemp=206
+    JumpIfFalse           CondTemp=310 Target=rc_drop_tuple_shared_116   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=311 BasePtr=206 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=78 Source=311   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_117:
+    LoadLocal             Target=312 Slot=78   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=313 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=314 Left=312 Right=313   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=314 Target=rcdrop_list_end_119   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=315 SourceTemp=312
+    JumpIfFalse           CondTemp=315 Target=rcdrop_list_shared_118   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=316 BasePtr=312 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=317 SourceTemp=316
+    JumpIfFalse           CondTemp=317 Target=rc_drop_shared_120   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    GetAdtField           Target=318 Ptr=316 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=318 TypeName=String RuntimeManaged=true
+  rc_drop_shared_120:
+    RcDrop                SourceTemp=316 TypeName=Tok RuntimeManaged=true
+    LoadMemOffset         Target=319 BasePtr=312 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=312 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=78 Source=319   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rcdrop_list_117   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_shared_118:
+    RcDrop                SourceTemp=312 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_119   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_end_119:
+    LoadMemOffset         Target=320 BasePtr=206 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=79 Source=320   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_121:
+    LoadLocal             Target=321 Slot=79   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=322 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=323 Left=321 Right=322   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=323 Target=rcdrop_list_end_123   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=324 SourceTemp=321
+    JumpIfFalse           CondTemp=324 Target=rcdrop_list_shared_122   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=325 BasePtr=321 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=326 SourceTemp=325
+    JumpIfFalse           CondTemp=326 Target=rc_drop_shared_124   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    GetAdtField           Target=327 Ptr=325 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=327 TypeName=String RuntimeManaged=true
+  rc_drop_shared_124:
+    RcDrop                SourceTemp=325 TypeName=Diag RuntimeManaged=true
+    LoadMemOffset         Target=328 BasePtr=321 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=321 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=79 Source=328   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rcdrop_list_121   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_shared_122:
+    RcDrop                SourceTemp=321 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_123   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rcdrop_list_end_123:
+  rc_drop_tuple_shared_116:
+    RcDrop                SourceTemp=206 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=77 Source=301   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Jump                  Target=rc_result_done_115   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_result_owned_114:
+    StoreLocal            Slot=77 Source=206   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  rc_result_done_115:
+    LoadLocal             Target=329 Slot=77   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Return                Source=329   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+  lambda_6_rc_edge_21_139:
+    RcDrop                SourceTemp=22 TypeName=Diag OwnerSlot=21
+    Jump                  Target=rcdrop_list_end_196
 
 function lambda_5  [ClosureHelper from scan]
   locals=2 temps=8
@@ -652,7 +1012,7 @@ function lambda_5  [ClosureHelper from scan]
     LoadEnv               Target=4 Index=2   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     Borrow                Target=5 SourceTemp=4
     StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=5   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    MakeClosure           Target=7 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=32 ReturnsRuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    MakeClosure           Target=7 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=32 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     Return                Source=7   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
 
 function lambda_4  [ClosureHelper from scan]
@@ -685,62 +1045,62 @@ function lambda_10  [ClosureHelper from count]
     StoreLocal            Slot=2 Source=0   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadLocal             Target=35 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     IsReferenceCounted    Target=36 SourceTemp=35
-    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_79   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_134   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     RcDup                 Target=37 SourceTemp=35 RuntimeManaged=true
     StoreLocal            Slot=24 Source=37   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    Jump                  Target=rc_representation_done_80   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_representation_copy_79:
+    Jump                  Target=rc_representation_done_135   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+  rc_representation_copy_134:
     LoadConstInt          Target=39 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=25 Source=35   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=26 Source=39   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=27 Source=39   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_normalize_list_81:
+  rc_normalize_list_136:
     LoadLocal             Target=40 Slot=25   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     CmpIntNe              Target=41 Left=40 Right=39   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_end_82   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_end_137   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadMemOffset         Target=42 BasePtr=40 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadMemOffset         Target=43 BasePtr=40 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     IsReferenceCounted    Target=44 SourceTemp=42
-    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_83   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_138   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     RcDup                 Target=45 SourceTemp=42 RuntimeManaged=true
     StoreLocal            Slot=28 Source=45   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    Jump                  Target=rc_representation_done_84   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_representation_copy_83:
+    Jump                  Target=rc_representation_done_139   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+  rc_representation_copy_138:
     CopyOutArena          DestTemp=47 SrcTemp=42 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=48 Ptr=42 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     IsReferenceCounted    Target=49 SourceTemp=48
-    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_85   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_140   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     RcDup                 Target=50 SourceTemp=48 RuntimeManaged=true
     StoreLocal            Slot=29 Source=50   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    Jump                  Target=rc_representation_done_86   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_representation_copy_85:
+    Jump                  Target=rc_representation_done_141   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+  rc_representation_copy_140:
     CopyOutArena          DestTemp=51 SrcTemp=48 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=29 Source=51   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_representation_done_86:
+  rc_representation_done_141:
     LoadLocal             Target=52 Slot=29   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     SetAdtField           Ptr=47 FieldIndex=1 Source=52 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=28 Source=47   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_representation_done_84:
+  rc_representation_done_139:
     LoadLocal             Target=53 Slot=28   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     Alloc                 Target=54 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreMemOffset        BasePtr=54 OffsetBytes=0 Source=53   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=39   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadLocal             Target=55 Slot=26   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     CmpIntNe              Target=56 Left=55 Right=39   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    JumpIfFalse           CondTemp=56 Target=rc_normalize_list_first_87   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=56 Target=rc_normalize_list_first_142   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadLocal             Target=57 Slot=27   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=54   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    Jump                  Target=rc_normalize_list_linked_88   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_normalize_list_first_87:
+    Jump                  Target=rc_normalize_list_linked_143   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+  rc_normalize_list_first_142:
     StoreLocal            Slot=26 Source=54   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_normalize_list_linked_88:
+  rc_normalize_list_linked_143:
     StoreLocal            Slot=27 Source=54   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=25 Source=43   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    Jump                  Target=rc_normalize_list_81   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_normalize_list_end_82:
+    Jump                  Target=rc_normalize_list_136   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+  rc_normalize_list_end_137:
     LoadLocal             Target=58 Slot=26   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=24 Source=58   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rc_representation_done_80:
+  rc_representation_done_135:
     LoadLocal             Target=59 Slot=24   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=2 Source=59   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadConstInt          Target=60 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
@@ -757,21 +1117,21 @@ function lambda_10  [ClosureHelper from count]
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_73   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_128   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     LoadLocal             Target=5 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:32:17)
     StoreLocal            Slot=12 Source=5   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_70   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
-  match_arm_cleanup_73:
+    Jump                  Target=match_end_125   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
+  match_arm_cleanup_128:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_72   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
-  match_next_72:
+    Jump                  Target=match_next_127   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
+  match_next_127:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     CmpIntNe              Target=7 Left=2 Right=6   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_74   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_129   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     StoreLocal            Slot=19 Source=8   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
@@ -788,28 +1148,28 @@ function lambda_10  [ClosureHelper from count]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
     LoadLocal             Target=18 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     StoreLocal            Slot=21 Source=18   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
-  rcdrop_list_75:
+  rcdrop_list_130:
     LoadLocal             Target=19 Slot=21   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     LoadConstInt          Target=20 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     CmpIntNe              Target=21 Left=19 Right=20   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
-    JumpIfFalse           CondTemp=21 Target=rcdrop_list_end_77   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
+    JumpIfFalse           CondTemp=21 Target=rcdrop_list_end_132   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     RcIsUnique            Target=22 SourceTemp=19
-    JumpIfFalse           CondTemp=22 Target=rcdrop_list_shared_76   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
+    JumpIfFalse           CondTemp=22 Target=rcdrop_list_shared_131   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     LoadMemOffset         Target=23 BasePtr=19 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     RcIsUnique            Target=24 SourceTemp=23
-    JumpIfFalse           CondTemp=24 Target=rc_drop_shared_78   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
+    JumpIfFalse           CondTemp=24 Target=rc_drop_shared_133   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     GetAdtField           Target=25 Ptr=23 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     RcDrop                SourceTemp=25 TypeName=String RuntimeManaged=true
-  rc_drop_shared_78:
+  rc_drop_shared_133:
     RcDrop                SourceTemp=23 TypeName=Tok RuntimeManaged=true
     LoadMemOffset         Target=26 BasePtr=19 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=21 Source=26   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
-    Jump                  Target=rcdrop_list_75   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
-  rcdrop_list_shared_76:
+    Jump                  Target=rcdrop_list_130   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
+  rcdrop_list_shared_131:
     RcDrop                SourceTemp=19 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_77   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
-  rcdrop_list_end_77:
+    Jump                  Target=rcdrop_list_end_132   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
+  rcdrop_list_end_132:
     LoadConstInt          Target=27 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     StoreLocal            Slot=8 Source=27   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     LoadLocal             Target=28 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
@@ -817,31 +1177,31 @@ function lambda_10  [ClosureHelper from count]
     StoreLocal            Slot=2 Source=17   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     StoreLocal            Slot=1 Source=16   (tco_let_bound_successor_keeps_owned_child.ash:33:28)
     LoadLocal             Target=71 Slot=8
-    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_137
+    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_201
     StoreLocal            Slot=32 Source=28
-  rcdrop_list_138:
+  rcdrop_list_202:
     LoadLocal             Target=72 Slot=32
     LoadConstInt          Target=73 Value=0
     CmpIntNe              Target=74 Left=72 Right=73
-    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_140
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_204
     RcIsUnique            Target=75 SourceTemp=72
-    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_139
+    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_203
     LoadMemOffset         Target=76 BasePtr=72 OffsetBytes=0
     RcIsUnique            Target=77 SourceTemp=76
-    JumpIfFalse           CondTemp=77 Target=rc_drop_shared_141
+    JumpIfFalse           CondTemp=77 Target=rc_drop_shared_205
     GetAdtField           Target=78 Ptr=76 FieldIndex=1 Tagless=true
     RcDrop                SourceTemp=78 TypeName=String RuntimeManaged=true
-  rc_drop_shared_141:
+  rc_drop_shared_205:
     RcDrop                SourceTemp=76 TypeName=Tok RuntimeManaged=true
     LoadMemOffset         Target=79 BasePtr=72 OffsetBytes=8
     RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=32 Source=79
-    Jump                  Target=rcdrop_list_138
-  rcdrop_list_shared_139:
+    Jump                  Target=rcdrop_list_202
+  rcdrop_list_shared_203:
     RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_140
-  rcdrop_list_end_140:
-  rc_tco_drop_inactive_137:
+    Jump                  Target=rcdrop_list_end_204
+  rcdrop_list_end_204:
+  rc_tco_drop_inactive_201:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
     LoadConstInt          Target=80 Value=0
     StoreLocal            Slot=6 Source=80
@@ -856,43 +1216,43 @@ function lambda_10  [ClosureHelper from count]
     StoreLocal            Slot=12 Source=30   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_end_70   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
-  match_arm_cleanup_74:
+    Jump                  Target=match_end_125   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
+  match_arm_cleanup_129:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
-    Jump                  Target=match_none_71   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
-  match_none_71:
+    Jump                  Target=match_none_126   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
+  match_none_126:
     LoadConstInt          Target=33 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     StoreLocal            Slot=12 Source=33   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
-  match_end_70:
+  match_end_125:
     LoadLocal             Target=34 Slot=12   (tco_let_bound_successor_keeps_owned_child.ash:31:5)
     LoadLocal             Target=61 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadLocal             Target=62 Slot=8   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    JumpIfFalse           CondTemp=62 Target=rc_tco_exit_drop_inactive_89   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=62 Target=rc_tco_exit_drop_inactive_144   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     StoreLocal            Slot=30 Source=61   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rcdrop_list_90:
+  rcdrop_list_145:
     LoadLocal             Target=63 Slot=30   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadConstInt          Target=64 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     CmpIntNe              Target=65 Left=63 Right=64   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_92   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_end_147   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     RcIsUnique            Target=66 SourceTemp=63
-    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_91   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=66 Target=rcdrop_list_shared_146   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     LoadMemOffset         Target=67 BasePtr=63 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     RcIsUnique            Target=68 SourceTemp=67
-    JumpIfFalse           CondTemp=68 Target=rc_drop_shared_93   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+    JumpIfFalse           CondTemp=68 Target=rc_drop_shared_148   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     GetAdtField           Target=69 Ptr=67 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     RcDrop                SourceTemp=69 TypeName=String RuntimeManaged=true
-  rc_drop_shared_93:
+  rc_drop_shared_148:
     RcDrop                SourceTemp=67 TypeName=Tok RuntimeManaged=true
     LoadMemOffset         Target=70 BasePtr=63 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
     RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=70   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-    Jump                  Target=rcdrop_list_90   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rcdrop_list_shared_91:
+    Jump                  Target=rcdrop_list_145   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+  rcdrop_list_shared_146:
     RcDrop                SourceTemp=63 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_92   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
-  rcdrop_list_end_92:
-  rc_tco_exit_drop_inactive_89:
+    Jump                  Target=rcdrop_list_end_147   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
+  rcdrop_list_end_147:
+  rc_tco_exit_drop_inactive_144:
     Return                Source=34   (tco_let_bound_successor_keeps_owned_child.ash:30:1)
 
 function lambda_9  [SourceFunction from count]
@@ -909,62 +1269,62 @@ function lambda_12  [ClosureHelper from weigh]
     StoreLocal            Slot=2 Source=0   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadLocal             Target=38 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     IsReferenceCounted    Target=39 SourceTemp=38
-    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_103   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_158   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     RcDup                 Target=40 SourceTemp=38 RuntimeManaged=true
     StoreLocal            Slot=24 Source=40   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    Jump                  Target=rc_representation_done_104   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_representation_copy_103:
+    Jump                  Target=rc_representation_done_159   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+  rc_representation_copy_158:
     LoadConstInt          Target=42 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=25 Source=38   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=26 Source=42   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=27 Source=42   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_normalize_list_105:
+  rc_normalize_list_160:
     LoadLocal             Target=43 Slot=25   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     CmpIntNe              Target=44 Left=43 Right=42   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_end_106   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_end_161   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadMemOffset         Target=45 BasePtr=43 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadMemOffset         Target=46 BasePtr=43 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     IsReferenceCounted    Target=47 SourceTemp=45
-    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_107   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_162   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     RcDup                 Target=48 SourceTemp=45 RuntimeManaged=true
     StoreLocal            Slot=28 Source=48   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    Jump                  Target=rc_representation_done_108   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_representation_copy_107:
+    Jump                  Target=rc_representation_done_163   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+  rc_representation_copy_162:
     CopyOutArena          DestTemp=50 SrcTemp=45 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=51 Ptr=45 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     IsReferenceCounted    Target=52 SourceTemp=51
-    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_109   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_164   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     RcDup                 Target=53 SourceTemp=51 RuntimeManaged=true
     StoreLocal            Slot=29 Source=53   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    Jump                  Target=rc_representation_done_110   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_representation_copy_109:
+    Jump                  Target=rc_representation_done_165   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+  rc_representation_copy_164:
     CopyOutArena          DestTemp=54 SrcTemp=51 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=29 Source=54   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_representation_done_110:
+  rc_representation_done_165:
     LoadLocal             Target=55 Slot=29   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     SetAdtField           Ptr=50 FieldIndex=0 Source=55 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=28 Source=50   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_representation_done_108:
+  rc_representation_done_163:
     LoadLocal             Target=56 Slot=28   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     Alloc                 Target=57 SizeBytes=16 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreMemOffset        BasePtr=57 OffsetBytes=0 Source=56   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreMemOffset        BasePtr=57 OffsetBytes=8 Source=42   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadLocal             Target=58 Slot=26   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     CmpIntNe              Target=59 Left=58 Right=42   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    JumpIfFalse           CondTemp=59 Target=rc_normalize_list_first_111   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=59 Target=rc_normalize_list_first_166   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadLocal             Target=60 Slot=27   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreMemOffset        BasePtr=60 OffsetBytes=8 Source=57   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    Jump                  Target=rc_normalize_list_linked_112   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_normalize_list_first_111:
+    Jump                  Target=rc_normalize_list_linked_167   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+  rc_normalize_list_first_166:
     StoreLocal            Slot=26 Source=57   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_normalize_list_linked_112:
+  rc_normalize_list_linked_167:
     StoreLocal            Slot=27 Source=57   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=25 Source=46   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    Jump                  Target=rc_normalize_list_105   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_normalize_list_end_106:
+    Jump                  Target=rc_normalize_list_160   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+  rc_normalize_list_end_161:
     LoadLocal             Target=61 Slot=26   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=24 Source=61   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rc_representation_done_104:
+  rc_representation_done_159:
     LoadLocal             Target=62 Slot=24   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=2 Source=62   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadConstInt          Target=63 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
@@ -981,21 +1341,21 @@ function lambda_12  [ClosureHelper from weigh]
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_97   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_152   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     LoadLocal             Target=5 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:37:17)
     StoreLocal            Slot=12 Source=5   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_94   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
-  match_arm_cleanup_97:
+    Jump                  Target=match_end_149   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
+  match_arm_cleanup_152:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_96   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
-  match_next_96:
+    Jump                  Target=match_next_151   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
+  match_next_151:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     CmpIntNe              Target=7 Left=2 Right=6   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_98   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_153   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     StoreLocal            Slot=19 Source=8   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
@@ -1015,28 +1375,28 @@ function lambda_12  [ClosureHelper from weigh]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
     LoadLocal             Target=21 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     StoreLocal            Slot=21 Source=21   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
-  rcdrop_list_99:
+  rcdrop_list_154:
     LoadLocal             Target=22 Slot=21   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     LoadConstInt          Target=23 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     CmpIntNe              Target=24 Left=22 Right=23   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
-    JumpIfFalse           CondTemp=24 Target=rcdrop_list_end_101   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
+    JumpIfFalse           CondTemp=24 Target=rcdrop_list_end_156   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     RcIsUnique            Target=25 SourceTemp=22
-    JumpIfFalse           CondTemp=25 Target=rcdrop_list_shared_100   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
+    JumpIfFalse           CondTemp=25 Target=rcdrop_list_shared_155   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     RcIsUnique            Target=27 SourceTemp=26
-    JumpIfFalse           CondTemp=27 Target=rc_drop_shared_102   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
+    JumpIfFalse           CondTemp=27 Target=rc_drop_shared_157   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     GetAdtField           Target=28 Ptr=26 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     RcDrop                SourceTemp=28 TypeName=String RuntimeManaged=true
-  rc_drop_shared_102:
+  rc_drop_shared_157:
     RcDrop                SourceTemp=26 TypeName=Diag RuntimeManaged=true
     LoadMemOffset         Target=29 BasePtr=22 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=21 Source=29   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
-    Jump                  Target=rcdrop_list_99   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
-  rcdrop_list_shared_100:
+    Jump                  Target=rcdrop_list_154   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
+  rcdrop_list_shared_155:
     RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_101   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
-  rcdrop_list_end_101:
+    Jump                  Target=rcdrop_list_end_156   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
+  rcdrop_list_end_156:
     LoadConstInt          Target=30 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     StoreLocal            Slot=8 Source=30   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     LoadLocal             Target=31 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
@@ -1044,31 +1404,31 @@ function lambda_12  [ClosureHelper from weigh]
     StoreLocal            Slot=2 Source=20   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     StoreLocal            Slot=1 Source=19   (tco_let_bound_successor_keeps_owned_child.ash:38:33)
     LoadLocal             Target=74 Slot=8
-    JumpIfFalse           CondTemp=74 Target=rc_tco_drop_inactive_142
+    JumpIfFalse           CondTemp=74 Target=rc_tco_drop_inactive_206
     StoreLocal            Slot=32 Source=31
-  rcdrop_list_143:
+  rcdrop_list_207:
     LoadLocal             Target=75 Slot=32
     LoadConstInt          Target=76 Value=0
     CmpIntNe              Target=77 Left=75 Right=76
-    JumpIfFalse           CondTemp=77 Target=rcdrop_list_end_145
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_end_209
     RcIsUnique            Target=78 SourceTemp=75
-    JumpIfFalse           CondTemp=78 Target=rcdrop_list_shared_144
+    JumpIfFalse           CondTemp=78 Target=rcdrop_list_shared_208
     LoadMemOffset         Target=79 BasePtr=75 OffsetBytes=0
     RcIsUnique            Target=80 SourceTemp=79
-    JumpIfFalse           CondTemp=80 Target=rc_drop_shared_146
+    JumpIfFalse           CondTemp=80 Target=rc_drop_shared_210
     GetAdtField           Target=81 Ptr=79 FieldIndex=0 Tagless=true
     RcDrop                SourceTemp=81 TypeName=String RuntimeManaged=true
-  rc_drop_shared_146:
+  rc_drop_shared_210:
     RcDrop                SourceTemp=79 TypeName=Diag RuntimeManaged=true
     LoadMemOffset         Target=82 BasePtr=75 OffsetBytes=8
     RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=32 Source=82
-    Jump                  Target=rcdrop_list_143
-  rcdrop_list_shared_144:
+    Jump                  Target=rcdrop_list_207
+  rcdrop_list_shared_208:
     RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_145
-  rcdrop_list_end_145:
-  rc_tco_drop_inactive_142:
+    Jump                  Target=rcdrop_list_end_209
+  rcdrop_list_end_209:
+  rc_tco_drop_inactive_206:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
     LoadConstInt          Target=83 Value=0
     StoreLocal            Slot=6 Source=83
@@ -1083,43 +1443,43 @@ function lambda_12  [ClosureHelper from weigh]
     StoreLocal            Slot=12 Source=33   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_end_94   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
-  match_arm_cleanup_98:
+    Jump                  Target=match_end_149   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
+  match_arm_cleanup_153:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
-    Jump                  Target=match_none_95   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
-  match_none_95:
+    Jump                  Target=match_none_150   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
+  match_none_150:
     LoadConstInt          Target=36 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     StoreLocal            Slot=12 Source=36   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
-  match_end_94:
+  match_end_149:
     LoadLocal             Target=37 Slot=12   (tco_let_bound_successor_keeps_owned_child.ash:36:5)
     LoadLocal             Target=64 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadLocal             Target=65 Slot=8   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    JumpIfFalse           CondTemp=65 Target=rc_tco_exit_drop_inactive_113   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=65 Target=rc_tco_exit_drop_inactive_168   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     StoreLocal            Slot=30 Source=64   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rcdrop_list_114:
+  rcdrop_list_169:
     LoadLocal             Target=66 Slot=30   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadConstInt          Target=67 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     CmpIntNe              Target=68 Left=66 Right=67   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_116   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_171   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     RcIsUnique            Target=69 SourceTemp=66
-    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_115   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_170   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     RcIsUnique            Target=71 SourceTemp=70
-    JumpIfFalse           CondTemp=71 Target=rc_drop_shared_117   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+    JumpIfFalse           CondTemp=71 Target=rc_drop_shared_172   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     GetAdtField           Target=72 Ptr=70 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
-  rc_drop_shared_117:
+  rc_drop_shared_172:
     RcDrop                SourceTemp=70 TypeName=Diag RuntimeManaged=true
     LoadMemOffset         Target=73 BasePtr=66 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
     RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=73   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-    Jump                  Target=rcdrop_list_114   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rcdrop_list_shared_115:
+    Jump                  Target=rcdrop_list_169   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+  rcdrop_list_shared_170:
     RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_116   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
-  rcdrop_list_end_116:
-  rc_tco_exit_drop_inactive_113:
+    Jump                  Target=rcdrop_list_end_171   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
+  rcdrop_list_end_171:
+  rc_tco_exit_drop_inactive_168:
     Return                Source=37   (tco_let_bound_successor_keeps_owned_child.ash:35:1)
 
 function lambda_11  [SourceFunction from weigh]
@@ -1145,11 +1505,11 @@ function lambda_14  [ClosureHelper from rounds]
     LoadLocal             Target=2 Slot=2   (tco_let_bound_successor_keeps_owned_child.ash:41:8)
     LoadConstInt          Target=3 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:41:13)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_let_bound_successor_keeps_owned_child.ash:41:8)
-    JumpIfFalse           CondTemp=4 Target=else_118   (tco_let_bound_successor_keeps_owned_child.ash:41:5)
+    JumpIfFalse           CondTemp=4 Target=else_173   (tco_let_bound_successor_keeps_owned_child.ash:41:5)
     LoadLocal             Target=5 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:42:10)
     StoreLocal            Slot=11 Source=5   (tco_let_bound_successor_keeps_owned_child.ash:41:5)
-    Jump                  Target=endif_119   (tco_let_bound_successor_keeps_owned_child.ash:41:5)
-  else_118:
+    Jump                  Target=endif_174   (tco_let_bound_successor_keeps_owned_child.ash:41:5)
+  else_173:
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadEnv               Target=6 Index=1   (tco_let_bound_successor_keeps_owned_child.ash:44:15)
     LoadConstInt          Target=7 Value=2000   (tco_let_bound_successor_keeps_owned_child.ash:44:20)
@@ -1182,10 +1542,10 @@ function lambda_14  [ClosureHelper from rounds]
     LoadConstInt          Target=27 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
     AndInt                Target=28 Left=26 Right=27   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
     StoreLocal            Slot=23 Source=23   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
-    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_123   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
+    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_178   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
     RcDup                 Target=29 SourceTemp=23 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=23 Source=29   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
-  rc_call_argument_not_retained_123:
+  rc_call_argument_not_retained_178:
     LoadLocal             Target=30 Slot=23   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
     CallClosure           Target=31 ClosureTemp=21 ArgTemp=30 RuntimeManagedArgumentFlagTemp=28   (tco_let_bound_successor_keeps_owned_child.ash:45:62)
     LoadConstInt          Target=32 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:45:76)
@@ -1204,10 +1564,10 @@ function lambda_14  [ClosureHelper from rounds]
     LoadConstInt          Target=41 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
     AndInt                Target=42 Left=40 Right=41   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
     StoreLocal            Slot=27 Source=37   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
-    JumpIfFalse           CondTemp=42 Target=rc_call_argument_not_retained_124   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
+    JumpIfFalse           CondTemp=42 Target=rc_call_argument_not_retained_179   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
     RcDup                 Target=43 SourceTemp=37 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=27 Source=43   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
-  rc_call_argument_not_retained_124:
+  rc_call_argument_not_retained_179:
     LoadLocal             Target=44 Slot=27   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
     CallClosure           Target=45 ClosureTemp=35 ArgTemp=44 RuntimeManagedArgumentFlagTemp=42   (tco_let_bound_successor_keeps_owned_child.ash:45:81)
     LoadConstInt          Target=46 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:45:100)
@@ -1222,56 +1582,56 @@ function lambda_14  [ClosureHelper from rounds]
     StoreLocal            Slot=1 Source=48   (tco_let_bound_successor_keeps_owned_child.ash:45:40)
     LoadLocal             Target=77 Slot=20
     RcIsUnique            Target=78 SourceTemp=77
-    JumpIfFalse           CondTemp=78 Target=rc_drop_tuple_shared_147
+    JumpIfFalse           CondTemp=78 Target=rc_drop_tuple_shared_211
     LoadMemOffset         Target=79 BasePtr=77 OffsetBytes=0
     StoreLocal            Slot=34 Source=79
-  rcdrop_list_148:
+  rcdrop_list_212:
     LoadLocal             Target=80 Slot=34
     LoadConstInt          Target=81 Value=0
     CmpIntNe              Target=82 Left=80 Right=81
-    JumpIfFalse           CondTemp=82 Target=rcdrop_list_end_150
+    JumpIfFalse           CondTemp=82 Target=rcdrop_list_end_214
     RcIsUnique            Target=83 SourceTemp=80
-    JumpIfFalse           CondTemp=83 Target=rcdrop_list_shared_149
+    JumpIfFalse           CondTemp=83 Target=rcdrop_list_shared_213
     LoadMemOffset         Target=84 BasePtr=80 OffsetBytes=0
     RcIsUnique            Target=85 SourceTemp=84
-    JumpIfFalse           CondTemp=85 Target=rc_drop_shared_151
+    JumpIfFalse           CondTemp=85 Target=rc_drop_shared_215
     GetAdtField           Target=86 Ptr=84 FieldIndex=1 Tagless=true
     RcDrop                SourceTemp=86 TypeName=String RuntimeManaged=true
-  rc_drop_shared_151:
+  rc_drop_shared_215:
     RcDrop                SourceTemp=84 TypeName=Tok RuntimeManaged=true
     LoadMemOffset         Target=87 BasePtr=80 OffsetBytes=8
     RcDrop                SourceTemp=80 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=34 Source=87
-    Jump                  Target=rcdrop_list_148
-  rcdrop_list_shared_149:
+    Jump                  Target=rcdrop_list_212
+  rcdrop_list_shared_213:
     RcDrop                SourceTemp=80 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_150
-  rcdrop_list_end_150:
+    Jump                  Target=rcdrop_list_end_214
+  rcdrop_list_end_214:
     LoadMemOffset         Target=88 BasePtr=77 OffsetBytes=8
     StoreLocal            Slot=35 Source=88
-  rcdrop_list_152:
+  rcdrop_list_216:
     LoadLocal             Target=89 Slot=35
     LoadConstInt          Target=90 Value=0
     CmpIntNe              Target=91 Left=89 Right=90
-    JumpIfFalse           CondTemp=91 Target=rcdrop_list_end_154
+    JumpIfFalse           CondTemp=91 Target=rcdrop_list_end_218
     RcIsUnique            Target=92 SourceTemp=89
-    JumpIfFalse           CondTemp=92 Target=rcdrop_list_shared_153
+    JumpIfFalse           CondTemp=92 Target=rcdrop_list_shared_217
     LoadMemOffset         Target=93 BasePtr=89 OffsetBytes=0
     RcIsUnique            Target=94 SourceTemp=93
-    JumpIfFalse           CondTemp=94 Target=rc_drop_shared_155
+    JumpIfFalse           CondTemp=94 Target=rc_drop_shared_219
     GetAdtField           Target=95 Ptr=93 FieldIndex=0 Tagless=true
     RcDrop                SourceTemp=95 TypeName=String RuntimeManaged=true
-  rc_drop_shared_155:
+  rc_drop_shared_219:
     RcDrop                SourceTemp=93 TypeName=Diag RuntimeManaged=true
     LoadMemOffset         Target=96 BasePtr=89 OffsetBytes=8
     RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=35 Source=96
-    Jump                  Target=rcdrop_list_152
-  rcdrop_list_shared_153:
+    Jump                  Target=rcdrop_list_216
+  rcdrop_list_shared_217:
     RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_154
-  rcdrop_list_end_154:
-  rc_drop_tuple_shared_147:
+    Jump                  Target=rcdrop_list_end_218
+  rcdrop_list_end_218:
+  rc_drop_tuple_shared_211:
     RcDrop                SourceTemp=77 TypeName=Tuple RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=33
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=33
@@ -1281,71 +1641,71 @@ function lambda_14  [ClosureHelper from rounds]
     StoreLocal            Slot=15 Source=51   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     LoadLocal             Target=54 Slot=20   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcIsUnique            Target=55 SourceTemp=54
-    JumpIfFalse           CondTemp=55 Target=rc_drop_tuple_shared_125   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+    JumpIfFalse           CondTemp=55 Target=rc_drop_tuple_shared_180   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     LoadMemOffset         Target=56 BasePtr=54 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     StoreLocal            Slot=29 Source=56   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  rcdrop_list_126:
+  rcdrop_list_181:
     LoadLocal             Target=57 Slot=29   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     LoadConstInt          Target=58 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     CmpIntNe              Target=59 Left=57 Right=58   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_128   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_183   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcIsUnique            Target=60 SourceTemp=57
-    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_127   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_182   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcIsUnique            Target=62 SourceTemp=61
-    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_129   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_184   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     GetAdtField           Target=63 Ptr=61 FieldIndex=1 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcDrop                SourceTemp=63 TypeName=String RuntimeManaged=true
-  rc_drop_shared_129:
+  rc_drop_shared_184:
     RcDrop                SourceTemp=61 TypeName=Tok RuntimeManaged=true
     LoadMemOffset         Target=64 BasePtr=57 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=29 Source=64   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-    Jump                  Target=rcdrop_list_126   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  rcdrop_list_shared_127:
+    Jump                  Target=rcdrop_list_181   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+  rcdrop_list_shared_182:
     RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_128   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  rcdrop_list_end_128:
+    Jump                  Target=rcdrop_list_end_183   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+  rcdrop_list_end_183:
     LoadMemOffset         Target=65 BasePtr=54 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     StoreLocal            Slot=30 Source=65   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  rcdrop_list_130:
+  rcdrop_list_185:
     LoadLocal             Target=66 Slot=30   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     LoadConstInt          Target=67 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     CmpIntNe              Target=68 Left=66 Right=67   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_132   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_187   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcIsUnique            Target=69 SourceTemp=66
-    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_131   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_186   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcIsUnique            Target=71 SourceTemp=70
-    JumpIfFalse           CondTemp=71 Target=rc_drop_shared_133   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+    JumpIfFalse           CondTemp=71 Target=rc_drop_shared_188   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     GetAdtField           Target=72 Ptr=70 FieldIndex=0 Tagless=true   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
-  rc_drop_shared_133:
+  rc_drop_shared_188:
     RcDrop                SourceTemp=70 TypeName=Diag RuntimeManaged=true
     LoadMemOffset         Target=73 BasePtr=66 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=73   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-    Jump                  Target=rcdrop_list_130   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  rcdrop_list_shared_131:
+    Jump                  Target=rcdrop_list_185   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+  rcdrop_list_shared_186:
     RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_132   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  rcdrop_list_end_132:
-  rc_drop_tuple_shared_125:
+    Jump                  Target=rcdrop_list_end_187   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+  rcdrop_list_end_187:
+  rc_drop_tuple_shared_180:
     RcDrop                SourceTemp=54 TypeName=Tuple RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=31
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=31
-    Jump                  Target=match_end_120   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  match_arm_cleanup_122:
+    Jump                  Target=match_end_175   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+  match_arm_cleanup_177:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=32
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=32
-    Jump                  Target=match_none_121   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  match_none_121:
+    Jump                  Target=match_none_176   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
+  match_none_176:
     LoadConstInt          Target=74 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     StoreLocal            Slot=15 Source=74   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
-  match_end_120:
+  match_end_175:
     LoadLocal             Target=75 Slot=15   (tco_let_bound_successor_keeps_owned_child.ash:44:9)
     StoreLocal            Slot=11 Source=75   (tco_let_bound_successor_keeps_owned_child.ash:41:5)
-  endif_119:
+  endif_174:
     LoadLocal             Target=76 Slot=11   (tco_let_bound_successor_keeps_owned_child.ash:41:5)
     Return                Source=76   (tco_let_bound_successor_keeps_owned_child.ash:40:1)
 

@@ -7462,8 +7462,13 @@ public sealed partial class Lowering
     // Decided before the body is lowered (so the body's aggregates can count a read of the
     // parameter as a fresh owned child) and again after it, when the parameter's type may have
     // resolved further; the later decision can only add the normalization, never withdraw it.
+    // A curried stage whose body is the next stage never normalizes: its parameter reaches the
+    // result only as a capture of that stage's closure, whose environment normalizer copies or
+    // retains it once the closure escapes. An owned entry copy would instead sit in an arena
+    // closure environment that is never released.
     private bool NormalizesAlwaysReturnedParameter(Expr.Lambda lambda, string label, TypeRef argumentType)
         => !_runtimeNormalizedFunctionArgumentLabels.Contains(label)
+            && lambda.Body is not Expr.Lambda
             && IsRuntimeNormalizableParameterType(Prune(argumentType))
             && ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName);
 
@@ -7568,8 +7573,15 @@ public sealed partial class Lowering
         {
             TypeRef.TStr => true,
             TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named),
+            TypeRef.TList list when OwnsKeptPiece(1) => CanRuntimeManageTcoListElement(list.Element),
             _ => false,
         };
+
+    // Stage 1 of the arena-aggregate ownership design (SELF_HOSTING.md): a callee that keeps a
+    // parameter whole owns it.
+    private static bool OwnsKeptParameters => Environment.GetEnvironmentVariable("GRC_OWN_KEPT") is not null;
+
+    private static bool OwnsKeptPiece(int piece) => OwnsKeptParameters && Environment.GetEnvironmentVariable("GRC_OWN_KEPT_NO" + piece) is null;
 
     private bool ResultAlwaysReachesVariable(
         Expr expression,
@@ -15294,6 +15306,19 @@ public sealed partial class Lowering
         return (tailTemp, Prune(tailType));
     }
 
+    // The tuple representation an arena list's request carries was asked for by the tuple
+    // enclosing the list, not by the list. Inherited by a tuple element, it would place a
+    // reference-counted tuple in an arena cons cell, which is reclaimed without releasing it.
+    private static LoweredValueRequest WithoutEnclosingTupleRepresentation(
+        LoweredValueRequest listRequest,
+        bool runtimeManagedList)
+        => runtimeManagedList
+            ? listRequest
+            : listRequest with
+            {
+                RuntimeRepresentation = listRequest.RuntimeRepresentation & ~LoweredValueRuntimeRepresentation.Tuple,
+            };
+
     private LoweredValue LowerRuntimeManagedListElement(
         Expr element,
         LoweredValueRequest listRequest,
@@ -15301,6 +15326,7 @@ public sealed partial class Lowering
     {
         bool runtimeManagedList = listRequest.EmitsRuntime(
             LoweredValueRuntimeRepresentation.List);
+        listRequest = WithoutEnclosingTupleRepresentation(listRequest, runtimeManagedList);
         LoweredValueRequest elementRequest = listRequest
             .WithoutExpectedType()
             .AddRuntime(
@@ -15714,8 +15740,24 @@ public sealed partial class Lowering
             .AddRuntime(
                 runtimeManagedTuple && element is Expr.RecordLit,
                 LoweredValueRuntimeRepresentation.Record);
-        return LowerExpr(element, elementRequest);
+        LoweredValue lowered = LowerExpr(element, elementRequest);
+        if (OwnsKeptPiece(2) && IsNormalizedAlwaysReturnedParameterRead(element))
+        {
+            MarkRuntimeManagedTemp(lowered.Temp, type: lowered.Type);
+            lowered = CreateLoweredValue(lowered.Temp, lowered.Type);
+        }
+
+        return lowered;
     }
+
+    // A read of the parameter the entry normalization owns, of any type: the aggregate storing it
+    // takes the owned value over.
+    private bool IsNormalizedAlwaysReturnedParameterRead(Expr expression)
+        => _normalizedAlwaysReturnedParameter is (string name, int slot, TypeRef _)
+            && expression is Expr.Var variable
+            && string.Equals(variable.Name, name, StringComparison.Ordinal)
+            && Lookup(variable.Name) is Binding.Local { Slot: int readSlot }
+            && readSlot == slot;
 
     private bool IsRuntimeManageableTupleElement(LoweredValue value)
     {

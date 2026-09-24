@@ -86,15 +86,16 @@ type PatternLineage =
     | lineageDepth: Int
     | lineageBinder: Maybe(Int)
 
-// The walk over one loop function: its self name and parameters, the program's constructor
-// names (nullary ones separately, since a bare constructor name in a pattern binds nothing),
-// and the binders classified so far, most recent first.
-type PatternWalk =
+// What stays fixed over the walk of one loop function: its self name and parameters, and the
+// program's constructor names (nullary ones separately, since a bare constructor name in a pattern
+// binds nothing). The walkers thread only the binders classified so far, most recent first, after
+// it: a record threaded through the mutually recursive walkers and handed back whole by half their
+// arms left each of its versions behind, where a list does not.
+type PatternWalkScope =
     | selfName: Str
     | parameters: List(Str)
     | constructors: List(Str)
     | nullaryConstructors: List(Str)
-    | binders: List(PatternBinder)
 
 let recursive containsText (name: Str) (names: List(Str)) =
     match names with
@@ -221,11 +222,11 @@ let recursive removeNames (removed: List(Str)) (names: List(Str)) =
             else name :: removeNames(removed)(rest)
 
 // The names a pattern binds, minus the nullary constructors it merely tests.
-let patternBinderNames (pattern: Pattern) (walk: PatternWalk) =
+let patternBinderNames (pattern: Pattern) (scope: PatternWalkScope) =
     None
     |> enumerateBinders(pattern)(1)
     |> binderNames
-    |> removeNames(walk.nullaryConstructors)
+    |> removeNames(scope.nullaryConstructors)
 
 let recursive lookupLineage (name: Str) (lineages: List((Str, PatternLineage))) =
     match lineages with
@@ -259,18 +260,18 @@ let recursive addBinderUse (key: Int) (use: PatternBindingUse) (binders: List(Pa
             else binder :: addBinderUse(key)(use)(rest)
 
 // Records one use of the binding behind `name`, when the name is a pattern binding.
-let recordUse (name: Str) (lineages: List((Str, PatternLineage))) (use: PatternBindingUse) (walk: PatternWalk) =
+let recordUse (name: Str) (lineages: List((Str, PatternLineage))) (use: PatternBindingUse) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match lookupLineage(name)(lineages) with
-        | Some(PatternLineage { lineageBinder = Some(key) }) -> walk with binders = addBinderUse(key)(use)(walk.binders)
-        | _ -> walk
+        | Some(PatternLineage { lineageBinder = Some(key) }) -> addBinderUse(key)(use)(found)
+        | _ -> found
 
-let recursive recordUses (names: List(Str)) (lineages: List((Str, PatternLineage))) (use: PatternBindingUse) (walk: PatternWalk) =
+let recursive recordUses (names: List(Str)) (lineages: List((Str, PatternLineage))) (use: PatternBindingUse) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match names with
-        | [] -> walk
+        | [] -> found
         | name :: rest ->
-            walk
-            |> recordUse(name)(lineages)(use)
-            |> recordUses(rest)(lineages)(use)
+            found
+            |> recordUse(name)(lineages)(use)(scope)
+            |> recordUses(rest)(lineages)(use)(scope)
 
 let recursive patternNames (pattern: Pattern) (names: List(Str)) =
     match pattern with
@@ -416,8 +417,8 @@ and resumeBound (resumeName: Maybe(Str)) (bound: List(Str)) =
 
 // Stage 0's `RecordPatternBindingFreeUses`: every pattern binding the expression mentions freely
 // takes the context's use.
-let recordFreeUses (expression: Expr) (bound: List(Str)) (lineages: List((Str, PatternLineage))) (context: PatternUseContext) (walk: PatternWalk) =
-    recordUses(freeNames(expression)(bound)([]))(lineages)(contextUse(context))(walk)
+let recordFreeUses (expression: Expr) (bound: List(Str)) (lineages: List((Str, PatternLineage))) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
+    recordUses(freeNames(expression)(bound)([]))(lineages)(contextUse(context))(scope)(found)
 
 let recursive callSpine (expression: Expr) (arguments: List(Expr)) =
     match expression with
@@ -468,33 +469,33 @@ let argumentContext (exactSelfCall: Bool) (constructorCall: Bool) (ordinaryCall:
 // when the scrutinee itself carries a lineage, each binder becomes a new pattern binding of that
 // lineage's root, one extraction level deeper per structural level (stage 0's
 // `BindPatternOwnershipLineages`).
-let recursive bindBinders (binders: List((Int, Str, Int))) (source: PatternLineage) (lineages: List((Str, PatternLineage))) (walk: PatternWalk) =
+let recursive bindBinders (binders: List((Int, Str, Int))) (source: PatternLineage) (lineages: List((Str, PatternLineage))) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match binders with
-        | [] -> (lineages, walk)
+        | [] -> (lineages, found)
         | (key, name, relativeDepth) :: rest ->
-            if containsText(name)(walk.nullaryConstructors)
-            then bindBinders(rest)(source)(lineages)(walk)
+            if containsText(name)(scope.nullaryConstructors)
+            then bindBinders(rest)(source)(lineages)(scope)(found)
             else
                 bindBinders(rest)(source)(setLineage(name)(PatternLineage(
                     lineageRoot = source.lineageRoot,
                     lineageRootName = source.lineageRootName,
                     lineageDepth = source.lineageDepth + relativeDepth,
                     lineageBinder = Some(key)
-                ))(lineages))((walk with binders = PatternBinder(
+                ))(lineages))(scope)(PatternBinder(
                     key = key,
                     binderName = name,
                     rootOrdinal = source.lineageRoot,
                     rootName = source.lineageRootName,
                     depth = source.lineageDepth + relativeDepth,
                     uses = []
-                ) :: walk.binders))
+                ) :: found)
 
-let bindArmLineages (pattern: Pattern) (source: Maybe(PatternLineage)) (lineages: List((Str, PatternLineage))) (walk: PatternWalk) =
+let bindArmLineages (pattern: Pattern) (source: Maybe(PatternLineage)) (lineages: List((Str, PatternLineage))) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match source with
         | None ->
-            (removeLineages(patternBinderNames(pattern)(walk))(lineages), walk)
+            (removeLineages(patternBinderNames(pattern)(scope))(lineages), found)
         | Some(sourceLineage) ->
-            bindBinders(enumerateBinders(pattern)(1)(None))(sourceLineage)(removeLineages(patternBinderNames(pattern)(walk))(lineages))(walk)
+            bindBinders(enumerateBinders(pattern)(1)(None))(sourceLineage)(removeLineages(patternBinderNames(pattern)(scope))(lineages))(scope)(found)
 
 let scrutineeLineage (value: Expr) (lineages: List((Str, PatternLineage))) =
     match unspan(value) with
@@ -503,154 +504,154 @@ let scrutineeLineage (value: Expr) (lineages: List((Str, PatternLineage))) =
 
 // Stage 0's `WalkPatternBindingOwnership`: `shadowedSelf` says whether a binder between the loop
 // function and this expression reuses its name, so a call of that name is no self-call.
-let recursive walkExpression (expression: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (walk: PatternWalk) =
+let recursive walkExpression (expression: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match expression with
-        | ExprAt(_span, inner) -> walkExpression(inner)(lineages)(shadowedSelf)(context)(walk)
-        | ExprCall(_function, _argument, _sugar, _layout) -> walkCall(expression)(lineages)(shadowedSelf)(walk)
+        | ExprAt(_span, inner) -> walkExpression(inner)(lineages)(shadowedSelf)(context)(scope)(found)
+        | ExprCall(_function, _argument, _sugar, _layout) -> walkCall(expression)(lineages)(shadowedSelf)(scope)(found)
         | ExprVar(name) ->
-            recordUse(name)(lineages)(contextUse(context))(walk)
-        | ExprQualifiedVar(_moduleName, _member) -> walk
-        | ExprInt(_value) -> walk
-        | ExprBigInt(_value) -> walk
-        | ExprUInt(_value, _width, _text) -> walk
-        | ExprFloat(_value, _text) -> walk
-        | ExprString(_value) -> walk
-        | ExprRune(_value) -> walk
-        | ExprBool(_value) -> walk
+            recordUse(name)(lineages)(contextUse(context))(scope)(found)
+        | ExprQualifiedVar(_moduleName, _member) -> found
+        | ExprInt(_value) -> found
+        | ExprBigInt(_value) -> found
+        | ExprUInt(_value, _width, _text) -> found
+        | ExprFloat(_value, _text) -> found
+        | ExprString(_value) -> found
+        | ExprRune(_value) -> found
+        | ExprBool(_value) -> found
         | ExprIf(condition, thenBranch, elseBranch) ->
-            walk
-            |> walkExpression(condition)(lineages)(shadowedSelf)(ContextStructuralInspection)
-            |> walkExpression(thenBranch)(lineages)(shadowedSelf)(context)
-            |> walkExpression(elseBranch)(lineages)(shadowedSelf)(context)
+            found
+            |> walkExpression(condition)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)
+            |> walkExpression(thenBranch)(lineages)(shadowedSelf)(context)(scope)
+            |> walkExpression(elseBranch)(lineages)(shadowedSelf)(context)(scope)
         | ExprLogicalAnd(left, right) ->
-            walk
-            |> walkExpression(left)(lineages)(shadowedSelf)(ContextStructuralInspection)
-            |> walkExpression(right)(lineages)(shadowedSelf)(context)
+            found
+            |> walkExpression(left)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)
+            |> walkExpression(right)(lineages)(shadowedSelf)(context)(scope)
         | ExprLogicalOr(left, right) ->
-            walk
-            |> walkExpression(left)(lineages)(shadowedSelf)(ContextStructuralInspection)
-            |> walkExpression(right)(lineages)(shadowedSelf)(context)
-        | ExprLet(name, value, body, _parameters, _annotation, _requirements) -> walkLet(name)(value)(body)(lineages)(shadowedSelf)(context)(walk)
+            found
+            |> walkExpression(left)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)
+            |> walkExpression(right)(lineages)(shadowedSelf)(context)(scope)
+        | ExprLet(name, value, body, _parameters, _annotation, _requirements) -> walkLet(name)(value)(body)(lineages)(shadowedSelf)(context)(scope)(found)
         | ExprLetResult(name, value, body) ->
-            walk
-            |> walkExpression(value)(lineages)(shadowedSelf)(ContextConservativeUnknown)
-            |> walkExpression(body)(removeLineages([name])(lineages))(shadowedSelf || name == walk.selfName)(context)
+            found
+            |> walkExpression(value)(lineages)(shadowedSelf)(ContextConservativeUnknown)(scope)
+            |> walkExpression(body)(removeLineages([name])(lineages))(shadowedSelf || name == scope.selfName)(context)(scope)
         | ExprLetRecursive(name, value, body, _parameters, _annotation, _requirements) ->
-            walk
-            |> walkExpression(value)(removeLineages([name])(lineages))(shadowedSelf || name == walk.selfName)(ContextConservativeUnknown)
-            |> walkExpression(body)(removeLineages([name])(lineages))(shadowedSelf || name == walk.selfName)(context)
+            found
+            |> walkExpression(value)(removeLineages([name])(lineages))(shadowedSelf || name == scope.selfName)(ContextConservativeUnknown)(scope)
+            |> walkExpression(body)(removeLineages([name])(lineages))(shadowedSelf || name == scope.selfName)(context)(scope)
         | ExprLambda(parameter, body, _annotation) ->
-            recordFreeUses(body)([parameter])(removeLineages([parameter])(lineages))(ContextCapturedByClosure)(walk)
-        | ExprMatch(value, cases, _position) -> walkMatch(value)(cases)(lineages)(shadowedSelf)(context)(walk)
-        | ExprTuple(elements) -> walkAll(elements)(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(walk)
-        | ExprList(elements, _isMultiline) -> walkAll(elements)(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(walk)
-        | ExprCons(head, tail) -> walkAll([head, tail])(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(walk)
+            recordFreeUses(body)([parameter])(removeLineages([parameter])(lineages))(ContextCapturedByClosure)(scope)(found)
+        | ExprMatch(value, cases, _position) -> walkMatch(value)(cases)(lineages)(shadowedSelf)(context)(scope)(found)
+        | ExprTuple(elements) -> walkAll(elements)(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(scope)(found)
+        | ExprList(elements, _isMultiline) -> walkAll(elements)(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(scope)(found)
+        | ExprCons(head, tail) -> walkAll([head, tail])(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(scope)(found)
         | ExprRecord(_constructorName, fields, _isMultiline) ->
-            walkAll(fieldValues(fields))(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(walk)
-        | ExprRecordUpdate(target, fields) -> walkAll(target :: fieldValues(fields))(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(walk)
-        | ExprAdd(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprSubtract(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprMultiply(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprDivide(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprModulo(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprBitwiseAnd(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprBitwiseOr(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprBitwiseXor(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprShiftLeft(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprShiftRight(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprBitwiseNot(operand) -> walkExpression(operand)(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprLogicalNot(operand) -> walkExpression(operand)(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprGreaterThan(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprLessThan(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprGreaterOrEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprLessOrEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprNotEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | ExprResultPipe(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextConservativeUnknown)(walk)
-        | ExprResultMapErrorPipe(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextConservativeUnknown)(walk)
-        | ExprAwait(inner) -> walkExpression(inner)(lineages)(shadowedSelf)(ContextConservativeUnknown)(walk)
-        | other -> recordFreeUses(other)([])(lineages)(ContextConservativeUnknown)(walk)
+            walkAll(fieldValues(fields))(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(scope)(found)
+        | ExprRecordUpdate(target, fields) -> walkAll(target :: fieldValues(fields))(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(scope)(found)
+        | ExprAdd(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprSubtract(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprMultiply(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprDivide(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprModulo(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprBitwiseAnd(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprBitwiseOr(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprBitwiseXor(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprShiftLeft(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprShiftRight(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprBitwiseNot(operand) -> walkExpression(operand)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprLogicalNot(operand) -> walkExpression(operand)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprGreaterThan(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprLessThan(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprGreaterOrEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprLessOrEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprNotEqual(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | ExprResultPipe(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextConservativeUnknown)(scope)(found)
+        | ExprResultMapErrorPipe(left, right) -> walkAll([left, right])(lineages)(shadowedSelf)(ContextConservativeUnknown)(scope)(found)
+        | ExprAwait(inner) -> walkExpression(inner)(lineages)(shadowedSelf)(ContextConservativeUnknown)(scope)(found)
+        | other -> recordFreeUses(other)([])(lineages)(ContextConservativeUnknown)(scope)(found)
 and fieldValues (fields: List((Str, Expr))) =
     match fields with
         | [] -> []
         | (_fieldName, value) :: rest -> value :: fieldValues(rest)
-and walkAll (expressions: List(Expr)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (walk: PatternWalk) =
+and walkAll (expressions: List(Expr)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match expressions with
-        | [] -> walk
+        | [] -> found
         | expression :: rest ->
-            walk
-            |> walkExpression(expression)(lineages)(shadowedSelf)(context)
-            |> walkAll(rest)(lineages)(shadowedSelf)(context)
-and walkLet (name: Str) (value: Expr) (body: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (walk: PatternWalk) =
+            found
+            |> walkExpression(expression)(lineages)(shadowedSelf)(context)(scope)
+            |> walkAll(rest)(lineages)(shadowedSelf)(context)(scope)
+and walkLet (name: Str) (value: Expr) (body: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match aliasLineage(value)(lineages) with
         | Some(lineage) ->
-            walkExpression(body)(setLineage(name)(lineage)(lineages))(shadowedSelf || name == walk.selfName)(context)(walk)
+            walkExpression(body)(setLineage(name)(lineage)(lineages))(shadowedSelf || name == scope.selfName)(context)(scope)(found)
         | None ->
-            walk
-            |> walkExpression(value)(lineages)(shadowedSelf)(ContextIndependentEscape)
-            |> walkExpression(body)(removeLineages([name])(lineages))(shadowedSelf || name == walk.selfName)(context)
+            found
+            |> walkExpression(value)(lineages)(shadowedSelf)(ContextIndependentEscape)(scope)
+            |> walkExpression(body)(removeLineages([name])(lineages))(shadowedSelf || name == scope.selfName)(context)(scope)
 and aliasLineage (value: Expr) (lineages: List((Str, PatternLineage))) =
     match unspan(value) with
         | ExprVar(alias) -> lookupLineage(alias)(lineages)
         | _ -> None
-and walkMatch (value: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (walk: PatternWalk) =
+and walkMatch (value: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match scrutineeLineage(value)(lineages) with
         | Some(source) ->
-            walkCases(cases)(Some(source))(lineages)(shadowedSelf)(context)((match source with
-                | PatternLineage { lineageBinder = Some(key) } -> walk with binders = addBinderUse(key)(UseStructuralInspection)(walk.binders)
-                | _ -> walk))
+            walkCases(cases)(Some(source))(lineages)(shadowedSelf)(context)(scope)(match source with
+                | PatternLineage { lineageBinder = Some(key) } -> addBinderUse(key)(UseStructuralInspection)(found)
+                | _ -> found)
         | None ->
-            walk
-            |> walkExpression(value)(lineages)(shadowedSelf)(ContextStructuralInspection)
-            |> walkCases(cases)(None)(lineages)(shadowedSelf)(context)
-and walkCases (cases: List((Pattern, Expr, Maybe(Expr)))) (source: Maybe(PatternLineage)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (walk: PatternWalk) =
+            found
+            |> walkExpression(value)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)
+            |> walkCases(cases)(None)(lineages)(shadowedSelf)(context)(scope)
+and walkCases (cases: List((Pattern, Expr, Maybe(Expr)))) (source: Maybe(PatternLineage)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match cases with
-        | [] -> walk
+        | [] -> found
         | (pattern, body, guard) :: rest ->
-            match bindArmLineages(pattern)(source)(lineages)(walk) with
+            match bindArmLineages(pattern)(source)(lineages)(scope)(found) with
                 | (armLineages, bound) ->
                     bound
-                    |> walkGuard(guard)(armLineages)(shadowedSelf || containsText(walk.selfName)(patternBinderNames(pattern)(walk)))
-                    |> walkExpression(body)(armLineages)(shadowedSelf || containsText(walk.selfName)(patternBinderNames(pattern)(walk)))(context)
-                    |> walkCases(rest)(source)(lineages)(shadowedSelf)(context)
-and walkGuard (guard: Maybe(Expr)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (walk: PatternWalk) =
+                    |> walkGuard(guard)(armLineages)(shadowedSelf || containsText(scope.selfName)(patternBinderNames(pattern)(scope)))(scope)
+                    |> walkExpression(body)(armLineages)(shadowedSelf || containsText(scope.selfName)(patternBinderNames(pattern)(scope)))(context)(scope)
+                    |> walkCases(rest)(source)(lineages)(shadowedSelf)(context)(scope)
+and walkGuard (guard: Maybe(Expr)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match guard with
-        | Some(expression) -> walkExpression(expression)(lineages)(shadowedSelf)(ContextStructuralInspection)(walk)
-        | None -> walk
-and walkCall (expression: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (walk: PatternWalk) =
+        | Some(expression) -> walkExpression(expression)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)
+        | None -> found
+and walkCall (expression: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match callSpine(expression)([]) with
         | (root, arguments) ->
-            walkCallWith(root)(arguments)(isExactSelfCall(root)(arguments)(shadowedSelf)(walk))(isConstructorRoot(root)(walk))(lineages)(shadowedSelf)(walk)
-and isExactSelfCall (root: Expr) (arguments: List(Expr)) (shadowedSelf: Bool) (walk: PatternWalk) =
+            walkCallWith(root)(arguments)(isExactSelfCall(root)(arguments)(shadowedSelf)(scope))(isConstructorRoot(root)(scope))(lineages)(shadowedSelf)(scope)(found)
+and isExactSelfCall (root: Expr) (arguments: List(Expr)) (shadowedSelf: Bool) (scope: PatternWalkScope) =
     match root with
-        | ExprVar(callee) -> callee == walk.selfName && !shadowedSelf && length(arguments) == length(walk.parameters)
+        | ExprVar(callee) -> callee == scope.selfName && !shadowedSelf && length(arguments) == length(scope.parameters)
         | _ -> false
-and isConstructorRoot (root: Expr) (walk: PatternWalk) =
+and isConstructorRoot (root: Expr) (scope: PatternWalkScope) =
     match rootConstructorName(root) with
-        | Some(name) -> containsText(name)(walk.constructors)
+        | Some(name) -> containsText(name)(scope.constructors)
         | None -> false
 and isOrdinaryRoot (root: Expr) (constructorCall: Bool) =
     match root with
         | ExprVar(_name) -> !constructorCall
         | ExprQualifiedVar(_moduleName, _member) -> !constructorCall
         | _ -> false
-and walkCallWith (root: Expr) (arguments: List(Expr)) (exactSelfCall: Bool) (constructorCall: Bool) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (walk: PatternWalk) =
-    walk
-    |> walkArguments(arguments)(0)(exactSelfCall)(constructorCall)(isOrdinaryRoot(root)(constructorCall))(lineages)(shadowedSelf)
-    |> walkExpression(root)(lineages)(shadowedSelf)(ContextConservativeUnknown)
-and walkArguments (arguments: List(Expr)) (index: Int) (exactSelfCall: Bool) (constructorCall: Bool) (ordinaryCall: Bool) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (walk: PatternWalk) =
+and walkCallWith (root: Expr) (arguments: List(Expr)) (exactSelfCall: Bool) (constructorCall: Bool) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
+    found
+    |> walkArguments(arguments)(0)(exactSelfCall)(constructorCall)(isOrdinaryRoot(root)(constructorCall))(lineages)(shadowedSelf)(scope)
+    |> walkExpression(root)(lineages)(shadowedSelf)(ContextConservativeUnknown)(scope)
+and walkArguments (arguments: List(Expr)) (index: Int) (exactSelfCall: Bool) (constructorCall: Bool) (ordinaryCall: Bool) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match arguments with
-        | [] -> walk
+        | [] -> found
         | argument :: rest ->
-            walk
-            |> walkArgument(argument)(index)(exactSelfCall)(constructorCall)(ordinaryCall)(lineages)(shadowedSelf)
-            |> walkArguments(rest)(index + 1)(exactSelfCall)(constructorCall)(ordinaryCall)(lineages)(shadowedSelf)
-and walkArgument (argument: Expr) (index: Int) (exactSelfCall: Bool) (constructorCall: Bool) (ordinaryCall: Bool) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (walk: PatternWalk) =
+            found
+            |> walkArgument(argument)(index)(exactSelfCall)(constructorCall)(ordinaryCall)(lineages)(shadowedSelf)(scope)
+            |> walkArguments(rest)(index + 1)(exactSelfCall)(constructorCall)(ordinaryCall)(lineages)(shadowedSelf)(scope)
+and walkArgument (argument: Expr) (index: Int) (exactSelfCall: Bool) (constructorCall: Bool) (ordinaryCall: Bool) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match argumentLineage(argument)(lineages) with
         | Some((name, lineage)) ->
-            recordUse(name)(lineages)(argumentUse(exactSelfCall)(constructorCall)(ordinaryCall)(index)(lineage))(walk)
+            recordUse(name)(lineages)(argumentUse(exactSelfCall)(constructorCall)(ordinaryCall)(index)(lineage))(scope)(found)
         | None ->
-            walkExpression(argument)(lineages)(shadowedSelf)(argumentContext(exactSelfCall)(constructorCall)(ordinaryCall))(walk)
+            walkExpression(argument)(lineages)(shadowedSelf)(argumentContext(exactSelfCall)(constructorCall)(ordinaryCall))(scope)(found)
 and argumentLineage (argument: Expr) (lineages: List((Str, PatternLineage))) =
     match unspan(argument) with
         | ExprVar(name) ->
@@ -686,9 +687,7 @@ let recursive buildFacts (binders: List(PatternBinder)) =
 // in binder order. `constructors` are the program's constructor names and `nullaryConstructors`
 // the subset a bare pattern name tests rather than binds.
 let patternBindingFacts (self: Str) (parameters: List(Str)) (constructors: List(Str)) (nullaryConstructors: List(Str)) (body: Expr) =
-    PatternWalk(selfName = self, parameters = parameters, constructors = constructors, nullaryConstructors = nullaryConstructors, binders = [])
-    |> walkExpression(body)(parameterLineages(parameters)(0))(false)(ContextIndependentEscape)
-    |> (given (walk: PatternWalk) ->
-        walk.binders
-        |> reverse
-        |> buildFacts)
+    []
+    |> walkExpression(body)(parameterLineages(parameters)(0))(false)(ContextIndependentEscape)(PatternWalkScope(selfName = self, parameters = parameters, constructors = constructors, nullaryConstructors = nullaryConstructors))
+    |> reverse
+    |> buildFacts

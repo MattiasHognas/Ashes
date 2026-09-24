@@ -342,6 +342,139 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    a separate and older defect. Found on the way: stage 1 has taken seven
    times longer on the probe since the third port (230 seconds against 32), an uncached walk of the
    heap layout at every admissibility question, to be cached next.
+   The self-hosted optimizer's pass shape (`reproducers/optimizer_pass_state_and_rewritten_instruction.ash`,
+   1380 MB at 100,000 rounds) was taken for an unreleased tuple: the callee's result pair was
+   thought to keep its instruction shared, so the list's drop kept every child. The lowered and
+   final IR both release the pair, and a variant that uses neither half of it leaks the same, so
+   the census was read again: containers are freed and their children are not, and the children
+   come from two unrelated leaks, each now a program of a dozen lines. A record parameter kept by
+   an outer curried stage (`make (loc) (k)`) was copied onto the reference-counted heap at entry
+   and the copy moved into an arena closure environment that nothing releases; it regressed in
+   #622, found by bisecting the reproducer over published compilers. The outer stage no longer
+   normalizes: the parameter reaches the result only as a capture of the next stage's closure,
+   whose environment normalizer copies or retains it once the closure escapes. This is also the
+   root cause of OPT-85's lowering-state probe (`stateleak`, 32 MB at 4,000 rounds on `main`, now
+   8 MB), which was attacked from the other side, by giving the adopting environment a dropper,
+   and that miscompiled five of the six self-hosted suites; this side passes all six. The other leak is older than August: a tuple consed onto a list inside a
+   tuple result inherited the enclosing tuple's request for a reference-counted representation,
+   while the list cell holding it stayed in the arena, so the arena reset reclaimed the cell and
+   left the tuple. An arena list's element no longer takes that request. Both rules are mirrored
+   in stage 1, and the optimizer reproducer, `loop_state_and_rewrite_pair` (1228 MB) and
+   `record_state_list_field_grown_by_callee_pair` (312 MB) now stay at 8 MB with unchanged output.
+   A loop accumulator with an arm that resets it to nil (`direct_successor_with_reset_arm`, 1752 MB)
+   was never an accumulator edge, so the list stayed in the arena holding retained elements; nil is
+   one now, and a nested join normalized in place no longer counts as borrowing the loop parameter,
+   which had the outer join retain it a second time. Stage 1 needed only the first rule.
+   None of this moved the module probe (2767 MB on `main`, 2750 MB after, 91% of the heap still
+   leaked), and the census said why. Roots claiming 390 of the leaked megabytes are token lists, and
+   the real parser, run in a probe (`parseloop.sh`), leaves 166 MB behind after one parse of a
+   3,700-line file and 83 MB for each parse after, against 0.5 MB for lexing alone. The parser threads
+   its state as a tuple of the token list, the diagnostics, the source bytes and a flag. That tuple
+   lives in the arena (the byte view and a list whose representation is unknown at the tuple keep it
+   there), while the token lists put into it are fresh reference-counted results
+   (`List.append`, per declaration and per nested `let`). A call that hands a fresh list to a function
+   returning it inside such a tuple transfers ownership to a callee that owns nothing, and every
+   later state rebuild drops the arena tuple's reference to the old head cell. Reduced:
+   `list_parameter_returned_inside_tuple.ash`. Three local rules were tried and reverted, each
+   measured on the real parser: normalizing list parameters, an all-inline variant as a tuple
+   sibling, and copying a transferred fresh list into the arena (which fixes both reproducers, and
+   makes the parser worse, because its arena lists are copied back onto the reference-counted heap
+   downstream). The same shape is behind the lexer's leaked token kinds, the recursive group's
+   sibling result and the closure-parameter result: an owned reference-counted value stored in an
+   arena aggregate nothing releases. That is the ownership contract's open question (which values
+   a result owns, and who releases what an arena aggregate holds), and the next round is its design,
+   not another local rule.
+
+   **The design for that round.** The invariant to establish is the dual of the representation
+   test's: *an arena value never holds the only reference to a reference-counted value.* Arena
+   memory holding a borrowed reference is fine, since its owner outlives it; holding the only one is
+   a leak by construction, because nothing releases what an arena cell points at. The only reference
+   ends up there in three ways, each with a reproducer:
+
+   ```mermaid
+   flowchart LR
+       A["A fresh call result stored<br/>into an arena aggregate"] --> L["Only reference<br/>held by arena"]
+       B["A fresh argument transferred<br/>to a callee that does not adopt it,<br/>whose result keeps it"] --> L
+       C["An owned result of a type the<br/>contract does not govern, threaded<br/>through a group sibling or a closure"] --> L
+   ```
+
+   A is `record_with_call_result_field_beside_optional_in_tuple` and the lexer's token kinds; B is
+   `list_parameter_returned_inside_tuple` and the parser's state; C is
+   `group_sibling_result_passed_to_recursive_call` and `record_result_through_closure_parameter`.
+   Two ways out were measured and rejected. Demoting the value into the arena (a deep copy, the
+   original released) closes both B reproducers and makes the parser five times worse, because an
+   arena list flowing on into reference-counted code is copied back at every such point. Promoting
+   the aggregate onto the reference-counted heap works wherever it applies (the two-parameter B
+   shape, the optional-scalar A shape), and fails only where the promotion is refused: a sibling the
+   normalizer cannot take (a byte view), a list whose representation is unknown at the aggregate, or
+   a read of a parameter the aggregate does not own.
+
+   So the direction is promotion, made total, in three stages, each landed on its own with the
+   reproducers, the parse probe, the six suites, the poisoned end-to-end run, the `challenges/`
+   programs and the module probe as its gate:
+
+   1. **A callee that keeps a parameter whole owns it.** Entry normalization covers every
+      runtime-manageable parameter type, lists included, so such a callee adopts a fresh argument
+      and copies a borrowed one; a read of the adopted parameter is an owned element of the
+      aggregate storing it; and "transfer to a callee whose result keeps it" disappears, since every
+      such callee now adopts. This closes B.
+   2. **An aggregate holding an owned element is promoted, whatever its siblings.** Borrowed
+      reference-counted siblings are retained, arena siblings copied onto the reference-counted
+      heap, and a byte view is retained or copied like a string. This closes A and the parser's
+      four-field state.
+   3. **Such a result is owned by the caller.** The contract's owned-result commitment extends to
+      every aggregate its callee promoted, so the caller keeps it in an owned slot or reads the
+      closure's owned-return bit. This closes C.
+
+   The cost to watch is the same at every stage: a value that used to live and die in the arena now
+   pays a reference count, and an arena value handed to an adopting callee is copied once. The
+   `challenges/` programs and stage 1's compile time are what decide whether a stage lands.
+
+   Stages 1 and 2 exist behind `GRC_OWN_KEPT` and `GRC_PROMOTE_SIBLINGS`, off by default. They close
+   all three B-shaped reproducers, poisoned runs included. Stage 1 needed one thing the design did
+   not name: a closure built before its function's entry normalization was decided carried a stale
+   adoption bit, so callers never handed a fresh argument over; closures are now marked once the
+   program is lowered, as the owned-result bit already was. Handing an argument over under the flag
+   instead of transferring it, the other obvious piece, crashed the real parser (a callee that keeps
+   the parameter on some paths does not normalize it) and is not part of it. On the real parser both
+   stages do what they say, `parserStateWithTokens` now adopts its token list and returns a
+   reference-counted state, and the leak stays the same size, in a different shape: the token lists
+   reach it in the arena, so its entry normalization copies them whole, and no caller releases the
+   state that owns the copy. That is stage 3, and it comes with the copy cost made concrete: unless
+   the lexer's list and the lists the parser builds are reference-counted to begin with, every
+   adoption is a full copy.
+
+   Meanwhile the census, now able to name a root by what its first two words hold
+   (`REACH_SHAPE`), found most of the probe's leak in stage 1's own source patterns and in two
+   compiler rules, and removing them took the module probe from 2767 MB to 920 MB at the same
+   compile time:
+
+   | Change | Probe peak |
+   |---|---|
+   | `main` | 2767 MB |
+   | The parser concatenates its token lists with a typed helper instead of the generic `List.append` | 2491 MB |
+   | The pattern-binding walk threads its binders as a list instead of a record through a recursive group | 1499 MB |
+   | Module stitching searches the completed modules instead of concatenating them | 1449 MB |
+   | The admissibility walks keep types on their path instead of rendered names | 1271 MB |
+   | A reference-counted nullary constructor is one immortal cell per tag (both backends) | 1169 MB |
+   | Heap-layout children are built onto their tail instead of from pairs and a concatenation | 1038 MB |
+   | Shadowing a name that names no function leaves the reach scope as it is | 952 MB |
+   | A loop releases the value an earlier iteration left in an owned slot | 920 MB |
+
+   The last is a lowering rule, mirrored in stage 1: a loop threading a value through a helper's
+   owned result (`map |> keepFirst(k)(v) |> loop`) hands the result to its parameter, and the next
+   iteration's call overwrote the slot that held it, so every earlier version leaked. The slot's old
+   occupant now moves to a slot of its own before the store, and a back edge releases it once no
+   successor can still name it: each is inline, a read of an owned slot, a parameter normalized onto
+   the reference-counted heap, or of a type that cannot hold it. A parameter handed on unchanged
+   counts only by its type, since it may be that very value. A related shape is reproduced and
+   not fixed: an arena record update of a loop parameter retains the reference-counted fields it
+   keeps, for the back edge to take over when the update is the successor, and when a helper takes
+   the update instead those retains are never released
+   (`nested_group_replaced_by_helper_in_record_loop.ash`). The probe's largest remaining single
+   class, about 12,000 leaked lowering-state records (76 MB), is not that one: folding the one such
+   update the census pointed at into a single helper changed neither the probe nor the leaked-state
+   count of a four-function program, so where those records come from is still open.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
