@@ -1,6 +1,6 @@
-// A loop whose successor record, built in place, stores a field of the loop parameter beside a
-// fresh record: the cell borrows that field, and the back edge's copy takes the reference that
-// outlives the old parameter, so a field replaced every few iterations is released each time.
+// A loop whose successor record, built at the self-call, stores a field of the loop parameter beside
+// a fresh record: the cell retains that field, and the back edge's copy releases the dying cell's
+// references, so a field replaced every few iterations is released each time.
 // expect: 41
 type State =
     | label: Str

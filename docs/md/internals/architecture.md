@@ -1378,6 +1378,10 @@ requests an arena result, for a caller that could not own one. Once the result t
 contract type, the caller owns it after all, so the request is withdrawn: the callee hands over its
 reference-counted result instead of deep-copying it into the arena for the caller to normalize back.
 
+A record successor written at the self-call (a record literal or a constructor application) holds
+the references its construction retained, so the back edge's copy releases them from the dying cell;
+any other successor, a call's result say, is borrowed by the copy, and its owner releases it.
+
 A back edge releases the owned slots its iteration may have stored. A slot stored inside another arm
 of a `match` or `if` that is still open at the back edge is skipped, since one iteration never runs
 both arms; a value an earlier iteration left there is released at that arm's own back edge or at the
