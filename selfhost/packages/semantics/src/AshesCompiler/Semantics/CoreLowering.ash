@@ -12810,6 +12810,28 @@ let emitAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (s
         | (None, synthesized) ->
             emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(synthesized)
 
+// Stage 0's `TryEmitContractRecordDropCall`: a record of the ownership contract is released by one
+// call to a dropper synthesized once per type through the state's label cache.
+let emitRecordDropperCall (valueTemp: Int) (named: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+            match synthesizeRecordDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
+                | DropperSynthesis { label = Some(label), cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    match freshTempRun(2)(withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
+                        | FreshTemp { state = reserved, temp = environmentTemp } ->
+                            reserved
+                            |> emit(LoadConstInt(environmentTemp)(0))
+                            |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
+                | _ -> state
+
+// A record the lowering says joins the ownership contract, where the contract governs the lowering.
+let usesRecordDropper (named: SemanticType) (state: CoreLoweringState) =
+    (let types = dropperTypesOf(state)
+    in
+        named
+        |> resolveType(state)
+        |> types.contractRecord)
+
 // A recursive-copy or owned-child ADT is released by its own constructor-switching dropper.
 let usesAdtDropper (named: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(named)(state) with
@@ -12908,7 +12930,10 @@ and emitRuntimeAdtDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (s
     else
         if usesAdtDropper(named)(state)
         then emitAdtDropperCall(valueTemp)(typeName)(named)(state)
-        else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
+        else
+            if usesRecordDropper(named)(state)
+            then emitRecordDropperCall(valueTemp)(named)(state)
+            else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
 and emitFirstConstructorDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
     match state
     |> stateConstructorLayouts

@@ -41,6 +41,7 @@ export (
     value isScalarResultType,
     value synthesizeStructuralOwnerDropper,
     value synthesizeRuntimeManagedAdtDropper,
+    value synthesizeRecordDropper,
     type OwnedReleasePlan(..),
     type InlineReleaseSynthesis(..),
     value synthesizeOwnedAggregateRelease,
@@ -815,6 +816,16 @@ let synthesizeStructuralOwnerDropper (semanticType: SemanticType) (dropperTypes:
 
 // Names the constructor-switching dropper of a named type, synthesizing it once; a type that is
 // not named has no such dropper.
+// The dropper of a record of the ownership contract, synthesized once per type.
+let synthesizeRecordDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
+        | (ids, body) ->
+            match renumberType(ids)(semanticType) with
+                | SemNamed(_symbolId, _name, _arguments) as named ->
+                    match synthesizeRecordDropperIn(named)(body) with
+                        | (label, synthesized) -> synthesisResult(Some(label))(synthesized)
+                | _ -> synthesisResult(None)(body)
+
 let synthesizeRuntimeManagedAdtDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
         | (ids, body) ->
