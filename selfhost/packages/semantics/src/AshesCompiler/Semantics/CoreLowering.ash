@@ -5920,7 +5920,7 @@ let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: Co
                             |> stateConstructorLayouts
                             |> constructorLayoutsOfType(name)
                         in
-                            if general && isInlineCopiedContractRecord(named)(layouts)(facts)(state)
+                            if isInlineCopiedContractRecord(named)(layouts)(facts)(state)
                             then Some(NormalizerArgumentCopy(named))
                             else adtCopyPlanOfWith(general)(layouts)(children)(state)
                     else
@@ -5983,6 +5983,25 @@ let generalCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) = 
 let heapChildrenOfNamed (named: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(named)(state) with
         | HeapLayoutFacts { children = children } -> children
+
+// The cell-by-cell copy of a named type written inline, a record of the contract's types included:
+// stage 0's constructor deep copy, which the normalization helper's body and a successor built at
+// the self-call use.
+let inlineAdtCopyPlanOf (named: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(named) with
+        | SemNamed(_symbolId, name, _arguments) as resolved ->
+            adtCopyPlanOfWith(false)(state
+            |> stateConstructorLayouts
+            |> constructorLayoutsOfType(name))(heapChildrenOfNamed(resolved)(state))(state)
+        | _ -> None
+
+// Stage 0's `EmitRuntimeManagedTcoParamCopy` and `EmitRuntimeManagedTcoDeepCopy`: the copy of a value
+// whose inline plan decided that it is copied at all, a record of the contract's types copied by its
+// normalization helper at any depth.
+let entryCopyPlanOf (semanticType: SemanticType) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match generalCopyPlanOf(semanticType)(state) with
+        | Some(general) -> general
+        | None -> plan
 
 // Stage 0's `IsInlineCopiedContractRecord` as the drop synthesis asks it: the record joins the
 // contract. Whether the contract governs the lowering asking is `dropperTypesOf`'s to say.
@@ -7184,8 +7203,8 @@ and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (lit
         | (SemNamed(_symbolId, _name, _arguments) as named, _literal) ->
             match constructorFieldExpressionsOf(literal)(named)(state) with
                 | Some(arguments) ->
-                    match tcoAdtCopyPlanOf(named)(state) with
-                        | ConstructorArgumentCopy((_tag, _sizeBytes, tagless, _childPlans)) ->
+                    match inlineAdtCopyPlanOf(named)(state) with
+                        | Some(ConstructorArgumentCopy((_tag, _sizeBytes, tagless, _childPlans))) ->
                             releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedChildrenOfNamed(named)(state))(arguments)(state)
                         | _plan -> emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
                 | None -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
@@ -7268,9 +7287,12 @@ let recursive releaseBackEdgeSourceChildren (read: List((Int, SemanticType, Int)
 // self-call itself (stage 0's `SuccessorOwnsItsChildren`); any other successor of such a record is
 // borrowed by the copy, which its normalization helper makes.
 let backEdgeAdtCopyPlanOf (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
-    match (tcoAdtCopyPlanOf(semanticType)(state), constructorFieldExpressionsOf(expression)(semanticType)(state), argumentCopyPlanOf(semanticType)(state)) with
-        | (NormalizerArgumentCopy(_named), Some(_fields), Some(ConstructorArgumentCopy(constructorPlan))) -> ConstructorArgumentCopy(constructorPlan)
-        | (plan, _fields, _inline) -> plan
+    match (tcoAdtCopyPlanOf(semanticType)(state), constructorFieldExpressionsOf(expression)(semanticType)(state)) with
+        | (NormalizerArgumentCopy(named), Some(_fields)) ->
+            match inlineAdtCopyPlanOf(named)(state) with
+                | Some(ConstructorArgumentCopy(constructorPlan)) -> ConstructorArgumentCopy(constructorPlan)
+                | _ -> NormalizerArgumentCopy(named)
+        | (plan, _fields) -> plan
 
 let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
@@ -8732,12 +8754,14 @@ let emitPassthroughCopyByCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state:
 let emitOwnedPassthroughCopy (sourceTemp: Int) (parameterType: SemanticType) (state: CoreLoweringState) =
     match argumentCopyPlanOf(parameterType)(state) with
         | None -> (state, sourceTemp)
-        | Some(plan) ->
-            match if canTestRepresentation && resultSurvivesReset(parameterType)(state) == false
-            then
-                emitReferenceOrCopy(sourceTemp)(emitPassthroughCopyByCopy(sourceTemp)(plan))(state)
-            else emitPassthroughCopyByCopy(sourceTemp)(plan)(state) with
-                | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
+        | Some(inlinePlan) ->
+            let plan = entryCopyPlanOf(parameterType)(inlinePlan)(state)
+            in
+                match if canTestRepresentation && resultSurvivesReset(parameterType)(state) == false
+                then
+                    emitReferenceOrCopy(sourceTemp)(emitPassthroughCopyByCopy(sourceTemp)(plan))(state)
+                else emitPassthroughCopyByCopy(sourceTemp)(plan)(state) with
+                    | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
 
 let bindingIsLocalSlot (name: Str) (slot: Int) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
@@ -8983,7 +9007,7 @@ let releaseNormalizedParameterBehindResult (label: Str) (parameter: Str) (body: 
                                 match argumentCopyPlanOf(bodyType)(state) with
                                     | None -> kept
                                     | Some(plan) ->
-                                        match emitArgumentCopy(bodyTemp)(plan)(state) with
+                                        match emitArgumentCopy(bodyTemp)(entryCopyPlanOf(bodyType)(plan)(state))(state) with
                                             | (copied, ownedTemp) ->
                                                 (copied
                                                 |> emitNormalizedParameterRelease(named)
@@ -9356,13 +9380,6 @@ let withNormalizedAlwaysReturnedParameter parameter body label parameterType (st
     then withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))(state)
     else withStateNormalizedAlwaysReturnedParameter(None)(state)
 
-// Stage 0's `EmitRuntimeManagedTcoParamCopy`: the entry copy of a parameter the entry normalization
-// admits, a record of the contract's types copied by its normalization helper.
-let entryCopyPlanOf (parameterType: SemanticType) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    match generalCopyPlanOf(parameterType)(state) with
-        | Some(general) -> general
-        | None -> plan
-
 let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
@@ -9523,7 +9540,7 @@ let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringSta
                         | (_layout :: [], facts) ->
                             if runtimeManagedAdtLayout(facts)
                             then
-                                match argumentCopyPlanOf(named)(state) with
+                                match inlineAdtCopyPlanOf(named)(state) with
                                     | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
                                     | _ -> None
                             else None
@@ -13671,7 +13688,7 @@ let ownResultBeforeArgumentRelease (context: CoreCallContext) (stage: CoreCallSt
                 match ownedResultPlanOf(semanticType)(state) with
                     | None -> stage
                     | Some(plan) ->
-                        match emitArgumentCopy(temp)(plan)(state) with
+                        match emitArgumentCopy(temp)(entryCopyPlanOf(semanticType)(plan)(state))(state) with
                             | (copied, ownedTemp) -> stage with lowered = (lowered with state = markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)(copied), temp = ownedTemp), consumedArguments = releaseWithAllParts(consumed)
         | _ -> stage
 
@@ -13940,7 +13957,8 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
                 match ownedResultPlanOf(resultType)(state) with
                     | None -> (state, arms)
                     | Some(ScalarArgumentCopy) -> (state, arms)
-                    | Some(plan) -> normalizeUnownedJoinArms(resultSlot)(plan)(arms)(state)
+                    | Some(plan) ->
+                        normalizeUnownedJoinArms(resultSlot)(entryCopyPlanOf(resultType)(plan)(state))(arms)(state)
         | _ -> (state, arms)
 
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
@@ -17373,7 +17391,8 @@ let prepareRuntimeRcListTail (request: ConsumerRequest) (tailExpression: Expr) (
                     if boundSlot == tailSlot
                     then
                         match argumentCopyPlanOf(tailType)(state) with
-                            | Some(plan) -> emitReferenceCountedListTail(tailTemp)(plan)(state)
+                            | Some(plan) ->
+                                emitReferenceCountedListTail(tailTemp)(entryCopyPlanOf(tailType)(plan)(state))(state)
                             | None -> (state, tailTemp)
                     else (state, tailTemp)
                 | _ -> (state, tailTemp)
@@ -17615,7 +17634,10 @@ let ownedLiteralTail (runtimeManaged: Bool) (tailIsReferenceCounted: Bool) (tail
         match argumentCopyPlanOf(elementType
         |> resolveType(state)
         |> SemList)(state) with
-            | Some(plan) -> emitReferenceCountedListTail(tailTemp)(plan)(state)
+            | Some(plan) ->
+                emitReferenceCountedListTail(tailTemp)(entryCopyPlanOf(elementType
+                |> resolveType(state)
+                |> SemList)(plan)(state))(state)
             | None -> (state, tailTemp)
     else (state, tailTemp)
 
@@ -18083,16 +18105,18 @@ let normalizeConstructorChildArgument (runtimeManaged: Bool) (fieldType: Semanti
             if runtimeManaged && isRuntimeTemp(temp)(state) == false && requiresRuntimeManagedChildCopy(fieldType)(state)
             then
                 match argumentCopyPlanOf(fieldType)(state) with
-                    | Some(plan) ->
-                        match if canTestRepresentation
-                        then
-                            emitReferenceOrCopy(temp)(emitArgumentDeepCopy(temp)(plan))(state)
-                        else emitArgumentDeepCopy(temp)(plan)(state) with
-                            | (copied, copiedTemp) ->
-                                copied
-                                |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
-                                |> (given (marked: CoreLoweringState) -> withStatePatternOwnerCopyTemps(copiedTemp :: statePatternOwnerCopyTemps(marked))(marked))
-                                |> success(copiedTemp)(semanticType)
+                    | Some(inlinePlan) ->
+                        let plan = entryCopyPlanOf(fieldType)(inlinePlan)(state)
+                        in
+                            match if canTestRepresentation
+                            then
+                                emitReferenceOrCopy(temp)(emitArgumentDeepCopy(temp)(plan))(state)
+                            else emitArgumentDeepCopy(temp)(plan)(state) with
+                                | (copied, copiedTemp) ->
+                                    copied
+                                    |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+                                    |> (given (marked: CoreLoweringState) -> withStatePatternOwnerCopyTemps(copiedTemp :: statePatternOwnerCopyTemps(marked))(marked))
+                                    |> success(copiedTemp)(semanticType)
                     | None -> lowered
             else lowered
         | _ -> lowered
