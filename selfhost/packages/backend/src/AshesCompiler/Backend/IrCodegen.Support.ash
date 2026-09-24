@@ -53,6 +53,7 @@ export (
     value gepBytes,
     value emitRcAllocPayloadPtr,
     value emitAllocAdtRuntimeManaged,
+    value emitImmortalNullaryAdt,
     value emitStackAlloc,
     value emitStackAllocAdt,
     value closureSizeBytes,
@@ -628,6 +629,35 @@ let emitAllocAdtRuntimeManaged builder i64 i8 mallocFn mallocType tag fieldCount
                     buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr))
                 |> (given (_) -> Unit)
         in buildPtrToInt(builder)(payloadPtr)(i64)(resultName))
+
+// A runtime-managed nullary constructor: one cell per tag for the whole program, stage 0's
+// `EmitImmortalNullaryAdt`. The first use allocates it in the reference-counted region and writes
+// the immortal count into its header, so `RcDup`/`RcDrop` leave it alone and a reuse test never
+// sees it unique; `global` holds its address, `0` until then.
+let emitImmortalNullaryAdt context function_ builder i64 i8 ptrType mallocFn mallocType tag global resultName =
+    (let initBlock = appendBasicBlock(context)(function_)("nullary_init")
+    in
+        let readyBlock = appendBasicBlock(context)(function_)("nullary_ready")
+        in
+            let cached = buildLoad(builder)(i64)(global)(resultName + "_cached")
+            in
+                let _ =
+                    buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(cached)(constInt(i64)(0u64)(false))(resultName + "_unset"))(initBlock)(readyBlock)
+                in
+                    let _ = positionBuilderAtEnd(builder)(initBlock)
+                    in
+                        let cell = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(0)(false)(resultName + "_cell")
+                        in
+                            let _ =
+                                Unit
+                                |> (given (_) ->
+                                    resultName + "_count_ptr"
+                                    |> gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(cell)(ptrType)(resultName + "_cell_ptr"))(-16)
+                                    |> buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 62))(false)))
+                                |> (given (_) -> buildStore(builder)(cell)(global))
+                                |> (given (_) -> buildBr(builder)(readyBlock))
+                                |> (given (_) -> positionBuilderAtEnd(builder)(readyBlock))
+                            in buildLoad(builder)(i64)(global)(resultName))
 
 // `sizeBytes` of stack storage as `[n x i64]` (`AllocStack`/`MakeClosureStack`: lowering only
 // picks the stack form when it has proven the value never escapes the current frame).

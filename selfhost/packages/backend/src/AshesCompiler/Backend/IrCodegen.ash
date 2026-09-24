@@ -191,6 +191,7 @@ type CodegenContext =
     | programArgsGlobal: LLVMValueRef
     | externalSymbols: List(ExternalSymbolDeclaration)
     | capabilityHandlerGlobals: List((Int, LLVMValueRef))
+    | nullaryCellGlobals: List((Int, LLVMValueRef))
     | consoleGlobals: ConsoleGlobals
     | arenaRuntime: ArenaRuntime
     | copyRuntime: Maybe(CopyRuntime)
@@ -225,6 +226,8 @@ type ModuleCodegen =
     // Every `external` C symbol the program calls, declared once for the module.
     | moduleExternalSymbols: List(ExternalSymbolDeclaration)
     | moduleCapabilityHandlerGlobals: List((Int, LLVMValueRef))
+    // One address slot per tag a runtime-managed nullary constructor is allocated with.
+    | moduleNullaryCellGlobals: List((Int, LLVMValueRef))
     | moduleConsoleGlobals: ConsoleGlobals
     | moduleArenaRuntime: ArenaRuntime
     | moduleCopyRuntime: Maybe(CopyRuntime)
@@ -301,6 +304,10 @@ let recursive createLabelBlocks context function_ names =
 // any realistic number of drops never reaches zero, so the existing `RcDrop` codegen (unchanged for
 // this) naturally never frees a literal's static storage — no sentinel-aware branch needed there.
 let runtimeRcImmortalSentinel = Ashes.Number.UInt.fromInt64(1 << 62)
+
+// Whether an `AllocAdt` builds a runtime-managed nullary constructor, which every use shares as one
+// immortal cell per tag (`emitImmortalNullaryAdt`).
+let isImmortalNullaryAlloc fieldCount runtimeManaged tagless = runtimeManaged && fieldCount == 0 && !tagless
 
 let recursive stringLiteralByteConstants bytes i8 index length =
     if index >= length
@@ -939,9 +946,13 @@ let codegenInstructionKind cx builder kind state =
                                         | AllocAdt(target, tag, fieldCount, runtimeManaged, tagless) ->
                                             let resultName = "t" + Ashes.Text.fromInt(target)
                                             in
-                                                if runtimeManaged
-                                                then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
-                                                else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
+                                                if isImmortalNullaryAlloc(fieldCount)(runtimeManaged)(tagless)
+                                                then
+                                                    ((target, emitImmortalNullaryAdt(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(tag)(lookupIndexed(tag)(cx.nullaryCellGlobals))(resultName)) :: tempEnv, terminated)
+                                                else
+                                                    if runtimeManaged
+                                                    then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
+                                                    else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
                                         | AllocAdtStack(target, tag, fieldCount, tagless) -> ((target, emitStackAllocAdt(builder)(i64)(tag)(fieldCount)(tagless)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // The reuse pair (`IrCodegen.Rc`): an arena `DropReuse` is statically
                         // unique, so its token is the cell itself; the RC-managed form consumes
@@ -1720,6 +1731,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                             programArgsGlobal = mc.moduleProgramArgsGlobal,
                                                             externalSymbols = mc.moduleExternalSymbols,
                                                             capabilityHandlerGlobals = mc.moduleCapabilityHandlerGlobals,
+                                                            nullaryCellGlobals = mc.moduleNullaryCellGlobals,
                                                             consoleGlobals = mc.moduleConsoleGlobals,
                                                             arenaRuntime = arena,
                                                             copyRuntime = mc.moduleCopyRuntime,
@@ -1815,6 +1827,28 @@ let recursive functionsUseBigInt functions =
     match functions with
         | [] -> false
         | IrFunction { instructions = instructions } :: rest -> instructionsUseBigInt(instructions) || functionsUseBigInt(rest)
+
+let recursive instructionsNullaryCellTags instructions found =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = AllocAdt(_target, tag, fieldCount, runtimeManaged, tagless) } :: rest ->
+            if isImmortalNullaryAlloc(fieldCount)(runtimeManaged)(tagless) && !containsInt(tag)(found)
+            then instructionsNullaryCellTags(rest)(tag :: found)
+            else instructionsNullaryCellTags(rest)(found)
+        | _ :: rest -> instructionsNullaryCellTags(rest)(found)
+
+let recursive collectNullaryCellTags functions found =
+    match functions with
+        | [] -> found
+        | IrFunction { instructions = instructions } :: rest ->
+            found
+            |> instructionsNullaryCellTags(instructions)
+            |> collectNullaryCellTags(rest)
+
+let recursive defineNullaryCellGlobals module_ i64 tags =
+    match tags with
+        | [] -> []
+        | tag :: rest -> (tag, addZeroWordGlobal(module_)(i64)("__ashes_rc_nullary_" + Ashes.Text.fromInt(tag))) :: defineNullaryCellGlobals(module_)(i64)(rest)
 
 // The C symbols the runtime itself declares for its own emitters. A program's `external` naming one
 // of them reuses that declaration instead of adding a second one under the same name.
@@ -1915,6 +1949,9 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                             |> collectExternalSymbols(entryFunction :: functions)
                                                             |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
                                                             moduleCapabilityHandlerGlobals = defineCapabilityHandlerGlobals(module_)(types.i64)(0)(capabilityHandlerGlobalCount),
+                                                            moduleNullaryCellGlobals = []
+                                                            |> collectNullaryCellTags(entryFunction :: functions)
+                                                            |> defineNullaryCellGlobals(module_)(types.i64),
                                                             moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
                                                             moduleArenaRuntime = arena,
                                                             moduleCopyRuntime = if usesCopy
