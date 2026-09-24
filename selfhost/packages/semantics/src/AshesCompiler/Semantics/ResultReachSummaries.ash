@@ -640,8 +640,8 @@ let recordValueName (name: Str) (registration: ReachRegistration) =
             then registration
             else
                 if containsName(name)(valueNames)
-                then ReachRegistration(functions = functions, valueNames = withoutName(name)(valueNames), ambiguous = addName(name)(ambiguous))
-                else ReachRegistration(functions = functions, valueNames = addName(name)(valueNames), ambiguous = ambiguous)
+                then ReachRegistration(functions = functions, valueNames = Ashes.Collection.Map.setStr(name)(false)(valueNames), ambiguous = Ashes.Collection.Map.setStr(name)(true)(ambiguous))
+                else ReachRegistration(functions = functions, valueNames = Ashes.Collection.Map.setStr(name)(true)(valueNames), ambiguous = ambiguous)
 
 let addFunction (function: ReachFunction) (registration: ReachRegistration) = registration with functions = function :: registration.functions
 
@@ -703,7 +703,7 @@ let registeredFunctionOf (key: Str) (name: Str) (enclosing: Maybe(Str)) (identit
                     nested = Some(ReachNestedShape(recursiveName = recursiveName, recursiveKey = recursiveKey, outer = outer, accumulator = accumulator)),
                     scope = scope
                     |> removeScopeNames(outer)
-                    |> setScopeName(recursiveName)(recursiveKey)
+                    |> Ashes.Collection.Map.setStr(recursiveName)(recursiveKey)
                     |> removeScopeNames([accumulator])
                 )
         | None ->
@@ -834,14 +834,14 @@ and registerBinding (isRecursive: Bool) (name: Str) (value: Expr) (body: Maybe(E
                 in
                     let recursiveScope =
                         if isRecursive
-                        then setScopeName(name)(key)(scope)
+                        then Ashes.Collection.Map.setStr(name)(key)(scope)
                         else scope
                     in
                         registration
                         |> recordValueName(name)
                         |> addFunction(registeredFunctionOf(key)(name)(enclosing)(identity)(value)(parameters)(innerBody)(recursiveScope))
                         |> registerExpr(value)(Some(key))(recursiveScope)
-                        |> registerBody(body)(enclosing)(setScopeName(name)(key)(scope))
+                        |> registerBody(body)(enclosing)(Ashes.Collection.Map.setStr(name)(key)(scope))
 
 // The scope after a top-level binding: the name bound to its function, or shadowing one.
 let scopeAfterBinding (name: Str) (value: Expr) (scope: ReachScope) =
@@ -1063,7 +1063,7 @@ let bindingScopeOf (registry: ReachRegistry) (scope: ReachScope) (name: Str) (va
         | ([], _innerBody) -> removeScopeName(name)(scope)
         | _ ->
             match Ashes.Collection.Map.getStr(name + "@" + Ashes.Text.fromInt(lambdaIdentityOf(value)))(registry.byIdentity) with
-                | Some(ReachFunction { key = key }) -> setScopeName(name)(key)(scope)
+                | Some(ReachFunction { key = key }) -> Ashes.Collection.Map.setStr(name)(key)(scope)
                 | None -> removeScopeName(name)(scope)
 
 let bindingScope (context: ReachContext) (scope: ReachScope) (name: Str) (value: Expr) = bindingScopeOf(context.registry)(scope)(name)(value)
@@ -1791,7 +1791,7 @@ let recursive solveReach (registry: ReachRegistry) (dependents: MapTree(Str, Lis
                                         in
                                             match enqueueDependents(waiting)(back)(dequeued) with
                                                 | (nextBack, nextQueued) ->
-                                                    solveReach(registry)(dependents)(setTable(key)(merged)(table))(rest)(nextBack)(nextQueued)(fuel - 1)
+                                                    solveReach(registry)(dependents)(Ashes.Collection.Map.setStr(key)(merged)(table))(rest)(nextBack)(nextQueued)(fuel - 1)
 
 let recursive functionKeys (functions: List(ReachFunction)) (keys: List(Str)) =
     match functions with
@@ -1816,7 +1816,7 @@ let recursive initialTableInto (functions: List(ReachFunction)) (table: ReachTab
         | [] -> table
         | ReachFunction { key = key } :: rest ->
             table
-            |> setTable(key)(reachBottom(Unit))
+            |> Ashes.Collection.Map.setStr(key)(reachBottom(Unit))
             |> initialTableInto(rest)
 
 let initialTable (functions: List(ReachFunction)) = initialTableInto(functions)(Ashes.Collection.Map.empty)

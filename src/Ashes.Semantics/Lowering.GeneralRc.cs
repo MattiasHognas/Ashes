@@ -117,7 +117,9 @@ public sealed partial class Lowering
     // FreshSlot, inside a loop, holds 1 once this iteration stored the slot's value and 0 once a back
     // edge left the value to a successor: only a value this iteration produced can be proven out of
     // its successors' reach by their being the loop's own parameters.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1);
+    // Predecessor marks the slot holding what a call's owned slot held before this iteration stored
+    // it again: an earlier iteration's value, left to a successor, that the loop still owns.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false);
 
     // Registers the owned slot just stored, marking it this iteration's when it sits in a loop.
     private void RegisterGeneralRcOwnedSlot(int slot, TypeRef type)
@@ -133,6 +135,32 @@ public sealed partial class Lowering
         }
 
         _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(slot, type, loop, freshSlot));
+    }
+
+    // Inside a loop, moves what the owned slot about to be stored still holds into a slot of its own:
+    // a value an earlier iteration left to a successor (a parameter threaded through a call) that
+    // no back edge released. Returns that slot, or -1 outside a loop.
+    private int SaveGeneralRcOwnedPredecessor(int ownedSlot)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_PREDECESSOR") is not null
+            || (_tcoCtx ?? _generalRcBackEdgeLoop) is null)
+        {
+            return -1;
+        }
+
+        int predecessorSlot = NewLocal();
+        int previousTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(previousTemp, ownedSlot));
+        Emit(new IrInst.StoreLocal(predecessorSlot, previousTemp));
+        return predecessorSlot;
+    }
+
+    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type)
+    {
+        if (predecessorSlot >= 0)
+        {
+            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true));
+        }
     }
 
     // The functions whose compiled result is owned under the contract, and the ones being lowered.
@@ -529,6 +557,7 @@ public sealed partial class Lowering
         int ownedFlagTemp = calleeReturnsOwned ? -1 : TryEmitClosureReturnsGeneralRcOwnedFlag(currentTemp);
         int callPreRestoreEndSlot = NewLocal();
         int ownedSlot = NewLocal();
+        int predecessorSlot = SaveGeneralRcOwnedPredecessor(ownedSlot);
         Emit(new IrInst.StoreLocal(ownedSlot, currentTemp));
         Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
         if (!calleeReturnsOwned)
@@ -549,6 +578,7 @@ public sealed partial class Lowering
 
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
+        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
         return resultTemp;
@@ -689,11 +719,14 @@ public sealed partial class Lowering
     /// </summary>
     private void EmitGeneralRcBackEdgeDrops(PendingTcoReset info, bool successorsNormalized)
     {
-        if (!_generalRcBackEdgeSlots.TryGetValue(_generalRcBackEdgeId, out List<GeneralRcOwnedSlot>? iterationSlots)
-            || iterationSlots.Count == 0)
+        if (!_generalRcBackEdgeSlots.TryGetValue(_generalRcBackEdgeId, out List<GeneralRcOwnedSlot>? capturedSlots)
+            || capturedSlots.Count == 0)
         {
             return;
         }
+
+        EmitGeneralRcPredecessorDrops(info, capturedSlots.Where(owned => owned.Predecessor).ToList(), successorsNormalized);
+        List<GeneralRcOwnedSlot> iterationSlots = capturedSlots.Where(owned => !owned.Predecessor).ToList();
 
         // A parameter placed on the reference-counted heap owns its successor only on the path that
         // normalized it; any other path may store an arena successor that borrows the owned values.
@@ -740,6 +773,28 @@ public sealed partial class Lowering
             int zeroTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(zeroTemp, 0));
             Emit(new IrInst.StoreLocal(owned.FreshSlot, zeroTemp));
+        }
+    }
+
+    // An earlier iteration's value is released once no successor can still name it: each successor
+    // is inline, a plain read of an owned slot (a result holding its own references), a parameter
+    // normalized onto the reference-counted heap, or of a type that cannot hold its parts. A
+    // parameter handed on unchanged may be that very value, so it counts only by its type.
+    private void EmitGeneralRcPredecessorDrops(PendingTcoReset info, List<GeneralRcOwnedSlot> predecessors, bool successorsNormalized)
+    {
+        int[] argumentSlots = _generalRcBackEdgeArgumentSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
+        foreach (GeneralRcOwnedSlot predecessor in predecessors)
+        {
+            List<TypeRef> parts = HeapPartTypes(predecessor.Type);
+            bool unreachable = Enumerable.Range(0, info.ArgTypes.Length).All(index =>
+                CanArenaReset(Prune(info.ArgTypes[index]))
+                || (index < argumentSlots.Length && argumentSlots[index] >= 0)
+                || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
+                || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
+            if (unreachable)
+            {
+                EmitGeneralRcOwnedSlotDrops([predecessor]);
+            }
         }
     }
 

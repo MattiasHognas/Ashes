@@ -161,7 +161,7 @@ let recursive addPredecessor (name: Str) (targets: List(Str)) (added: NameSet) (
             else
                 predecessors
                 |> Ashes.Collection.Map.upsertStr(target)([name])(given (existing) -> name :: existing)
-                |> addPredecessor(name)(rest)(addName(target)(added))
+                |> addPredecessor(name)(rest)(Ashes.Collection.Map.setStr(target)(true)(added))
 
 let recursive predecessorsOf (reversedNodes: List(ProvenanceFunctionNode)) (predecessors: Adjacency) =
     match reversedNodes with
@@ -193,7 +193,7 @@ let recursive computePostOrder (roots: List(Str)) (stack: List(DfsFrame)) (adj: 
             if containsName(name)(visited)
             then computePostOrder(roots)(Visit(more) :: rest)(adj)(visited)(postOrder)
             else
-                computePostOrder(roots)(Visit(targetsOf(adj)(name)) :: Exit(name) :: Visit(more) :: rest)(adj)(addName(name)(visited))(postOrder)
+                computePostOrder(roots)(Visit(targetsOf(adj)(name)) :: Exit(name) :: Visit(more) :: rest)(adj)(Ashes.Collection.Map.setStr(name)(true)(visited))(postOrder)
         | Exit(name) :: rest -> computePostOrder(roots)(rest)(adj)(visited)(name :: postOrder)
         | [] ->
             match roots with
@@ -209,7 +209,7 @@ let recursive computeSccs (order: List(Str)) (stack: List(List(Str))) (predecess
             if containsName(name)(visited)
             then computeSccs(order)(more :: rest)(predecessors)(visited)(component)(components)
             else
-                computeSccs(order)(targetsOf(predecessors)(name) :: more :: rest)(predecessors)(addName(name)(visited))(name :: component)(components)
+                computeSccs(order)(targetsOf(predecessors)(name) :: more :: rest)(predecessors)(Ashes.Collection.Map.setStr(name)(true)(visited))(name :: component)(components)
         | [] ->
             let finished =
                 match component with
