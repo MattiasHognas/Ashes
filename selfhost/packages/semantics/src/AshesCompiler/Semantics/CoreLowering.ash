@@ -8880,11 +8880,12 @@ let unifySelfCallResults (lowered: LoweredCoreValue) =
 // parameter slots; a loop that placed no parameter has nothing to walk and the zero store stays.
 // `emitTcoExitDrops` emits it with the walk, so this covers only the loop with no placed
 // parameter, at the point stage 0 reaches it: after the spine closes, before the result-ownership
-// epilogue.
-let reserveTcoExitTransferSlot (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
+// epilogue. A result of the contract's types is made the function's own first, and holds its own
+// reference, so no parameter is transferred as the result.
+let reserveTcoExitTransferSlot (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match stateTcoLoopFrame(state) with
         | Some(CoreTcoLoopFrame { bodyLabel = bodyLabel, runtimeManagedListSlots = [], runtimeManagedAdtSlots = [], runtimeManagedStrSlots = [] }) ->
-            if bodyLabel == label + "_body" && isRuntimeTemp(bodyTemp)(state)
+            if bodyLabel == label + "_body" && isRuntimeTemp(bodyTemp)(state) && !isGeneralRcValueType(bodyType)(state)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = slotState, local = transferSelectedSlot } ->
@@ -9056,7 +9057,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
         | LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None } ->
             match bodyState
             |> adoptNormalizedParameterResult(label)(loweredTemp)
-            |> reserveTcoExitTransferSlot(label)(loweredTemp)
+            |> reserveTcoExitTransferSlot(label)(loweredTemp)(bodyType)
             |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType)
             |> releaseNormalizedParameterBehindResult(label)(parameter)(body)(parameterType)(bodyType) with
                 | (loweredBody, bodyTemp) ->
@@ -16630,7 +16631,7 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                 | (boundBody, None) ->
                     match boundBody
                     |> adoptNormalizedParameterResult(label)(loweredTemp)
-                    |> reserveTcoExitTransferSlot(label)(loweredTemp)
+                    |> reserveTcoExitTransferSlot(label)(loweredTemp)(bodyType)
                     |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType) with
                         | (typedBody, bodyTemp) ->
                             let bodyRuntimeManaged = finishedResultRuntimeManaged(bodyTemp)(bodyType)(typedBody)
