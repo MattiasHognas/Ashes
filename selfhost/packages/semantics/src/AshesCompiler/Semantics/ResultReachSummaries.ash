@@ -597,7 +597,11 @@ let lookupScope (name: Str) (scope: ReachScope) =
             else Some(key)
         | None -> None
 
-let removeScopeName (name: Str) (scope: ReachScope) = Ashes.Collection.Map.setStr(name)("")(scope)
+// A name that names no function reads as absent already, so shadowing it leaves the scope as it is.
+let removeScopeName (name: Str) (scope: ReachScope) =
+    match lookupScope(name)(scope) with
+        | None -> scope
+        | Some(_key) -> Ashes.Collection.Map.setStr(name)("")(scope)
 
 let recursive removeScopeNames (names: List(Str)) (scope: ReachScope) =
     match names with
