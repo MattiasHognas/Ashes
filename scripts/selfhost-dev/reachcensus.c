@@ -199,6 +199,14 @@ int main(int argc, char **argv) {
                 uint64_t len; memcpy(&len, p + 16, 8);
                 if (len > 0 && len + 24 <= cells[i].size) printf("string root %.*s\n", (int)(len < 40 ? len : 40), (const char *)p + 24);
             }
+            // REACH_SHAPE=<size>: every root of that size with a pointer first, one line per root naming the size
+            // of the cell each of its first two words points at (0 for a word that is not a cell), for `sort |
+            // uniq -c` to tell a list cell from a pair and name what it holds.
+            if (getenv("REACH_SHAPE") && cells[i].size == (uint32_t)atoi(getenv("REACH_SHAPE")) && isptr && p) {
+                uint64_t second = 0; memcpy(&second, p + 24, 8);
+                long a = findcell(first), b = findcell(second);
+                printf("shape root %u %u %s @ %llx\n", a >= 0 ? cells[a].size : 0, b >= 0 ? cells[b].size : 0, second == 0 ? "nil" : b >= 0 ? "cell" : "int", (unsigned long long)(cells[i].addr + 16));
+            }
             if (topsize && cells[i].size == topsize && isptr) {
                 uint64_t got = classes[k].bytes - before;
                 int band = got < 128 ? 0 : got < 1024 ? 1 : got < 16384 ? 2 : got < 262144 ? 3 : 4;
