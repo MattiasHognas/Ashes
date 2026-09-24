@@ -22656,6 +22656,29 @@ let tmcCandidateCons (tailExpression: Expr) (state: CoreLoweringState) =
             destSlot >= 0 && tmcSelfCallTail(collectCallSpine(tailExpression))(state)
         | None -> false
 
+// Stage 0's `OwnContractHeadForTmcCell`: a head of the ownership contract's own types that a call
+// produced (its owned result, kept in an owned slot the function releases itself) takes a reference
+// of its own for the spine's cell, so the recursion builds its reference-counted spine instead of
+// recursing per element.
+let ownContractHeadForTmcCell (request: ConsumerRequest) (headExpression: Expr) (lowered: LoweredCoreValue) =
+    match (lowered, unspanArgument(headExpression)) with
+        | (LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, ExprCall(_function, _argument, _whitespace, _layout)) ->
+            match resolveType(state)(semanticType) with
+                | SemNamed(_symbolId, _name, _arguments) as named ->
+                    if requestsRuntimeList(request) && !isRuntimeTemp(temp)(state) && isGeneralRcValueType(named)(state)
+                    then
+                        match generalCopyPlanOf(named)(state) with
+                            | Some(plan) ->
+                                match emitGuardedDeepCopy(temp)(plan)(state) with
+                                    | (copied, ownedTemp) ->
+                                        copied
+                                        |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
+                                        |> success(ownedTemp)(semanticType)
+                            | None -> lowered
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
 // The transformed cons's own head prelude, deliberately identical to `lowerCons`'s up to the point
 // the tail would be lowered — a candidate tail is a saturated self-call, so the reuse-token rule
 // reaches the same request either way, and only the finisher differs. Keeping the prelude shared is
@@ -22677,6 +22700,7 @@ let lowerConsTmc head tail lower state =
                         |> normalizeRuntimeManagedConsHead(request)(head)(tail)
                         |> normalizePatternOwnerHead(request)(head)
                         |> retainListElement(request)(listTransfers(request)(state))(head)
+                        |> ownContractHeadForTmcCell(request)(head)
                         |> finishConsTmc(request)(listTransfers(request)(state))(frame)(loop)(head)(tail)(lower)
                     | _ -> lowerCons(head)(tail)(lower)(state)
 
