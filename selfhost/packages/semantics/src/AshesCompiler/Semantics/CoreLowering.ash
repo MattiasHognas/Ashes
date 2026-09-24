@@ -10579,15 +10579,18 @@ let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTc
         | Some(shape) -> isTcoListShape(shape) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
         | None -> false
 
-// A non-resource ADT whose whole cell has no shallow copy but whose arena deep copy is
-// synthesizable: the only accumulators whose in-place rebuild pays, a shallow-copied cell being
-// bounded by its copy-out already (stage 0's `LowerLambdaCoreScanDirectReuse` type test).
+// A non-resource ADT whose whole cell has no shallow copy and that the contract does not govern:
+// the only accumulators whose in-place rebuild pays, a shallow-copied cell being bounded by its
+// copy-out already (stage 0's `LowerLambdaCoreScanDirectReuse` type test). Its copier always
+// exists, since the caller found a constructor of it and the synthesized copier calls itself for a
+// self field and copies a type parameter's word as it is; `arenaDeepCopySupported` answers whether
+// an inline walk terminates instead, and refuses both.
 let directReuseAccumulatorType (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(named)(state) with
-        | HeapLayoutFacts { containsResource = containsResource, structuralCopy = structuralCopy, arenaDeepCopySupported = deepCopySupported } ->
+        | HeapLayoutFacts { containsResource = containsResource, structuralCopy = structuralCopy } ->
             match structuralCopy with
                 | ShallowCopy -> false
-                | _ -> !isResourceTypeName(typeName) && !containsResource && deepCopySupported
+                | _ -> !isResourceTypeName(typeName) && !containsResource && !isGeneralRcValueType(named)(state)
 
 let recursive moveCensusConstructorArities (layouts: List(CoreConstructorLayout)) =
     match layouts with
@@ -11845,24 +11848,27 @@ let isBorrowedRetainableParameterType (argumentType: SemanticType) (state: CoreL
 let keptWholeUnderOwnedResult facts index argument argumentTemp (resultNormalizedOwned: Bool) state = resultNormalizedOwned && calleeParameterBorrows(facts)(index) == false && isFreshRuntimeArgument(argument)(argumentTemp)(state) && calleeNormalizesArgument(facts)(index)(state) == false && argumentReachesResultWhole(facts)(index)(argumentTemp)(state)
 
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
-// the callee's result may keep is retained outright, its flag registered as pending.
+// the callee's result may keep is retained outright, its flag registered as pending. A value of
+// the contract's types is always passed borrowed, whatever the callee's own summary says.
 let argumentHandOffOf facts index argument argumentType argumentTemp (resultNormalizedOwned: Bool) state =
-    match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state), argumentRootSlotOf(argument)(state), keptWholeUnderOwnedResult(facts)(index)(argument)(argumentTemp)(resultNormalizedOwned)(state)) with
-        | (runtimeArgument, rootSlot, keptWhole) ->
-            CoreArgumentHandOff(
-                borrowsOnly = calleeParameterBorrows(facts)(index),
-                fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
-                runtimeArgument = runtimeArgument || rootSlot != None,
-                mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || (patternBindingArgumentRootSlot(argument)(state) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(state)) && calleeResultReachesArgument(facts)(index),
-                transfers = !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
-                keptWholeUnderOwnedResult = keptWhole,
-                normalizes = calleeNormalizesArgument(facts)(index)(state),
-                borrowedReach = rootSlot != None && calleeResultReachesArgument(facts)(index),
-                cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
-                pendingRootSlot = if runtimeArgument
-                then None
-                else rootSlot
-            )
+    (let contractBorrow = isGeneralRcValueType(argumentType)(state)
+    in
+        match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state), argumentRootSlotOf(argument)(state), !contractBorrow && keptWholeUnderOwnedResult(facts)(index)(argument)(argumentTemp)(resultNormalizedOwned)(state)) with
+            | (runtimeArgument, rootSlot, keptWhole) ->
+                CoreArgumentHandOff(
+                    borrowsOnly = contractBorrow || calleeParameterBorrows(facts)(index),
+                    fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
+                    runtimeArgument = runtimeArgument || rootSlot != None,
+                    mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || (patternBindingArgumentRootSlot(argument)(state) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(state)) && calleeResultReachesArgument(facts)(index),
+                    transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
+                    keptWholeUnderOwnedResult = keptWhole,
+                    normalizes = calleeNormalizesArgument(facts)(index)(state),
+                    borrowedReach = rootSlot != None && calleeResultReachesArgument(facts)(index),
+                    cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
+                    pendingRootSlot = if runtimeArgument
+                    then None
+                    else rootSlot
+                ))
 
 // The callee's `AcceptsRuntimeManagedArgument` bit, bit 62 of the closure's packed environment
 // size word, in a fresh flag temp.
@@ -12256,7 +12262,9 @@ let deferredSelfResultNamedByConsumer (context: CoreCallContext) (state: CoreLow
         | None -> false)
 
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
-// request (bit 1) beside the argument ownership flag (bit 0), when the call passes one.
+// request (bit 1) beside the argument ownership flag (bit 0), when the call passes one. Only the
+// last application of a spine asks: an earlier one yields a closure, which stage 0 sees as a
+// function type, while a self call of a recursive binding whose arrow is still open sees a variable.
 let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if requestsArenaResult(resultType)(state) && deferredSelfResultNamedByConsumer(context)(state) == false
     then
@@ -12282,7 +12290,9 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                 | (flaggedState, resultFlagTemp) ->
                     match freshTemp(flaggedState) with
                         | FreshTemp { state = targetState, temp = target } ->
-                            match emitArenaResultRequestWord(context)(argumentFlagTemp)(resultType)(targetState) with
+                            match if arity == 1
+                            then emitArenaResultRequestWord(context)(argumentFlagTemp)(resultType)(targetState)
+                            else (targetState, argumentFlagTemp) with
                                 | (wordState, wordTemp) ->
                                     CoreCallStage(
                                         lowered = wordState

@@ -1,0 +1,18 @@
+type Tree(v) =
+    | Leaf
+    | Node(Tree(v), Int, v, Tree(v))
+
+let recursive insert (key: Int) value tree =
+    match tree with
+        | Leaf -> Node(Leaf)(key)(value)(Leaf)
+        | Node(left, current, existing, right) ->
+            if key < current
+            then Node(insert(key)(value)(left))(current)(existing)(right)
+            else
+                if current < key
+                then Node(left)(current)(existing)(insert(key)(value)(right))
+                else tree
+
+Ashes.IO.print(match insert(2)("b")(insert(1)("a")(Leaf)) with
+    | Leaf -> 0
+    | Node(_left, key, _value, _right) -> key)

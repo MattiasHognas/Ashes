@@ -222,6 +222,11 @@ let recursive printEach (lines: List(Str)) =
 // releases: a function returning one hands it over owned, a caller keeps it in an owned slot it
 // releases at its end or at its back edge, behind a result it made independent first, and a caller
 // that cannot name its callee reads the closure's header to know which it got.
+// generic_collection_loop_reuses_matched_accumulator matches a loop parameter of a generic
+// recursive variant: it is a direct-reuse root whose copier exists though its type parameter's field
+// and its self field defeat an inline walk. recursive_insert_curried_stage_requests_no_arena_result
+// applies a recursive binding to itself one argument at a time: only the last application asks for
+// an arena result, since the earlier ones yield closures.
 // tco_list_parameter_resolved_by_back_edge walks a list into an unannotated accumulator with
 // no operator in the body: the accumulator's type is a variable at the loop entry, so its
 // active flag is allocated where the back edge resolves it, after the arm's pattern locals.
@@ -289,6 +294,8 @@ let fixtures =
         "tco_direct_conditional_accumulator_borrows_child",
         "owned_value_released_behind_optional_scalar_result",
         "tco_accumulator_of_owned_call_results",
+        "generic_collection_loop_reuses_matched_accumulator",
+        "recursive_insert_curried_stage_requests_no_arena_result",
         "owned_result_of_unnamed_callee_read_from_closure_header",
         "parameter_released_behind_pair_result",
         "closure_environment_normalizes_record_of_list",
