@@ -418,25 +418,26 @@ let recursive compilerNameOwner name definitions =
             then Some(qualifiedName)
             else compilerNameOwner(name)(rest)
 
-let recursive allDefinitions modules =
+// The owner of a compiler name among the completed modules' definitions, searched module by module
+// in order rather than over a concatenation of them, which every module rebuilt and left behind.
+let recursive compilerNameOwnerInModules name modules =
     match modules with
-        | [] -> []
+        | [] -> None
         | StitchedModuleScope { name = _name, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } :: rest ->
-            appendList(
-                definitions,
-                allDefinitions(rest)
-            )
+            match compilerNameOwner(name)(definitions) with
+                | Some(owner) -> Some(owner)
+                | None -> compilerNameOwnerInModules(name)(rest)
 
-let recursive validateCompilerNames definitions existing =
+let recursive validateCompilerNames definitions existingModules =
     match definitions with
         | [] -> None
         | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
-            match compilerNameOwner(compilerName)(existing) with
+            match compilerNameOwnerInModules(compilerName)(existingModules) with
                 | Some(owner) ->
                     qualifiedName
                     |> CompilerPrivateNameCollision(compilerName)(owner)
                     |> Some
-                | None -> validateCompilerNames(rest)(existing)
+                | None -> validateCompilerNames(rest)(existingModules)
 
 let resolvedModule resolved =
     match resolved with
@@ -817,9 +818,7 @@ let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
                         | None ->
                             match materializeDefinitions(pending)(unit)(nextDefinitionId)([]) with
                                 | (definitions, nextId) ->
-                                    match completedModules
-                                    |> allDefinitions
-                                    |> validateCompilerNames(definitions) with
+                                    match completedModules |> validateCompilerNames(definitions) with
                                         | Some(error) -> Error(error)
                                         | None ->
                                             match buildImportBindings(
