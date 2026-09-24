@@ -376,7 +376,7 @@ public sealed class LinuxBackendCoverageTests
 
         var instructions = new List<IrInst>
         {
-            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
             new IrInst.RcIsUnique(1, 0),
             new IrInst.PrintBool(1),
             new IrInst.RcDup(2, 0, RuntimeManaged: true),
@@ -431,6 +431,44 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_shares_one_immortal_cell_per_reference_counted_nullary_constructor()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A reference-counted nullary constructor carries only its tag: every allocation of one tag
+        // is the same immortal cell, never unique, and retains and releases leave it alone.
+        List<IrInst> instructions = new()
+        {
+            new IrInst.AllocAdt(0, 2, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(1, 2, 0, RuntimeManaged: true),
+            new IrInst.CmpIntEq(2, 0, 1),
+            new IrInst.PrintBool(2),
+            new IrInst.AllocAdt(3, 3, 0, RuntimeManaged: true),
+            new IrInst.CmpIntNe(4, 0, 3),
+            new IrInst.PrintBool(4),
+            new IrInst.RcIsUnique(5, 0),
+            new IrInst.PrintBool(5),
+            new IrInst.IsReferenceCounted(6, 0),
+            new IrInst.PrintBool(6),
+            new IrInst.RcDrop(0, "Choice", RuntimeManaged: true),
+            new IrInst.RcDrop(1, "Choice", RuntimeManaged: true),
+            new IrInst.GetAdtTag(7, 1),
+            new IrInst.PrintInt(7),
+            new IrInst.LoadConstInt(8, 0),
+            new IrInst.Return(8),
+        };
+        IrFunction function = new("entry", instructions, 0, 9, false);
+        IrProgram program = new(function, [], [], false, false, true, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("true\ntrue\nfalse\ntrue\n2\n");
+    }
+
+    [Test]
     public async Task Linux_backend_runtime_drop_reuse_falls_back_when_cell_is_shared()
     {
         if (!OperatingSystem.IsLinux())
@@ -440,10 +478,10 @@ public sealed class LinuxBackendCoverageTests
 
         List<IrInst> instructions = new()
         {
-            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
             new IrInst.RcDup(1, 0, RuntimeManaged: true),
-            new IrInst.DropReuse(2, 0, 0, RuntimeManaged: true),
-            new IrInst.AllocReusing(3, 1, 0, 2, RuntimeManaged: true),
+            new IrInst.DropReuse(2, 0, 1, RuntimeManaged: true),
+            new IrInst.AllocReusing(3, 1, 1, 2, RuntimeManaged: true),
             new IrInst.CmpIntNe(4, 1, 3),
             new IrInst.PrintBool(4),
             new IrInst.RcIsUnique(5, 1),
@@ -519,7 +557,7 @@ public sealed class LinuxBackendCoverageTests
 
         List<IrInst> instructions = new()
         {
-            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
             new IrInst.AllocAdt(1, 0, 1, RuntimeManaged: true),
             new IrInst.SetAdtField(1, 0, 0),
             new IrInst.RcDup(2, 1, RuntimeManaged: true),
@@ -1388,7 +1426,7 @@ public sealed class LinuxBackendCoverageTests
 
         List<IrInst> instructions = new()
         {
-            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
             new IrInst.RcDup(1, 0, RuntimeManaged: true),
             new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
             new IrInst.RcIsUnique(2, 1),
@@ -1444,7 +1482,7 @@ public sealed class LinuxBackendCoverageTests
 
         List<IrInst> instructions = new()
         {
-            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
             new IrInst.RcIsUnique(1, 0, MayBeEmpty: true),
             new IrInst.PrintBool(1),
             new IrInst.RcDrop(0, "UnitBox", RuntimeManaged: true),
@@ -1469,7 +1507,7 @@ public sealed class LinuxBackendCoverageTests
 
         List<IrInst> instructions = new()
         {
-            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
             new IrInst.LoadConstBool(2, true),
             new IrInst.RcDup(1, 0, RuntimeManaged: true),
             new IrInst.JumpIfFalse(2, "else"),
@@ -1504,7 +1542,7 @@ public sealed class LinuxBackendCoverageTests
 
         var instructions = new List<IrInst>
         {
-            new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
+            new IrInst.AllocAdt(0, 0, 1, RuntimeManaged: true),
             new IrInst.AllocAdt(1, 0, 1, RuntimeManaged: true),
             new IrInst.SetAdtField(1, 0, 0),
             new IrInst.RcDup(2, 1, RuntimeManaged: true),
