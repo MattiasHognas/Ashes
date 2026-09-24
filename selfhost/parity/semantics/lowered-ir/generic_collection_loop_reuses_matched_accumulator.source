@@ -1,0 +1,13 @@
+type Bag(a) =
+    | Empty
+    | Item(Str, a, Bag(a))
+
+let recursive fill (n: Int) (bag: Bag(List(Str))) =
+    if n == 0
+    then
+        match bag with
+            | Empty -> 0
+            | Item(_key, _value, _rest) -> 1
+    else fill(n - 1)(Item("k" + Ashes.Text.fromInt(n))(["v"])(bag))
+
+Ashes.IO.print(fill(3)(Empty))
