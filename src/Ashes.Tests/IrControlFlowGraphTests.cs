@@ -151,6 +151,44 @@ public sealed class IrControlFlowGraphTests
     }
 
     [Test]
+    public void Immediate_dominators_answer_every_dominance_query_as_the_dominator_sets_do()
+    {
+        // entry branches to a loop whose body branches to two arms that rejoin before the back
+        // edge; a block after the Return is unreachable.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstBool(0, true),
+            new IrInst.JumpIfFalse(0, "exit"),
+            new IrInst.Label("head"),
+            new IrInst.JumpIfFalse(0, "right"),
+            new IrInst.LoadConstInt(1, 1),
+            new IrInst.Jump("join"),
+            new IrInst.Label("right"),
+            new IrInst.LoadConstInt(1, 2),
+            new IrInst.Label("join"),
+            new IrInst.JumpIfFalse(0, "exit"),
+            new IrInst.Jump("head"),
+            new IrInst.Label("exit"),
+            new IrInst.Return(1),
+            new IrInst.Label("dead"),
+            new IrInst.Jump("join"),
+        };
+
+        var blocks = IrControlFlowGraph.Build(instructions);
+        var dominators = IrControlFlowGraph.ComputeDominators(blocks);
+        int[] idoms = IrControlFlowGraph.ComputeImmediateDominators(blocks);
+
+        for (int block = 0; block < blocks.Count; block++)
+        {
+            for (int dominator = 0; dominator < blocks.Count; dominator++)
+            {
+                IrControlFlowGraph.Dominates(idoms, dominator, block)
+                    .ShouldBe(dominators[block].Contains(dominator), $"does {dominator} dominate {block}");
+            }
+        }
+    }
+
+    [Test]
     public void Switch_links_every_case_and_the_default_as_successors_with_correct_predecessors()
     {
         var instructions = new List<IrInst>

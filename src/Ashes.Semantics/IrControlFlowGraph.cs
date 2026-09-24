@@ -153,6 +153,138 @@ internal static class IrControlFlowGraph
             count: blocks.Count);
 
     /// <summary>
+    /// Computes the immediate dominator of every block, indexed by block: the entry (index 0) is its
+    /// own, an unreachable block has none (-1), and every other block's is refined over the reverse
+    /// postorder of the blocks reachable from the entry until no block changes. The table is one int
+    /// per block rather than a set per block; <see cref="Dominates"/> answers a query by walking it.
+    /// </summary>
+    public static int[] ComputeImmediateDominators<T>(IReadOnlyList<T> blocks) where T : IHasCfgEdges
+    {
+        int[] idoms = new int[blocks.Count];
+        Array.Fill(idoms, -1);
+        if (blocks.Count == 0)
+        {
+            return idoms;
+        }
+
+        List<int> order = ReversePostorder(blocks);
+        int[] positions = new int[blocks.Count];
+        for (int position = 0; position < order.Count; position++)
+        {
+            positions[order[position]] = position;
+        }
+
+        idoms[0] = 0;
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (int block in order)
+            {
+                int candidate = block == 0 ? -1 : ImmediateDominatorCandidate(blocks[block].Predecessors, idoms, positions);
+                if (candidate >= 0 && candidate != idoms[block])
+                {
+                    idoms[block] = candidate;
+                    changed = true;
+                }
+            }
+        }
+        while (changed);
+
+        return idoms;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="dominator"/> dominates <paramref name="block"/> under the immediate
+    /// dominators <paramref name="idoms"/>: the block itself, or a block on its immediate-dominator
+    /// chain up to the entry. An unreachable block is dominated only by itself.
+    /// </summary>
+    public static bool Dominates(int[] idoms, int dominator, int block)
+    {
+        int current = block;
+        while (current != dominator)
+        {
+            int parent = idoms[current];
+            if (parent < 0 || parent == current)
+            {
+                return false;
+            }
+
+            current = parent;
+        }
+
+        return true;
+    }
+
+    // The immediate dominator a block's predecessors agree on this round: every predecessor that
+    // already has one takes part, and an unreachable or not yet processed predecessor is skipped.
+    private static int ImmediateDominatorCandidate(List<int> predecessors, int[] idoms, int[] positions)
+    {
+        int candidate = -1;
+        foreach (int predecessor in predecessors)
+        {
+            if (idoms[predecessor] < 0)
+            {
+                continue;
+            }
+
+            candidate = candidate < 0 ? predecessor : IntersectImmediateDominators(idoms, positions, predecessor, candidate);
+        }
+
+        return candidate;
+    }
+
+    // The nearest common ancestor of two blocks in the immediate-dominator tree so far, found by
+    // walking whichever finger sits later in the reverse postorder up to its immediate dominator.
+    private static int IntersectImmediateDominators(int[] idoms, int[] positions, int left, int right)
+    {
+        while (left != right)
+        {
+            while (positions[left] > positions[right])
+            {
+                left = idoms[left];
+            }
+
+            while (positions[right] > positions[left])
+            {
+                right = idoms[right];
+            }
+        }
+
+        return left;
+    }
+
+    private static List<int> ReversePostorder<T>(IReadOnlyList<T> blocks) where T : IHasCfgEdges
+    {
+        var postorder = new List<int>(blocks.Count);
+        bool[] visited = new bool[blocks.Count];
+        var open = new Stack<(int Block, int NextSuccessor)>();
+        visited[0] = true;
+        open.Push((0, 0));
+        while (open.Count > 0)
+        {
+            (int block, int nextSuccessor) = open.Pop();
+            List<int> successors = blocks[block].Successors;
+            if (nextSuccessor >= successors.Count)
+            {
+                postorder.Add(block);
+                continue;
+            }
+
+            open.Push((block, nextSuccessor + 1));
+            int successor = successors[nextSuccessor];
+            if (!visited[successor])
+            {
+                visited[successor] = true;
+                open.Push((successor, 0));
+            }
+        }
+
+        postorder.Reverse();
+        return postorder;
+    }
+
+    /// <summary>
     /// Computes, for every block, the set of blocks that post-dominate it (every path from that
     /// block to any function exit passes through each member of its set) — the same
     /// meet-over-predecessors fixpoint run over the reversed graph, rooted at a virtual exit node

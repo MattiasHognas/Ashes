@@ -1339,6 +1339,11 @@ public sealed partial class Lowering
             return;
         }
 
+        if (TryEmitContractRecordDropCall(valueTemp, named))
+        {
+            return;
+        }
+
         ConstructorSymbol constructor = named.Symbol.Constructors[0];
         List<OrdinaryHeapLayoutChild> childFields =
             GetOwnedOrdinaryHeapChildren(named, constructor);

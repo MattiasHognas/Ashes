@@ -67,7 +67,7 @@ internal static class PerceusLifetimePlacement
             .Select(drop => drop.OwnerSlot)
             .Distinct()
             .ToArray();
-        IReadOnlyList<HashSet<int>>? dominators = null;
+        int[]? dominators = null;
         var usedTempsByInstruction = new Dictionary<IrInst, int[]>(
             ReferenceEqualityComparer.Instance);
         HashSet<int> arenaAdtCells = CollectArenaAdtCells(instructions);
@@ -145,7 +145,7 @@ internal static class PerceusLifetimePlacement
         IrInst.RcDrop anchor,
         int anchorIndex,
         ref int tempCount,
-        ref IReadOnlyList<HashSet<int>>? dominators,
+        ref int[]? dominators,
         Dictionary<IrInst, int[]> usedTempsByInstruction,
         string functionLabel,
         IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls,
@@ -164,7 +164,7 @@ internal static class PerceusLifetimePlacement
             return;
         }
 
-        dominators ??= ComputeDominators(blocks);
+        dominators ??= IrControlFlowGraph.ComputeImmediateDominators(blocks);
         HashSet<int> region = ReachableBeforeBoundary(
             blocks, dominators, definitionBlock, boundaryBlock);
         if (region.Count == 0)
@@ -697,7 +697,7 @@ internal static class PerceusLifetimePlacement
 
     private static HashSet<int> ReachableBeforeBoundary(
         List<Block> blocks,
-        IReadOnlyList<HashSet<int>> dominators,
+        int[] dominators,
         int start,
         int boundary)
     {
@@ -713,7 +713,7 @@ internal static class PerceusLifetimePlacement
             // dominated by the definition so a drop never references the arm-local definition
             // temp on an unrelated path.
             if (current > boundary
-                || !dominators[current].Contains(start)
+                || !IrControlFlowGraph.Dominates(dominators, start, current)
                 || !reachable.Add(current)
                 || current == boundary)
             {
@@ -734,9 +734,6 @@ internal static class PerceusLifetimePlacement
     // (OwnerLoads/OwnerUses/HasUse/LiveIn/LiveOut) alongside the shared graph shape. Wrapping,
     // rather than reimplementing, keeps this pass's block graph and its Successors/Predecessors
     // edges byte-for-byte identical to what IrControlFlowGraph.Build produces.
-
-    private static IReadOnlyList<HashSet<int>> ComputeDominators(List<Block> blocks)
-        => IrControlFlowGraph.ComputeDominators(blocks);
 
     private static List<Block> BuildBlocks(List<IrInst> instructions)
         => [.. IrControlFlowGraph.Build(instructions).Select(b => new Block(b))];

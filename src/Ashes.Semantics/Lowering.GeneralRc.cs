@@ -507,6 +507,11 @@ public sealed partial class Lowering
     private bool IsGeneralRcValueType(TypeRef type)
     {
         TypeRef pruned = Prune(type);
+        if (Environment.GetEnvironmentVariable("DEBUG_GRC") is { } debugName && pruned is TypeRef.TNamedType debugNamed && string.Equals(debugNamed.Symbol.Name, debugName, StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine($"GRC {debugName}: enabled={GeneralRcEnabled} arena={CanArenaReset(pruned)} copyout={GetCallCopyOutKind(pruned, out _, out _)} unresolved={ContainsUnresolvedLayoutType(pruned, [])} admissible={IsGeneralRcAdmissible(pruned)} reaches={ReachesGeneralRcNamedType(pruned, new HashSet<string>(StringComparer.Ordinal))} named={IsGeneralRcNamedType(debugNamed)} normalizer={NeedsRuntimeManagedAdtNormalizer(debugNamed)} recursive={CanRuntimeManageRecursiveCopyAdt(debugNamed)} ownedChild={CanRuntimeManageOwnedChildAdt(debugNamed)}");
+        }
+
         return GeneralRcEnabled
             && !CanArenaReset(pruned)
             && GetCallCopyOutKind(pruned, out _, out _) == CopyOutKind.None
@@ -520,8 +525,90 @@ public sealed partial class Lowering
     /// a heap child, and that the recursive and owned-child reference-counted paths do not already
     /// manage on their own terms.
     /// </summary>
+    // A record the contract admits although its copy could be written inline: it is copied by the
+    // synthesized normalizer all the same, one call per site instead of its whole graph.
+    private bool IsInlineCopiedContractRecord(TypeRef.TNamedType named)
+        => Environment.GetEnvironmentVariable("GRC_INLINE_RECORDS") is not null
+            && GeneralRcEnabled
+            && !NeedsRuntimeManagedAdtNormalizer(named)
+            && IsNormalizableUncoveredRecord(named)
+            && IsGeneralRcNamedType(named);
+
+    private static readonly HashSet<string>? InlineRecordNames =
+        Environment.GetEnvironmentVariable("GRC_INLINE_FILE") is { } path
+            ? new HashSet<string>(File.ReadAllLines(path), StringComparer.Ordinal)
+            : null;
+
+    private static readonly HashSet<string> LoggedInlineRecords = new(StringComparer.Ordinal);
+
+    private static bool InlineRecordSelected(TypeRef.TNamedType named)
+    {
+        string name = named.Symbol.Name;
+        if (Environment.GetEnvironmentVariable("GRC_INLINE_LOG") is not null)
+        {
+            lock (LoggedInlineRecords)
+            {
+                if (LoggedInlineRecords.Add(name))
+                {
+                    Console.Error.WriteLine($"INLREC {name}");
+                }
+            }
+        }
+
+        return InlineRecordNames is null || InlineRecordNames.Contains(name);
+    }
+
+    private readonly Dictionary<string, string> _contractRecordDropperLabels = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _contractRecordDroppersInProgress = new(StringComparer.Ordinal);
+
+    // A loop threading such a record releases it at every back edge and exit, so its release is
+    // one call to a dropper synthesized once per type, whose body is the release written inline.
+    private bool TryEmitContractRecordDropCall(int valueTemp, TypeRef.TNamedType named)
+    {
+        string key = Pretty(named);
+        if (!IsInlineCopiedContractRecord(named) || _contractRecordDroppersInProgress.Contains(key) || Environment.GetEnvironmentVariable("GRC_NO_RECDROP") is not null)
+        {
+            return false;
+        }
+
+        if (!_contractRecordDropperLabels.TryGetValue(key, out string? label))
+        {
+            label = $"__rcdrop_record_{_nextLambdaId++}";
+            _contractRecordDropperLabels[key] = label;
+            _contractRecordDroppersInProgress.Add(key);
+            SynthesizedBodyState saved = BeginSynthesizedBody();
+            NewLocal(); // slot 0: env (implicit)
+            int argSlot = NewLocal(); // slot 1: value (implicit)
+            int argTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(argTemp, argSlot));
+            EmitRuntimeManagedAdtDrop(argTemp, named);
+            int returnTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(returnTemp, 0));
+            Emit(new IrInst.Return(returnTemp));
+            AddFunction(
+                new IrFunction(
+                    Label: label,
+                    Instructions: new List<IrInst>(_inst),
+                    LocalCount: _nextLocalSlot,
+                    TempCount: _nextTempSlot,
+                    HasEnvAndArgParams: true),
+                new IrFunctionOrigin(
+                    label,
+                    IrFunctionOriginKind.RuntimeManagedAdtDropper,
+                    CompilerOwner: new CompilerFunctionOwner(CompilerFunctionOwnerKind.Type, key),
+                    StableDiscriminator: key));
+            RestoreEnclosingBodyState(saved);
+            _contractRecordDroppersInProgress.Remove(key);
+        }
+
+        int envTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(envTemp, 0));
+        Emit(new IrInst.CallKnown(NewTemp(), label, envTemp, valueTemp));
+        return true;
+    }
+
     private bool IsGeneralRcNamedType(TypeRef.TNamedType named) =>
-        NeedsRuntimeManagedAdtNormalizer(named)
+        (NeedsRuntimeManagedAdtNormalizer(named) || (Environment.GetEnvironmentVariable("GRC_INLINE_RECORDS") is not null && IsNormalizableUncoveredRecord(named) && InlineRecordSelected(named)))
         && !CanRuntimeManageRecursiveCopyAdt(named)
         && !CanRuntimeManageOwnedChildAdt(named)
         && named.Symbol.Constructors.Any(constructor =>
@@ -540,6 +627,19 @@ public sealed partial class Lowering
         _ => false,
     };
 
+    private bool IsArenaResultRequestingCall(int resultTemp)
+    {
+        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 64; i--)
+        {
+            if (_inst[i] is IrInst.CallClosure call && call.Target == resultTemp)
+            {
+                return _arenaResultRequestingCalls.Contains(call);
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// A call result of such a type, owned by the caller once the call's window is reset: taken
     /// over as it is from a callee known to return it owned (<paramref name="calleeReturnsOwned"/>),
@@ -554,21 +654,39 @@ public sealed partial class Lowering
         TypeRef callResultType,
         bool calleeReturnsOwned)
     {
+        // A callee that honours the request for an arena result returns an arena copy, which is
+        // normalized; a reference-counted result is one it returned as it does without the request.
+        bool arenaResultRequested = IsArenaResultRequestingCall(currentTemp);
         int ownedFlagTemp = calleeReturnsOwned ? -1 : TryEmitClosureReturnsGeneralRcOwnedFlag(currentTemp);
         int callPreRestoreEndSlot = NewLocal();
         int ownedSlot = NewLocal();
         int predecessorSlot = SaveGeneralRcOwnedPredecessor(ownedSlot);
         Emit(new IrInst.StoreLocal(ownedSlot, currentTemp));
         Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
-        if (!calleeReturnsOwned)
+        if (!calleeReturnsOwned || arenaResultRequested)
         {
             // A closure whose header says its function returns the result owned hands it over.
             string ownedLabel = NewLabel("general_rc_result_owned");
+            string? normalizeLabel = ownedFlagTemp >= 0 || arenaResultRequested ? NewLabel("general_rc_result_normalize") : null;
+            if (arenaResultRequested)
+            {
+                int referenceCountedTemp = NewTemp();
+                Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, currentTemp));
+                Emit(new IrInst.JumpIfFalse(referenceCountedTemp, normalizeLabel!));
+                if (calleeReturnsOwned)
+                {
+                    Emit(new IrInst.Jump(ownedLabel));
+                }
+            }
+
             if (ownedFlagTemp >= 0)
             {
-                string normalizeLabel = NewLabel("general_rc_result_normalize");
-                Emit(new IrInst.JumpIfFalse(ownedFlagTemp, normalizeLabel));
+                Emit(new IrInst.JumpIfFalse(ownedFlagTemp, normalizeLabel!));
                 Emit(new IrInst.Jump(ownedLabel));
+            }
+
+            if (normalizeLabel is not null)
+            {
                 Emit(new IrInst.Label(normalizeLabel));
             }
 
@@ -1048,7 +1166,7 @@ public sealed partial class Lowering
     {
         if (releaseSourceChildren
             || valueType is not TypeRef.TNamedType named
-            || !NeedsRuntimeManagedAdtNormalizer(named))
+            || !(NeedsRuntimeManagedAdtNormalizer(named) || IsInlineCopiedContractRecord(named)))
         {
             throw new InvalidOperationException($"Unsupported runtime-managed TCO aggregate: {Pretty(valueType)}.");
         }
