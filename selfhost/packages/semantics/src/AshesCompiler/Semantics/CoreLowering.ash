@@ -5771,7 +5771,7 @@ let runtimeManagedAdtLayout (facts: HeapLayoutFacts) =
 // lists, tuples and algebraic data types, recursive and generic ones included. Closures,
 // resources, tasks and unresolved types are excluded. A named type already on the walk's path is
 // taken as admissible, which is what lets a recursive type through.
-let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Str)) (state: CoreLoweringState) =
+let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> true
         | SemBytes -> true
@@ -5782,7 +5782,7 @@ let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Str
             if resultSurvivesReset(named)(state)
             then true
             else
-                if name == "Task" || containsName(formatSemanticType(named))(path)
+                if name == "Task" || containsType(named)(path)
                 then name != "Task"
                 else
                     match (state
@@ -5791,13 +5791,13 @@ let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Str
                         | ([], _facts) -> false
                         | (_layouts, HeapLayoutFacts { containsResource = true }) -> false
                         | (_layouts, HeapLayoutFacts { containsUnresolvedType = true }) -> false
-                        | (_layouts, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(formatSemanticType(named) :: path)(state)
+                        | (_layouts, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
         | resolved -> canArenaResetLayout(resolved)
-and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(Str)) (state: CoreLoweringState) =
+and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> true
         | semanticType :: rest -> isGeneralRcAdmissible(semanticType)(path)(state) && allGeneralRcAdmissible(rest)(path)(state)
-and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(Str)) (state: CoreLoweringState) =
+and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match children with
         | [] -> true
         | HeapLayoutChild { dropKind = DropClosure } :: _rest -> false
@@ -5898,18 +5898,18 @@ let isGeneralRcNamedType (named: SemanticType) (state: CoreLoweringState) =
         | _ -> false
 
 // Stage 0's `ReachesGeneralRcNamedType`.
-let recursive reachesGeneralRcNamedType (semanticType: SemanticType) (path: List(Str)) (state: CoreLoweringState) =
+let recursive reachesGeneralRcNamedType (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemList(element) -> reachesGeneralRcNamedType(element)(path)(state)
         | SemTuple(elements) -> anyReachesGeneralRcNamedType(elements)(path)(state)
         | SemNamed(_symbolId, _name, _arguments) as named ->
-            isGeneralRcNamedType(named)(state) || !containsName(formatSemanticType(named))(path) && anyChildReachesGeneralRcNamedType(heapChildrenOfNamed(named)(state))(formatSemanticType(named) :: path)(state)
+            isGeneralRcNamedType(named)(state) || !containsType(named)(path) && anyChildReachesGeneralRcNamedType(heapChildrenOfNamed(named)(state))(named :: path)(state)
         | _ -> false
-and anyReachesGeneralRcNamedType (types: List(SemanticType)) (path: List(Str)) (state: CoreLoweringState) =
+and anyReachesGeneralRcNamedType (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> false
         | semanticType :: rest -> reachesGeneralRcNamedType(semanticType)(path)(state) || anyReachesGeneralRcNamedType(rest)(path)(state)
-and anyChildReachesGeneralRcNamedType (children: List(HeapLayoutChild)) (path: List(Str)) (state: CoreLoweringState) =
+and anyChildReachesGeneralRcNamedType (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match children with
         | [] -> false
         | HeapLayoutChild { childType = childType } :: rest -> reachesGeneralRcNamedType(childType)(path)(state) || anyChildReachesGeneralRcNamedType(rest)(path)(state)

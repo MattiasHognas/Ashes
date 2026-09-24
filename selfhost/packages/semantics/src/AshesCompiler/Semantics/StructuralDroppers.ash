@@ -35,6 +35,7 @@ export (
     type DropperSynthesis(..),
     type DropperBody(..),
     value emptyDropperLabelCache,
+    value containsType,
     value structuralReleaseNeedsHelper,
     value ownedChildrenOf,
     value isScalarResultType,
@@ -402,15 +403,24 @@ let registerGeneralDropperLabel (key: Str) (body: DropperBody) =
             let label = "__rcdrop_general_" + Ashes.Text.fromInt(nextLambdaId)
             in (label, (body with cache = (body.cache with generalDropperLabels = (key, label) :: labels), nextLambdaId = nextLambdaId + 1))
 
-let recursive containsTypeKey (key: Str) (path: List(Str)) =
+// Whether two named types are the same one for the admissibility walk's recursion check, as their
+// rendered text would say: an argument-free type by its name, without rendering a copy of it.
+let sameTypeKey (left: SemanticType) (right: SemanticType) =
+    match (left, right) with
+        | (SemNamed(_leftId, leftName, []), SemNamed(_rightId, rightName, [])) -> leftName == rightName
+        | (SemNamed(_leftId, _leftName, []), _) -> false
+        | (_, SemNamed(_rightId, _rightName, [])) -> false
+        | _ -> formatSemanticType(left) == formatSemanticType(right)
+
+let recursive containsType (semanticType: SemanticType) (path: List(SemanticType)) =
     match path with
         | [] -> false
-        | candidate :: rest -> candidate == key || containsTypeKey(key)(rest)
+        | candidate :: rest -> sameTypeKey(candidate)(semanticType) || containsType(semanticType)(rest)
 
 // Stage 0's `IsGeneralRcAdmissible` over the synthesis environment: a resolved graph of inline
 // values, strings, byte buffers, big integers, lists, tuples and algebraic data types. A named
 // type already on the walk's path is taken as admissible, which lets a recursive type through.
-let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Str)) (body: DropperBody) =
+let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (body: DropperBody) =
     match semanticType with
         | SemString -> true
         | SemBytes -> true
@@ -418,7 +428,7 @@ let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Str))
         | SemList(element) -> generalRcAdmissible(element)(path)(body)
         | SemTuple(elements) -> allGeneralRcAdmissible(elements)(path)(body)
         | SemNamed(_symbolId, _name, _arguments) ->
-            if containsTypeKey(formatSemanticType(semanticType))(path)
+            if containsType(semanticType)(path)
             then true
             else
                 match (namedTypeConstructors(semanticType)(body), body
@@ -427,13 +437,13 @@ let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Str))
                     | ([], _facts) -> false
                     | (_constructors, HeapLayoutFacts { containsResource = true }) -> false
                     | (_constructors, HeapLayoutFacts { containsUnresolvedType = true }) -> false
-                    | (_constructors, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(formatSemanticType(semanticType) :: path)(body)
+                    | (_constructors, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(semanticType :: path)(body)
         | other -> canArenaResetLayout(other)
-and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(Str)) (body: DropperBody) =
+and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (body: DropperBody) =
     match types with
         | [] -> true
         | semanticType :: rest -> generalRcAdmissible(semanticType)(path)(body) && allGeneralRcAdmissible(rest)(path)(body)
-and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(Str)) (body: DropperBody) =
+and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(SemanticType)) (body: DropperBody) =
     match children with
         | [] -> true
         | HeapLayoutChild { dropKind = DropClosure } :: _rest -> false

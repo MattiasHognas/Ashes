@@ -193,6 +193,12 @@ int main(int argc, char **argv) {
                     if (t >= 0 && cells[t].live && !(cells[t].mark & 5)) { cells[t].mark |= 4; push((size_t)t); }
                 }
             }
+            // REACH_STRINGS=<size>: the first 40 characters of every leaked string root of that size, one per
+            // line, for `sort | uniq -c` to tally which texts are copied and left behind.
+            if (getenv("REACH_STRINGS") && cells[i].size == (uint32_t)atoi(getenv("REACH_STRINGS")) && !isptr && p) {
+                uint64_t len; memcpy(&len, p + 16, 8);
+                if (len > 0 && len + 24 <= cells[i].size) printf("string root %.*s\n", (int)(len < 40 ? len : 40), (const char *)p + 24);
+            }
             if (topsize && cells[i].size == topsize && isptr) {
                 uint64_t got = classes[k].bytes - before;
                 int band = got < 128 ? 0 : got < 1024 ? 1 : got < 16384 ? 2 : got < 262144 ? 3 : 4;
