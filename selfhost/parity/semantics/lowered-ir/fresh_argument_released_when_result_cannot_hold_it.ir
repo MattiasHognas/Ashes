@@ -1,13 +1,81 @@
 IR (lowered)
 ============
 
-function __deepcopy_3  [AdtDeepCopier]
+function __rcnorm_2  [RuntimeManagedAdtNormalizer]
+  locals=5 temps=15
+    LoadLocal             Target=0 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_11   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    Jump                  Target=rc_representation_done_12   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_representation_copy_11:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_13   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    Jump                  Target=rc_representation_done_14   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_representation_copy_13:
+    CopyOutArena          DestTemp=7 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=7   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_representation_done_14:
+    LoadLocal             Target=8 Slot=3   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    GetAdtField           Target=9 Ptr=0 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    IsReferenceCounted    Target=10 SourceTemp=9
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_15   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    Jump                  Target=rc_representation_done_16   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_representation_copy_15:
+    CopyOutList           DestTemp=12 SrcTemp=9 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreLocal            Slot=4 Source=12   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_representation_done_16:
+    LoadLocal             Target=13 Slot=4   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    SetAdtField           Ptr=3 FieldIndex=1 Source=13 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreLocal            Slot=2 Source=3   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_representation_done_12:
+    LoadLocal             Target=14 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    Return                Source=14   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+
+function __rcdrop_record_3  [RuntimeManagedAdtDropper]
+  locals=3 temps=10
+    LoadLocal             Target=0 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_46   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=2 Source=3   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_47:
+    LoadLocal             Target=4 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=5 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=6 Left=4 Right=5   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_49   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcIsUnique            Target=7 SourceTemp=4
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_48   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rcdrop_list_47   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_shared_48:
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_49   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_end_49:
+  rc_drop_shared_46:
+    RcDrop                SourceTemp=0 TypeName=Fact RuntimeManaged=true
+    LoadConstInt          Target=9 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Return                Source=9   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+
+function __deepcopy_5  [AdtDeepCopier]
   locals=2 temps=8
     LoadLocal             Target=0 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadEnv               Target=1 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadConstInt          Target=2 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_3_default   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  __deepcopy_3_c0:
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_5_default   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  __deepcopy_5_c0:
     AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
@@ -16,23 +84,23 @@ function __deepcopy_3  [AdtDeepCopier]
     CopyOutList           DestTemp=7 SrcTemp=6 HeadCopy=Inline Purpose=IndependentClone   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=7   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Return                Source=3   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  __deepcopy_3_default:
+  __deepcopy_5_default:
     Return                Source=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
 
-function __deepcopy_list_2  [ListDeepCopier]
+function __deepcopy_list_4  [ListDeepCopier]
   locals=2 temps=12
     LoadLocal             Target=0 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadEnv               Target=1 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadConstInt          Target=2 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     CmpIntEq              Target=3 Left=0 Right=2   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_2_copy   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_4_copy   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadConstInt          Target=4 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Return                Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  __deepcopy_list_2_copy:
+  __deepcopy_list_4_copy:
     LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Alloc                 Target=7 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    MakeClosure           Target=8 FuncLabel=__deepcopy_3 EnvPtrTemp=7 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_5 EnvPtrTemp=7 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
@@ -42,93 +110,70 @@ function __deepcopy_list_2  [ListDeepCopier]
     Return                Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
 
 function lambda_1  [ClosureHelper from withFacts]
-  locals=43 temps=150
+  locals=42 temps=140
     LoadEnv               Target=0 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreLocal            Slot=2 Source=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadLocal             Target=69 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadArgumentOwnership Target=70   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=71 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    AndInt                Target=72 Left=70 Right=71   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=72 Target=rc_arg_normalize_copy_17   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=28 Source=69   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_arg_normalize_done_18   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_arg_normalize_copy_17:
-    IsReferenceCounted    Target=73 SourceTemp=69
-    JumpIfFalse           CondTemp=73 Target=rc_representation_copy_19   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDup                 Target=74 SourceTemp=69 RuntimeManaged=true
-    StoreLocal            Slot=29 Source=74   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_representation_done_20   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_copy_19:
-    LoadConstInt          Target=76 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=30 Source=69   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=31 Source=76   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=32 Source=76   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_normalize_list_21:
-    LoadLocal             Target=77 Slot=30   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntNe              Target=78 Left=77 Right=76   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=78 Target=rc_normalize_list_end_22   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadMemOffset         Target=79 BasePtr=77 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadMemOffset         Target=80 BasePtr=77 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    IsReferenceCounted    Target=81 SourceTemp=79
-    JumpIfFalse           CondTemp=81 Target=rc_representation_copy_23   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDup                 Target=82 SourceTemp=79 RuntimeManaged=true
-    StoreLocal            Slot=33 Source=82   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_representation_done_24   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_copy_23:
-    CopyOutArena          DestTemp=84 SrcTemp=79 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=85 Ptr=79 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    IsReferenceCounted    Target=86 SourceTemp=85
-    JumpIfFalse           CondTemp=86 Target=rc_representation_copy_25   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDup                 Target=87 SourceTemp=85 RuntimeManaged=true
-    StoreLocal            Slot=34 Source=87   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=60 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadArgumentOwnership Target=61   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=62 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    AndInt                Target=63 Left=61 Right=62   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=63 Target=rc_arg_normalize_copy_19   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=26 Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_arg_normalize_done_20   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_arg_normalize_copy_19:
+    IsReferenceCounted    Target=64 SourceTemp=60
+    JumpIfFalse           CondTemp=64 Target=rc_representation_copy_21   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDup                 Target=65 SourceTemp=60 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=65   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_representation_done_22   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_copy_21:
+    LoadConstInt          Target=67 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=28 Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=29 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=30 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_23:
+    LoadLocal             Target=68 Slot=28   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=69 Left=68 Right=67   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=69 Target=rc_normalize_list_end_24   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=70 BasePtr=68 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=71 BasePtr=68 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    IsReferenceCounted    Target=72 SourceTemp=70
+    JumpIfFalse           CondTemp=72 Target=rc_representation_copy_25   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDup                 Target=73 SourceTemp=70 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=73   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Jump                  Target=rc_representation_done_26   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
   rc_representation_copy_25:
-    CopyOutArena          DestTemp=88 SrcTemp=85 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=34 Source=88   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=75 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CallKnown             Target=76 FuncLabel=__rcnorm_2 EnvTemp=75 ArgTemp=70   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=31 Source=76   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
   rc_representation_done_26:
-    LoadLocal             Target=89 Slot=34   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    SetAdtField           Ptr=84 FieldIndex=0 Source=89 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    GetAdtField           Target=90 Ptr=79 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    IsReferenceCounted    Target=91 SourceTemp=90
-    JumpIfFalse           CondTemp=91 Target=rc_representation_copy_27   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDup                 Target=92 SourceTemp=90 RuntimeManaged=true
-    StoreLocal            Slot=35 Source=92   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_representation_done_28   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_copy_27:
-    CopyOutList           DestTemp=93 SrcTemp=90 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=35 Source=93   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_done_28:
-    LoadLocal             Target=94 Slot=35   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    SetAdtField           Ptr=84 FieldIndex=1 Source=94 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=33 Source=84   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_done_24:
-    LoadLocal             Target=95 Slot=33   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Alloc                 Target=96 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreMemOffset        BasePtr=96 OffsetBytes=0 Source=95   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreMemOffset        BasePtr=96 OffsetBytes=8 Source=76   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadLocal             Target=97 Slot=31   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntNe              Target=98 Left=97 Right=76   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=98 Target=rc_normalize_list_first_29   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadLocal             Target=99 Slot=32   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreMemOffset        BasePtr=99 OffsetBytes=8 Source=96   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_normalize_list_linked_30   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_normalize_list_first_29:
-    StoreLocal            Slot=31 Source=96   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_normalize_list_linked_30:
-    StoreLocal            Slot=32 Source=96   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=30 Source=80   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_normalize_list_21   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_normalize_list_end_22:
-    LoadLocal             Target=100 Slot=31   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=29 Source=100   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_done_20:
-    LoadLocal             Target=101 Slot=29   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=28 Source=101   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_arg_normalize_done_18:
-    LoadLocal             Target=102 Slot=28   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=1 Source=102   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=103 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=25 Source=103   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=77 Slot=31   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Alloc                 Target=78 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=78 OffsetBytes=0 Source=77   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=78 OffsetBytes=8 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=79 Slot=29   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=80 Left=79 Right=67   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=80 Target=rc_normalize_list_first_27   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=81 Slot=30   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=81 OffsetBytes=8 Source=78   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_normalize_list_linked_28   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_first_27:
+    StoreLocal            Slot=29 Source=78   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_linked_28:
+    StoreLocal            Slot=30 Source=78   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=28 Source=71   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_normalize_list_23   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_end_24:
+    LoadLocal             Target=82 Slot=29   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=27 Source=82   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_done_22:
+    LoadLocal             Target=83 Slot=27   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=26 Source=83   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_arg_normalize_done_20:
+    LoadLocal             Target=84 Slot=26   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=1 Source=84   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=85 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=23 Source=85   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreLocal            Slot=5 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
@@ -205,217 +250,209 @@ function lambda_1  [ClosureHelper from withFacts]
     StoreLocal            Slot=22 Source=41   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
     Jump                  Target=rc_representation_done_10   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
   rc_representation_copy_9:
-    CopyOutArena          DestTemp=43 SrcTemp=38 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=44 Ptr=38 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    IsReferenceCounted    Target=45 SourceTemp=44
-    JumpIfFalse           CondTemp=45 Target=rc_representation_copy_11   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    RcDup                 Target=46 SourceTemp=44 RuntimeManaged=true
-    StoreLocal            Slot=23 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    Jump                  Target=rc_representation_done_12   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-  rc_representation_copy_11:
-    CopyOutArena          DestTemp=47 SrcTemp=44 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=23 Source=47   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-  rc_representation_done_12:
-    LoadLocal             Target=48 Slot=23   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    SetAdtField           Ptr=43 FieldIndex=0 Source=48 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    GetAdtField           Target=49 Ptr=38 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    IsReferenceCounted    Target=50 SourceTemp=49
-    JumpIfFalse           CondTemp=50 Target=rc_representation_copy_13   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    RcDup                 Target=51 SourceTemp=49 RuntimeManaged=true
-    StoreLocal            Slot=24 Source=51   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    Jump                  Target=rc_representation_done_14   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-  rc_representation_copy_13:
-    CopyOutList           DestTemp=52 SrcTemp=49 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreLocal            Slot=24 Source=52   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-  rc_representation_done_14:
-    LoadLocal             Target=53 Slot=24   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    SetAdtField           Ptr=43 FieldIndex=1 Source=53 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreLocal            Slot=22 Source=43   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    LoadConstInt          Target=43 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    CallKnown             Target=44 FuncLabel=__rcnorm_2 EnvTemp=43 ArgTemp=38   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreLocal            Slot=22 Source=44   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
   rc_representation_done_10:
-    LoadLocal             Target=54 Slot=22   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    Alloc                 Target=55 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreMemOffset        BasePtr=55 OffsetBytes=0 Source=54   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreMemOffset        BasePtr=55 OffsetBytes=8 Source=35   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    LoadLocal             Target=56 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    CmpIntNe              Target=57 Left=56 Right=35   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    JumpIfFalse           CondTemp=57 Target=rc_normalize_list_first_15   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    LoadLocal             Target=58 Slot=21   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreMemOffset        BasePtr=58 OffsetBytes=8 Source=55   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    Jump                  Target=rc_normalize_list_linked_16   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-  rc_normalize_list_first_15:
-    StoreLocal            Slot=20 Source=55   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-  rc_normalize_list_linked_16:
-    StoreLocal            Slot=21 Source=55   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    LoadLocal             Target=45 Slot=22   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    Alloc                 Target=46 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreMemOffset        BasePtr=46 OffsetBytes=0 Source=45   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreMemOffset        BasePtr=46 OffsetBytes=8 Source=35   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    LoadLocal             Target=47 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    CmpIntNe              Target=48 Left=47 Right=35   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_17   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    LoadLocal             Target=49 Slot=21   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreMemOffset        BasePtr=49 OffsetBytes=8 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    Jump                  Target=rc_normalize_list_linked_18   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_normalize_list_first_17:
+    StoreLocal            Slot=20 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+  rc_normalize_list_linked_18:
+    StoreLocal            Slot=21 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
     StoreLocal            Slot=19 Source=39   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
     Jump                  Target=rc_normalize_list_7   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
   rc_normalize_list_end_8:
-    LoadLocal             Target=59 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreLocal            Slot=18 Source=59   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    LoadLocal             Target=50 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreLocal            Slot=18 Source=50   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
   rc_tail_done_5:
-    LoadLocal             Target=60 Slot=18   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    Alloc                 Target=61 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreMemOffset        BasePtr=61 OffsetBytes=0 Source=28   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    StoreMemOffset        BasePtr=61 OffsetBytes=8 Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
-    LoadLocal             Target=62 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
-    LoadLocal             Target=63 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
+    LoadLocal             Target=51 Slot=18   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    Alloc                 Target=52 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreMemOffset        BasePtr=52 OffsetBytes=0 Source=28   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    StoreMemOffset        BasePtr=52 OffsetBytes=8 Source=51   (fresh_argument_released_when_result_cannot_hold_it.ash:11:43)
+    LoadLocal             Target=53 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
+    LoadLocal             Target=54 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
     StoreLocal            Slot=2 Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=17
-    StoreLocal            Slot=1 Source=61   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=42
-    StoreLocal            Slot=1 Source=61
-    LoadConstInt          Target=149 Value=1
-    StoreLocal            Slot=25 Source=149
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=42
+    StoreLocal            Slot=1 Source=52   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=41
+    StoreLocal            Slot=1 Source=52
+    LoadConstInt          Target=139 Value=1
+    StoreLocal            Slot=23 Source=139
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=41
     RestoreStackPointer   Slot=8   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
     Jump                  Target=lambda_1_body   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
-    LoadConstInt          Target=64 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
-    StoreLocal            Slot=9 Source=64   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
-    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=26
-    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=26
+    LoadConstInt          Target=55 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:11:27)
+    StoreLocal            Slot=9 Source=55   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=24
     Jump                  Target=match_end_0   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
   match_arm_cleanup_4:
-    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=27
-    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=27
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=25
     Jump                  Target=match_none_1   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
   match_none_1:
-    LoadConstInt          Target=67 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
-    StoreLocal            Slot=9 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
+    LoadConstInt          Target=58 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
+    StoreLocal            Slot=9 Source=58   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
   match_end_0:
-    LoadLocal             Target=68 Slot=9   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
+    LoadLocal             Target=59 Slot=9   (fresh_argument_released_when_result_cannot_hold_it.ash:9:5)
+    IsReferenceCounted    Target=86 SourceTemp=59
+    JumpIfFalse           CondTemp=86 Target=rc_representation_copy_29   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDup                 Target=87 SourceTemp=59 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=87   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_representation_done_30   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_copy_29:
+    IsReferenceCounted    Target=89 SourceTemp=59
+    JumpIfFalse           CondTemp=89 Target=rc_representation_copy_31   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDup                 Target=90 SourceTemp=59 RuntimeManaged=true
+    StoreLocal            Slot=33 Source=90   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_representation_done_32   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_copy_31:
+    LoadConstInt          Target=91 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=34 Source=59   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=35 Source=91   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=36 Source=91   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_33:
+    LoadLocal             Target=92 Slot=34   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=93 Left=92 Right=91   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=93 Target=rc_normalize_list_end_34   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    IsReferenceCounted    Target=94 SourceTemp=92
+    JumpIfFalse           CondTemp=94 Target=rc_normalize_list_cell_35   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDup                 Target=95 SourceTemp=92 RuntimeManaged=true
+    LoadLocal             Target=96 Slot=35   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=97 Left=96 Right=91   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=97 Target=rc_normalize_list_first_36   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=98 Slot=36   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=98 OffsetBytes=8 Source=95   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_normalize_list_linked_37   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_first_36:
+    StoreLocal            Slot=35 Source=95   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_linked_37:
+    StoreLocal            Slot=36 Source=95   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_normalize_list_end_34   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_cell_35:
+    LoadMemOffset         Target=99 BasePtr=92 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=100 BasePtr=92 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    IsReferenceCounted    Target=101 SourceTemp=99
+    JumpIfFalse           CondTemp=101 Target=rc_representation_copy_38   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDup                 Target=102 SourceTemp=99 RuntimeManaged=true
+    StoreLocal            Slot=37 Source=102   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_representation_done_39   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_copy_38:
     LoadConstInt          Target=104 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=36 Source=104   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadLocal             Target=105 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadLocal             Target=106 Slot=25   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntEq              Target=107 Left=105 Right=68   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadLocal             Target=108 Slot=36   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntEq              Target=109 Left=108 Right=104   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    AndInt                Target=110 Left=106 Right=107   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    AndInt                Target=111 Left=110 Right=109   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=111 Target=rc_tco_exit_transfer_not_selected_31   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=112 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=36 Source=112   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_tco_exit_transfer_done_32   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_tco_exit_transfer_not_selected_31:
-    LoadLocal             Target=113 Slot=25   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=113 Target=rc_tco_exit_drop_inactive_33   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CallKnown             Target=105 FuncLabel=__rcnorm_2 EnvTemp=104 ArgTemp=99   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreLocal            Slot=37 Source=105   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_34:
-    LoadLocal             Target=114 Slot=37   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=115 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntNe              Target=116 Left=114 Right=115   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=116 Target=rcdrop_list_end_36   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcIsUnique            Target=117 SourceTemp=114
-    JumpIfFalse           CondTemp=117 Target=rcdrop_list_shared_35   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadMemOffset         Target=118 BasePtr=114 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcIsUnique            Target=119 SourceTemp=118
-    JumpIfFalse           CondTemp=119 Target=rc_drop_shared_37   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    GetAdtField           Target=120 Ptr=118 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDrop                SourceTemp=120 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=121 Ptr=118 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=38 Source=121   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_38:
-    LoadLocal             Target=122 Slot=38   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=123 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntNe              Target=124 Left=122 Right=123   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=124 Target=rcdrop_list_end_40   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcIsUnique            Target=125 SourceTemp=122
-    JumpIfFalse           CondTemp=125 Target=rcdrop_list_shared_39   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadMemOffset         Target=126 BasePtr=122 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDrop                SourceTemp=122 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=38 Source=126   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rcdrop_list_38   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_shared_39:
-    RcDrop                SourceTemp=122 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_40   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_end_40:
-  rc_drop_shared_37:
-    RcDrop                SourceTemp=118 TypeName=Fact RuntimeManaged=true
-    LoadMemOffset         Target=127 BasePtr=114 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDrop                SourceTemp=114 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=37 Source=127   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rcdrop_list_34   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_shared_35:
-    RcDrop                SourceTemp=114 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_36   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_end_36:
-  rc_tco_exit_drop_inactive_33:
-  rc_tco_exit_transfer_done_32:
-    LoadArgumentOwnership Target=128   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=129 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    ShrInt                Target=130 Left=128 Right=129   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=130 Target=rc_result_owned_41   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Alloc                 Target=131 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    MakeClosure           Target=132 FuncLabel=__deepcopy_list_2 EnvPtrTemp=131 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreMemOffset        BasePtr=131 OffsetBytes=0 Source=132   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CallClosure           Target=133 ClosureTemp=132 ArgTemp=68   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=40 Source=68   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_done_39:
+    LoadLocal             Target=106 Slot=37   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Alloc                 Target=107 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=107 OffsetBytes=0 Source=106   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=107 OffsetBytes=8 Source=91   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=108 Slot=35   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=109 Left=108 Right=91   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=109 Target=rc_normalize_list_first_40   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=110 Slot=36   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=110 OffsetBytes=8 Source=107   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_normalize_list_linked_41   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_first_40:
+    StoreLocal            Slot=35 Source=107   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_linked_41:
+    StoreLocal            Slot=36 Source=107   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=34 Source=100   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_normalize_list_33   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_normalize_list_end_34:
+    LoadLocal             Target=111 Slot=35   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=33 Source=111   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_done_32:
+    LoadLocal             Target=112 Slot=33   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=32 Source=112   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_done_30:
+    LoadLocal             Target=113 Slot=32   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=114 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=115 Slot=23   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=115 Target=rc_tco_exit_drop_inactive_42   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=38 Source=114   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
   rcdrop_list_43:
-    LoadLocal             Target=134 Slot=40   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=135 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntNe              Target=136 Left=134 Right=135   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=136 Target=rcdrop_list_end_45   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcIsUnique            Target=137 SourceTemp=134
-    JumpIfFalse           CondTemp=137 Target=rcdrop_list_shared_44   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadMemOffset         Target=138 BasePtr=134 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcIsUnique            Target=139 SourceTemp=138
-    JumpIfFalse           CondTemp=139 Target=rc_drop_shared_46   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    GetAdtField           Target=140 Ptr=138 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDrop                SourceTemp=140 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=141 Ptr=138 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    StoreLocal            Slot=41 Source=141   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_47:
-    LoadLocal             Target=142 Slot=41   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadConstInt          Target=143 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    CmpIntNe              Target=144 Left=142 Right=143   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=144 Target=rcdrop_list_end_49   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcIsUnique            Target=145 SourceTemp=142
-    JumpIfFalse           CondTemp=145 Target=rcdrop_list_shared_48   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadMemOffset         Target=146 BasePtr=142 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDrop                SourceTemp=142 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=41 Source=146   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rcdrop_list_47   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_shared_48:
-    RcDrop                SourceTemp=142 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_49   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_end_49:
-  rc_drop_shared_46:
-    RcDrop                SourceTemp=138 TypeName=Fact RuntimeManaged=true
-    LoadMemOffset         Target=147 BasePtr=134 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    RcDrop                SourceTemp=134 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=40 Source=147   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadLocal             Target=116 Slot=38   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=117 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=118 Left=116 Right=117   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=118 Target=rcdrop_list_end_45   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcIsUnique            Target=119 SourceTemp=116
+    JumpIfFalse           CondTemp=119 Target=rcdrop_list_shared_44   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=120 BasePtr=116 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=121 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CallKnown             Target=122 FuncLabel=__rcdrop_record_3 EnvTemp=121 ArgTemp=120   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=123 BasePtr=116 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDrop                SourceTemp=116 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=38 Source=123   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Jump                  Target=rcdrop_list_43   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
   rcdrop_list_shared_44:
-    RcDrop                SourceTemp=134 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=116 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_45   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
   rcdrop_list_end_45:
-    StoreLocal            Slot=39 Source=133   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_result_done_42   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_result_owned_41:
-    StoreLocal            Slot=39 Source=68   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_result_done_42:
-    LoadLocal             Target=148 Slot=39   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Return                Source=148   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_tco_exit_drop_inactive_42:
+    LoadArgumentOwnership Target=124   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=125 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    ShrInt                Target=126 Left=124 Right=125   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=126 Target=rc_result_owned_50   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Alloc                 Target=127 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    MakeClosure           Target=128 FuncLabel=__deepcopy_list_4 EnvPtrTemp=127 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreMemOffset        BasePtr=127 OffsetBytes=0 Source=128   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CallClosure           Target=129 ClosureTemp=128 ArgTemp=113   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    StoreLocal            Slot=40 Source=113   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_52:
+    LoadLocal             Target=130 Slot=40   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=131 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CmpIntNe              Target=132 Left=130 Right=131   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=132 Target=rcdrop_list_end_54   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcIsUnique            Target=133 SourceTemp=130
+    JumpIfFalse           CondTemp=133 Target=rcdrop_list_shared_53   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=134 BasePtr=130 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadConstInt          Target=135 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    CallKnown             Target=136 FuncLabel=__rcdrop_record_3 EnvTemp=135 ArgTemp=134   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadMemOffset         Target=137 BasePtr=130 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    RcDrop                SourceTemp=130 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=40 Source=137   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rcdrop_list_52   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_shared_53:
+    RcDrop                SourceTemp=130 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_54   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_end_54:
+    StoreLocal            Slot=39 Source=129   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Jump                  Target=rc_result_done_51   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_result_owned_50:
+    StoreLocal            Slot=39 Source=113   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_result_done_51:
+    LoadLocal             Target=138 Slot=39   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    Return                Source=138   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
 
-function __rc_cdrop_4  [RuntimeManagedClosureDropper]
+function __rc_cdrop_6  [RuntimeManagedClosureDropper]
   locals=3 temps=8
     LoadLocal             Target=0 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreLocal            Slot=2 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_50:
+  rcdrop_list_55:
     LoadLocal             Target=2 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadConstInt          Target=3 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     CmpIntNe              Target=4 Left=2 Right=3   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_52   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_57   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     RcIsUnique            Target=5 SourceTemp=2
-    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_51   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_56   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadMemOffset         Target=6 BasePtr=2 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=6   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rcdrop_list_50   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_shared_51:
+    Jump                  Target=rcdrop_list_55   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_shared_56:
     RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_52   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rcdrop_list_end_52:
+    Jump                  Target=rcdrop_list_end_57   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rcdrop_list_end_57:
     LoadConstInt          Target=7 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Return                Source=7   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
 
@@ -425,17 +462,17 @@ function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from withFacts]
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     IsReferenceCounted    Target=3 SourceTemp=2
-    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_53   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_58   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
     StoreLocal            Slot=2 Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    Jump                  Target=rc_representation_done_54   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_copy_53:
+    Jump                  Target=rc_representation_done_59   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+  rc_representation_copy_58:
     CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreLocal            Slot=2 Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-  rc_representation_done_54:
+  rc_representation_done_59:
     LoadLocal             Target=6 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_4   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_6   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Return                Source=7   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
 
 function lambda_0  [SourceFunction from withFacts]
@@ -443,41 +480,41 @@ function lambda_0  [SourceFunction from withFacts]
     Alloc                 Target=0 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
-    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     Return                Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
 
-function lambda_6  [ClosureHelper from addKnown]
+function lambda_8  [ClosureHelper from addKnown]
   locals=35 temps=63
     LoadEnv               Target=0 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     StoreLocal            Slot=2 Source=0   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     StoreLocal            Slot=5 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
-  lambda_6_body:
+  lambda_8_body:
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     SaveStackPointer      Slot=8   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     LoadLocal             Target=2 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:14:11)
     SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
     LoadConstInt          Target=3 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     CmpIntEq              Target=4 Left=2 Right=3   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_58   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_63   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     LoadLocal             Target=5 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:15:17)
     StoreLocal            Slot=9 Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-    Jump                  Target=match_end_55   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-  match_arm_cleanup_58:
+    Jump                  Target=match_end_60   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
+  match_arm_cleanup_63:
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
-    Jump                  Target=match_next_57   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-  match_next_57:
+    Jump                  Target=match_next_62   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
+  match_next_62:
     SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
     LoadConstInt          Target=6 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     CmpIntNe              Target=7 Left=2 Right=6   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_59   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_64   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     LoadConstInt          Target=10 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     CmpIntNe              Target=11 Left=8 Right=10   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_59   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_64   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     GetAdtField           Target=12 Ptr=8 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     StoreLocal            Slot=16 Source=12   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     GetAdtField           Target=13 Ptr=8 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
@@ -491,7 +528,7 @@ function lambda_6  [ClosureHelper from addKnown]
     SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
     LoadConstInt          Target=16 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     CmpIntNe              Target=17 Left=15 Right=16   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
-    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_63   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_68   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     LoadMemOffset         Target=18 BasePtr=15 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     LoadMemOffset         Target=19 BasePtr=15 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     RcDrop                SourceTemp=13 TypeName=List OwnerSlot=17
@@ -500,7 +537,7 @@ function lambda_6  [ClosureHelper from addKnown]
     Borrow                Target=21 SourceTemp=20
     LoadConstInt          Target=22 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:19:32)
     CmpIntGt              Target=23 Left=21 Right=22   (fresh_argument_released_when_result_cannot_hold_it.ash:19:24)
-    JumpIfFalse           CondTemp=23 Target=else_64   (fresh_argument_released_when_result_cannot_hold_it.ash:19:21)
+    JumpIfFalse           CondTemp=23 Target=else_69   (fresh_argument_released_when_result_cannot_hold_it.ash:19:21)
     LoadLocal             Target=24 Slot=18   (fresh_argument_released_when_result_cannot_hold_it.ash:20:35)
     Borrow                Target=25 SourceTemp=24
     LoadLocal             Target=26 Slot=16   (fresh_argument_released_when_result_cannot_hold_it.ash:20:42)
@@ -524,11 +561,11 @@ function lambda_6  [ClosureHelper from addKnown]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
     StoreLocal            Slot=1 Source=34   (fresh_argument_released_when_result_cannot_hold_it.ash:20:26)
     RestoreStackPointer   Slot=8   (fresh_argument_released_when_result_cannot_hold_it.ash:20:26)
-    Jump                  Target=lambda_6_body   (fresh_argument_released_when_result_cannot_hold_it.ash:20:26)
+    Jump                  Target=lambda_8_body   (fresh_argument_released_when_result_cannot_hold_it.ash:20:26)
     LoadConstInt          Target=37 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:20:26)
     StoreLocal            Slot=23 Source=37   (fresh_argument_released_when_result_cannot_hold_it.ash:19:21)
-    Jump                  Target=endif_65   (fresh_argument_released_when_result_cannot_hold_it.ash:19:21)
-  else_64:
+    Jump                  Target=endif_70   (fresh_argument_released_when_result_cannot_hold_it.ash:19:21)
+  else_69:
     RcDrop                SourceTemp=12 TypeName=String OwnerSlot=16 RuntimeManaged=true
     RcDrop                SourceTemp=18 TypeName=PatternBinding OwnerSlot=22
     LoadLocal             Target=38 Slot=18   (fresh_argument_released_when_result_cannot_hold_it.ash:21:35)
@@ -540,26 +577,26 @@ function lambda_6  [ClosureHelper from addKnown]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
     StoreLocal            Slot=1 Source=40   (fresh_argument_released_when_result_cannot_hold_it.ash:21:26)
     RestoreStackPointer   Slot=8   (fresh_argument_released_when_result_cannot_hold_it.ash:21:26)
-    Jump                  Target=lambda_6_body   (fresh_argument_released_when_result_cannot_hold_it.ash:21:26)
+    Jump                  Target=lambda_8_body   (fresh_argument_released_when_result_cannot_hold_it.ash:21:26)
     LoadConstInt          Target=43 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:21:26)
     StoreLocal            Slot=23 Source=43   (fresh_argument_released_when_result_cannot_hold_it.ash:19:21)
-  endif_65:
+  endif_70:
     LoadLocal             Target=44 Slot=23   (fresh_argument_released_when_result_cannot_hold_it.ash:19:21)
     StoreLocal            Slot=19 Source=44   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=24
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=24
-    Jump                  Target=match_end_60   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
-  match_arm_cleanup_63:
+    Jump                  Target=match_end_65   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
+  match_arm_cleanup_68:
     RcDrop                SourceTemp=12 TypeName=String OwnerSlot=16 RuntimeManaged=true
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=25
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=25
-    Jump                  Target=match_next_62   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
-  match_next_62:
+    Jump                  Target=match_next_67   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
+  match_next_67:
     SaveArenaState        CursorLocalSlot=26 EndLocalSlot=27
     LoadConstInt          Target=46 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     CmpIntEq              Target=47 Left=15 Right=46   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     RcDrop                SourceTemp=13 TypeName=List OwnerSlot=17
-    JumpIfFalse           CondTemp=47 Target=match_arm_cleanup_66   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
+    JumpIfFalse           CondTemp=47 Target=match_arm_cleanup_71   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     LoadLocal             Target=48 Slot=18   (fresh_argument_released_when_result_cannot_hold_it.ash:22:34)
     Borrow                Target=49 SourceTemp=48
     LoadLocal             Target=50 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:22:40)
@@ -569,55 +606,55 @@ function lambda_6  [ClosureHelper from addKnown]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
     StoreLocal            Slot=1 Source=50   (fresh_argument_released_when_result_cannot_hold_it.ash:22:25)
     RestoreStackPointer   Slot=8   (fresh_argument_released_when_result_cannot_hold_it.ash:22:25)
-    Jump                  Target=lambda_6_body   (fresh_argument_released_when_result_cannot_hold_it.ash:22:25)
+    Jump                  Target=lambda_8_body   (fresh_argument_released_when_result_cannot_hold_it.ash:22:25)
     LoadConstInt          Target=53 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:22:25)
     StoreLocal            Slot=19 Source=53   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=28
     ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=28
-    Jump                  Target=match_end_60   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
-  match_arm_cleanup_66:
+    Jump                  Target=match_end_65   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
+  match_arm_cleanup_71:
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
     RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=29
     ReclaimArenaChunks    SavedEndSlot=27 PreRestoreEndSlot=29
-    Jump                  Target=match_none_61   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
-  match_none_61:
+    Jump                  Target=match_none_66   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
+  match_none_66:
     LoadConstInt          Target=54 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     StoreLocal            Slot=19 Source=54   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
-  match_end_60:
+  match_end_65:
     LoadLocal             Target=55 Slot=19   (fresh_argument_released_when_result_cannot_hold_it.ash:17:13)
     StoreLocal            Slot=9 Source=55   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=30
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=30
-    Jump                  Target=match_end_55   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-  match_arm_cleanup_59:
+    Jump                  Target=match_end_60   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
+  match_arm_cleanup_64:
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=31
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=31
-    Jump                  Target=match_none_56   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-  match_none_56:
+    Jump                  Target=match_none_61   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
+  match_none_61:
     LoadConstInt          Target=59 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     StoreLocal            Slot=9 Source=59   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
-  match_end_55:
+  match_end_60:
     LoadLocal             Target=60 Slot=9   (fresh_argument_released_when_result_cannot_hold_it.ash:14:5)
     Return                Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
 
-function lambda_5  [SourceFunction from addKnown]
+function lambda_7  [SourceFunction from addKnown]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
-    MakeClosure           Target=4 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
+    MakeClosure           Target=4 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     Return                Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
 
-function __deepcopy_list_10  [ListDeepCopier]
+function __deepcopy_list_12  [ListDeepCopier]
   locals=2 temps=13
     LoadLocal             Target=0 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadEnv               Target=1 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadConstInt          Target=2 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     CmpIntEq              Target=3 Left=0 Right=2   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_10_copy   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_12_copy   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadConstInt          Target=4 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     Return                Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  __deepcopy_list_10_copy:
+  __deepcopy_list_12_copy:
     LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     Alloc                 Target=7 SizeBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
@@ -632,358 +669,352 @@ function __deepcopy_list_10  [ListDeepCopier]
     StoreMemOffset        BasePtr=12 OffsetBytes=8 Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     Return                Source=12   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
 
-function lambda_9  [ClosureHelper from runKnown]
-  locals=37 temps=149
+function lambda_11  [ClosureHelper from runKnown]
+  locals=37 temps=143
     LoadEnv               Target=0 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreLocal            Slot=2 Source=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadEnv               Target=1 Index=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreLocal            Slot=3 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadLocal             Target=48 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    IsReferenceCounted    Target=49 SourceTemp=48
-    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_76   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcDup                 Target=50 SourceTemp=48 RuntimeManaged=true
-    StoreLocal            Slot=18 Source=50   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rc_representation_done_77   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_representation_copy_76:
-    LoadConstInt          Target=52 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=19 Source=48   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=20 Source=52   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=21 Source=52   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_normalize_list_78:
-    LoadLocal             Target=53 Slot=19   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    CmpIntNe              Target=54 Left=53 Right=52   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=54 Target=rc_normalize_list_end_79   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=55 BasePtr=53 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=56 BasePtr=53 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    IsReferenceCounted    Target=57 SourceTemp=55
-    JumpIfFalse           CondTemp=57 Target=rc_representation_copy_80   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcDup                 Target=58 SourceTemp=55 RuntimeManaged=true
-    StoreLocal            Slot=22 Source=58   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rc_representation_done_81   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_representation_copy_80:
-    Alloc                 Target=59 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=60 BasePtr=55 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    IsReferenceCounted    Target=61 SourceTemp=60
-    JumpIfFalse           CondTemp=61 Target=rc_representation_copy_82   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcDup                 Target=62 SourceTemp=60 RuntimeManaged=true
-    StoreLocal            Slot=23 Source=62   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rc_representation_done_83   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_representation_copy_82:
-    CopyOutArena          DestTemp=63 SrcTemp=60 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=23 Source=63   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_representation_done_83:
-    LoadLocal             Target=64 Slot=23   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreMemOffset        BasePtr=59 OffsetBytes=0 Source=64   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=65 BasePtr=55 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreMemOffset        BasePtr=59 OffsetBytes=8 Source=65   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=22 Source=59   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_representation_done_81:
-    LoadLocal             Target=66 Slot=22   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Alloc                 Target=67 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreMemOffset        BasePtr=67 OffsetBytes=0 Source=66   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreMemOffset        BasePtr=67 OffsetBytes=8 Source=52   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadLocal             Target=68 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    CmpIntNe              Target=69 Left=68 Right=52   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=69 Target=rc_normalize_list_first_84   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadLocal             Target=70 Slot=21   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreMemOffset        BasePtr=70 OffsetBytes=8 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rc_normalize_list_linked_85   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_normalize_list_first_84:
-    StoreLocal            Slot=20 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_normalize_list_linked_85:
-    StoreLocal            Slot=21 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=19 Source=56   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rc_normalize_list_78   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_normalize_list_end_79:
-    LoadLocal             Target=71 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=18 Source=71   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_representation_done_77:
-    LoadLocal             Target=72 Slot=18   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=2 Source=72   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadConstInt          Target=73 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=17 Source=73   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadLocal             Target=42 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    IsReferenceCounted    Target=43 SourceTemp=42
+    JumpIfFalse           CondTemp=43 Target=rc_representation_copy_81   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcDup                 Target=44 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=44   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rc_representation_done_82   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_representation_copy_81:
+    LoadConstInt          Target=46 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=19 Source=42   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=20 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=21 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_normalize_list_83:
+    LoadLocal             Target=47 Slot=19   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    CmpIntNe              Target=48 Left=47 Right=46   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_end_84   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=49 BasePtr=47 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=50 BasePtr=47 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    IsReferenceCounted    Target=51 SourceTemp=49
+    JumpIfFalse           CondTemp=51 Target=rc_representation_copy_85   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcDup                 Target=52 SourceTemp=49 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=52   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rc_representation_done_86   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_representation_copy_85:
+    Alloc                 Target=53 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=54 BasePtr=49 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    IsReferenceCounted    Target=55 SourceTemp=54
+    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_87   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcDup                 Target=56 SourceTemp=54 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=56   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rc_representation_done_88   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_representation_copy_87:
+    CopyOutArena          DestTemp=57 SrcTemp=54 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=23 Source=57   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_representation_done_88:
+    LoadLocal             Target=58 Slot=23   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=0 Source=58   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=59 BasePtr=49 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=8 Source=59   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=22 Source=53   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_representation_done_86:
+    LoadLocal             Target=60 Slot=22   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Alloc                 Target=61 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreMemOffset        BasePtr=61 OffsetBytes=0 Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreMemOffset        BasePtr=61 OffsetBytes=8 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadLocal             Target=62 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    CmpIntNe              Target=63 Left=62 Right=46   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=63 Target=rc_normalize_list_first_89   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadLocal             Target=64 Slot=21   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreMemOffset        BasePtr=64 OffsetBytes=8 Source=61   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rc_normalize_list_linked_90   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_normalize_list_first_89:
+    StoreLocal            Slot=20 Source=61   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_normalize_list_linked_90:
+    StoreLocal            Slot=21 Source=61   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=19 Source=50   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rc_normalize_list_83   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_normalize_list_end_84:
+    LoadLocal             Target=65 Slot=20   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=18 Source=65   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_representation_done_82:
+    LoadLocal             Target=66 Slot=18   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=2 Source=66   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadConstInt          Target=67 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=17 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadConstInt          Target=2 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreLocal            Slot=6 Source=2   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  lambda_9_body:
+  lambda_11_body:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     SaveStackPointer      Slot=9   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadLocal             Target=3 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:25:8)
     LoadConstInt          Target=4 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:25:18)
     CmpIntEq              Target=5 Left=3 Right=4   (fresh_argument_released_when_result_cannot_hold_it.ash:25:8)
-    JumpIfFalse           CondTemp=5 Target=else_67   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
+    JumpIfFalse           CondTemp=5 Target=else_72   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
     LoadLocal             Target=6 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:26:10)
     StoreLocal            Slot=10 Source=6   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
-    Jump                  Target=endif_68   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
-  else_67:
+    Jump                  Target=endif_73   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
+  else_72:
     LoadLocal             Target=7 Slot=3   (fresh_argument_released_when_result_cannot_hold_it.ash:28:18)
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     LoadEnv               Target=8 Index=2   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
     LoadLocal             Target=9 Slot=3   (fresh_argument_released_when_result_cannot_hold_it.ash:28:34)
-    LoadMemOffset         Target=10 BasePtr=8 OffsetBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=11 Value=62   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    ShrInt                Target=12 Left=10 Right=11   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=13 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    AndInt                Target=14 Left=12 Right=13   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=15 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=16 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    CmpIntEq              Target=17 Left=15 Right=16   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    OrInt                 Target=18 Left=14 Right=17   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadConstInt          Target=10 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
     StoreLocal            Slot=13 Source=9   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    JumpIfFalse           CondTemp=15 Target=rc_call_argument_not_retained_69   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    RcDup                 Target=19 SourceTemp=9 RuntimeManaged=true MayBeEmpty=true
-    StoreLocal            Slot=13 Source=19   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-  rc_call_argument_not_retained_69:
-    LoadLocal             Target=20 Slot=13   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    CallClosure           Target=21 ClosureTemp=8 ArgTemp=20 RuntimeManagedArgumentFlagTemp=15   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadLocal             Target=22 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:28:41)
-    LoadMemOffset         Target=23 BasePtr=21 OffsetBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=24 Value=62   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    ShrInt                Target=25 Left=23 Right=24   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=26 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    AndInt                Target=27 Left=25 Right=26   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=28 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=29 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    CmpIntEq              Target=30 Left=28 Right=29   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    OrInt                 Target=31 Left=27 Right=30   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    StoreLocal            Slot=14 Source=22   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_70   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    RcDup                 Target=32 SourceTemp=22 RuntimeManaged=true MayBeEmpty=true
-    StoreLocal            Slot=14 Source=32   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-  rc_call_argument_not_retained_70:
-    LoadLocal             Target=33 Slot=14   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    CallClosure           Target=34 ClosureTemp=21 ArgTemp=33 RuntimeManagedArgumentFlagTemp=28   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    JumpIfFalse           CondTemp=18 Target=rc_handed_over_release_72   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    Jump                  Target=rc_handed_over_adopted_71   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-  rc_handed_over_release_72:
-    StoreLocal            Slot=16 Source=20   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-  rcdrop_list_spine_73:
-    LoadLocal             Target=35 Slot=16   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadConstInt          Target=36 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    CmpIntNe              Target=37 Left=35 Right=36   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    JumpIfFalse           CondTemp=37 Target=rcdrop_list_spine_end_75   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    RcIsUnique            Target=38 SourceTemp=35
-    JumpIfFalse           CondTemp=38 Target=rcdrop_list_spine_shared_74   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    LoadMemOffset         Target=39 BasePtr=35 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=16 Source=39   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-    Jump                  Target=rcdrop_list_spine_73   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-  rcdrop_list_spine_shared_74:
-    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_spine_end_75   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
-  rcdrop_list_spine_end_75:
-  rc_handed_over_adopted_71:
-    LoadLocal             Target=40 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:49)
-    LoadConstInt          Target=41 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:58)
-    SubInt                Target=42 Left=40 Right=41   (fresh_argument_released_when_result_cannot_hold_it.ash:28:49)
-    LoadLocal             Target=43 Slot=3   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    LoadLocal             Target=44 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    LoadLocal             Target=45 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
+    JumpIfFalse           CondTemp=10 Target=rc_call_argument_not_retained_74   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=13 Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+  rc_call_argument_not_retained_74:
+    LoadLocal             Target=12 Slot=13   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadConstInt          Target=13 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    CmpIntEq              Target=14 Left=10 Right=13   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    CallClosure           Target=15 ClosureTemp=8 ArgTemp=12   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadLocal             Target=16 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:28:41)
+    LoadMemOffset         Target=17 BasePtr=15 OffsetBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadConstInt          Target=18 Value=62   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    ShrInt                Target=19 Left=17 Right=18   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadConstInt          Target=20 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    AndInt                Target=21 Left=19 Right=20   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadConstInt          Target=22 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadConstInt          Target=23 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    CmpIntEq              Target=24 Left=22 Right=23   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    OrInt                 Target=25 Left=21 Right=24   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    StoreLocal            Slot=14 Source=16   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    JumpIfFalse           CondTemp=22 Target=rc_call_argument_not_retained_75   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    RcDup                 Target=26 SourceTemp=16 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=14 Source=26   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+  rc_call_argument_not_retained_75:
+    LoadLocal             Target=27 Slot=14   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    CallClosure           Target=28 ClosureTemp=15 ArgTemp=27 RuntimeManagedArgumentFlagTemp=22   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    JumpIfFalse           CondTemp=14 Target=rc_handed_over_release_77   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    Jump                  Target=rc_handed_over_adopted_76   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+  rc_handed_over_release_77:
+    StoreLocal            Slot=16 Source=12   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+  rcdrop_list_spine_78:
+    LoadLocal             Target=29 Slot=16   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadConstInt          Target=30 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    CmpIntNe              Target=31 Left=29 Right=30   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    JumpIfFalse           CondTemp=31 Target=rcdrop_list_spine_end_80   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    RcIsUnique            Target=32 SourceTemp=29
+    JumpIfFalse           CondTemp=32 Target=rcdrop_list_spine_shared_79   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    LoadMemOffset         Target=33 BasePtr=29 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    RcDrop                SourceTemp=29 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=16 Source=33   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+    Jump                  Target=rcdrop_list_spine_78   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+  rcdrop_list_spine_shared_79:
+    RcDrop                SourceTemp=29 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_spine_end_80   (fresh_argument_released_when_result_cannot_hold_it.ash:28:25)
+  rcdrop_list_spine_end_80:
+  rc_handed_over_adopted_76:
+    LoadLocal             Target=34 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:49)
+    LoadConstInt          Target=35 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:58)
+    SubInt                Target=36 Left=34 Right=35   (fresh_argument_released_when_result_cannot_hold_it.ash:28:49)
+    LoadLocal             Target=37 Slot=3   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
+    LoadLocal             Target=38 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
+    LoadLocal             Target=39 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
     StoreLocal            Slot=3 Source=7   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    StoreLocal            Slot=2 Source=34   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    StoreLocal            Slot=1 Source=42   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    IsReferenceCounted    Target=107 SourceTemp=34
-    JumpIfFalse           CondTemp=107 Target=rc_representation_copy_142
-    RcDup                 Target=108 SourceTemp=34 RuntimeManaged=true
-    StoreLocal            Slot=29 Source=108
-    Jump                  Target=rc_representation_done_143
-  rc_representation_copy_142:
-    IsReferenceCounted    Target=110 SourceTemp=34
-    JumpIfFalse           CondTemp=110 Target=rc_representation_copy_144
-    RcDup                 Target=111 SourceTemp=34 RuntimeManaged=true
-    StoreLocal            Slot=30 Source=111
-    Jump                  Target=rc_representation_done_145
-  rc_representation_copy_144:
-    LoadConstInt          Target=112 Value=0
-    StoreLocal            Slot=31 Source=34
-    StoreLocal            Slot=32 Source=112
-    StoreLocal            Slot=33 Source=112
-  rc_normalize_list_146:
-    LoadLocal             Target=113 Slot=31
-    CmpIntNe              Target=114 Left=113 Right=112
-    JumpIfFalse           CondTemp=114 Target=rc_normalize_list_end_147
-    IsReferenceCounted    Target=115 SourceTemp=113
-    JumpIfFalse           CondTemp=115 Target=rc_normalize_list_cell_148
-    RcDup                 Target=116 SourceTemp=113 RuntimeManaged=true
-    LoadLocal             Target=117 Slot=32
-    CmpIntNe              Target=118 Left=117 Right=112
-    JumpIfFalse           CondTemp=118 Target=rc_normalize_list_first_149
-    LoadLocal             Target=119 Slot=33
-    StoreMemOffset        BasePtr=119 OffsetBytes=8 Source=116
-    Jump                  Target=rc_normalize_list_linked_150
-  rc_normalize_list_first_149:
-    StoreLocal            Slot=32 Source=116
-  rc_normalize_list_linked_150:
-    StoreLocal            Slot=33 Source=116
-    Jump                  Target=rc_normalize_list_end_147
-  rc_normalize_list_cell_148:
-    LoadMemOffset         Target=120 BasePtr=113 OffsetBytes=0
-    LoadMemOffset         Target=121 BasePtr=113 OffsetBytes=8
-    IsReferenceCounted    Target=122 SourceTemp=120
-    JumpIfFalse           CondTemp=122 Target=rc_representation_copy_151
-    RcDup                 Target=123 SourceTemp=120 RuntimeManaged=true
-    StoreLocal            Slot=34 Source=123
-    Jump                  Target=rc_representation_done_152
-  rc_representation_copy_151:
-    Alloc                 Target=124 SizeBytes=16 RuntimeManaged=true
-    LoadMemOffset         Target=125 BasePtr=120 OffsetBytes=0
-    IsReferenceCounted    Target=126 SourceTemp=125
-    JumpIfFalse           CondTemp=126 Target=rc_representation_copy_153
-    RcDup                 Target=127 SourceTemp=125 RuntimeManaged=true
-    StoreLocal            Slot=35 Source=127
-    Jump                  Target=rc_representation_done_154
-  rc_representation_copy_153:
-    CopyOutArena          DestTemp=128 SrcTemp=125 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=35 Source=128
-  rc_representation_done_154:
-    LoadLocal             Target=129 Slot=35
-    StoreMemOffset        BasePtr=124 OffsetBytes=0 Source=129
-    LoadMemOffset         Target=130 BasePtr=120 OffsetBytes=8
-    StoreMemOffset        BasePtr=124 OffsetBytes=8 Source=130
-    StoreLocal            Slot=34 Source=124
-  rc_representation_done_152:
-    LoadLocal             Target=131 Slot=34
-    Alloc                 Target=132 SizeBytes=16 RuntimeManaged=true
-    StoreMemOffset        BasePtr=132 OffsetBytes=0 Source=131
-    StoreMemOffset        BasePtr=132 OffsetBytes=8 Source=112
-    LoadLocal             Target=133 Slot=32
-    CmpIntNe              Target=134 Left=133 Right=112
-    JumpIfFalse           CondTemp=134 Target=rc_normalize_list_first_155
-    LoadLocal             Target=135 Slot=33
-    StoreMemOffset        BasePtr=135 OffsetBytes=8 Source=132
-    Jump                  Target=rc_normalize_list_linked_156
-  rc_normalize_list_first_155:
-    StoreLocal            Slot=32 Source=132
-  rc_normalize_list_linked_156:
-    StoreLocal            Slot=33 Source=132
-    StoreLocal            Slot=31 Source=121
-    Jump                  Target=rc_normalize_list_146
-  rc_normalize_list_end_147:
-    LoadLocal             Target=136 Slot=32
-    StoreLocal            Slot=30 Source=136
-  rc_representation_done_145:
-    LoadLocal             Target=137 Slot=30
-    StoreLocal            Slot=29 Source=137
-  rc_representation_done_143:
-    LoadLocal             Target=138 Slot=29
-    LoadLocal             Target=139 Slot=17
-    JumpIfFalse           CondTemp=139 Target=rc_tco_drop_inactive_157
-    StoreLocal            Slot=36 Source=44
-  rcdrop_list_158:
-    LoadLocal             Target=140 Slot=36
-    LoadConstInt          Target=141 Value=0
-    CmpIntNe              Target=142 Left=140 Right=141
-    JumpIfFalse           CondTemp=142 Target=rcdrop_list_end_160
-    RcIsUnique            Target=143 SourceTemp=140
-    JumpIfFalse           CondTemp=143 Target=rcdrop_list_shared_159
-    LoadMemOffset         Target=144 BasePtr=140 OffsetBytes=0
-    RcIsUnique            Target=145 SourceTemp=144
-    JumpIfFalse           CondTemp=145 Target=rc_drop_tuple_shared_161
-    LoadMemOffset         Target=146 BasePtr=144 OffsetBytes=0
-    RcDrop                SourceTemp=146 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_161:
-    RcDrop                SourceTemp=144 TypeName=Tuple RuntimeManaged=true
-    LoadMemOffset         Target=147 BasePtr=140 OffsetBytes=8
-    RcDrop                SourceTemp=140 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=36 Source=147
-    Jump                  Target=rcdrop_list_158
-  rcdrop_list_shared_159:
-    RcDrop                SourceTemp=140 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_160
-  rcdrop_list_end_160:
-  rc_tco_drop_inactive_157:
+    StoreLocal            Slot=2 Source=28   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
+    StoreLocal            Slot=1 Source=36   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
+    IsReferenceCounted    Target=101 SourceTemp=28
+    JumpIfFalse           CondTemp=101 Target=rc_representation_copy_143
+    RcDup                 Target=102 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=102
+    Jump                  Target=rc_representation_done_144
+  rc_representation_copy_143:
+    IsReferenceCounted    Target=104 SourceTemp=28
+    JumpIfFalse           CondTemp=104 Target=rc_representation_copy_145
+    RcDup                 Target=105 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=105
+    Jump                  Target=rc_representation_done_146
+  rc_representation_copy_145:
+    LoadConstInt          Target=106 Value=0
+    StoreLocal            Slot=31 Source=28
+    StoreLocal            Slot=32 Source=106
+    StoreLocal            Slot=33 Source=106
+  rc_normalize_list_147:
+    LoadLocal             Target=107 Slot=31
+    CmpIntNe              Target=108 Left=107 Right=106
+    JumpIfFalse           CondTemp=108 Target=rc_normalize_list_end_148
+    IsReferenceCounted    Target=109 SourceTemp=107
+    JumpIfFalse           CondTemp=109 Target=rc_normalize_list_cell_149
+    RcDup                 Target=110 SourceTemp=107 RuntimeManaged=true
+    LoadLocal             Target=111 Slot=32
+    CmpIntNe              Target=112 Left=111 Right=106
+    JumpIfFalse           CondTemp=112 Target=rc_normalize_list_first_150
+    LoadLocal             Target=113 Slot=33
+    StoreMemOffset        BasePtr=113 OffsetBytes=8 Source=110
+    Jump                  Target=rc_normalize_list_linked_151
+  rc_normalize_list_first_150:
+    StoreLocal            Slot=32 Source=110
+  rc_normalize_list_linked_151:
+    StoreLocal            Slot=33 Source=110
+    Jump                  Target=rc_normalize_list_end_148
+  rc_normalize_list_cell_149:
+    LoadMemOffset         Target=114 BasePtr=107 OffsetBytes=0
+    LoadMemOffset         Target=115 BasePtr=107 OffsetBytes=8
+    IsReferenceCounted    Target=116 SourceTemp=114
+    JumpIfFalse           CondTemp=116 Target=rc_representation_copy_152
+    RcDup                 Target=117 SourceTemp=114 RuntimeManaged=true
+    StoreLocal            Slot=34 Source=117
+    Jump                  Target=rc_representation_done_153
+  rc_representation_copy_152:
+    Alloc                 Target=118 SizeBytes=16 RuntimeManaged=true
+    LoadMemOffset         Target=119 BasePtr=114 OffsetBytes=0
+    IsReferenceCounted    Target=120 SourceTemp=119
+    JumpIfFalse           CondTemp=120 Target=rc_representation_copy_154
+    RcDup                 Target=121 SourceTemp=119 RuntimeManaged=true
+    StoreLocal            Slot=35 Source=121
+    Jump                  Target=rc_representation_done_155
+  rc_representation_copy_154:
+    CopyOutArena          DestTemp=122 SrcTemp=119 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=35 Source=122
+  rc_representation_done_155:
+    LoadLocal             Target=123 Slot=35
+    StoreMemOffset        BasePtr=118 OffsetBytes=0 Source=123
+    LoadMemOffset         Target=124 BasePtr=114 OffsetBytes=8
+    StoreMemOffset        BasePtr=118 OffsetBytes=8 Source=124
+    StoreLocal            Slot=34 Source=118
+  rc_representation_done_153:
+    LoadLocal             Target=125 Slot=34
+    Alloc                 Target=126 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=126 OffsetBytes=0 Source=125
+    StoreMemOffset        BasePtr=126 OffsetBytes=8 Source=106
+    LoadLocal             Target=127 Slot=32
+    CmpIntNe              Target=128 Left=127 Right=106
+    JumpIfFalse           CondTemp=128 Target=rc_normalize_list_first_156
+    LoadLocal             Target=129 Slot=33
+    StoreMemOffset        BasePtr=129 OffsetBytes=8 Source=126
+    Jump                  Target=rc_normalize_list_linked_157
+  rc_normalize_list_first_156:
+    StoreLocal            Slot=32 Source=126
+  rc_normalize_list_linked_157:
+    StoreLocal            Slot=33 Source=126
+    StoreLocal            Slot=31 Source=115
+    Jump                  Target=rc_normalize_list_147
+  rc_normalize_list_end_148:
+    LoadLocal             Target=130 Slot=32
+    StoreLocal            Slot=30 Source=130
+  rc_representation_done_146:
+    LoadLocal             Target=131 Slot=30
+    StoreLocal            Slot=29 Source=131
+  rc_representation_done_144:
+    LoadLocal             Target=132 Slot=29
+    LoadLocal             Target=133 Slot=17
+    JumpIfFalse           CondTemp=133 Target=rc_tco_drop_inactive_158
+    StoreLocal            Slot=36 Source=38
+  rcdrop_list_159:
+    LoadLocal             Target=134 Slot=36
+    LoadConstInt          Target=135 Value=0
+    CmpIntNe              Target=136 Left=134 Right=135
+    JumpIfFalse           CondTemp=136 Target=rcdrop_list_end_161
+    RcIsUnique            Target=137 SourceTemp=134
+    JumpIfFalse           CondTemp=137 Target=rcdrop_list_shared_160
+    LoadMemOffset         Target=138 BasePtr=134 OffsetBytes=0
+    RcIsUnique            Target=139 SourceTemp=138
+    JumpIfFalse           CondTemp=139 Target=rc_drop_tuple_shared_162
+    LoadMemOffset         Target=140 BasePtr=138 OffsetBytes=0
+    RcDrop                SourceTemp=140 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_162:
+    RcDrop                SourceTemp=138 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=141 BasePtr=134 OffsetBytes=8
+    RcDrop                SourceTemp=134 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=36 Source=141
+    Jump                  Target=rcdrop_list_159
+  rcdrop_list_shared_160:
+    RcDrop                SourceTemp=134 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_161
+  rcdrop_list_end_161:
+  rc_tco_drop_inactive_158:
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=28
-    StoreLocal            Slot=2 Source=138
-    LoadConstInt          Target=148 Value=1
-    StoreLocal            Slot=17 Source=148
+    StoreLocal            Slot=2 Source=132
+    LoadConstInt          Target=142 Value=1
+    StoreLocal            Slot=17 Source=142
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=28
     RestoreStackPointer   Slot=9   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    Jump                  Target=lambda_9_body   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    LoadConstInt          Target=46 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
-    StoreLocal            Slot=10 Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
-  endif_68:
-    LoadLocal             Target=47 Slot=10   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
-    LoadConstInt          Target=74 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=24 Source=74   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadLocal             Target=75 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadLocal             Target=76 Slot=17   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    CmpIntEq              Target=77 Left=75 Right=47   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadLocal             Target=78 Slot=24   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    CmpIntEq              Target=79 Left=78 Right=74   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    AndInt                Target=80 Left=76 Right=77   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    AndInt                Target=81 Left=80 Right=79   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=81 Target=rc_tco_exit_transfer_not_selected_86   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadConstInt          Target=82 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=24 Source=82   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rc_tco_exit_transfer_done_87   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_tco_exit_transfer_not_selected_86:
-    LoadLocal             Target=83 Slot=17   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=83 Target=rc_tco_exit_drop_inactive_88   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=25 Source=75   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rcdrop_list_89:
-    LoadLocal             Target=84 Slot=25   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadConstInt          Target=85 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    CmpIntNe              Target=86 Left=84 Right=85   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=86 Target=rcdrop_list_end_91   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcIsUnique            Target=87 SourceTemp=84
-    JumpIfFalse           CondTemp=87 Target=rcdrop_list_shared_90   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=88 BasePtr=84 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcIsUnique            Target=89 SourceTemp=88
-    JumpIfFalse           CondTemp=89 Target=rc_drop_tuple_shared_92   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=90 BasePtr=88 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcDrop                SourceTemp=90 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_92:
-    RcDrop                SourceTemp=88 TypeName=Tuple RuntimeManaged=true
-    LoadMemOffset         Target=91 BasePtr=84 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=25 Source=91   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rcdrop_list_89   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rcdrop_list_shared_90:
-    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_91   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rcdrop_list_end_91:
-  rc_tco_exit_drop_inactive_88:
-  rc_tco_exit_transfer_done_87:
-    LoadArgumentOwnership Target=92   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadConstInt          Target=93 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    ShrInt                Target=94 Left=92 Right=93   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=94 Target=rc_result_owned_93   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Alloc                 Target=95 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    MakeClosure           Target=96 FuncLabel=__deepcopy_list_10 EnvPtrTemp=95 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreMemOffset        BasePtr=95 OffsetBytes=0 Source=96   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    CallClosure           Target=97 ClosureTemp=96 ArgTemp=47   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    StoreLocal            Slot=27 Source=47   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rcdrop_list_95:
-    LoadLocal             Target=98 Slot=27   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadConstInt          Target=99 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    CmpIntNe              Target=100 Left=98 Right=99   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    JumpIfFalse           CondTemp=100 Target=rcdrop_list_end_97   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcIsUnique            Target=101 SourceTemp=98
-    JumpIfFalse           CondTemp=101 Target=rcdrop_list_shared_96   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=102 BasePtr=98 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcIsUnique            Target=103 SourceTemp=102
-    JumpIfFalse           CondTemp=103 Target=rc_drop_tuple_shared_98   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    LoadMemOffset         Target=104 BasePtr=102 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcDrop                SourceTemp=104 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_98:
-    RcDrop                SourceTemp=102 TypeName=Tuple RuntimeManaged=true
-    LoadMemOffset         Target=105 BasePtr=98 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    RcDrop                SourceTemp=98 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=27 Source=105   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rcdrop_list_95   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rcdrop_list_shared_96:
-    RcDrop                SourceTemp=98 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_97   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rcdrop_list_end_97:
-    StoreLocal            Slot=26 Source=97   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Jump                  Target=rc_result_done_94   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_result_owned_93:
-    StoreLocal            Slot=26 Source=47   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-  rc_result_done_94:
-    LoadLocal             Target=106 Slot=26   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    Return                Source=106   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=lambda_11_body   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
+    LoadConstInt          Target=40 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:28:9)
+    StoreLocal            Slot=10 Source=40   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
+  endif_73:
+    LoadLocal             Target=41 Slot=10   (fresh_argument_released_when_result_cannot_hold_it.ash:25:5)
+    LoadConstInt          Target=68 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=24 Source=68   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadLocal             Target=69 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadLocal             Target=70 Slot=17   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    CmpIntEq              Target=71 Left=69 Right=41   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadLocal             Target=72 Slot=24   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    CmpIntEq              Target=73 Left=72 Right=68   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    AndInt                Target=74 Left=70 Right=71   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    AndInt                Target=75 Left=74 Right=73   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=75 Target=rc_tco_exit_transfer_not_selected_91   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadConstInt          Target=76 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=24 Source=76   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rc_tco_exit_transfer_done_92   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_tco_exit_transfer_not_selected_91:
+    LoadLocal             Target=77 Slot=17   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=77 Target=rc_tco_exit_drop_inactive_93   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=25 Source=69   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rcdrop_list_94:
+    LoadLocal             Target=78 Slot=25   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadConstInt          Target=79 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    CmpIntNe              Target=80 Left=78 Right=79   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=80 Target=rcdrop_list_end_96   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcIsUnique            Target=81 SourceTemp=78
+    JumpIfFalse           CondTemp=81 Target=rcdrop_list_shared_95   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=82 BasePtr=78 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcIsUnique            Target=83 SourceTemp=82
+    JumpIfFalse           CondTemp=83 Target=rc_drop_tuple_shared_97   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=84 BasePtr=82 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcDrop                SourceTemp=84 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_97:
+    RcDrop                SourceTemp=82 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=85 BasePtr=78 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=85   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rcdrop_list_94   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rcdrop_list_shared_95:
+    RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_96   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rcdrop_list_end_96:
+  rc_tco_exit_drop_inactive_93:
+  rc_tco_exit_transfer_done_92:
+    LoadArgumentOwnership Target=86   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadConstInt          Target=87 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    ShrInt                Target=88 Left=86 Right=87   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=88 Target=rc_result_owned_98   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Alloc                 Target=89 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    MakeClosure           Target=90 FuncLabel=__deepcopy_list_12 EnvPtrTemp=89 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreMemOffset        BasePtr=89 OffsetBytes=0 Source=90   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    CallClosure           Target=91 ClosureTemp=90 ArgTemp=41   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    StoreLocal            Slot=27 Source=41   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rcdrop_list_100:
+    LoadLocal             Target=92 Slot=27   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadConstInt          Target=93 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    CmpIntNe              Target=94 Left=92 Right=93   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    JumpIfFalse           CondTemp=94 Target=rcdrop_list_end_102   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcIsUnique            Target=95 SourceTemp=92
+    JumpIfFalse           CondTemp=95 Target=rcdrop_list_shared_101   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=96 BasePtr=92 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcIsUnique            Target=97 SourceTemp=96
+    JumpIfFalse           CondTemp=97 Target=rc_drop_tuple_shared_103   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    LoadMemOffset         Target=98 BasePtr=96 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcDrop                SourceTemp=98 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_103:
+    RcDrop                SourceTemp=96 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=99 BasePtr=92 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    RcDrop                SourceTemp=92 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=99   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rcdrop_list_100   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rcdrop_list_shared_101:
+    RcDrop                SourceTemp=92 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_102   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rcdrop_list_end_102:
+    StoreLocal            Slot=26 Source=91   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Jump                  Target=rc_result_done_99   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_result_owned_98:
+    StoreLocal            Slot=26 Source=41   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+  rc_result_done_99:
+    LoadLocal             Target=100 Slot=26   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    Return                Source=100   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
 
-function lambda_8  [ClosureHelper from runKnown]
+function lambda_10  [ClosureHelper from runKnown]
   locals=2 temps=6
     Alloc                 Target=0 SizeBytes=24   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
@@ -992,21 +1023,21 @@ function lambda_8  [ClosureHelper from runKnown]
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadEnv               Target=4 Index=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    MakeClosure           Target=5 FuncLabel=lambda_9 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    MakeClosure           Target=5 FuncLabel=lambda_11 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     Return                Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
 
-function lambda_7  [SourceFunction from runKnown]
+function lambda_9  [SourceFunction from runKnown]
   locals=2 temps=6
     Alloc                 Target=0 SizeBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadLocal             Target=3 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=3   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadEnv               Target=4 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    MakeClosure           Target=5 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    MakeClosure           Target=5 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     Return                Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
 
-function lambda_11  [SourceFunction from knownLabels]
-  locals=13 temps=47
+function lambda_13  [SourceFunction from knownLabels]
+  locals=12 temps=39
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
@@ -1015,169 +1046,147 @@ function lambda_11  [SourceFunction from knownLabels]
     CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (fresh_argument_released_when_result_cannot_hold_it.ash:31:14)
     LoadConstInt          Target=4 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:31:31)
     CallClosure           Target=5 ClosureTemp=3 ArgTemp=4   (fresh_argument_released_when_result_cannot_hold_it.ash:31:14)
+    StoreLocal            Slot=7 Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:31:14)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
-    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadConstInt          Target=7 Value=62   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    ShrInt                Target=8 Left=6 Right=7   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadConstInt          Target=9 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    AndInt                Target=10 Left=8 Right=9   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    StoreLocal            Slot=7 Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    JumpIfFalse           CondTemp=10 Target=rc_call_argument_not_retained_99   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    RcDup                 Target=11 SourceTemp=5 RuntimeManaged=true MayBeEmpty=true
-    StoreLocal            Slot=7 Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-  rc_call_argument_not_retained_99:
-    LoadLocal             Target=12 Slot=7   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    CallClosure           Target=13 ClosureTemp=0 ArgTemp=12 RuntimeManagedArgumentFlagTemp=10   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadConstInt          Target=14 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:31:36)
-    CallClosure           Target=15 ClosureTemp=13 ArgTemp=14   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadConstInt          Target=16 Value=3   (fresh_argument_released_when_result_cannot_hold_it.ash:31:40)
-    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
+    LoadLocal             Target=6 Slot=7   (fresh_argument_released_when_result_cannot_hold_it.ash:31:14)
+    CallClosure           Target=7 ClosureTemp=0 ArgTemp=6   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
+    LoadConstInt          Target=8 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:31:36)
+    CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
+    LoadConstInt          Target=10 Value=3   (fresh_argument_released_when_result_cannot_hold_it.ash:31:40)
+    CallClosure           Target=11 ClosureTemp=9 ArgTemp=10   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=8
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=8
-    StoreLocal            Slot=9 Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-  rcdrop_list_100:
-    LoadLocal             Target=18 Slot=9   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadConstInt          Target=19 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    CmpIntNe              Target=20 Left=18 Right=19   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_end_102   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    RcIsUnique            Target=21 SourceTemp=18
-    JumpIfFalse           CondTemp=21 Target=rcdrop_list_shared_101   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadMemOffset         Target=22 BasePtr=18 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    RcIsUnique            Target=23 SourceTemp=22
-    JumpIfFalse           CondTemp=23 Target=rc_drop_shared_103   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    GetAdtField           Target=24 Ptr=22 FieldIndex=0 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    RcDrop                SourceTemp=24 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=25 Ptr=22 FieldIndex=1 Tagless=true   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    StoreLocal            Slot=10 Source=25   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-  rcdrop_list_104:
-    LoadLocal             Target=26 Slot=10   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadConstInt          Target=27 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    CmpIntNe              Target=28 Left=26 Right=27   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    JumpIfFalse           CondTemp=28 Target=rcdrop_list_end_106   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    RcIsUnique            Target=29 SourceTemp=26
-    JumpIfFalse           CondTemp=29 Target=rcdrop_list_shared_105   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    LoadMemOffset         Target=30 BasePtr=26 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=10 Source=30   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    Jump                  Target=rcdrop_list_104   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-  rcdrop_list_shared_105:
-    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_106   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-  rcdrop_list_end_106:
-  rc_drop_shared_103:
-    RcDrop                SourceTemp=22 TypeName=Fact RuntimeManaged=true
-    LoadMemOffset         Target=31 BasePtr=18 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    RcDrop                SourceTemp=18 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=9 Source=31   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-    Jump                  Target=rcdrop_list_100   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-  rcdrop_list_shared_101:
-    RcDrop                SourceTemp=18 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_102   (fresh_argument_released_when_result_cannot_hold_it.ash:31:5)
-  rcdrop_list_end_102:
-    LoadArgumentOwnership Target=32   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    LoadConstInt          Target=33 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    ShrInt                Target=34 Left=32 Right=33   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    JumpIfFalse           CondTemp=34 Target=rc_result_owned_107   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    Alloc                 Target=35 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    MakeClosure           Target=36 FuncLabel=__deepcopy_list_10 EnvPtrTemp=35 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=36   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    CallClosure           Target=37 ClosureTemp=36 ArgTemp=17   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    StoreLocal            Slot=12 Source=17   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-  rcdrop_list_109:
-    LoadLocal             Target=38 Slot=12   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    LoadConstInt          Target=39 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    CmpIntNe              Target=40 Left=38 Right=39   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    JumpIfFalse           CondTemp=40 Target=rcdrop_list_end_111   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    RcIsUnique            Target=41 SourceTemp=38
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_shared_110   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    LoadMemOffset         Target=42 BasePtr=38 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    RcIsUnique            Target=43 SourceTemp=42
-    JumpIfFalse           CondTemp=43 Target=rc_drop_tuple_shared_112   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    LoadMemOffset         Target=44 BasePtr=42 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    RcDrop                SourceTemp=44 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_112:
-    RcDrop                SourceTemp=42 TypeName=Tuple RuntimeManaged=true
-    LoadMemOffset         Target=45 BasePtr=38 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=12 Source=45   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    Jump                  Target=rcdrop_list_109   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-  rcdrop_list_shared_110:
-    RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_111   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-  rcdrop_list_end_111:
+    LoadLocal             Target=12 Slot=7   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadConstInt          Target=13 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    CmpIntNe              Target=14 Left=12 Right=13   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    JumpIfFalse           CondTemp=14 Target=general_rc_owned_absent_104   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    IsReferenceCounted    Target=15 SourceTemp=12
+    JumpIfFalse           CondTemp=15 Target=general_rc_owned_absent_104   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    StoreLocal            Slot=9 Source=12   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rcdrop_list_105:
+    LoadLocal             Target=16 Slot=9   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadConstInt          Target=17 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    CmpIntNe              Target=18 Left=16 Right=17   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    JumpIfFalse           CondTemp=18 Target=rcdrop_list_end_107   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    RcIsUnique            Target=19 SourceTemp=16
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_shared_106   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadMemOffset         Target=20 BasePtr=16 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadConstInt          Target=21 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    CallKnown             Target=22 FuncLabel=__rcdrop_record_3 EnvTemp=21 ArgTemp=20   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadMemOffset         Target=23 BasePtr=16 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=9 Source=23   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    Jump                  Target=rcdrop_list_105   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rcdrop_list_shared_106:
+    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_107   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rcdrop_list_end_107:
+    StoreLocal            Slot=7 Source=13   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  general_rc_owned_absent_104:
+    LoadArgumentOwnership Target=24   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadConstInt          Target=25 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    ShrInt                Target=26 Left=24 Right=25   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    JumpIfFalse           CondTemp=26 Target=rc_result_owned_108   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    Alloc                 Target=27 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    MakeClosure           Target=28 FuncLabel=__deepcopy_list_12 EnvPtrTemp=27 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=28   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    CallClosure           Target=29 ClosureTemp=28 ArgTemp=11   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    StoreLocal            Slot=11 Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rcdrop_list_110:
+    LoadLocal             Target=30 Slot=11   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadConstInt          Target=31 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    CmpIntNe              Target=32 Left=30 Right=31   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    JumpIfFalse           CondTemp=32 Target=rcdrop_list_end_112   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    RcIsUnique            Target=33 SourceTemp=30
+    JumpIfFalse           CondTemp=33 Target=rcdrop_list_shared_111   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadMemOffset         Target=34 BasePtr=30 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    RcIsUnique            Target=35 SourceTemp=34
+    JumpIfFalse           CondTemp=35 Target=rc_drop_tuple_shared_113   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    LoadMemOffset         Target=36 BasePtr=34 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    RcDrop                SourceTemp=36 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_113:
+    RcDrop                SourceTemp=34 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=37 BasePtr=30 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=11 Source=37   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    Jump                  Target=rc_result_done_108   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-  rc_result_owned_107:
-    StoreLocal            Slot=11 Source=17   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-  rc_result_done_108:
-    LoadLocal             Target=46 Slot=11   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    Return                Source=46   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    Jump                  Target=rcdrop_list_110   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rcdrop_list_shared_111:
+    RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_112   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rcdrop_list_end_112:
+    StoreLocal            Slot=10 Source=29   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    Jump                  Target=rc_result_done_109   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rc_result_owned_108:
+    StoreLocal            Slot=10 Source=11   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+  rc_result_done_109:
+    LoadLocal             Target=38 Slot=10   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    Return                Source=38   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
 
-function lambda_13  [ClosureHelper from total]
+function lambda_15  [ClosureHelper from total]
   locals=34 temps=88
     LoadEnv               Target=0 Index=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=2 Source=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadLocal             Target=41 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     IsReferenceCounted    Target=42 SourceTemp=41
-    JumpIfFalse           CondTemp=42 Target=rc_representation_copy_122   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=42 Target=rc_representation_copy_123   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     RcDup                 Target=43 SourceTemp=41 RuntimeManaged=true
     StoreLocal            Slot=25 Source=43   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    Jump                  Target=rc_representation_done_123   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_representation_copy_122:
+    Jump                  Target=rc_representation_done_124   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+  rc_representation_copy_123:
     LoadConstInt          Target=45 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=26 Source=41   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=27 Source=45   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=28 Source=45   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_normalize_list_124:
+  rc_normalize_list_125:
     LoadLocal             Target=46 Slot=26   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     CmpIntNe              Target=47 Left=46 Right=45   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    JumpIfFalse           CondTemp=47 Target=rc_normalize_list_end_125   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=47 Target=rc_normalize_list_end_126   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadMemOffset         Target=48 BasePtr=46 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadMemOffset         Target=49 BasePtr=46 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     IsReferenceCounted    Target=50 SourceTemp=48
-    JumpIfFalse           CondTemp=50 Target=rc_representation_copy_126   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=50 Target=rc_representation_copy_127   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     RcDup                 Target=51 SourceTemp=48 RuntimeManaged=true
     StoreLocal            Slot=29 Source=51   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    Jump                  Target=rc_representation_done_127   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_representation_copy_126:
+    Jump                  Target=rc_representation_done_128   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+  rc_representation_copy_127:
     Alloc                 Target=52 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadMemOffset         Target=53 BasePtr=48 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     IsReferenceCounted    Target=54 SourceTemp=53
-    JumpIfFalse           CondTemp=54 Target=rc_representation_copy_128   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=54 Target=rc_representation_copy_129   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     RcDup                 Target=55 SourceTemp=53 RuntimeManaged=true
     StoreLocal            Slot=30 Source=55   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    Jump                  Target=rc_representation_done_129   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_representation_copy_128:
+    Jump                  Target=rc_representation_done_130   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+  rc_representation_copy_129:
     CopyOutArena          DestTemp=56 SrcTemp=53 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=30 Source=56   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_representation_done_129:
+  rc_representation_done_130:
     LoadLocal             Target=57 Slot=30   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreMemOffset        BasePtr=52 OffsetBytes=0 Source=57   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadMemOffset         Target=58 BasePtr=48 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreMemOffset        BasePtr=52 OffsetBytes=8 Source=58   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=29 Source=52   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_representation_done_127:
+  rc_representation_done_128:
     LoadLocal             Target=59 Slot=29   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     Alloc                 Target=60 SizeBytes=16 RuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreMemOffset        BasePtr=60 OffsetBytes=0 Source=59   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreMemOffset        BasePtr=60 OffsetBytes=8 Source=45   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadLocal             Target=61 Slot=27   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     CmpIntNe              Target=62 Left=61 Right=45   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    JumpIfFalse           CondTemp=62 Target=rc_normalize_list_first_130   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=62 Target=rc_normalize_list_first_131   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadLocal             Target=63 Slot=28   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreMemOffset        BasePtr=63 OffsetBytes=8 Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    Jump                  Target=rc_normalize_list_linked_131   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_normalize_list_first_130:
+    Jump                  Target=rc_normalize_list_linked_132   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+  rc_normalize_list_first_131:
     StoreLocal            Slot=27 Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_normalize_list_linked_131:
+  rc_normalize_list_linked_132:
     StoreLocal            Slot=28 Source=60   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=26 Source=49   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    Jump                  Target=rc_normalize_list_124   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_normalize_list_end_125:
+    Jump                  Target=rc_normalize_list_125   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+  rc_normalize_list_end_126:
     LoadLocal             Target=64 Slot=27   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=25 Source=64   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rc_representation_done_123:
+  rc_representation_done_124:
     LoadLocal             Target=65 Slot=25   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=2 Source=65   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadConstInt          Target=66 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
@@ -1187,28 +1196,28 @@ function lambda_13  [ClosureHelper from total]
     StoreLocal            Slot=5 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=6 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=7 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  lambda_13_body:
+  lambda_15_body:
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     SaveStackPointer      Slot=11   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadLocal             Target=2 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:34:11)
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     CmpIntEq              Target=4 Left=2 Right=3   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_116   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_117   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     LoadLocal             Target=5 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:35:17)
     StoreLocal            Slot=12 Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_113   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
-  match_arm_cleanup_116:
+    Jump                  Target=match_end_114   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
+  match_arm_cleanup_117:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_115   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
-  match_next_115:
+    Jump                  Target=match_next_116   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
+  match_next_116:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     CmpIntNe              Target=7 Left=2 Right=6   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_117   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_118   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     LoadMemOffset         Target=10 BasePtr=8 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
@@ -1233,28 +1242,28 @@ function lambda_13  [ClosureHelper from total]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=21
     LoadLocal             Target=22 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     StoreLocal            Slot=22 Source=22   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
-  rcdrop_list_118:
+  rcdrop_list_119:
     LoadLocal             Target=23 Slot=22   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     LoadConstInt          Target=24 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     CmpIntNe              Target=25 Left=23 Right=24   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
-    JumpIfFalse           CondTemp=25 Target=rcdrop_list_end_120   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
+    JumpIfFalse           CondTemp=25 Target=rcdrop_list_end_121   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     RcIsUnique            Target=26 SourceTemp=23
-    JumpIfFalse           CondTemp=26 Target=rcdrop_list_shared_119   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
+    JumpIfFalse           CondTemp=26 Target=rcdrop_list_shared_120   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     LoadMemOffset         Target=27 BasePtr=23 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     RcIsUnique            Target=28 SourceTemp=27
-    JumpIfFalse           CondTemp=28 Target=rc_drop_tuple_shared_121   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
+    JumpIfFalse           CondTemp=28 Target=rc_drop_tuple_shared_122   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     LoadMemOffset         Target=29 BasePtr=27 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     RcDrop                SourceTemp=29 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_121:
+  rc_drop_tuple_shared_122:
     RcDrop                SourceTemp=27 TypeName=Tuple RuntimeManaged=true
     LoadMemOffset         Target=30 BasePtr=23 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     RcDrop                SourceTemp=23 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=22 Source=30   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
-    Jump                  Target=rcdrop_list_118   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
-  rcdrop_list_shared_119:
+    Jump                  Target=rcdrop_list_119   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
+  rcdrop_list_shared_120:
     RcDrop                SourceTemp=23 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_120   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
-  rcdrop_list_end_120:
+    Jump                  Target=rcdrop_list_end_121   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
+  rcdrop_list_end_121:
     LoadConstInt          Target=31 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     StoreLocal            Slot=8 Source=31   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     LoadLocal             Target=32 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
@@ -1262,31 +1271,31 @@ function lambda_13  [ClosureHelper from total]
     StoreLocal            Slot=2 Source=21   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     StoreLocal            Slot=1 Source=20   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     LoadLocal             Target=77 Slot=8
-    JumpIfFalse           CondTemp=77 Target=rc_tco_drop_inactive_162
+    JumpIfFalse           CondTemp=77 Target=rc_tco_drop_inactive_163
     StoreLocal            Slot=33 Source=32
-  rcdrop_list_163:
+  rcdrop_list_164:
     LoadLocal             Target=78 Slot=33
     LoadConstInt          Target=79 Value=0
     CmpIntNe              Target=80 Left=78 Right=79
-    JumpIfFalse           CondTemp=80 Target=rcdrop_list_end_165
+    JumpIfFalse           CondTemp=80 Target=rcdrop_list_end_166
     RcIsUnique            Target=81 SourceTemp=78
-    JumpIfFalse           CondTemp=81 Target=rcdrop_list_shared_164
+    JumpIfFalse           CondTemp=81 Target=rcdrop_list_shared_165
     LoadMemOffset         Target=82 BasePtr=78 OffsetBytes=0
     RcIsUnique            Target=83 SourceTemp=82
-    JumpIfFalse           CondTemp=83 Target=rc_drop_tuple_shared_166
+    JumpIfFalse           CondTemp=83 Target=rc_drop_tuple_shared_167
     LoadMemOffset         Target=84 BasePtr=82 OffsetBytes=0
     RcDrop                SourceTemp=84 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_166:
+  rc_drop_tuple_shared_167:
     RcDrop                SourceTemp=82 TypeName=Tuple RuntimeManaged=true
     LoadMemOffset         Target=85 BasePtr=78 OffsetBytes=8
     RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=33 Source=85
-    Jump                  Target=rcdrop_list_163
-  rcdrop_list_shared_164:
+    Jump                  Target=rcdrop_list_164
+  rcdrop_list_shared_165:
     RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_165
-  rcdrop_list_end_165:
-  rc_tco_drop_inactive_162:
+    Jump                  Target=rcdrop_list_end_166
+  rcdrop_list_end_166:
+  rc_tco_drop_inactive_163:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=32
     LoadConstInt          Target=86 Value=0
     StoreLocal            Slot=6 Source=86
@@ -1296,56 +1305,56 @@ function lambda_13  [ClosureHelper from total]
     StoreLocal            Slot=8 Source=87
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=32
     RestoreStackPointer   Slot=11   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
-    Jump                  Target=lambda_13_body   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
+    Jump                  Target=lambda_15_body   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     LoadConstInt          Target=34 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:36:36)
     StoreLocal            Slot=12 Source=34   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
-    Jump                  Target=match_end_113   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
-  match_arm_cleanup_117:
+    Jump                  Target=match_end_114   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
+  match_arm_cleanup_118:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=24
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=24
-    Jump                  Target=match_none_114   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
-  match_none_114:
+    Jump                  Target=match_none_115   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
+  match_none_115:
     LoadConstInt          Target=37 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     StoreLocal            Slot=12 Source=37   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
-  match_end_113:
+  match_end_114:
     LoadLocal             Target=38 Slot=12   (fresh_argument_released_when_result_cannot_hold_it.ash:34:5)
     LoadLocal             Target=67 Slot=2   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadLocal             Target=68 Slot=8   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    JumpIfFalse           CondTemp=68 Target=rc_tco_exit_drop_inactive_132   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=68 Target=rc_tco_exit_drop_inactive_133   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=31 Source=67   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rcdrop_list_133:
+  rcdrop_list_134:
     LoadLocal             Target=69 Slot=31   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadConstInt          Target=70 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     CmpIntNe              Target=71 Left=69 Right=70   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    JumpIfFalse           CondTemp=71 Target=rcdrop_list_end_135   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=71 Target=rcdrop_list_end_136   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     RcIsUnique            Target=72 SourceTemp=69
-    JumpIfFalse           CondTemp=72 Target=rcdrop_list_shared_134   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=72 Target=rcdrop_list_shared_135   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadMemOffset         Target=73 BasePtr=69 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     RcIsUnique            Target=74 SourceTemp=73
-    JumpIfFalse           CondTemp=74 Target=rc_drop_tuple_shared_136   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    JumpIfFalse           CondTemp=74 Target=rc_drop_tuple_shared_137   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadMemOffset         Target=75 BasePtr=73 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     RcDrop                SourceTemp=75 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_136:
+  rc_drop_tuple_shared_137:
     RcDrop                SourceTemp=73 TypeName=Tuple RuntimeManaged=true
     LoadMemOffset         Target=76 BasePtr=69 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=31 Source=76   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    Jump                  Target=rcdrop_list_133   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rcdrop_list_shared_134:
+    Jump                  Target=rcdrop_list_134   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+  rcdrop_list_shared_135:
     RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_135   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-  rcdrop_list_end_135:
-  rc_tco_exit_drop_inactive_132:
+    Jump                  Target=rcdrop_list_end_136   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+  rcdrop_list_end_136:
+  rc_tco_exit_drop_inactive_133:
     Return                Source=38   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
 
-function lambda_12  [SourceFunction from total]
+function lambda_14  [SourceFunction from total]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    MakeClosure           Target=4 FuncLabel=lambda_13 EnvPtrTemp=0 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    MakeClosure           Target=4 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     Return                Source=4   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
 
 function _start_main  [ProgramEntry]
@@ -1354,12 +1363,12 @@ function _start_main  [ProgramEntry]
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     StoreLocal            Slot=0 Source=1   (fresh_argument_released_when_result_cannot_hold_it.ash:8:1)
     LoadConstInt          Target=2 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
-    MakeClosure           Target=3 FuncLabel=lambda_5 EnvPtrTemp=2 EnvSizeBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
+    MakeClosure           Target=3 FuncLabel=lambda_7 EnvPtrTemp=2 EnvSizeBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     StoreLocal            Slot=1 Source=3   (fresh_argument_released_when_result_cannot_hold_it.ash:13:1)
     Alloc                 Target=4 SizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     LoadLocal             Target=5 Slot=1   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
-    MakeClosure           Target=6 FuncLabel=lambda_7 EnvPtrTemp=4 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
+    MakeClosure           Target=6 FuncLabel=lambda_9 EnvPtrTemp=4 EnvSizeBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     StoreLocal            Slot=2 Source=6   (fresh_argument_released_when_result_cannot_hold_it.ash:24:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     AllocStack            Target=7 SizeBytes=16   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
@@ -1367,10 +1376,10 @@ function _start_main  [ProgramEntry]
     StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
     LoadLocal             Target=9 Slot=0   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
     StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=9   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
-    MakeClosureStack      Target=10 FuncLabel=lambda_11 EnvPtrTemp=7 EnvSizeBytes=16 ReturnsRuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
+    MakeClosureStack      Target=10 FuncLabel=lambda_13 EnvPtrTemp=7 EnvSizeBytes=16 ReturnsRuntimeManaged=true   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
     StoreLocal            Slot=5 Source=10   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)
     LoadConstInt          Target=11 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
-    MakeClosure           Target=12 FuncLabel=lambda_12 EnvPtrTemp=11 EnvSizeBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
+    MakeClosure           Target=12 FuncLabel=lambda_14 EnvPtrTemp=11 EnvSizeBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     StoreLocal            Slot=6 Source=12   (fresh_argument_released_when_result_cannot_hold_it.ash:33:1)
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadLocal             Target=13 Slot=6   (fresh_argument_released_when_result_cannot_hold_it.ash:39:4)
@@ -1399,10 +1408,10 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=27 Value=1   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     AndInt                Target=28 Left=26 Right=27   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     StoreLocal            Slot=12 Source=23   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
-    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_137   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
+    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_138   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     RcDup                 Target=29 SourceTemp=23 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=12 Source=29   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
-  rc_call_argument_not_retained_137:
+  rc_call_argument_not_retained_138:
     LoadLocal             Target=30 Slot=12   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     CallClosure           Target=31 ClosureTemp=13 ArgTemp=30 RuntimeManagedArgumentFlagTemp=28   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     LoadConstInt          Target=32 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
@@ -1410,28 +1419,28 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=13
     StoreLocal            Slot=14 Source=23   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
-  rcdrop_list_138:
+  rcdrop_list_139:
     LoadLocal             Target=34 Slot=14   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     LoadConstInt          Target=35 Value=0   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     CmpIntNe              Target=36 Left=34 Right=35   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
-    JumpIfFalse           CondTemp=36 Target=rcdrop_list_end_140   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
+    JumpIfFalse           CondTemp=36 Target=rcdrop_list_end_141   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     RcIsUnique            Target=37 SourceTemp=34
-    JumpIfFalse           CondTemp=37 Target=rcdrop_list_shared_139   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
+    JumpIfFalse           CondTemp=37 Target=rcdrop_list_shared_140   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     LoadMemOffset         Target=38 BasePtr=34 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     RcIsUnique            Target=39 SourceTemp=38
-    JumpIfFalse           CondTemp=39 Target=rc_drop_tuple_shared_141   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
+    JumpIfFalse           CondTemp=39 Target=rc_drop_tuple_shared_142   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     LoadMemOffset         Target=40 BasePtr=38 OffsetBytes=0   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     RcDrop                SourceTemp=40 TypeName=String RuntimeManaged=true
-  rc_drop_tuple_shared_141:
+  rc_drop_tuple_shared_142:
     RcDrop                SourceTemp=38 TypeName=Tuple RuntimeManaged=true
     LoadMemOffset         Target=41 BasePtr=34 OffsetBytes=8   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     RcDrop                SourceTemp=34 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=14 Source=41   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
-    Jump                  Target=rcdrop_list_138   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
-  rcdrop_list_shared_139:
+    Jump                  Target=rcdrop_list_139   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
+  rcdrop_list_shared_140:
     RcDrop                SourceTemp=34 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_140   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
-  rcdrop_list_end_140:
+    Jump                  Target=rcdrop_list_end_141   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
+  rcdrop_list_end_141:
     PrintInt              Source=33   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     AllocAdt              Target=42 Tag=0 FieldCount=0   (fresh_argument_released_when_result_cannot_hold_it.ash:38:1)
     StoreLocal            Slot=15 Source=42   (fresh_argument_released_when_result_cannot_hold_it.ash:30:1)

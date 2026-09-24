@@ -7,21 +7,21 @@ Function: build
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  6
-    drop:                 8
-    uniqueness checks:    4
+    dup:                  8
+    drop:                 4
+    uniqueness checks:    2
   perceus [lambda_0]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
-    dup:                  6
-    drop:                 8
-    uniqueness checks:    4
+    dup:                  8
+    drop:                 4
+    uniqueness checks:    2
   representation [lambda_1]
-    conservative unknown: 3
+    conservative unknown: 5
     region:               7
-    runtime rc:           26
+    runtime rc:           36
     copy value:           9
   representation [lambda_0]
     region:               3
@@ -32,24 +32,24 @@ Function: heaviest
     items: consumed, move-safe yes
     best: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_5]
-    dup:                  14
-    drop:                 36
-    uniqueness checks:    19
-  perceus [lambda_4]
+  perceus [lambda_7]
+    dup:                  11
+    drop:                 12
+    uniqueness checks:    5
+  perceus [lambda_6]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_5__scalarenv1]
-    dup:                  14
-    drop:                 36
-    uniqueness checks:    19
-  representation [lambda_5]
-    conservative unknown: 2
+  perceus [lambda_7__scalarenv1]
+    dup:                  11
+    drop:                 12
+    uniqueness checks:    5
+  representation [lambda_7]
+    conservative unknown: 9
     region:               6
     runtime rc:           42
     copy value:           2
-  representation [lambda_4]
+  representation [lambda_6]
     conservative unknown: 1
     region:               3
 
@@ -58,20 +58,20 @@ Function: run
     round: consumed, move-safe yes
     total: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_9]
-    dup:                  1
-    drop:                 7
+  perceus [lambda_13]
+    dup:                  0
+    drop:                 8
     uniqueness checks:    4
-  perceus [lambda_8]
+  perceus [lambda_12]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_9]
-    conservative unknown: 8
+  representation [lambda_13]
+    conservative unknown: 16
     region:               2
-    runtime rc:           7
+    runtime rc:           3
     copy value:           16
-  representation [lambda_8]
+  representation [lambda_12]
     region:               3
     copy value:           1
 

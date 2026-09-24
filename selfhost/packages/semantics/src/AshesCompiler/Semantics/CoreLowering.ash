@@ -472,6 +472,10 @@ type CoreProgramState =
     // Per argument-free named type of the program: whether it is admissible to the general contract and
     // whether it reaches a type the contract governs, each walked once when the program's lowering starts.
     | generalRcTypeFacts: MapTree(Str, (Bool, Bool))
+    // Whether a record joins the ownership contract and is released by a dropper of its own, the
+    // question the drop synthesis asks of the lowering: answered from the program's types as they
+    // stand when its lowering starts.
+    | contractRecordTest: SemanticType -> Bool
     // Stage 0's `_inlinableFunctions`: the let-bound non-recursive functions whose body allocates
     // or calls, spliced into a call site while a reuse token is live or under a loop's back edge
     // when their result is fresh; and stage 0's `_inliningInProgress`, the helpers whose bodies
@@ -1020,6 +1024,25 @@ let stateGeneralRcTypeFacts (state: CoreLoweringState) =
 let withStateGeneralRcTypeFacts value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with generalRcTypeFacts = value))
+
+let withStateContractRecordTest value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with contractRecordTest = value))
+
+// The drop synthesis's view of the program's types, answering from this state whether a record
+// joins the ownership contract.
+// A reuse specialization keeps its values in the persistent region and takes no part in the
+// contract.
+let dropperTypesOf (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        let reuse = state.reuseState
+        in
+            match reuse.specializationFreshInputs with
+                | None -> group.dropperTypes with contractRecord = group.contractRecordTest
+                | Some(_inputs) -> group.dropperTypes)
+
+let noContractRecordTest (_named: SemanticType) = false
 
 let stateProvenTraitGoals (state: CoreLoweringState) =
     (let group = state.programState
@@ -1925,6 +1948,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             dropperLabels = emptyDropperLabelCache,
             resultRcEligibility = None,
             generalRcTypeFacts = Ashes.Collection.Map.empty,
+            contractRecordTest = noContractRecordTest,
             inlinableHelpers = [],
             specializationCandidates = [],
             topLevelFunctionRefs = [],
@@ -4093,7 +4117,7 @@ let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLowering
         | Some((semanticType, plan)) ->
             match state with
                 | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-                    match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                    match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | None -> None
                         | Some(synthesis) ->
                             state
@@ -5860,6 +5884,11 @@ and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List
         | HeapLayoutChild { dropKind = UnsupportedChildDrop } :: _rest -> false
         | HeapLayoutChild { childType = childType } :: rest -> isGeneralRcAdmissible(childType)(path)(state) && allChildrenGeneralRcAdmissible(rest)(path)(state)
 
+let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> false
+        | HeapLayoutChild { childType = childType } :: rest -> !resultSurvivesReset(childType)(state) || anyChildSurvivesNoReset(rest)(state)
+
 let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> Some(LeafArgumentCopy(-1))
@@ -5886,9 +5915,14 @@ let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: Co
                 | HeapLayoutFacts { children = children } as facts ->
                     if runtimeManagedAdtLayout(facts)
                     then
-                        adtCopyPlanOfWith(general)(state
-                        |> stateConstructorLayouts
-                        |> constructorLayoutsOfType(name))(children)(state)
+                        let layouts =
+                            state
+                            |> stateConstructorLayouts
+                            |> constructorLayoutsOfType(name)
+                        in
+                            if general && isInlineCopiedContractRecord(named)(layouts)(facts)(state)
+                            then Some(NormalizerArgumentCopy(named))
+                            else adtCopyPlanOfWith(general)(layouts)(children)(state)
                     else
                         // Stage 0's `NeedsRuntimeManagedAdtNormalizer`: an admissible named type no
                         // inline copy expresses is copied by its synthesized helper.
@@ -5926,6 +5960,17 @@ and adtCopyPlanOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (ch
         | Some([]) -> None
         | Some(plans) -> Some(SwitchArgumentCopy(plans))
         | None -> None
+// Stage 0's `IsInlineCopiedContractRecord`: a record the entry normalization re-establishes (one
+// constructor, an inline copy, an arena deep copy) with a heap child, that the owned-child and
+// recursive-copy paths do not manage. It joins the ownership contract and is copied by its
+// synthesized normalization helper, one call per site instead of its whole graph.
+and isInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+    match (layouts, facts) with
+        | (_layout :: [], HeapLayoutFacts { runtimeOwnedChildAdtSupported = false, arenaDeepCopySupported = true, children = children }) ->
+            anyChildSurvivesNoReset(children)(state) && !canRuntimeManageRecursiveCopyAdt(named)(state) && (match adtCopyPlanOfWith(false)(layouts)(children)(state) with
+                | Some(_plan) -> true
+                | None -> false)
+        | _ -> false
 
 // The copy of a value into the reference-counted heap by the inline copies alone, which is also
 // how the placement rules ask whether a type has one.
@@ -5939,10 +5984,18 @@ let heapChildrenOfNamed (named: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(named)(state) with
         | HeapLayoutFacts { children = children } -> children
 
-let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
-    match children with
-        | [] -> false
-        | HeapLayoutChild { childType = childType } :: rest -> !resultSurvivesReset(childType)(state) || anyChildSurvivesNoReset(rest)(state)
+// Stage 0's `IsInlineCopiedContractRecord` as the drop synthesis asks it: the record joins the
+// contract. Whether the contract governs the lowering asking is `dropperTypesOf`'s to say.
+let isContractRecordType (named: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(named) with
+        | SemNamed(_symbolId, name, _arguments) as resolved ->
+            match heapFactsOf(resolved)(state) with
+                | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
+                | facts ->
+                    runtimeManagedAdtLayout(facts) && isInlineCopiedContractRecord(resolved)(state
+                    |> stateConstructorLayouts
+                    |> constructorLayoutsOfType(name))(facts)(state)
+        | _ -> false
 
 // Stage 0's `IsGeneralRcNamedType`: a named type the contract governs, one only the normalization
 // helper expresses, that owns a heap child, and that the recursive-copy path does not already
@@ -6617,7 +6670,7 @@ let emitInlineListRelease emitter (listTemp: Int) (elementType: SemanticType) (s
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
             match synthesizeOwnedAggregateRelease(listTemp)(elementType
             |> resolveType(state)
-            |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+            |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | None -> state
                 | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
 
@@ -6651,7 +6704,7 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
         | SemNamed(_symbolId, name, _arguments) as named ->
             match state with
                 | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-                    match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                    match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | None ->
                             emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))(state)
                         | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
@@ -6688,8 +6741,9 @@ let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
                 | None -> ScalarArgumentCopy
         | SemTuple(elements) -> ShallowAdtArgumentCopy(8 * length(elements))
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match argumentCopyPlanOf(named)(state) with
-                | Some(ConstructorArgumentCopy(constructorPlan)) -> ConstructorArgumentCopy(constructorPlan)
+            match (generalCopyPlanOf(named)(state), argumentCopyPlanOf(named)(state)) with
+                | (Some(NormalizerArgumentCopy(normalized)), _plan) -> NormalizerArgumentCopy(normalized)
+                | (_general, Some(ConstructorArgumentCopy(constructorPlan))) -> ConstructorArgumentCopy(constructorPlan)
                 | _ ->
                     state
                     |> shallowAdtCopySizeBytes(name)
@@ -7210,8 +7264,16 @@ let recursive releaseBackEdgeSourceChildren (read: List((Int, SemanticType, Int)
 // allocate a result temp they never use once the walk takes over
 // (`TcoBackEdgeNormalizeRuntimeManagedArg`, `EmitRuntimeManagedTcoDeepCopy`), so two temps are
 // burned ahead of the copy's own.
+// A record of the contract's types takes that copy only when the successor is built at the
+// self-call itself (stage 0's `SuccessorOwnsItsChildren`); any other successor of such a record is
+// borrowed by the copy, which its normalization helper makes.
+let backEdgeAdtCopyPlanOf (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
+    match (tcoAdtCopyPlanOf(semanticType)(state), constructorFieldExpressionsOf(expression)(semanticType)(state), argumentCopyPlanOf(semanticType)(state)) with
+        | (NormalizerArgumentCopy(_named), Some(_fields), Some(ConstructorArgumentCopy(constructorPlan))) -> ConstructorArgumentCopy(constructorPlan)
+        | (plan, _fields, _inline) -> plan
+
 let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
-    match tcoAdtCopyPlanOf(semanticType)(state) with
+    match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
         | ConstructorArgumentCopy((_tag, sizeBytes, tagless, _childPlans)) ->
             match freshTempRun(3)(state) with
                 | FreshTemp { state = allocated, temp = firstTemp } ->
@@ -7273,7 +7335,7 @@ let registerGeneralRcOwnedPredecessor (predecessorSlot: Int) (semanticType: Sema
 let emitOwnedValueChildDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-            spliceInlineRelease(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
+            spliceInlineRelease(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
 
 // Stage 0's `EmitGeneralRcOwnedSlotDrops` for one slot: a slot that holds a reference-counted
 // value releases it and is cleared; an empty slot, or one whose value is still in the arena, is
@@ -7828,7 +7890,7 @@ let recursive allArgumentsCompactable (arguments: List(TcoResetArgument)) (state
 let emitTcoDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
 
 let emitCompactionShallowCopy (sourceTemp: Int) (sizeBytes: Int) (state: CoreLoweringState) =
@@ -8289,7 +8351,7 @@ let recursive recordArenaCopyPlacements (instructions: List(IrInstructionKind)) 
 let emitArenaResultDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(ArenaResultBoundary) with
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(ArenaResultBoundary) with
                 | (synthesis, resultTemp) ->
                     (state
                     |> spliceInlineReleaseWith(emit)(synthesis)
@@ -8310,7 +8372,7 @@ let arenaResultDropTypeName (semanticType: SemanticType) =
 let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+            match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | Some(synthesis) -> spliceInlineReleaseWith(emit)(synthesis)(state)
                 | None ->
                     // A type only the normalization helper expresses is released through its own
@@ -8318,7 +8380,7 @@ let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state:
                     // drop routes it; any other single allocation is one typed drop.
                     match generalCopyPlanOf(semanticType)(state) with
                         | Some(NormalizerArgumentCopy(_named)) ->
-                            spliceInlineReleaseWith(emit)(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
+                            spliceInlineReleaseWith(emit)(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
                         | _ ->
                             emit(RcDrop(valueTemp)(semanticType
                             |> resolveType(state)
@@ -9294,6 +9356,13 @@ let withNormalizedAlwaysReturnedParameter parameter body label parameterType (st
     then withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))(state)
     else withStateNormalizedAlwaysReturnedParameter(None)(state)
 
+// Stage 0's `EmitRuntimeManagedTcoParamCopy`: the entry copy of a parameter the entry normalization
+// admits, a record of the contract's types copied by its normalization helper.
+let entryCopyPlanOf (parameterType: SemanticType) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match generalCopyPlanOf(parameterType)(state) with
+        | Some(general) -> general
+        | None -> plan
+
 let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
@@ -9302,7 +9371,8 @@ let normalizeAlwaysReturnedParameter parameter body label parameterType lowered 
                 | None -> lowered
                 | Some(plan) ->
                     if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(bodyState)
-                    then lowered with state = emitEntryArgumentNormalization(plan)(label)(bodyState)
+                    then
+                        lowered with state = emitEntryArgumentNormalization(entryCopyPlanOf(parameterType)(plan)(bodyState))(label)(bodyState)
                     else lowered
 
 // A TCO loop parameter's runtime-managed placement (stage 0's `TcoContext` slot placement,
@@ -10047,7 +10117,7 @@ let recursive patternOwnerAliases (instructions: List(IrInstruction)) (slot: Int
 let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(lambdaId)(labelId) with
+            match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
                 | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
                     (label, withStateDropperLabels(nextCache)((state with functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
@@ -10390,7 +10460,7 @@ let recursive revertReuseAllocations (count: Int) (instructions: List(IrInstruct
 let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
 
 // The entry deep copy of every direct-reuse accumulator the move analysis did not prove unique:
@@ -10771,7 +10841,7 @@ let reuseAccumulatorIsUnique (functionName: Str) (parameter: Str) (state: CoreLo
 let synthesizeAccumulatorCopier (named: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeDeepCopy(0)(named)(stateDropperTypes(state))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
+            match synthesizeDeepCopy(0)(named)(dropperTypesOf(state))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
                 | (InlineReleaseSynthesis { cache = copierCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
                     withStateDropperLabels(copierCache)((state with functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
@@ -12481,7 +12551,7 @@ let copyGenericArgumentToSpace (context: CoreCallContext) (index: Int) (argument
             then
                 match state with
                     | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-                        match synthesizeToSpaceCopy(argumentTemp)(resolveType(state)(argumentType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                        match synthesizeToSpaceCopy(argumentTemp)(resolveType(state)(argumentType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                             | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
             else (state, argumentTemp)
         | None -> (state, argumentTemp)
@@ -12674,7 +12744,7 @@ let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
 let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(stateDropperTypes(state))(cache)(lambdaId)(labelId) with
+            match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
                 | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
                     (label, withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
 
@@ -17778,7 +17848,7 @@ let relocateSpecializationField (fieldType: SemanticType) (fieldTemp: Int) (stat
     then
         match state with
             | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-                match synthesizeToSpaceCopy(fieldTemp)(resolveType(state)(fieldType))(stateDropperTypes(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                match synthesizeToSpaceCopy(fieldTemp)(resolveType(state)(fieldType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                     | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
     else (state, fieldTemp)
 
@@ -24075,6 +24145,8 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                                 | Ok(withImplementations) ->
                                     withImplementations
                                     |> ensureResultRcEligibility
+                                    |> (given (started: CoreLoweringState) ->
+                                        withStateContractRecordTest(given (named) -> isContractRecordType(named)(started))(started))
                                     |> recordGeneralRcTypeFacts
                                     |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 

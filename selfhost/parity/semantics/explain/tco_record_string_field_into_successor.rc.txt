@@ -1,7 +1,27 @@
 RC report
 =========
 
-Function: __deepcopy_2
+Function: __rcnorm_2
+  Operations
+    dup:                  2
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: __rcdrop_record_3
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_4
   Operations
     dup:                  0
     drop:                 0
@@ -14,12 +34,12 @@ Function: __deepcopy_2
 Function: step [lambda_1]
   Operations
     dup:                  5
-    drop:                 7
-    uniqueness checks:    3
+    drop:                 1
+    uniqueness checks:    0
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               4
+    copies:               2
 
 Function: step
   Operations
@@ -34,18 +54,18 @@ Function: step
 Function: step [lambda_1__scalarenv0]
   Operations
     dup:                  5
-    drop:                 7
-    uniqueness checks:    3
+    drop:                 1
+    uniqueness checks:    0
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               4
+    copies:               2
 
 Function: _start_main
   Operations
     dup:                  0
-    drop:                 2
-    uniqueness checks:    1
+    drop:                 0
+    uniqueness checks:    0
     allocations:          2
     reused allocations:   0
     reuse tokens:         0

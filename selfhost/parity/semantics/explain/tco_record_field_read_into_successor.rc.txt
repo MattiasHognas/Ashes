@@ -1,7 +1,47 @@
 RC report
 =========
 
-Function: __deepcopy_3
+Function: __rcnorm_3
+  Operations
+    dup:                  2
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: __rcnorm_2
+  Operations
+    dup:                  3
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __rcdrop_record_5
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_record_4
+  Operations
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_7
   Operations
     dup:                  0
     drop:                 0
@@ -11,7 +51,7 @@ Function: __deepcopy_3
     reuse tokens:         0
     copies:               1
 
-Function: __deepcopy_2
+Function: __deepcopy_6
   Operations
     dup:                  0
     drop:                 0
@@ -23,13 +63,13 @@ Function: __deepcopy_2
 
 Function: walk [lambda_1]
   Operations
-    dup:                  12
-    drop:                 18
-    uniqueness checks:    10
+    dup:                  7
+    drop:                 1
+    uniqueness checks:    0
     allocations:          3
     reused allocations:   0
     reuse tokens:         0
-    copies:               10
+    copies:               1
 
 Function: walk
   Operations
@@ -41,37 +81,27 @@ Function: walk
     reuse tokens:         0
     copies:               0
 
-Function: carry [lambda_6]
+Function: carry [lambda_10]
   Operations
-    dup:                  16
-    drop:                 24
-    uniqueness checks:    13
+    dup:                  10
+    drop:                 1
+    uniqueness checks:    0
     allocations:          3
     reused allocations:   0
     reuse tokens:         0
-    copies:               14
+    copies:               3
 
-Function: __rc_cdrop_7
+Function: carry [lambda_10$env_normalize]
   Operations
-    dup:                  0
-    drop:                 2
-    uniqueness checks:    1
-    allocations:          0
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
-Function: carry [lambda_6$env_normalize]
-  Operations
-    dup:                  2
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               0
 
-Function: carry [lambda_5]
+Function: carry [lambda_9]
   Operations
     dup:                  0
     drop:                 0
@@ -93,19 +123,19 @@ Function: carry
 
 Function: walk [lambda_1__scalarenv0]
   Operations
-    dup:                  12
-    drop:                 18
-    uniqueness checks:    10
+    dup:                  7
+    drop:                 1
+    uniqueness checks:    0
     allocations:          3
     reused allocations:   0
     reuse tokens:         0
-    copies:               10
+    copies:               1
 
 Function: _start_main
   Operations
     dup:                  0
-    drop:                 10
-    uniqueness checks:    6
+    drop:                 0
+    uniqueness checks:    0
     allocations:          8
     reused allocations:   0
     reuse tokens:         0

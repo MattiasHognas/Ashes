@@ -71,9 +71,10 @@ type DropperLabelCache =
     | copierLabels: List((Str, Str))
     | normalizerLabels: List((Str, Str))
     | generalDropperLabels: List((Str, Str))
+    | recordDropperLabels: List((Str, Str))
     deriving {Eq, Show}
 
-let emptyDropperLabelCache = DropperLabelCache(structuralLabels = [], adtLabels = [], copierLabels = [], normalizerLabels = [], generalDropperLabels = [])
+let emptyDropperLabelCache = DropperLabelCache(structuralLabels = [], adtLabels = [], copierLabels = [], normalizerLabels = [], generalDropperLabels = [], recordDropperLabels = [])
 
 // The outcome of one synthesis request: the helper's label (`None` when the release needs no
 // helper), the cache and counters to carry forward, and the functions synthesized by the request
@@ -86,8 +87,9 @@ type DropperSynthesis =
     | nextLabelId: Int
 
 // The build state of one synthesized body together with the facts every nested synthesis shares:
-// the label cache, the functions completed so far, the two shared counters, and the
-// classification environment.
+// the label cache, the functions completed so far, the two shared counters, the classification
+// environment, the lowering's answer to whether a record joins the ownership contract, and the
+// record droppers whose bodies are being built.
 type DropperBody =
     | reversedInstructions: List(IrInstruction)
     | nextTemp: Int
@@ -97,6 +99,8 @@ type DropperBody =
     | nextLambdaId: Int
     | nextLabelId: Int
     | environment: TypeEnvironment
+    | contractRecord: SemanticType -> Bool
+    | recordsInProgress: List(Str)
 
 let recursive schemeResultTypeName (body: SemanticType) =
     match body with
@@ -161,16 +165,21 @@ let renumberDefinition (ids: List((Str, Int))) (definition: ConstructorInference
 // declared type, every definition renumbered to those ids, and the definitions indexed by the type
 // each builds. Preparing this costs a pass over every constructor of the program, so it is built
 // where the constructors change and shared by every synthesis until they change again.
+// The lowering fills in `contractRecord` where it synthesizes, from its own state: a record of the
+// ownership contract is released through a dropper of its own.
 type DropperTypes =
     | dropperTypeIds: List((Str, Int))
     | dropperTypeEnvironment: TypeEnvironment
+    | contractRecord: SemanticType -> Bool
+
+let noContractRecord (_named: SemanticType) = false
 
 let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
     (let ids = namedTypeIds(definitions)([])
     in
         let renumbered =
             map(renumberDefinition(ids))(definitions)
-        in DropperTypes(dropperTypeIds = ids, dropperTypeEnvironment = emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)))
+        in DropperTypes(dropperTypeIds = ids, dropperTypeEnvironment = (emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)), contractRecord = noContractRecord))
 
 let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     (let ids = dropperTypes.dropperTypeIds
@@ -183,7 +192,9 @@ let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nex
             functions = [],
             nextLambdaId = nextLambdaId,
             nextLabelId = nextLabelId,
-            environment = dropperTypes.dropperTypeEnvironment
+            environment = dropperTypes.dropperTypeEnvironment,
+            contractRecord = dropperTypes.contractRecord,
+            recordsInProgress = []
         )))
 
 let freshDropperTemp (body: DropperBody) =
@@ -403,6 +414,25 @@ let registerGeneralDropperLabel (key: Str) (body: DropperBody) =
             let label = "__rcdrop_general_" + Ashes.Text.fromInt(nextLambdaId)
             in (label, (body with cache = (body.cache with generalDropperLabels = (key, label) :: labels), nextLambdaId = nextLambdaId + 1))
 
+let cachedRecordDropperLabel (key: Str) (body: DropperBody) =
+    match body with
+        | DropperBody { cache = DropperLabelCache { recordDropperLabels = labels } } -> lookupLabel(key)(labels)
+
+let registerRecordDropperLabel (key: Str) (body: DropperBody) =
+    match body with
+        | DropperBody { cache = DropperLabelCache { recordDropperLabels = labels }, nextLambdaId = nextLambdaId } ->
+            let label = "__rcdrop_record_" + Ashes.Text.fromInt(nextLambdaId)
+            in (label, (body with cache = (body.cache with recordDropperLabels = (key, label) :: labels), nextLambdaId = nextLambdaId + 1))
+
+let recursive containsKey (key: Str) (keys: List(Str)) =
+    match keys with
+        | [] -> false
+        | candidate :: rest -> candidate == key || containsKey(key)(rest)
+
+// A record the lowering says joins the ownership contract, outside its own dropper's body.
+let usesRecordDropper (named: SemanticType) (body: DropperBody) =
+    body.contractRecord(named) && !containsKey(formatSemanticType(named))(body.recordsInProgress)
+
 // Whether two named types are the same one for the admissibility walk's recursion check, as their
 // rendered text would say: an argument-free type by its name, without rendering a copy of it.
 let sameTypeKey (left: SemanticType) (right: SemanticType) =
@@ -600,7 +630,37 @@ and emitAdtDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
         else
             if usesGeneralDropper(named)(body)
             then emitGeneralAdtDrop(valueTemp)(named)(body)
-            else emitFirstConstructorDrop(valueTemp)(named)(body)
+            else
+                if usesRecordDropper(named)(body)
+                then emitRecordDrop(valueTemp)(named)(body)
+                else emitFirstConstructorDrop(valueTemp)(named)(body)
+// Stage 0's `TryEmitContractRecordDropCall`: a record of the ownership contract is released by one
+// call to a dropper synthesized once per type, whose body is the release written inline.
+and emitRecordDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
+    match synthesizeRecordDropperIn(named)(body) with
+        | (label, synthesizedBody) ->
+            match freshDropperTemp(synthesizedBody) with
+                | (environmentTemp, environmentBody) ->
+                    match freshDropperTemp(environmentBody) with
+                        | (resultTemp, resultBody) ->
+                            resultBody
+                            |> emitDropper(LoadConstInt(environmentTemp)(0))
+                            |> emitDropper(CallKnown(resultTemp)(label)(environmentTemp)(valueTemp)(-1)(false))
+and synthesizeRecordDropperIn (named: SemanticType) (body: DropperBody) =
+    (let key = formatSemanticType(named)
+    in
+        match cachedRecordDropperLabel(key)(body) with
+            | Some(label) -> (label, body)
+            | None ->
+                match registerRecordDropperLabel(key)(body) with
+                    | (label, registered) ->
+                        match (registered with recordsInProgress = key :: registered.recordsInProgress) |> beginSynthesizedBody |> openSynthesizedValue with
+                            | (valueTemp, valueBody) ->
+                                valueBody
+                                |> emitFirstConstructorDrop(valueTemp)(named)
+                                |> emitReturnZero
+                                |> finishSynthesizedBody(label)(createAdtDropperOrigin(label)(key))(registered)
+                                |> (given (outer) -> (label, outer)))
 // Stage 0's `EmitGeneralRuntimeManagedAdtDrop`: on the last reference the dropper releases every
 // owned field of the live constructor, then the cell. Its label is registered before its body, so
 // a field of the same type calls it.

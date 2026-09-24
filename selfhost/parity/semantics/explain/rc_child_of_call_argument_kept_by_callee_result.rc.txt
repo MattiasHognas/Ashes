@@ -1,12 +1,122 @@
 RC report
 =========
 
-Function: addTraitImplementation [lambda_3]
+Function: __rcnorm_6
+  Operations
+    dup:                  3
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               3
+
+Function: __rcnorm_5
+  Operations
+    dup:                  6
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: __rcnorm_4
+  Operations
+    dup:                  5
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_11
   Operations
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-    allocations:          3
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: __deepcopy_list_10
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_9
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_list_8
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __deepcopy_7
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_record_14
+  Operations
+    dup:                  0
+    drop:                 3
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_record_13
+  Operations
+    dup:                  0
+    drop:                 4
+    uniqueness checks:    2
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_record_12
+  Operations
+    dup:                  0
+    drop:                 3
+    uniqueness checks:    2
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: addTraitImplementation [lambda_3]
+  Operations
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          4
     reused allocations:   0
     reuse tokens:         0
     copies:               0
@@ -21,7 +131,7 @@ Function: addTraitImplementation [lambda_2]
     reuse tokens:         0
     copies:               0
 
-Function: __rc_cdrop_4
+Function: __rc_cdrop_15
   Operations
     dup:                  0
     drop:                 1
@@ -51,17 +161,17 @@ Function: addTraitImplementation
     reuse tokens:         0
     copies:               0
 
-Function: addImpl [lambda_7]
+Function: addImpl [lambda_18]
   Operations
-    dup:                  1
+    dup:                  2
     drop:                 1
     uniqueness checks:    0
-    allocations:          2
+    allocations:          3
     reused allocations:   0
     reuse tokens:         0
     copies:               1
 
-Function: addImpl [lambda_6]
+Function: addImpl [lambda_17]
   Operations
     dup:                  0
     drop:                 0
@@ -83,15 +193,15 @@ Function: addImpl
 
 Function: buildEnv
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
-    allocations:          1
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               0
 
-Function: __tospacecopy_adt_9
+Function: __tospacecopy_adt_20
   Operations
     dup:                  0
     drop:                 0
@@ -101,7 +211,7 @@ Function: __tospacecopy_adt_9
     reuse tokens:         0
     copies:               0
 
-Function: churn [lambda_11]
+Function: churn [lambda_22]
   Operations
     dup:                  1
     drop:                 6
@@ -121,7 +231,7 @@ Function: churn
     reuse tokens:         0
     copies:               0
 
-Function: count [lambda_13]
+Function: count [lambda_24]
   Operations
     dup:                  2
     drop:                 9
@@ -143,25 +253,25 @@ Function: count
 
 Function: firstNames
   Operations
-    dup:                  11
-    drop:                 29
-    uniqueness checks:    12
-    allocations:          2
+    dup:                  3
+    drop:                 8
+    uniqueness checks:    3
+    allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               8
+    copies:               3
 
 Function: buildEnv
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
-    allocations:          1
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               0
 
-Function: churn [lambda_11__scalarenv1]
+Function: churn [lambda_22__scalarenv1]
   Operations
     dup:                  1
     drop:                 6
@@ -171,7 +281,7 @@ Function: churn [lambda_11__scalarenv1]
     reuse tokens:         0
     copies:               3
 
-Function: count [lambda_13__scalarenv2]
+Function: count [lambda_24__scalarenv2]
   Operations
     dup:                  2
     drop:                 9
@@ -180,16 +290,6 @@ Function: count [lambda_13__scalarenv2]
     reused allocations:   0
     reuse tokens:         0
     copies:               1
-
-Function: addTraitImplementation [lambda_3__scalarenv3]
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          3
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
 
 Function: _start_main
   Operations

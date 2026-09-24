@@ -8,11 +8,11 @@ Function: collect
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_2]
-    dup:                  13
-    drop:                 9
-    uniqueness checks:    4
+    dup:                  14
+    drop:                 5
+    uniqueness checks:    2
   perceus [lambda_2$env_normalize]
-    dup:                  2
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1]
@@ -24,14 +24,14 @@ Function: collect
     drop:                 0
     uniqueness checks:    0
   representation [lambda_2]
-    conservative unknown: 2
-    region:               4
-    runtime rc:           34
+    conservative unknown: 8
+    region:               11
+    runtime rc:           41
     copy value:           9
   representation [lambda_1]
-    conservative unknown: 1
+    conservative unknown: 2
     region:               2
-    runtime rc:           6
+    runtime rc:           3
   representation [lambda_0]
     region:               3
     copy value:           1
@@ -41,20 +41,20 @@ Function: firstLabels
     items: consumed, move-safe yes
     k: consumed, move-safe yes
     result fresh: yes
-  perceus [lambda_8]
+  perceus [lambda_12]
     dup:                  0
     drop:                 2
     uniqueness checks:    0
-  perceus [lambda_7]
+  perceus [lambda_11]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_8]
+  representation [lambda_12]
     conservative unknown: 9
     region:               2
     runtime rc:           6
     copy value:           6
-  representation [lambda_7]
+  representation [lambda_11]
     conservative unknown: 1
     region:               3
 
@@ -63,23 +63,23 @@ Function: reversed
     items: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_10]
+  perceus [lambda_14]
     dup:                  12
-    drop:                 22
-    uniqueness checks:    10
-  perceus [lambda_9]
+    drop:                 11
+    uniqueness checks:    5
+  perceus [lambda_13]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_10__scalarenv0]
+  perceus [lambda_14__scalarenv0]
     dup:                  12
-    drop:                 22
-    uniqueness checks:    10
-  representation [lambda_10]
-    conservative unknown: 3
-    region:               7
-    runtime rc:           50
-  representation [lambda_9]
+    drop:                 11
+    uniqueness checks:    5
+  representation [lambda_14]
+    conservative unknown: 6
+    region:               2
+    runtime rc:           47
+  representation [lambda_13]
     conservative unknown: 1
     region:               3
 
@@ -89,26 +89,27 @@ Function: total
     sum: consumed, move-safe yes
     labels: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_6]
-    dup:                  5
-    drop:                 14
-    uniqueness checks:    6
-  perceus [lambda_5]
+  perceus [lambda_10]
+    dup:                  4
+    drop:                 8
+    uniqueness checks:    3
+  perceus [lambda_9]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_4]
+  perceus [lambda_8]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_6]
+  representation [lambda_10]
+    conservative unknown: 2
     region:               1
-    runtime rc:           21
+    runtime rc:           18
     copy value:           10
-  representation [lambda_5]
+  representation [lambda_9]
     region:               2
     copy value:           1
-  representation [lambda_4]
+  representation [lambda_8]
     conservative unknown: 1
     region:               3
 

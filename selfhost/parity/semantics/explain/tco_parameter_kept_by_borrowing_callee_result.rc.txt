@@ -1,12 +1,62 @@
 RC report
 =========
 
-Function: placed [lambda_1]
+Function: __rcnorm_2
+  Operations
+    dup:                  4
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               5
+
+Function: __deepcopy_4
   Operations
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-    allocations:          1
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_3
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __rcdrop_6
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_record_5
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: placed [lambda_1]
+  Operations
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
     copies:               0
@@ -21,7 +71,7 @@ Function: placed
     reuse tokens:         0
     copies:               0
 
-Function: __rcdrop_5
+Function: __rcdrop_record_10
   Operations
     dup:                  0
     drop:                 2
@@ -31,27 +81,17 @@ Function: __rcdrop_5
     reuse tokens:         0
     copies:               0
 
-Function: __deepcopy_8
+Function: __rcnorm_11
   Operations
-    dup:                  0
+    dup:                  4
     drop:                 0
     uniqueness checks:    0
-    allocations:          2
+    allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               1
+    copies:               5
 
-Function: __deepcopy_7
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          2
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               1
-
-Function: __deepcopy_list_6
+Function: __deepcopy_list_12
   Operations
     dup:                  0
     drop:                 0
@@ -61,17 +101,17 @@ Function: __deepcopy_list_6
     reuse tokens:         0
     copies:               0
 
-Function: collect [lambda_4]
+Function: collect [lambda_9]
   Operations
-    dup:                  21
-    drop:                 13
-    uniqueness checks:    7
-    allocations:          8
+    dup:                  14
+    drop:                 6
+    uniqueness checks:    4
+    allocations:          10
     reused allocations:   0
     reuse tokens:         0
-    copies:               20
+    copies:               0
 
-Function: collect [lambda_3]
+Function: collect [lambda_8]
   Operations
     dup:                  0
     drop:                 0
@@ -101,7 +141,7 @@ Function: describe
     reuse tokens:         0
     copies:               1
 
-Function: __deepcopy_11
+Function: __deepcopy_15
   Operations
     dup:                  0
     drop:                 0
@@ -113,23 +153,23 @@ Function: __deepcopy_11
 
 Function: build
   Operations
-    dup:                  2
-    drop:                 2
-    uniqueness checks:    1
+    dup:                  3
+    drop:                 0
+    uniqueness checks:    0
     allocations:          3
     reused allocations:   0
     reuse tokens:         0
     copies:               3
 
-Function: joinAll [lambda_13]
+Function: joinAll [lambda_17]
   Operations
-    dup:                  8
-    drop:                 17
-    uniqueness checks:    9
+    dup:                  5
+    drop:                 11
+    uniqueness checks:    6
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               7
+    copies:               2
 
 Function: joinAll
   Operations
@@ -141,21 +181,31 @@ Function: joinAll
     reuse tokens:         0
     copies:               0
 
-Function: joinAll [lambda_13__scalarenv0]
+Function: joinAll [lambda_17__scalarenv0]
   Operations
-    dup:                  8
-    drop:                 17
-    uniqueness checks:    9
+    dup:                  5
+    drop:                 11
+    uniqueness checks:    6
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               7
+    copies:               2
+
+Function: placed [lambda_1__scalarenv1]
+  Operations
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
 
 Function: _start_main
   Operations
-    dup:                  2
-    drop:                 8
-    uniqueness checks:    4
+    dup:                  0
+    drop:                 1
+    uniqueness checks:    0
     allocations:          6
     reused allocations:   0
     reuse tokens:         0

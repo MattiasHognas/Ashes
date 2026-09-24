@@ -1,17 +1,47 @@
 RC report
 =========
 
-Function: extend [lambda_1]
+Function: __rcnorm_2
+  Operations
+    dup:                  3
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               3
+
+Function: __deepcopy_3
   Operations
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-    allocations:          2
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
+Function: __rcdrop_record_4
+  Operations
+    dup:                  0
+    drop:                 5
+    uniqueness checks:    2
+    allocations:          0
     reused allocations:   0
     reuse tokens:         0
     copies:               0
 
-Function: __rc_cdrop_2
+Function: extend [lambda_1]
+  Operations
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rc_cdrop_5
   Operations
     dup:                  0
     drop:                 1
@@ -41,15 +71,15 @@ Function: extend
     reuse tokens:         0
     copies:               0
 
-Function: scan [lambda_4]
+Function: scan [lambda_7]
   Operations
-    dup:                  24
-    drop:                 62
-    uniqueness checks:    19
+    dup:                  20
+    drop:                 33
+    uniqueness checks:    9
     allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               14
+    copies:               5
 
 Function: scan
   Operations
@@ -61,7 +91,7 @@ Function: scan
     reuse tokens:         0
     copies:               0
 
-Function: joinAll [lambda_6]
+Function: joinAll [lambda_9]
   Operations
     dup:                  3
     drop:                 11
@@ -81,7 +111,7 @@ Function: joinAll
     reuse tokens:         0
     copies:               0
 
-Function: joinAll [lambda_6__scalarenv0]
+Function: joinAll [lambda_9__scalarenv0]
   Operations
     dup:                  3
     drop:                 11
@@ -90,6 +120,16 @@ Function: joinAll [lambda_6__scalarenv0]
     reused allocations:   0
     reuse tokens:         0
     copies:               3
+
+Function: extend [lambda_1__scalarenv1]
+  Operations
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
 
 Function: _start_main
   Operations

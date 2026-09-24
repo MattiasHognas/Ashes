@@ -235,8 +235,414 @@ function lambda_0  [SourceFunction from methodNameOf]
     LoadLocal             Target=57 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:19:5)
     Return                Source=57   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
 
+function __rcnorm_6  [RuntimeManagedAdtNormalizer]
+  locals=5 temps=15
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_72   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_73   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_72:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_74   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_75   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_74:
+    CopyOutArena          DestTemp=7 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_75:
+    LoadLocal             Target=8 Slot=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    GetAdtField           Target=9 Ptr=0 FieldIndex=2 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=10 SourceTemp=9
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_76   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=11   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_77   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_76:
+    CopyOutArena          DestTemp=12 SrcTemp=9 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=12   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_77:
+    LoadLocal             Target=13 Slot=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SetAdtField           Ptr=3 FieldIndex=2 Source=13 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=2 Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_73:
+    LoadLocal             Target=14 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=14   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __rcnorm_5  [RuntimeManagedAdtNormalizer]
+  locals=10 temps=39
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_57   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_58   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_57:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_59   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_60   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_59:
+    CopyOutArena          DestTemp=7 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_60:
+    LoadLocal             Target=8 Slot=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    GetAdtField           Target=9 Ptr=0 FieldIndex=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=10 SourceTemp=9
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_61   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=11   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_62   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_61:
+    IsReferenceCounted    Target=13 SourceTemp=9
+    JumpIfFalse           CondTemp=13 Target=rc_representation_copy_63   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=14 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=14   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_64   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_63:
+    LoadConstInt          Target=15 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=6 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=7 Source=15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=8 Source=15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_65:
+    LoadLocal             Target=16 Slot=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=17 Left=16 Right=15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=17 Target=rc_normalize_list_end_66   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=18 SourceTemp=16
+    JumpIfFalse           CondTemp=18 Target=rc_normalize_list_cell_67   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=19 SourceTemp=16 RuntimeManaged=true
+    LoadLocal             Target=20 Slot=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=21 Left=20 Right=15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=21 Target=rc_normalize_list_first_68   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadLocal             Target=22 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=19   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_linked_69   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_first_68:
+    StoreLocal            Slot=7 Source=19   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_linked_69:
+    StoreLocal            Slot=8 Source=19   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_end_66   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_cell_67:
+    LoadMemOffset         Target=23 BasePtr=16 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=24 BasePtr=16 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=25 SourceTemp=23
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_70   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=26 SourceTemp=23 RuntimeManaged=true
+    StoreLocal            Slot=9 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_71   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_70:
+    LoadConstInt          Target=28 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallKnown             Target=29 FuncLabel=__rcnorm_6 EnvTemp=28 ArgTemp=23   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=9 Source=29   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_71:
+    LoadLocal             Target=30 Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=31 SizeBytes=16 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=31 OffsetBytes=0 Source=30   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=31 OffsetBytes=8 Source=15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadLocal             Target=32 Slot=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=33 Left=32 Right=15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=33 Target=rc_normalize_list_first_78   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadLocal             Target=34 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=34 OffsetBytes=8 Source=31   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_linked_79   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_first_78:
+    StoreLocal            Slot=7 Source=31   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_linked_79:
+    StoreLocal            Slot=8 Source=31   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=6 Source=24   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_65   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_end_66:
+    LoadLocal             Target=35 Slot=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=5 Source=35   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_64:
+    LoadLocal             Target=36 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=4 Source=36   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_62:
+    LoadLocal             Target=37 Slot=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SetAdtField           Ptr=3 FieldIndex=1 Source=37 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=2 Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_58:
+    LoadLocal             Target=38 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=38   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __rcnorm_4  [RuntimeManagedAdtNormalizer]
+  locals=9 temps=34
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_44   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_45   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_44:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_46   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_47   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_46:
+    IsReferenceCounted    Target=8 SourceTemp=4
+    JumpIfFalse           CondTemp=8 Target=rc_representation_copy_48   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=9 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_49   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_48:
+    LoadConstInt          Target=10 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=5 Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=6 Source=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=7 Source=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_50:
+    LoadLocal             Target=11 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=12 Left=11 Right=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=12 Target=rc_normalize_list_end_51   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=13 SourceTemp=11
+    JumpIfFalse           CondTemp=13 Target=rc_normalize_list_cell_52   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=14 SourceTemp=11 RuntimeManaged=true
+    LoadLocal             Target=15 Slot=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=16 Left=15 Right=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=16 Target=rc_normalize_list_first_53   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadLocal             Target=17 Slot=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=14   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_linked_54   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_first_53:
+    StoreLocal            Slot=6 Source=14   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_linked_54:
+    StoreLocal            Slot=7 Source=14   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_end_51   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_cell_52:
+    LoadMemOffset         Target=18 BasePtr=11 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=19 BasePtr=11 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=20 SourceTemp=18
+    JumpIfFalse           CondTemp=20 Target=rc_representation_copy_55   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=21 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=8 Source=21   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_56   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_55:
+    LoadConstInt          Target=23 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallKnown             Target=24 FuncLabel=__rcnorm_5 EnvTemp=23 ArgTemp=18   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=8 Source=24   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_56:
+    LoadLocal             Target=25 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=26 SizeBytes=16 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=26 OffsetBytes=0 Source=25   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=26 OffsetBytes=8 Source=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadLocal             Target=27 Slot=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=28 Left=27 Right=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=28 Target=rc_normalize_list_first_80   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadLocal             Target=29 Slot=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=29 OffsetBytes=8 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_linked_81   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_first_80:
+    StoreLocal            Slot=6 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_linked_81:
+    StoreLocal            Slot=7 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=5 Source=19   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_normalize_list_50   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_normalize_list_end_51:
+    LoadLocal             Target=30 Slot=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=4 Source=30   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_49:
+    LoadLocal             Target=31 Slot=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=3 Source=31   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_47:
+    LoadLocal             Target=32 Slot=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=32 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=2 Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_45:
+    LoadLocal             Target=33 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=33   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __deepcopy_11  [AdtDeepCopier]
+  locals=2 temps=9
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=2 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_11_default   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_11_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=3 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CopyOutArena          DestTemp=8 SrcTemp=7 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_11_default:
+    Return                Source=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __deepcopy_list_10  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=2 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_10_copy   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=4 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_list_10_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=7 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_11 EnvPtrTemp=7 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=11 SizeBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=11   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __deepcopy_9  [AdtDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=2 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_9_default   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_9_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=7 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_list_10 EnvPtrTemp=7 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_9_default:
+    Return                Source=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __deepcopy_list_8  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=2 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_8_copy   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=4 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_list_8_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=7 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_9 EnvPtrTemp=7 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=11 SizeBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=11   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __deepcopy_7  [AdtDeepCopier]
+  locals=2 temps=8
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=2 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_7_default   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_7_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=5 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    MakeClosure           Target=6 FuncLabel=__deepcopy_list_8 EnvPtrTemp=5 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallClosure           Target=7 ClosureTemp=6 ArgTemp=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  __deepcopy_7_default:
+    Return                Source=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __rcdrop_record_14  [RuntimeManagedAdtDropper]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_92   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+    GetAdtField           Target=3 Ptr=0 FieldIndex=2 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+  rc_drop_shared_92:
+    RcDrop                SourceTemp=0 TypeName=Method RuntimeManaged=true
+    LoadConstInt          Target=4 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __rcdrop_record_13  [RuntimeManagedAdtDropper]
+  locals=3 temps=13
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_88   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=2 Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rcdrop_list_89:
+    LoadLocal             Target=4 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=5 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=6 Left=4 Right=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_91   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcIsUnique            Target=7 SourceTemp=4
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_90   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=9 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallKnown             Target=10 FuncLabel=__rcdrop_record_14 EnvTemp=9 ArgTemp=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=11 BasePtr=4 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=11   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rcdrop_list_89   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rcdrop_list_shared_90:
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_91   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rcdrop_list_end_91:
+  rc_drop_shared_88:
+    RcDrop                SourceTemp=0 TypeName=Impl RuntimeManaged=true
+    LoadConstInt          Target=12 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=12   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
+function __rcdrop_record_12  [RuntimeManagedAdtDropper]
+  locals=3 temps=12
+    LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_84   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=2 Source=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rcdrop_list_85:
+    LoadLocal             Target=3 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=4 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CmpIntNe              Target=5 Left=3 Right=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_87   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcIsUnique            Target=6 SourceTemp=3
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_86   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=8 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallKnown             Target=9 FuncLabel=__rcdrop_record_13 EnvTemp=8 ArgTemp=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadMemOffset         Target=10 BasePtr=3 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=10   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rcdrop_list_85   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rcdrop_list_shared_86:
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_87   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rcdrop_list_end_87:
+  rc_drop_shared_84:
+    RcDrop                SourceTemp=0 TypeName=Env RuntimeManaged=true
+    LoadConstInt          Target=11 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=11   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+
 function lambda_3  [ClosureHelper from addTraitImplementation]
-  locals=8 temps=14
+  locals=10 temps=29
     LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:41:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:41:5)
@@ -268,7 +674,34 @@ function lambda_3  [ClosureHelper from addTraitImplementation]
     StoreLocal            Slot=2 Source=12   (rc_child_of_call_argument_kept_by_callee_result.ash:41:5)
   match_end_39:
     LoadLocal             Target=13 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:41:5)
-    Return                Source=13   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    IsReferenceCounted    Target=14 SourceTemp=13
+    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_42   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    RcDup                 Target=15 SourceTemp=13 RuntimeManaged=true
+    StoreLocal            Slot=8 Source=15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_representation_done_43   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_42:
+    LoadConstInt          Target=17 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallKnown             Target=18 FuncLabel=__rcnorm_4 EnvTemp=17 ArgTemp=13   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=8 Source=18   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_done_43:
+    LoadLocal             Target=19 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadArgumentOwnership Target=20   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=21 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    ShrInt                Target=22 Left=20 Right=21   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=22 Target=rc_result_owned_82   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Alloc                 Target=23 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    MakeClosure           Target=24 FuncLabel=__deepcopy_7 EnvPtrTemp=23 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=24   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallClosure           Target=25 ClosureTemp=24 ArgTemp=19   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadConstInt          Target=26 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CallKnown             Target=27 FuncLabel=__rcdrop_record_12 EnvTemp=26 ArgTemp=19   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=9 Source=25   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Jump                  Target=rc_result_done_83   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_result_owned_82:
+    StoreLocal            Slot=9 Source=19   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_result_done_83:
+    LoadLocal             Target=28 Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    Return                Source=28   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
 
 function lambda_2  [ClosureHelper from addTraitImplementation]
   locals=2 temps=4
@@ -277,10 +710,10 @@ function lambda_2  [ClosureHelper from addTraitImplementation]
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     LoadLocal             Target=2 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-    MakeClosure           Target=3 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    MakeClosure           Target=3 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     Return                Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
 
-function __rc_cdrop_4  [RuntimeManagedClosureDropper]
+function __rc_cdrop_15  [RuntimeManagedClosureDropper]
   locals=2 temps=3
     LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
@@ -294,17 +727,17 @@ function lambda_2$env_normalize  [ClosureEnvironmentNormalizer from addTraitImpl
     LoadLocal             Target=1 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     IsReferenceCounted    Target=3 SourceTemp=2
-    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_42   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_93   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
     StoreLocal            Slot=2 Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-    Jump                  Target=rc_representation_done_43   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-  rc_representation_copy_42:
+    Jump                  Target=rc_representation_done_94   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+  rc_representation_copy_93:
     CopyOutArena          DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=2 Source=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-  rc_representation_done_43:
+  rc_representation_done_94:
     LoadLocal             Target=6 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_4   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_15   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     Return                Source=7   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
 
 function lambda_1  [SourceFunction from addTraitImplementation]
@@ -315,8 +748,8 @@ function lambda_1  [SourceFunction from addTraitImplementation]
     MakeClosure           Target=2 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
     Return                Source=2   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
 
-function lambda_7  [ClosureHelper from addImpl]
-  locals=23 temps=45
+function lambda_18  [ClosureHelper from addImpl]
+  locals=26 temps=67
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadEnv               Target=0 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
@@ -328,12 +761,12 @@ function lambda_7  [ClosureHelper from addImpl]
     CallClosure           Target=6 ClosureTemp=1 ArgTemp=2   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
     StoreLocal            Slot=7 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
-    JumpIfFalse           CondTemp=5 Target=call_copy_arena_result_44   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
-    Jump                  Target=call_reclaim_owned_result_45   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
-  call_copy_arena_result_44:
+    JumpIfFalse           CondTemp=5 Target=call_copy_arena_result_95   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
+    Jump                  Target=call_reclaim_owned_result_96   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
+  call_copy_arena_result_95:
     CopyOutArena          DestTemp=7 SrcTemp=6 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=7 Source=7   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
-  call_reclaim_owned_result_45:
+  call_reclaim_owned_result_96:
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
     LoadLocal             Target=8 Slot=7   (rc_child_of_call_argument_kept_by_callee_result.ash:45:23)
     StoreLocal            Slot=8 Source=8   (rc_child_of_call_argument_kept_by_callee_result.ash:45:6)
@@ -380,14 +813,55 @@ function lambda_7  [ClosureHelper from addImpl]
     CallClosure           Target=38 ClosureTemp=28 ArgTemp=37   (rc_child_of_call_argument_kept_by_callee_result.ash:50:16)
     LoadLocal             Target=39 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:50:111)
     CallClosure           Target=40 ClosureTemp=38 ArgTemp=39   (rc_child_of_call_argument_kept_by_callee_result.ash:50:16)
-    StoreLocal            Slot=18 Source=40   (rc_child_of_call_argument_kept_by_callee_result.ash:49:13)
-    LoadLocal             Target=42 Slot=18   (rc_child_of_call_argument_kept_by_callee_result.ash:49:13)
-    StoreLocal            Slot=21 Source=42   (rc_child_of_call_argument_kept_by_callee_result.ash:45:6)
-    LoadLocal             Target=44 Slot=21   (rc_child_of_call_argument_kept_by_callee_result.ash:45:6)
+    StoreLocal            Slot=18 Source=40   (rc_child_of_call_argument_kept_by_callee_result.ash:50:16)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=17
+    LoadLocal             Target=41 Slot=18   (rc_child_of_call_argument_kept_by_callee_result.ash:50:16)
+    StoreLocal            Slot=19 Source=41   (rc_child_of_call_argument_kept_by_callee_result.ash:49:13)
+    LoadLocal             Target=43 Slot=19   (rc_child_of_call_argument_kept_by_callee_result.ash:49:13)
+    StoreLocal            Slot=22 Source=43   (rc_child_of_call_argument_kept_by_callee_result.ash:45:6)
+    LoadLocal             Target=45 Slot=22   (rc_child_of_call_argument_kept_by_callee_result.ash:45:6)
+    IsReferenceCounted    Target=46 SourceTemp=45
     RcDrop                SourceTemp=24 TypeName=String OwnerSlot=14
-    Return                Source=44   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    JumpIfFalse           CondTemp=46 Target=rc_representation_copy_97   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    RcDup                 Target=47 SourceTemp=45 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=47   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    Jump                  Target=rc_representation_done_98   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+  rc_representation_copy_97:
+    LoadConstInt          Target=49 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    CallKnown             Target=50 FuncLabel=__rcnorm_4 EnvTemp=49 ArgTemp=45   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    StoreLocal            Slot=24 Source=50   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+  rc_representation_done_98:
+    LoadLocal             Target=51 Slot=24   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    LoadLocal             Target=52 Slot=18   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    LoadConstInt          Target=53 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    CmpIntNe              Target=54 Left=52 Right=53   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_99   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    IsReferenceCounted    Target=55 SourceTemp=52
+    JumpIfFalse           CondTemp=55 Target=general_rc_owned_absent_99   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    LoadConstInt          Target=56 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    CallKnown             Target=57 FuncLabel=__rcdrop_record_12 EnvTemp=56 ArgTemp=52   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    StoreLocal            Slot=18 Source=53   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+  general_rc_owned_absent_99:
+    LoadArgumentOwnership Target=58   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    LoadConstInt          Target=59 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    ShrInt                Target=60 Left=58 Right=59   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    JumpIfFalse           CondTemp=60 Target=rc_result_owned_100   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    Alloc                 Target=61 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    MakeClosure           Target=62 FuncLabel=__deepcopy_7 EnvPtrTemp=61 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    StoreMemOffset        BasePtr=61 OffsetBytes=0 Source=62   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    CallClosure           Target=63 ClosureTemp=62 ArgTemp=51   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    LoadConstInt          Target=64 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    CallKnown             Target=65 FuncLabel=__rcdrop_record_12 EnvTemp=64 ArgTemp=51   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    StoreLocal            Slot=25 Source=63   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    Jump                  Target=rc_result_done_101   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+  rc_result_owned_100:
+    StoreLocal            Slot=25 Source=51   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+  rc_result_done_101:
+    LoadLocal             Target=66 Slot=25   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    Return                Source=66   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
 
-function lambda_6  [ClosureHelper from addImpl]
+function lambda_17  [ClosureHelper from addImpl]
   locals=2 temps=8
     Alloc                 Target=0 SizeBytes=32   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
@@ -400,10 +874,10 @@ function lambda_6  [ClosureHelper from addImpl]
     LoadEnv               Target=5 Index=2   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     Borrow                Target=6 SourceTemp=5
     StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
-    MakeClosure           Target=7 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=32   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    MakeClosure           Target=7 FuncLabel=lambda_18 EnvPtrTemp=0 EnvSizeBytes=32 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     Return                Source=7   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
 
-function lambda_5  [SourceFunction from addImpl]
+function lambda_16  [SourceFunction from addImpl]
   locals=2 temps=7
     Alloc                 Target=0 SizeBytes=24   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
@@ -414,11 +888,11 @@ function lambda_5  [SourceFunction from addImpl]
     LoadEnv               Target=4 Index=1   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     Borrow                Target=5 SourceTemp=4
     StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
-    MakeClosure           Target=6 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=24   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    MakeClosure           Target=6 FuncLabel=lambda_17 EnvPtrTemp=0 EnvSizeBytes=24   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     Return                Source=6   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
 
-function lambda_8  [SourceFunction from buildEnv]
-  locals=11 temps=23
+function lambda_19  [SourceFunction from buildEnv]
+  locals=16 temps=59
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:56:8)
     Borrow                Target=1 SourceTemp=0
@@ -444,24 +918,93 @@ function lambda_8  [SourceFunction from buildEnv]
     AllocAdt              Target=19 Tag=0 FieldCount=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
     SetAdtField           Ptr=19 FieldIndex=0 Source=18 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
     CallClosure           Target=20 ClosureTemp=17 ArgTemp=19   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
-    CallClosure           Target=21 ClosureTemp=11 ArgTemp=20   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
-    CallClosure           Target=22 ClosureTemp=5 ArgTemp=21   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
-    Return                Source=22   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreLocal            Slot=9 Source=20   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=8
+    LoadLocal             Target=21 Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    CallClosure           Target=22 ClosureTemp=11 ArgTemp=21   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    StoreLocal            Slot=11 Source=22   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=10
+    LoadLocal             Target=23 Slot=11   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    CallClosure           Target=24 ClosureTemp=5 ArgTemp=23   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    StoreLocal            Slot=13 Source=24   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=12
+    LoadLocal             Target=25 Slot=13   (rc_child_of_call_argument_kept_by_callee_result.ash:53:5)
+    IsReferenceCounted    Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=rc_representation_copy_102   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    RcDup                 Target=27 SourceTemp=25 RuntimeManaged=true
+    StoreLocal            Slot=14 Source=27   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    Jump                  Target=rc_representation_done_103   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+  rc_representation_copy_102:
+    LoadConstInt          Target=29 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CallKnown             Target=30 FuncLabel=__rcnorm_4 EnvTemp=29 ArgTemp=25   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreLocal            Slot=14 Source=30   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+  rc_representation_done_103:
+    LoadLocal             Target=31 Slot=14   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadLocal             Target=32 Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=33 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CmpIntNe              Target=34 Left=32 Right=33   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    JumpIfFalse           CondTemp=34 Target=general_rc_owned_absent_104   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    IsReferenceCounted    Target=35 SourceTemp=32
+    JumpIfFalse           CondTemp=35 Target=general_rc_owned_absent_104   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=36 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CallKnown             Target=37 FuncLabel=__rcdrop_record_12 EnvTemp=36 ArgTemp=32   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreLocal            Slot=9 Source=33   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+  general_rc_owned_absent_104:
+    LoadLocal             Target=38 Slot=11   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=39 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CmpIntNe              Target=40 Left=38 Right=39   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    JumpIfFalse           CondTemp=40 Target=general_rc_owned_absent_105   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    IsReferenceCounted    Target=41 SourceTemp=38
+    JumpIfFalse           CondTemp=41 Target=general_rc_owned_absent_105   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=42 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CallKnown             Target=43 FuncLabel=__rcdrop_record_12 EnvTemp=42 ArgTemp=38   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreLocal            Slot=11 Source=39   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+  general_rc_owned_absent_105:
+    LoadLocal             Target=44 Slot=13   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=45 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CmpIntNe              Target=46 Left=44 Right=45   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    JumpIfFalse           CondTemp=46 Target=general_rc_owned_absent_106   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    IsReferenceCounted    Target=47 SourceTemp=44
+    JumpIfFalse           CondTemp=47 Target=general_rc_owned_absent_106   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=48 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CallKnown             Target=49 FuncLabel=__rcdrop_record_12 EnvTemp=48 ArgTemp=44   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreLocal            Slot=13 Source=45   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+  general_rc_owned_absent_106:
+    LoadArgumentOwnership Target=50   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=51 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    ShrInt                Target=52 Left=50 Right=51   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    JumpIfFalse           CondTemp=52 Target=rc_result_owned_107   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    Alloc                 Target=53 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    MakeClosure           Target=54 FuncLabel=__deepcopy_7 EnvPtrTemp=53 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=0 Source=54   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CallClosure           Target=55 ClosureTemp=54 ArgTemp=31   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadConstInt          Target=56 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CallKnown             Target=57 FuncLabel=__rcdrop_record_12 EnvTemp=56 ArgTemp=31   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreLocal            Slot=15 Source=55   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    Jump                  Target=rc_result_done_108   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+  rc_result_owned_107:
+    StoreLocal            Slot=15 Source=31   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+  rc_result_done_108:
+    LoadLocal             Target=58 Slot=15   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    Return                Source=58   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
 
-function __tospacecopy_adt_9  [AdtDeepCopier]
+function __tospacecopy_adt_20  [AdtDeepCopier]
   locals=2 temps=5
     LoadLocal             Target=0 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
     LoadEnv               Target=1 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
     GetAdtTag             Target=2 Ptr=0   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
-    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__tospacecopy_adt_9_default   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
-  __tospacecopy_adt_9_c0:
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__tospacecopy_adt_20_default   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
+  __tospacecopy_adt_20_c0:
     AllocAdt              Target=3 Tag=0 FieldCount=0   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
     CopyOutArenaToSpace   DestTemp=4 SrcTemp=3 StaticSizeBytes=8
     Return                Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
-  __tospacecopy_adt_9_default:
+  __tospacecopy_adt_20_default:
     Return                Source=0   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
 
-function lambda_11  [ClosureHelper from churn]
+function lambda_22  [ClosureHelper from churn]
   locals=19 temps=65
     LoadEnv               Target=0 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=2 Source=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
@@ -469,22 +1012,22 @@ function lambda_11  [ClosureHelper from churn]
     LoadArgumentOwnership Target=28   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadConstInt          Target=29 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     AndInt                Target=30 Left=28 Right=29   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    JumpIfFalse           CondTemp=30 Target=rc_arg_normalize_copy_50   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=30 Target=rc_arg_normalize_copy_113   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=12 Source=27   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    Jump                  Target=rc_arg_normalize_done_51   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rc_arg_normalize_copy_50:
+    Jump                  Target=rc_arg_normalize_done_114   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rc_arg_normalize_copy_113:
     IsReferenceCounted    Target=31 SourceTemp=27
-    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_52   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_115   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     RcDup                 Target=32 SourceTemp=27 RuntimeManaged=true
     StoreLocal            Slot=13 Source=32   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    Jump                  Target=rc_representation_done_53   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rc_representation_copy_52:
+    Jump                  Target=rc_representation_done_116   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rc_representation_copy_115:
     CopyOutList           DestTemp=33 SrcTemp=27 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=13 Source=33   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rc_representation_done_53:
+  rc_representation_done_116:
     LoadLocal             Target=34 Slot=13   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=12 Source=34   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rc_arg_normalize_done_51:
+  rc_arg_normalize_done_114:
     LoadLocal             Target=35 Slot=12   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=1 Source=35   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadConstInt          Target=36 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
@@ -492,17 +1035,17 @@ function lambda_11  [ClosureHelper from churn]
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=5 Source=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  lambda_11_body:
+  lambda_22_body:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     SaveStackPointer      Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadLocal             Target=2 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:61:8)
     LoadConstInt          Target=3 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:61:13)
     CmpIntEq              Target=4 Left=2 Right=3   (rc_child_of_call_argument_kept_by_callee_result.ash:61:8)
-    JumpIfFalse           CondTemp=4 Target=else_46   (rc_child_of_call_argument_kept_by_callee_result.ash:61:5)
+    JumpIfFalse           CondTemp=4 Target=else_109   (rc_child_of_call_argument_kept_by_callee_result.ash:61:5)
     LoadLocal             Target=5 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:62:10)
     StoreLocal            Slot=10 Source=5   (rc_child_of_call_argument_kept_by_callee_result.ash:61:5)
-    Jump                  Target=endif_47   (rc_child_of_call_argument_kept_by_callee_result.ash:61:5)
-  else_46:
+    Jump                  Target=endif_110   (rc_child_of_call_argument_kept_by_callee_result.ash:61:5)
+  else_109:
     LoadLocal             Target=6 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:63:16)
     LoadConstInt          Target=7 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:63:20)
     SubInt                Target=8 Left=6 Right=7   (rc_child_of_call_argument_kept_by_callee_result.ash:63:16)
@@ -518,12 +1061,12 @@ function lambda_11  [ClosureHelper from churn]
     LoadConstInt          Target=17 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
     CmpIntEq              Target=18 Left=15 Right=17   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
     OrInt                 Target=19 Left=16 Right=18   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
-    JumpIfFalse           CondTemp=19 Target=rc_tail_copy_49   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
-    Jump                  Target=rc_tail_done_48   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
-  rc_tail_copy_49:
+    JumpIfFalse           CondTemp=19 Target=rc_tail_copy_112   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
+    Jump                  Target=rc_tail_done_111   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
+  rc_tail_copy_112:
     CopyOutList           DestTemp=20 SrcTemp=15 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
     StoreLocal            Slot=11 Source=20   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
-  rc_tail_done_48:
+  rc_tail_done_111:
     LoadLocal             Target=21 Slot=11   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
     Alloc                 Target=22 SizeBytes=16 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
     StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=14   (rc_child_of_call_argument_kept_by_callee_result.ash:63:23)
@@ -538,10 +1081,10 @@ function lambda_11  [ClosureHelper from churn]
     StoreLocal            Slot=6 Source=64
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=18
     RestoreStackPointer   Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:63:10)
-    Jump                  Target=lambda_11_body   (rc_child_of_call_argument_kept_by_callee_result.ash:63:10)
+    Jump                  Target=lambda_22_body   (rc_child_of_call_argument_kept_by_callee_result.ash:63:10)
     LoadConstInt          Target=25 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:63:10)
     StoreLocal            Slot=10 Source=25   (rc_child_of_call_argument_kept_by_callee_result.ash:61:5)
-  endif_47:
+  endif_110:
     LoadLocal             Target=26 Slot=10   (rc_child_of_call_argument_kept_by_callee_result.ash:61:5)
     LoadConstInt          Target=37 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=14 Source=37   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
@@ -552,65 +1095,65 @@ function lambda_11  [ClosureHelper from churn]
     CmpIntEq              Target=42 Left=41 Right=37   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     AndInt                Target=43 Left=39 Right=40   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     AndInt                Target=44 Left=43 Right=42   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    JumpIfFalse           CondTemp=44 Target=rc_tco_exit_transfer_not_selected_54   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=44 Target=rc_tco_exit_transfer_not_selected_117   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadConstInt          Target=45 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=14 Source=45   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    Jump                  Target=rc_tco_exit_transfer_done_55   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rc_tco_exit_transfer_not_selected_54:
+    Jump                  Target=rc_tco_exit_transfer_done_118   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rc_tco_exit_transfer_not_selected_117:
     LoadLocal             Target=46 Slot=6   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    JumpIfFalse           CondTemp=46 Target=rc_tco_exit_drop_inactive_56   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=46 Target=rc_tco_exit_drop_inactive_119   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=15 Source=38   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rcdrop_list_57:
+  rcdrop_list_120:
     LoadLocal             Target=47 Slot=15   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadConstInt          Target=48 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     CmpIntNe              Target=49 Left=47 Right=48   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    JumpIfFalse           CondTemp=49 Target=rcdrop_list_end_59   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=49 Target=rcdrop_list_end_122   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     RcIsUnique            Target=50 SourceTemp=47
-    JumpIfFalse           CondTemp=50 Target=rcdrop_list_shared_58   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=50 Target=rcdrop_list_shared_121   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadMemOffset         Target=51 BasePtr=47 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     RcDrop                SourceTemp=51 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=52 BasePtr=47 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     RcDrop                SourceTemp=47 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=15 Source=52   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    Jump                  Target=rcdrop_list_57   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rcdrop_list_shared_58:
+    Jump                  Target=rcdrop_list_120   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rcdrop_list_shared_121:
     RcDrop                SourceTemp=47 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_59   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rcdrop_list_end_59:
-  rc_tco_exit_drop_inactive_56:
-  rc_tco_exit_transfer_done_55:
+    Jump                  Target=rcdrop_list_end_122   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rcdrop_list_end_122:
+  rc_tco_exit_drop_inactive_119:
+  rc_tco_exit_transfer_done_118:
     LoadArgumentOwnership Target=53   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadConstInt          Target=54 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     ShrInt                Target=55 Left=53 Right=54   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    JumpIfFalse           CondTemp=55 Target=rc_result_owned_60   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=55 Target=rc_result_owned_123   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     CopyOutList           DestTemp=56 SrcTemp=26 HeadCopy=String Purpose=ArenaResultBoundary   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreLocal            Slot=17 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rcdrop_list_62:
+  rcdrop_list_125:
     LoadLocal             Target=57 Slot=17   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadConstInt          Target=58 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     CmpIntNe              Target=59 Left=57 Right=58   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_64   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_127   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     RcIsUnique            Target=60 SourceTemp=57
-    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_63   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_126   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     RcDrop                SourceTemp=61 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=62 BasePtr=57 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=17 Source=62   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    Jump                  Target=rcdrop_list_62   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rcdrop_list_shared_63:
+    Jump                  Target=rcdrop_list_125   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rcdrop_list_shared_126:
     RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_64   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rcdrop_list_end_64:
+    Jump                  Target=rcdrop_list_end_127   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rcdrop_list_end_127:
     StoreLocal            Slot=16 Source=56   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    Jump                  Target=rc_result_done_61   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rc_result_owned_60:
+    Jump                  Target=rc_result_done_124   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+  rc_result_owned_123:
     StoreLocal            Slot=16 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-  rc_result_done_61:
+  rc_result_done_124:
     LoadLocal             Target=63 Slot=16   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     Return                Source=63   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
 
-function lambda_11$env_normalize  [ClosureEnvironmentNormalizer from churn]
+function lambda_22$env_normalize  [ClosureEnvironmentNormalizer from churn]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadLocal             Target=1 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
@@ -619,28 +1162,28 @@ function lambda_11$env_normalize  [ClosureEnvironmentNormalizer from churn]
     LoadConstInt          Target=3 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     Return                Source=3   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
 
-function lambda_10  [SourceFunction from churn]
+function lambda_21  [SourceFunction from churn]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     LoadLocal             Target=1 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    MakeClosure           Target=4 FuncLabel=lambda_11 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    MakeClosure           Target=4 FuncLabel=lambda_22 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
     Return                Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
 
-function lambda_13  [ClosureHelper from count]
+function lambda_24  [ClosureHelper from count]
   locals=27 temps=53
     LoadEnv               Target=0 Index=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     StoreLocal            Slot=2 Source=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     LoadLocal             Target=30 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     IsReferenceCounted    Target=31 SourceTemp=30
-    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_73   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_136   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     RcDup                 Target=32 SourceTemp=30 RuntimeManaged=true
     StoreLocal            Slot=23 Source=32   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    Jump                  Target=rc_representation_done_74   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-  rc_representation_copy_73:
+    Jump                  Target=rc_representation_done_137   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+  rc_representation_copy_136:
     CopyOutList           DestTemp=33 SrcTemp=30 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     StoreLocal            Slot=23 Source=33   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-  rc_representation_done_74:
+  rc_representation_done_137:
     LoadLocal             Target=34 Slot=23   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     StoreLocal            Slot=2 Source=34   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     LoadConstInt          Target=35 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
@@ -650,28 +1193,28 @@ function lambda_13  [ClosureHelper from count]
     StoreLocal            Slot=5 Source=1   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     StoreLocal            Slot=6 Source=1   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     StoreLocal            Slot=7 Source=1   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-  lambda_13_body:
+  lambda_24_body:
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     SaveStackPointer      Slot=11   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     LoadLocal             Target=2 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:66:11)
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=3 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     CmpIntEq              Target=4 Left=2 Right=3   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_68   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_131   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     LoadLocal             Target=5 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:67:17)
     StoreLocal            Slot=12 Source=5   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
-    Jump                  Target=match_end_65   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
-  match_arm_cleanup_68:
+    Jump                  Target=match_end_128   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
+  match_arm_cleanup_131:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
-    Jump                  Target=match_next_67   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
-  match_next_67:
+    Jump                  Target=match_next_130   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
+  match_next_130:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=6 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     CmpIntNe              Target=7 Left=2 Right=6   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_69   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_132   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     StoreLocal            Slot=19 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
@@ -684,23 +1227,23 @@ function lambda_13  [ClosureHelper from count]
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=16 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     StoreLocal            Slot=20 Source=16   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
-  rcdrop_list_70:
+  rcdrop_list_133:
     LoadLocal             Target=17 Slot=20   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     LoadConstInt          Target=18 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     CmpIntNe              Target=19 Left=17 Right=18   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
-    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_72   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_135   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     RcIsUnique            Target=20 SourceTemp=17
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_71   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
+    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_134   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     RcDrop                SourceTemp=21 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=22 BasePtr=17 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=20 Source=22   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
-    Jump                  Target=rcdrop_list_70   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
-  rcdrop_list_shared_71:
+    Jump                  Target=rcdrop_list_133   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
+  rcdrop_list_shared_134:
     RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_72   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
-  rcdrop_list_end_72:
+    Jump                  Target=rcdrop_list_end_135   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
+  rcdrop_list_end_135:
     LoadConstInt          Target=23 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     StoreLocal            Slot=8 Source=23   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     LoadLocal             Target=24 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
@@ -708,26 +1251,26 @@ function lambda_13  [ClosureHelper from count]
     StoreLocal            Slot=2 Source=15   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     StoreLocal            Slot=1 Source=14   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     LoadLocal             Target=44 Slot=8
-    JumpIfFalse           CondTemp=44 Target=rc_tco_drop_inactive_144
+    JumpIfFalse           CondTemp=44 Target=rc_tco_drop_inactive_177
     StoreLocal            Slot=26 Source=24
-  rcdrop_list_145:
+  rcdrop_list_178:
     LoadLocal             Target=45 Slot=26
     LoadConstInt          Target=46 Value=0
     CmpIntNe              Target=47 Left=45 Right=46
-    JumpIfFalse           CondTemp=47 Target=rcdrop_list_end_147
+    JumpIfFalse           CondTemp=47 Target=rcdrop_list_end_180
     RcIsUnique            Target=48 SourceTemp=45
-    JumpIfFalse           CondTemp=48 Target=rcdrop_list_shared_146
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_shared_179
     LoadMemOffset         Target=49 BasePtr=45 OffsetBytes=0
     RcDrop                SourceTemp=49 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=50 BasePtr=45 OffsetBytes=8
     RcDrop                SourceTemp=45 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=26 Source=50
-    Jump                  Target=rcdrop_list_145
-  rcdrop_list_shared_146:
+    Jump                  Target=rcdrop_list_178
+  rcdrop_list_shared_179:
     RcDrop                SourceTemp=45 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_147
-  rcdrop_list_end_147:
-  rc_tco_drop_inactive_144:
+    Jump                  Target=rcdrop_list_end_180
+  rcdrop_list_end_180:
+  rc_tco_drop_inactive_177:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=25
     LoadConstInt          Target=51 Value=0
     StoreLocal            Slot=6 Source=51
@@ -737,265 +1280,158 @@ function lambda_13  [ClosureHelper from count]
     StoreLocal            Slot=8 Source=52
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=25
     RestoreStackPointer   Slot=11   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
-    Jump                  Target=lambda_13_body   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
+    Jump                  Target=lambda_24_body   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     LoadConstInt          Target=26 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:68:24)
     StoreLocal            Slot=12 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
-    Jump                  Target=match_end_65   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
-  match_arm_cleanup_69:
+    Jump                  Target=match_end_128   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
+  match_arm_cleanup_132:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_none_66   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
-  match_none_66:
+    Jump                  Target=match_none_129   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
+  match_none_129:
     LoadConstInt          Target=28 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     StoreLocal            Slot=12 Source=28   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
-  match_end_65:
+  match_end_128:
     LoadLocal             Target=29 Slot=12   (rc_child_of_call_argument_kept_by_callee_result.ash:66:5)
     LoadLocal             Target=36 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     LoadLocal             Target=37 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    JumpIfFalse           CondTemp=37 Target=rc_tco_exit_drop_inactive_75   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    JumpIfFalse           CondTemp=37 Target=rc_tco_exit_drop_inactive_138   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     StoreLocal            Slot=24 Source=36   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-  rcdrop_list_76:
+  rcdrop_list_139:
     LoadLocal             Target=38 Slot=24   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     LoadConstInt          Target=39 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     CmpIntNe              Target=40 Left=38 Right=39   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    JumpIfFalse           CondTemp=40 Target=rcdrop_list_end_78   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    JumpIfFalse           CondTemp=40 Target=rcdrop_list_end_141   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     RcIsUnique            Target=41 SourceTemp=38
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_shared_77   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    JumpIfFalse           CondTemp=41 Target=rcdrop_list_shared_140   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     LoadMemOffset         Target=42 BasePtr=38 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     RcDrop                SourceTemp=42 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=43 BasePtr=38 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=24 Source=43   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    Jump                  Target=rcdrop_list_76   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-  rcdrop_list_shared_77:
+    Jump                  Target=rcdrop_list_139   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+  rcdrop_list_shared_140:
     RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_78   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-  rcdrop_list_end_78:
-  rc_tco_exit_drop_inactive_75:
+    Jump                  Target=rcdrop_list_end_141   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+  rcdrop_list_end_141:
+  rc_tco_exit_drop_inactive_138:
     Return                Source=29   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
 
-function lambda_12  [SourceFunction from count]
+function lambda_23  [SourceFunction from count]
   locals=2 temps=5
     Alloc                 Target=0 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     LoadLocal             Target=1 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    MakeClosure           Target=4 FuncLabel=lambda_13 EnvPtrTemp=0 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    MakeClosure           Target=4 FuncLabel=lambda_24 EnvPtrTemp=0 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
     Return                Source=4   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
 
-function lambda_14  [SourceFunction from firstNames]
-  locals=54 temps=202
-    LoadLocal             Target=81 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadArgumentOwnership Target=82   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadConstInt          Target=83 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    AndInt                Target=84 Left=82 Right=83   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=84 Target=rc_arg_normalize_copy_95   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=32 Source=81   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_arg_normalize_done_96   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_arg_normalize_copy_95:
-    IsReferenceCounted    Target=85 SourceTemp=81
-    JumpIfFalse           CondTemp=85 Target=rc_representation_copy_97   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=86 SourceTemp=81 RuntimeManaged=true
-    StoreLocal            Slot=33 Source=86   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_98   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_97:
-    LoadConstInt          Target=88 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+function lambda_25  [SourceFunction from firstNames]
+  locals=41 temps=122
+    LoadLocal             Target=63 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadArgumentOwnership Target=64   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadConstInt          Target=65 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    AndInt                Target=66 Left=64 Right=65   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    JumpIfFalse           CondTemp=66 Target=rc_arg_normalize_copy_152   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=30 Source=63   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rc_arg_normalize_done_153   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_arg_normalize_copy_152:
+    IsReferenceCounted    Target=67 SourceTemp=63
+    JumpIfFalse           CondTemp=67 Target=rc_representation_copy_154   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    RcDup                 Target=68 SourceTemp=63 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=68   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rc_representation_done_155   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_representation_copy_154:
+    LoadConstInt          Target=70 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=32 Source=63   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=33 Source=70   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=34 Source=70   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_normalize_list_156:
+    LoadLocal             Target=71 Slot=32   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CmpIntNe              Target=72 Left=71 Right=70   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    JumpIfFalse           CondTemp=72 Target=rc_normalize_list_end_157   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadMemOffset         Target=73 BasePtr=71 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadMemOffset         Target=74 BasePtr=71 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    IsReferenceCounted    Target=75 SourceTemp=73
+    JumpIfFalse           CondTemp=75 Target=rc_representation_copy_158   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    RcDup                 Target=76 SourceTemp=73 RuntimeManaged=true
+    StoreLocal            Slot=35 Source=76   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rc_representation_done_159   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_representation_copy_158:
+    LoadConstInt          Target=78 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CallKnown             Target=79 FuncLabel=__rcnorm_5 EnvTemp=78 ArgTemp=73   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=35 Source=79   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_representation_done_159:
+    LoadLocal             Target=80 Slot=35   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Alloc                 Target=81 SizeBytes=16 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreMemOffset        BasePtr=81 OffsetBytes=0 Source=80   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreMemOffset        BasePtr=81 OffsetBytes=8 Source=70   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadLocal             Target=82 Slot=33   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CmpIntNe              Target=83 Left=82 Right=70   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    JumpIfFalse           CondTemp=83 Target=rc_normalize_list_first_160   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadLocal             Target=84 Slot=34   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreMemOffset        BasePtr=84 OffsetBytes=8 Source=81   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rc_normalize_list_linked_161   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_normalize_list_first_160:
+    StoreLocal            Slot=33 Source=81   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_normalize_list_linked_161:
     StoreLocal            Slot=34 Source=81   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=35 Source=88   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=36 Source=88   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_99:
-    LoadLocal             Target=89 Slot=34   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntNe              Target=90 Left=89 Right=88   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=90 Target=rc_normalize_list_end_100   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadMemOffset         Target=91 BasePtr=89 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadMemOffset         Target=92 BasePtr=89 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    IsReferenceCounted    Target=93 SourceTemp=91
-    JumpIfFalse           CondTemp=93 Target=rc_representation_copy_101   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=94 SourceTemp=91 RuntimeManaged=true
-    StoreLocal            Slot=37 Source=94   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_102   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_101:
-    CopyOutArena          DestTemp=96 SrcTemp=91 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=97 Ptr=91 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    IsReferenceCounted    Target=98 SourceTemp=97
-    JumpIfFalse           CondTemp=98 Target=rc_representation_copy_103   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=99 SourceTemp=97 RuntimeManaged=true
-    StoreLocal            Slot=38 Source=99   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_104   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_103:
-    CopyOutArena          DestTemp=100 SrcTemp=97 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=38 Source=100   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_104:
-    LoadLocal             Target=101 Slot=38   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    SetAdtField           Ptr=96 FieldIndex=0 Source=101 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    GetAdtField           Target=102 Ptr=91 FieldIndex=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    IsReferenceCounted    Target=103 SourceTemp=102
-    JumpIfFalse           CondTemp=103 Target=rc_representation_copy_105   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=104 SourceTemp=102 RuntimeManaged=true
-    StoreLocal            Slot=39 Source=104   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_106   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_105:
-    IsReferenceCounted    Target=106 SourceTemp=102
-    JumpIfFalse           CondTemp=106 Target=rc_representation_copy_107   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=107 SourceTemp=102 RuntimeManaged=true
-    StoreLocal            Slot=40 Source=107   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_107:
-    LoadConstInt          Target=108 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=41 Source=102   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=42 Source=108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=43 Source=108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_109:
-    LoadLocal             Target=109 Slot=41   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntNe              Target=110 Left=109 Right=108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=110 Target=rc_normalize_list_end_110   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    IsReferenceCounted    Target=111 SourceTemp=109
-    JumpIfFalse           CondTemp=111 Target=rc_normalize_list_cell_111   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=112 SourceTemp=109 RuntimeManaged=true
-    LoadLocal             Target=113 Slot=42   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntNe              Target=114 Left=113 Right=108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=114 Target=rc_normalize_list_first_112   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=115 Slot=43   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreMemOffset        BasePtr=115 OffsetBytes=8 Source=112   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_normalize_list_linked_113   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_first_112:
-    StoreLocal            Slot=42 Source=112   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_linked_113:
-    StoreLocal            Slot=43 Source=112   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_normalize_list_end_110   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_cell_111:
-    LoadMemOffset         Target=116 BasePtr=109 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadMemOffset         Target=117 BasePtr=109 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    IsReferenceCounted    Target=118 SourceTemp=116
-    JumpIfFalse           CondTemp=118 Target=rc_representation_copy_114   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=119 SourceTemp=116 RuntimeManaged=true
-    StoreLocal            Slot=44 Source=119   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_115   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_114:
-    CopyOutArena          DestTemp=121 SrcTemp=116 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=122 Ptr=116 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    IsReferenceCounted    Target=123 SourceTemp=122
-    JumpIfFalse           CondTemp=123 Target=rc_representation_copy_116   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=124 SourceTemp=122 RuntimeManaged=true
-    StoreLocal            Slot=45 Source=124   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_117   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_116:
-    CopyOutArena          DestTemp=125 SrcTemp=122 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=45 Source=125   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_117:
-    LoadLocal             Target=126 Slot=45   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    SetAdtField           Ptr=121 FieldIndex=0 Source=126 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    GetAdtField           Target=127 Ptr=116 FieldIndex=2 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    IsReferenceCounted    Target=128 SourceTemp=127
-    JumpIfFalse           CondTemp=128 Target=rc_representation_copy_118   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDup                 Target=129 SourceTemp=127 RuntimeManaged=true
-    StoreLocal            Slot=46 Source=129   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_representation_done_119   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_copy_118:
-    CopyOutArena          DestTemp=130 SrcTemp=127 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=46 Source=130   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_119:
-    LoadLocal             Target=131 Slot=46   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    SetAdtField           Ptr=121 FieldIndex=2 Source=131 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=44 Source=121   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_115:
-    LoadLocal             Target=132 Slot=44   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Alloc                 Target=133 SizeBytes=16 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreMemOffset        BasePtr=133 OffsetBytes=0 Source=132   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreMemOffset        BasePtr=133 OffsetBytes=8 Source=108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=134 Slot=42   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntNe              Target=135 Left=134 Right=108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=135 Target=rc_normalize_list_first_120   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=136 Slot=43   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreMemOffset        BasePtr=136 OffsetBytes=8 Source=133   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_normalize_list_linked_121   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_first_120:
-    StoreLocal            Slot=42 Source=133   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_linked_121:
-    StoreLocal            Slot=43 Source=133   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=41 Source=117   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_normalize_list_109   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_end_110:
-    LoadLocal             Target=137 Slot=42   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=40 Source=137   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_108:
-    LoadLocal             Target=138 Slot=40   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=39 Source=138   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_106:
-    LoadLocal             Target=139 Slot=39   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    SetAdtField           Ptr=96 FieldIndex=1 Source=139 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=37 Source=96   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_102:
-    LoadLocal             Target=140 Slot=37   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Alloc                 Target=141 SizeBytes=16 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreMemOffset        BasePtr=141 OffsetBytes=0 Source=140   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreMemOffset        BasePtr=141 OffsetBytes=8 Source=88   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=142 Slot=35   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntNe              Target=143 Left=142 Right=88   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=143 Target=rc_normalize_list_first_122   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=144 Slot=36   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreMemOffset        BasePtr=144 OffsetBytes=8 Source=141   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_normalize_list_linked_123   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_first_122:
-    StoreLocal            Slot=35 Source=141   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_linked_123:
-    StoreLocal            Slot=36 Source=141   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=34 Source=92   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_normalize_list_99   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_normalize_list_end_100:
-    LoadLocal             Target=145 Slot=35   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=33 Source=145   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_representation_done_98:
-    LoadLocal             Target=146 Slot=33   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=32 Source=146   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_arg_normalize_done_96:
-    LoadLocal             Target=147 Slot=32   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=1 Source=147   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadConstInt          Target=148 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=5 Source=148   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=32 Source=74   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rc_normalize_list_156   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_normalize_list_end_157:
+    LoadLocal             Target=85 Slot=33   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=31 Source=85   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_representation_done_155:
+    LoadLocal             Target=86 Slot=31   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=30 Source=86   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_arg_normalize_done_153:
+    LoadLocal             Target=87 Slot=30   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=1 Source=87   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadConstInt          Target=88 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=5 Source=88   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
     StoreLocal            Slot=4 Source=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  lambda_14_body:
+  lambda_25_body:
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     SaveStackPointer      Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
     LoadLocal             Target=1 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:71:11)
     SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
     LoadConstInt          Target=2 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     CmpIntEq              Target=3 Left=1 Right=2   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_82   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_145   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadConstStr          Target=4 StrLabel=str_36   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     CopyOutArena          DestTemp=5 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=9 Source=5   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
-    Jump                  Target=match_end_79   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-  match_arm_cleanup_82:
+    Jump                  Target=match_end_142   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+  match_arm_cleanup_145:
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
-    Jump                  Target=match_next_81   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-  match_next_81:
+    Jump                  Target=match_next_144   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+  match_next_144:
     SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
     LoadConstInt          Target=6 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     CmpIntNe              Target=7 Left=1 Right=6   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_84   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_147   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadMemOffset         Target=8 BasePtr=1 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadMemOffset         Target=9 BasePtr=1 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadConstInt          Target=10 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     CmpIntNe              Target=11 Left=8 Right=10   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_84   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_147   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     GetAdtField           Target=12 Ptr=8 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     StoreLocal            Slot=16 Source=12   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     GetAdtField           Target=13 Ptr=8 FieldIndex=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadConstInt          Target=14 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     CmpIntNe              Target=15 Left=13 Right=14   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_84   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_147   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadMemOffset         Target=16 BasePtr=13 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadMemOffset         Target=17 BasePtr=13 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     LoadConstInt          Target=18 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     CmpIntNe              Target=19 Left=16 Right=18   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    JumpIfFalse           CondTemp=19 Target=match_arm_cleanup_84   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    JumpIfFalse           CondTemp=19 Target=match_arm_cleanup_147   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     GetAdtField           Target=20 Ptr=16 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     StoreLocal            Slot=17 Source=20   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
     StoreLocal            Slot=18 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
@@ -1012,259 +1448,157 @@ function lambda_14  [SourceFunction from firstNames]
     ConcatStr             Target=29 Left=27 Right=28   (rc_child_of_call_argument_kept_by_callee_result.ash:73:84)
     SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
     LoadLocal             Target=31 Slot=0   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    MakeClosure           Target=30 FuncLabel=lambda_14 EnvPtrTemp=31 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
+    MakeClosure           Target=30 FuncLabel=lambda_25 EnvPtrTemp=31 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
     LoadLocal             Target=32 Slot=18   (rc_child_of_call_argument_kept_by_callee_result.ash:73:118)
     Borrow                Target=33 SourceTemp=32
-    LoadMemOffset         Target=34 BasePtr=30 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    LoadConstInt          Target=35 Value=62   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    ShrInt                Target=36 Left=34 Right=35   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    LoadConstInt          Target=37 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    AndInt                Target=38 Left=36 Right=37   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    StoreLocal            Slot=21 Source=33   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    JumpIfFalse           CondTemp=38 Target=rc_call_argument_not_retained_85   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    RcDup                 Target=39 SourceTemp=33 RuntimeManaged=true MayBeEmpty=true
-    StoreLocal            Slot=21 Source=39   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-  rc_call_argument_not_retained_85:
-    LoadLocal             Target=40 Slot=21   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    LoadConstInt          Target=42 Value=2   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    OrInt                 Target=43 Left=38 Right=42   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    CallClosure           Target=41 ClosureTemp=30 ArgTemp=40 RuntimeManagedArgumentFlagTemp=43   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
-    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=22
-    CopyOutArena          DestTemp=44 SrcTemp=41 RuntimeManaged=true Purpose=RcNormalization
-    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=22
+    LoadConstInt          Target=35 Value=2   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
+    CallClosure           Target=34 ClosureTemp=30 ArgTemp=33 RuntimeManagedArgumentFlagTemp=35   (rc_child_of_call_argument_kept_by_callee_result.ash:73:107)
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=21
+    CopyOutArena          DestTemp=36 SrcTemp=34 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=21
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
-    ConcatStr             Target=45 Left=29 Right=44 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:73:84)
-    RcDrop                SourceTemp=44 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=9 Source=45   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    ConcatStr             Target=37 Left=29 Right=36 RuntimeManaged=true   (rc_child_of_call_argument_kept_by_callee_result.ash:73:84)
+    RcDrop                SourceTemp=36 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=9 Source=37   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=22
+    Jump                  Target=match_end_142   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+  match_arm_cleanup_147:
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=23
-    Jump                  Target=match_end_79   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-  match_arm_cleanup_84:
-    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=24
-    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=24
-    Jump                  Target=match_next_83   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-  match_next_83:
-    SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
-    LoadConstInt          Target=49 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    CmpIntNe              Target=50 Left=1 Right=49   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    JumpIfFalse           CondTemp=50 Target=match_arm_cleanup_86   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    LoadMemOffset         Target=51 BasePtr=1 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    LoadMemOffset         Target=52 BasePtr=1 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    StoreLocal            Slot=27 Source=52   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    LoadLocal             Target=53 Slot=27   (rc_child_of_call_argument_kept_by_callee_result.ash:74:35)
-    Borrow                Target=54 SourceTemp=53
-    RcDup                 Target=55 SourceTemp=54 RuntimeManaged=true MayBeEmpty=true
-    RcDrop                SourceTemp=52 TypeName=List OwnerSlot=27
-    LoadLocal             Target=56 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    StoreLocal            Slot=28 Source=56   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-  rcdrop_list_87:
-    LoadLocal             Target=57 Slot=28   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    LoadConstInt          Target=58 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    CmpIntNe              Target=59 Left=57 Right=58   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_89   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcIsUnique            Target=60 SourceTemp=57
-    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_88   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcIsUnique            Target=62 SourceTemp=61
-    JumpIfFalse           CondTemp=62 Target=rc_drop_shared_90   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    GetAdtField           Target=63 Ptr=61 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcDrop                SourceTemp=63 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=64 Ptr=61 FieldIndex=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    StoreLocal            Slot=29 Source=64   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-  rcdrop_list_91:
-    LoadLocal             Target=65 Slot=29   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    LoadConstInt          Target=66 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    CmpIntNe              Target=67 Left=65 Right=66   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_93   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcIsUnique            Target=68 SourceTemp=65
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_92   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    LoadMemOffset         Target=69 BasePtr=65 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcIsUnique            Target=70 SourceTemp=69
-    JumpIfFalse           CondTemp=70 Target=rc_drop_shared_94   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    GetAdtField           Target=71 Ptr=69 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcDrop                SourceTemp=71 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=72 Ptr=69 FieldIndex=2 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
-  rc_drop_shared_94:
-    RcDrop                SourceTemp=69 TypeName=Method RuntimeManaged=true
-    LoadMemOffset         Target=73 BasePtr=65 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=29 Source=73   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    Jump                  Target=rcdrop_list_91   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-  rcdrop_list_shared_92:
-    RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_93   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-  rcdrop_list_end_93:
-  rc_drop_shared_90:
-    RcDrop                SourceTemp=61 TypeName=Impl RuntimeManaged=true
-    LoadMemOffset         Target=74 BasePtr=57 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=28 Source=74   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    Jump                  Target=rcdrop_list_87   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-  rcdrop_list_shared_88:
-    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_89   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-  rcdrop_list_end_89:
-    LoadConstInt          Target=75 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    StoreLocal            Slot=5 Source=75   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    LoadLocal             Target=76 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    StoreLocal            Slot=1 Source=55   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    LoadLocal             Target=182 Slot=5
-    JumpIfFalse           CondTemp=182 Target=rc_tco_drop_inactive_148
-    StoreLocal            Slot=52 Source=76
+    Jump                  Target=match_next_146   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+  match_next_146:
+    SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
+    LoadConstInt          Target=41 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    CmpIntNe              Target=42 Left=1 Right=41   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    JumpIfFalse           CondTemp=42 Target=match_arm_cleanup_148   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    LoadMemOffset         Target=43 BasePtr=1 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    LoadMemOffset         Target=44 BasePtr=1 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    StoreLocal            Slot=26 Source=44   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    LoadLocal             Target=45 Slot=26   (rc_child_of_call_argument_kept_by_callee_result.ash:74:35)
+    Borrow                Target=46 SourceTemp=45
+    RcDup                 Target=47 SourceTemp=46 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=44 TypeName=List OwnerSlot=26
+    LoadLocal             Target=48 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    StoreLocal            Slot=27 Source=48   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
   rcdrop_list_149:
-    LoadLocal             Target=183 Slot=52
-    LoadConstInt          Target=184 Value=0
-    CmpIntNe              Target=185 Left=183 Right=184
-    JumpIfFalse           CondTemp=185 Target=rcdrop_list_end_151
-    RcIsUnique            Target=186 SourceTemp=183
-    JumpIfFalse           CondTemp=186 Target=rcdrop_list_shared_150
-    LoadMemOffset         Target=187 BasePtr=183 OffsetBytes=0
-    RcIsUnique            Target=188 SourceTemp=187
-    JumpIfFalse           CondTemp=188 Target=rc_drop_shared_152
-    GetAdtField           Target=189 Ptr=187 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=189 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=190 Ptr=187 FieldIndex=1 Tagless=true
-    StoreLocal            Slot=53 Source=190
-  rcdrop_list_153:
-    LoadLocal             Target=191 Slot=53
-    LoadConstInt          Target=192 Value=0
-    CmpIntNe              Target=193 Left=191 Right=192
-    JumpIfFalse           CondTemp=193 Target=rcdrop_list_end_155
-    RcIsUnique            Target=194 SourceTemp=191
-    JumpIfFalse           CondTemp=194 Target=rcdrop_list_shared_154
-    LoadMemOffset         Target=195 BasePtr=191 OffsetBytes=0
-    RcIsUnique            Target=196 SourceTemp=195
-    JumpIfFalse           CondTemp=196 Target=rc_drop_shared_156
-    GetAdtField           Target=197 Ptr=195 FieldIndex=0 Tagless=true
-    RcDrop                SourceTemp=197 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=198 Ptr=195 FieldIndex=2 Tagless=true
-    RcDrop                SourceTemp=198 TypeName=String RuntimeManaged=true
-  rc_drop_shared_156:
-    RcDrop                SourceTemp=195 TypeName=Method RuntimeManaged=true
-    LoadMemOffset         Target=199 BasePtr=191 OffsetBytes=8
-    RcDrop                SourceTemp=191 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=53 Source=199
-    Jump                  Target=rcdrop_list_153
-  rcdrop_list_shared_154:
-    RcDrop                SourceTemp=191 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_155
-  rcdrop_list_end_155:
-  rc_drop_shared_152:
-    RcDrop                SourceTemp=187 TypeName=Impl RuntimeManaged=true
-    LoadMemOffset         Target=200 BasePtr=183 OffsetBytes=8
-    RcDrop                SourceTemp=183 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=52 Source=200
-    Jump                  Target=rcdrop_list_149
+    LoadLocal             Target=49 Slot=27   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    LoadConstInt          Target=50 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    CmpIntNe              Target=51 Left=49 Right=50   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_end_151   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    RcIsUnique            Target=52 SourceTemp=49
+    JumpIfFalse           CondTemp=52 Target=rcdrop_list_shared_150   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    LoadMemOffset         Target=53 BasePtr=49 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    LoadConstInt          Target=54 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    CallKnown             Target=55 FuncLabel=__rcdrop_record_13 EnvTemp=54 ArgTemp=53   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    LoadMemOffset         Target=56 BasePtr=49 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=56   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    Jump                  Target=rcdrop_list_149   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
   rcdrop_list_shared_150:
-    RcDrop                SourceTemp=183 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_151
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_151   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
   rcdrop_list_end_151:
-  rc_tco_drop_inactive_148:
-    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=51
-    StoreLocal            Slot=1 Source=55
-    LoadConstInt          Target=201 Value=1
-    StoreLocal            Slot=5 Source=201
-    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=51
+    LoadConstInt          Target=57 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    StoreLocal            Slot=5 Source=57   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    LoadLocal             Target=58 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    StoreLocal            Slot=1 Source=47   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    LoadLocal             Target=112 Slot=5
+    JumpIfFalse           CondTemp=112 Target=rc_tco_drop_inactive_181
+    StoreLocal            Slot=40 Source=58
+  rcdrop_list_182:
+    LoadLocal             Target=113 Slot=40
+    LoadConstInt          Target=114 Value=0
+    CmpIntNe              Target=115 Left=113 Right=114
+    JumpIfFalse           CondTemp=115 Target=rcdrop_list_end_184
+    RcIsUnique            Target=116 SourceTemp=113
+    JumpIfFalse           CondTemp=116 Target=rcdrop_list_shared_183
+    LoadMemOffset         Target=117 BasePtr=113 OffsetBytes=0
+    LoadConstInt          Target=118 Value=0
+    CallKnown             Target=119 FuncLabel=__rcdrop_record_13 EnvTemp=118 ArgTemp=117
+    LoadMemOffset         Target=120 BasePtr=113 OffsetBytes=8
+    RcDrop                SourceTemp=113 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=40 Source=120
+    Jump                  Target=rcdrop_list_182
+  rcdrop_list_shared_183:
+    RcDrop                SourceTemp=113 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_184
+  rcdrop_list_end_184:
+  rc_tco_drop_inactive_181:
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=39
+    StoreLocal            Slot=1 Source=47
+    LoadConstInt          Target=121 Value=1
+    StoreLocal            Slot=5 Source=121
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=39
     RestoreStackPointer   Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    Jump                  Target=lambda_14_body   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    LoadConstInt          Target=77 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
-    StoreLocal            Slot=9 Source=77   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=30
-    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=30
-    Jump                  Target=match_end_79   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-  match_arm_cleanup_86:
-    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=31
-    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=31
-    Jump                  Target=match_none_80   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-  match_none_80:
-    LoadConstInt          Target=79 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    StoreLocal            Slot=9 Source=79   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-  match_end_79:
-    LoadLocal             Target=80 Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
-    LoadConstInt          Target=149 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=47 Source=149   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=150 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=151 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntEq              Target=152 Left=150 Right=80   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadLocal             Target=153 Slot=47   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntEq              Target=154 Left=153 Right=149   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    AndInt                Target=155 Left=151 Right=152   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    AndInt                Target=156 Left=155 Right=154   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=156 Target=rc_tco_exit_transfer_not_selected_124   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadConstInt          Target=157 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=47 Source=157   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_tco_exit_transfer_done_125   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_tco_exit_transfer_not_selected_124:
-    LoadLocal             Target=158 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=158 Target=rc_tco_exit_drop_inactive_126   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=48 Source=150   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rcdrop_list_127:
-    LoadLocal             Target=159 Slot=48   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadConstInt          Target=160 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntNe              Target=161 Left=159 Right=160   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=161 Target=rcdrop_list_end_129   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcIsUnique            Target=162 SourceTemp=159
-    JumpIfFalse           CondTemp=162 Target=rcdrop_list_shared_128   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadMemOffset         Target=163 BasePtr=159 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcIsUnique            Target=164 SourceTemp=163
-    JumpIfFalse           CondTemp=164 Target=rc_drop_shared_130   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    GetAdtField           Target=165 Ptr=163 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDrop                SourceTemp=165 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=166 Ptr=163 FieldIndex=1 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=49 Source=166   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rcdrop_list_131:
-    LoadLocal             Target=167 Slot=49   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadConstInt          Target=168 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CmpIntNe              Target=169 Left=167 Right=168   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=169 Target=rcdrop_list_end_133   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcIsUnique            Target=170 SourceTemp=167
-    JumpIfFalse           CondTemp=170 Target=rcdrop_list_shared_132   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadMemOffset         Target=171 BasePtr=167 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcIsUnique            Target=172 SourceTemp=171
-    JumpIfFalse           CondTemp=172 Target=rc_drop_shared_134   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    GetAdtField           Target=173 Ptr=171 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDrop                SourceTemp=173 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=174 Ptr=171 FieldIndex=2 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDrop                SourceTemp=174 TypeName=String RuntimeManaged=true
-  rc_drop_shared_134:
-    RcDrop                SourceTemp=171 TypeName=Method RuntimeManaged=true
-    LoadMemOffset         Target=175 BasePtr=167 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDrop                SourceTemp=167 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=49 Source=175   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rcdrop_list_131   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rcdrop_list_shared_132:
-    RcDrop                SourceTemp=167 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_133   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rcdrop_list_end_133:
-  rc_drop_shared_130:
-    RcDrop                SourceTemp=163 TypeName=Impl RuntimeManaged=true
-    LoadMemOffset         Target=176 BasePtr=159 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    RcDrop                SourceTemp=159 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=48 Source=176   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rcdrop_list_127   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rcdrop_list_shared_128:
-    RcDrop                SourceTemp=159 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_129   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rcdrop_list_end_129:
-  rc_tco_exit_drop_inactive_126:
-  rc_tco_exit_transfer_done_125:
-    LoadArgumentOwnership Target=177   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    LoadConstInt          Target=178 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    ShrInt                Target=179 Left=177 Right=178   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    JumpIfFalse           CondTemp=179 Target=rc_result_owned_135   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    CopyOutArena          DestTemp=180 SrcTemp=80 Purpose=ArenaResultBoundary
-    RcDrop                SourceTemp=80 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=50 Source=180   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Jump                  Target=rc_result_done_136   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_result_owned_135:
-    StoreLocal            Slot=50 Source=80   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-  rc_result_done_136:
-    LoadLocal             Target=181 Slot=50   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    Return                Source=181   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=lambda_25_body   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    LoadConstInt          Target=59 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:74:24)
+    StoreLocal            Slot=9 Source=59   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=28
+    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=28
+    Jump                  Target=match_end_142   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+  match_arm_cleanup_148:
+    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=29
+    Jump                  Target=match_none_143   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+  match_none_143:
+    LoadConstInt          Target=61 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    StoreLocal            Slot=9 Source=61   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+  match_end_142:
+    LoadLocal             Target=62 Slot=9   (rc_child_of_call_argument_kept_by_callee_result.ash:71:5)
+    LoadConstInt          Target=89 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=36 Source=89   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadLocal             Target=90 Slot=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadLocal             Target=91 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CmpIntEq              Target=92 Left=90 Right=62   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadLocal             Target=93 Slot=36   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CmpIntEq              Target=94 Left=93 Right=89   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    AndInt                Target=95 Left=91 Right=92   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    AndInt                Target=96 Left=95 Right=94   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    JumpIfFalse           CondTemp=96 Target=rc_tco_exit_transfer_not_selected_162   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadConstInt          Target=97 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=36 Source=97   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rc_tco_exit_transfer_done_163   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_tco_exit_transfer_not_selected_162:
+    LoadLocal             Target=98 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    JumpIfFalse           CondTemp=98 Target=rc_tco_exit_drop_inactive_164   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=37 Source=90   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rcdrop_list_165:
+    LoadLocal             Target=99 Slot=37   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadConstInt          Target=100 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CmpIntNe              Target=101 Left=99 Right=100   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    JumpIfFalse           CondTemp=101 Target=rcdrop_list_end_167   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    RcIsUnique            Target=102 SourceTemp=99
+    JumpIfFalse           CondTemp=102 Target=rcdrop_list_shared_166   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadMemOffset         Target=103 BasePtr=99 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadConstInt          Target=104 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CallKnown             Target=105 FuncLabel=__rcdrop_record_13 EnvTemp=104 ArgTemp=103   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadMemOffset         Target=106 BasePtr=99 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=37 Source=106   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rcdrop_list_165   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rcdrop_list_shared_166:
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_167   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rcdrop_list_end_167:
+  rc_tco_exit_drop_inactive_164:
+  rc_tco_exit_transfer_done_163:
+    LoadArgumentOwnership Target=107   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    LoadConstInt          Target=108 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    ShrInt                Target=109 Left=107 Right=108   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    JumpIfFalse           CondTemp=109 Target=rc_result_owned_168   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    CopyOutArena          DestTemp=110 SrcTemp=62 Purpose=ArenaResultBoundary
+    RcDrop                SourceTemp=62 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=38 Source=110   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Jump                  Target=rc_result_done_169   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_result_owned_168:
+    StoreLocal            Slot=38 Source=62   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+  rc_result_done_169:
+    LoadLocal             Target=111 Slot=38   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    Return                Source=111   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
 
 function _start_main  [ProgramEntry]
-  locals=53 temps=86
+  locals=54 temps=87
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
@@ -1281,14 +1615,14 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=7 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     Borrow                Target=8 SourceTemp=7
     StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=8   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
-    MakeClosureStack      Target=9 FuncLabel=lambda_5 EnvPtrTemp=4 EnvSizeBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    MakeClosureStack      Target=9 FuncLabel=lambda_16 EnvPtrTemp=4 EnvSizeBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     StoreLocal            Slot=8 Source=9   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     AllocStack            Target=10 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
     LoadLocal             Target=11 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
     Borrow                Target=12 SourceTemp=11
     StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=12   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
-    MakeClosureStack      Target=13 FuncLabel=lambda_8 EnvPtrTemp=10 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    MakeClosureStack      Target=13 FuncLabel=lambda_19 EnvPtrTemp=10 EnvSizeBytes=8 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
     StoreLocal            Slot=11 Source=13   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
@@ -1296,145 +1630,149 @@ function _start_main  [ProgramEntry]
     Borrow                Target=15 SourceTemp=14
     AllocAdt              Target=16 Tag=0 FieldCount=0   (rc_child_of_call_argument_kept_by_callee_result.ash:58:28)
     Alloc                 Target=17 SizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
-    MakeClosure           Target=18 FuncLabel=__tospacecopy_adt_9 EnvPtrTemp=17 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
+    MakeClosure           Target=18 FuncLabel=__tospacecopy_adt_20 EnvPtrTemp=17 EnvSizeBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
     StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=18   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
     CallClosure           Target=19 ClosureTemp=18 ArgTemp=16   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
     CallClosure           Target=20 ClosureTemp=15 ArgTemp=19   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
-    StoreLocal            Slot=17 Source=20   (rc_child_of_call_argument_kept_by_callee_result.ash:58:1)
-    LoadConstInt          Target=21 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    MakeClosure           Target=22 FuncLabel=lambda_10 EnvPtrTemp=21 EnvSizeBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    StoreLocal            Slot=18 Source=22   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
-    LoadConstInt          Target=23 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    MakeClosure           Target=24 FuncLabel=lambda_12 EnvPtrTemp=23 EnvSizeBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    StoreLocal            Slot=19 Source=24   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
-    LoadConstInt          Target=25 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    MakeClosure           Target=26 FuncLabel=lambda_14 EnvPtrTemp=25 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    StoreLocal            Slot=20 Source=26   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
-    SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
-    SaveArenaState        CursorLocalSlot=23 EndLocalSlot=24
-    LoadLocal             Target=27 Slot=18   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
-    LoadConstInt          Target=28 Value=2000   (rc_child_of_call_argument_kept_by_callee_result.ash:76:19)
-    CallClosure           Target=29 ClosureTemp=27 ArgTemp=28   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
-    LoadConstInt          Target=30 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:76:25)
-    LoadMemOffset         Target=31 BasePtr=29 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
-    LoadConstInt          Target=32 Value=63   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
-    ShrInt                Target=33 Left=31 Right=32   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
-    CallClosure           Target=34 ClosureTemp=29 ArgTemp=30   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
-    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=25
-    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=25
-    StoreLocal            Slot=26 Source=34   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    LoadLocal             Target=35 Slot=17   (rc_child_of_call_argument_kept_by_callee_result.ash:78:7)
-    Borrow                Target=36 SourceTemp=35
-    SaveArenaState        CursorLocalSlot=28 EndLocalSlot=29
-    LoadConstInt          Target=37 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    CmpIntNe              Target=38 Left=36 Right=37   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    JumpIfFalse           CondTemp=38 Target=match_arm_cleanup_139   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    GetAdtField           Target=39 Ptr=36 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    RcDrop                SourceTemp=20 TypeName=Env OwnerSlot=17
-    StoreLocal            Slot=30 Source=39   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    SaveArenaState        CursorLocalSlot=31 EndLocalSlot=32
-    LoadLocal             Target=40 Slot=20   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    LoadLocal             Target=41 Slot=30   (rc_child_of_call_argument_kept_by_callee_result.ash:79:58)
-    Borrow                Target=42 SourceTemp=41
-    LoadMemOffset         Target=43 BasePtr=40 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    LoadConstInt          Target=44 Value=63   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    ShrInt                Target=45 Left=43 Right=44   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    RcDup                 Target=85 SourceTemp=42   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    CallClosure           Target=46 ClosureTemp=40 ArgTemp=42   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    RestoreArenaState     CursorLocalSlot=31 EndLocalSlot=32 PreRestoreEndSlot=33
-    ReclaimArenaChunks    SavedEndSlot=32 PreRestoreEndSlot=33
-    SaveArenaState        CursorLocalSlot=34 EndLocalSlot=35
-    LoadLocal             Target=47 Slot=19   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    LoadLocal             Target=48 Slot=26   (rc_child_of_call_argument_kept_by_callee_result.ash:79:92)
-    Borrow                Target=49 SourceTemp=48
-    LoadMemOffset         Target=50 BasePtr=47 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    LoadConstInt          Target=51 Value=62   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    ShrInt                Target=52 Left=50 Right=51   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    LoadConstInt          Target=53 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    AndInt                Target=54 Left=52 Right=53   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    StoreLocal            Slot=36 Source=49   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    JumpIfFalse           CondTemp=54 Target=rc_call_argument_not_retained_140   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    RcDup                 Target=55 SourceTemp=49 RuntimeManaged=true MayBeEmpty=true
-    StoreLocal            Slot=36 Source=55   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-  rc_call_argument_not_retained_140:
-    LoadLocal             Target=56 Slot=36   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    CallClosure           Target=57 ClosureTemp=47 ArgTemp=56 RuntimeManagedArgumentFlagTemp=54   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    LoadConstInt          Target=58 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:79:99)
-    CallClosure           Target=59 ClosureTemp=57 ArgTemp=58   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
-    RestoreArenaState     CursorLocalSlot=34 EndLocalSlot=35 PreRestoreEndSlot=37
-    ReclaimArenaChunks    SavedEndSlot=35 PreRestoreEndSlot=37
-    TextFromInt           Target=60 ValueTemp=59   (rc_child_of_call_argument_kept_by_callee_result.ash:79:67)
-    ConcatStr             Target=61 Left=46 Right=60   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    RcDrop                SourceTemp=46 TypeName=String RuntimeManaged=true
-    RcDrop                SourceTemp=39 TypeName=List OwnerSlot=30
-    PrintStr              Source=61   (rc_child_of_call_argument_kept_by_callee_result.ash:79:32)
-    AllocAdt              Target=62 Tag=0 FieldCount=0   (rc_child_of_call_argument_kept_by_callee_result.ash:79:32)
-    StoreLocal            Slot=27 Source=62   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    RestoreArenaState     CursorLocalSlot=28 EndLocalSlot=29 PreRestoreEndSlot=38
-    CopyOutArena          DestTemp=64 SrcTemp=62 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    ReclaimArenaChunks    SavedEndSlot=29 PreRestoreEndSlot=38
-    StoreLocal            Slot=27 Source=64   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    Jump                  Target=match_end_137   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-  match_arm_cleanup_139:
-    RcDrop                SourceTemp=20 TypeName=Env OwnerSlot=17
-    RestoreArenaState     CursorLocalSlot=28 EndLocalSlot=29 PreRestoreEndSlot=39
-    ReclaimArenaChunks    SavedEndSlot=29 PreRestoreEndSlot=39
-    Jump                  Target=match_none_138   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-  match_none_138:
-    LoadConstInt          Target=65 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    StoreLocal            Slot=27 Source=65   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-  match_end_137:
-    LoadLocal             Target=66 Slot=27   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
-    StoreLocal            Slot=40 Source=66   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    LoadLocal             Target=67 Slot=26   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    StoreLocal            Slot=17 Source=20   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
+    LoadLocal             Target=21 Slot=17   (rc_child_of_call_argument_kept_by_callee_result.ash:58:19)
+    StoreLocal            Slot=18 Source=21   (rc_child_of_call_argument_kept_by_callee_result.ash:58:1)
+    LoadConstInt          Target=22 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    MakeClosure           Target=23 FuncLabel=lambda_21 EnvPtrTemp=22 EnvSizeBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    StoreLocal            Slot=19 Source=23   (rc_child_of_call_argument_kept_by_callee_result.ash:60:1)
+    LoadConstInt          Target=24 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    MakeClosure           Target=25 FuncLabel=lambda_23 EnvPtrTemp=24 EnvSizeBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    StoreLocal            Slot=20 Source=25   (rc_child_of_call_argument_kept_by_callee_result.ash:65:1)
+    LoadConstInt          Target=26 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    MakeClosure           Target=27 FuncLabel=lambda_25 EnvPtrTemp=26 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    StoreLocal            Slot=21 Source=27   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
+    SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
+    SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
+    LoadLocal             Target=28 Slot=19   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
+    LoadConstInt          Target=29 Value=2000   (rc_child_of_call_argument_kept_by_callee_result.ash:76:19)
+    CallClosure           Target=30 ClosureTemp=28 ArgTemp=29   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
+    LoadConstInt          Target=31 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:76:25)
+    LoadMemOffset         Target=32 BasePtr=30 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
+    LoadConstInt          Target=33 Value=63   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
+    ShrInt                Target=34 Left=32 Right=33   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
+    CallClosure           Target=35 ClosureTemp=30 ArgTemp=31   (rc_child_of_call_argument_kept_by_callee_result.ash:76:13)
+    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=26
+    StoreLocal            Slot=27 Source=35   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    LoadLocal             Target=36 Slot=18   (rc_child_of_call_argument_kept_by_callee_result.ash:78:7)
+    Borrow                Target=37 SourceTemp=36
+    SaveArenaState        CursorLocalSlot=29 EndLocalSlot=30
+    LoadConstInt          Target=38 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    CmpIntNe              Target=39 Left=37 Right=38   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    JumpIfFalse           CondTemp=39 Target=match_arm_cleanup_172   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    GetAdtField           Target=40 Ptr=37 FieldIndex=0 Tagless=true   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    RcDrop                SourceTemp=21 TypeName=Env OwnerSlot=18
+    StoreLocal            Slot=31 Source=40   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    SaveArenaState        CursorLocalSlot=32 EndLocalSlot=33
+    LoadLocal             Target=41 Slot=21   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+    LoadLocal             Target=42 Slot=31   (rc_child_of_call_argument_kept_by_callee_result.ash:79:58)
+    Borrow                Target=43 SourceTemp=42
+    LoadMemOffset         Target=44 BasePtr=41 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+    LoadConstInt          Target=45 Value=63   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+    ShrInt                Target=46 Left=44 Right=45   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+    RcDup                 Target=86 SourceTemp=43   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+    CallClosure           Target=47 ClosureTemp=41 ArgTemp=43   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+    RestoreArenaState     CursorLocalSlot=32 EndLocalSlot=33 PreRestoreEndSlot=34
+    ReclaimArenaChunks    SavedEndSlot=33 PreRestoreEndSlot=34
+    SaveArenaState        CursorLocalSlot=35 EndLocalSlot=36
+    LoadLocal             Target=48 Slot=20   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    LoadLocal             Target=49 Slot=27   (rc_child_of_call_argument_kept_by_callee_result.ash:79:92)
+    Borrow                Target=50 SourceTemp=49
+    LoadMemOffset         Target=51 BasePtr=48 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    LoadConstInt          Target=52 Value=62   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    ShrInt                Target=53 Left=51 Right=52   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    LoadConstInt          Target=54 Value=1   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    AndInt                Target=55 Left=53 Right=54   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    StoreLocal            Slot=37 Source=50   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    JumpIfFalse           CondTemp=55 Target=rc_call_argument_not_retained_173   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    RcDup                 Target=56 SourceTemp=50 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=37 Source=56   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+  rc_call_argument_not_retained_173:
+    LoadLocal             Target=57 Slot=37   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    CallClosure           Target=58 ClosureTemp=48 ArgTemp=57 RuntimeManagedArgumentFlagTemp=55   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    LoadConstInt          Target=59 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:79:99)
+    CallClosure           Target=60 ClosureTemp=58 ArgTemp=59   (rc_child_of_call_argument_kept_by_callee_result.ash:79:86)
+    RestoreArenaState     CursorLocalSlot=35 EndLocalSlot=36 PreRestoreEndSlot=38
+    ReclaimArenaChunks    SavedEndSlot=36 PreRestoreEndSlot=38
+    TextFromInt           Target=61 ValueTemp=60   (rc_child_of_call_argument_kept_by_callee_result.ash:79:67)
+    ConcatStr             Target=62 Left=47 Right=61   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
+    RcDrop                SourceTemp=47 TypeName=String RuntimeManaged=true
+    RcDrop                SourceTemp=40 TypeName=List OwnerSlot=31
+    PrintStr              Source=62   (rc_child_of_call_argument_kept_by_callee_result.ash:79:32)
+    AllocAdt              Target=63 Tag=0 FieldCount=0   (rc_child_of_call_argument_kept_by_callee_result.ash:79:32)
+    StoreLocal            Slot=28 Source=63   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=39
+    CopyOutArena          DestTemp=65 SrcTemp=63 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=39
+    StoreLocal            Slot=28 Source=65   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    Jump                  Target=match_end_170   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+  match_arm_cleanup_172:
+    RcDrop                SourceTemp=21 TypeName=Env OwnerSlot=18
+    RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=40
+    ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=40
+    Jump                  Target=match_none_171   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+  match_none_171:
+    LoadConstInt          Target=66 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+    StoreLocal            Slot=28 Source=66   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
+  match_end_170:
+    LoadLocal             Target=67 Slot=28   (rc_child_of_call_argument_kept_by_callee_result.ash:78:1)
     StoreLocal            Slot=41 Source=67   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-  rcdrop_list_141:
-    LoadLocal             Target=68 Slot=41   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    LoadConstInt          Target=69 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    CmpIntNe              Target=70 Left=68 Right=69   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    JumpIfFalse           CondTemp=70 Target=rcdrop_list_end_143   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    RcIsUnique            Target=71 SourceTemp=68
-    JumpIfFalse           CondTemp=71 Target=rcdrop_list_shared_142   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    LoadMemOffset         Target=72 BasePtr=68 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=73 BasePtr=68 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    RcDrop                SourceTemp=68 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=41 Source=73   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    Jump                  Target=rcdrop_list_141   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-  rcdrop_list_shared_142:
-    RcDrop                SourceTemp=68 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_143   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-  rcdrop_list_end_143:
-    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=42
-    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=42
-    LoadLocal             Target=74 Slot=40   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
-    StoreLocal            Slot=43 Source=74   (rc_child_of_call_argument_kept_by_callee_result.ash:58:1)
-    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=44
-    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=44
-    LoadLocal             Target=76 Slot=43   (rc_child_of_call_argument_kept_by_callee_result.ash:58:1)
-    StoreLocal            Slot=45 Source=76   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
-    LoadLocal             Target=77 Slot=11   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
-    CleanupResource       SourceTemp=77 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=46
-    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=46
-    LoadLocal             Target=78 Slot=45   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
-    StoreLocal            Slot=47 Source=78   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
-    LoadLocal             Target=79 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
-    CleanupResource       SourceTemp=79 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=48
-    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=48
-    LoadLocal             Target=80 Slot=47   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
-    StoreLocal            Slot=49 Source=80   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-    LoadLocal             Target=81 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-    CleanupResource       SourceTemp=81 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=50
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=50
-    LoadLocal             Target=82 Slot=49   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
-    StoreLocal            Slot=51 Source=82   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
-    LoadLocal             Target=83 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
-    CleanupResource       SourceTemp=83 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=52
-    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=52
-    LoadLocal             Target=84 Slot=51   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
-    Return                Source=84
+    LoadLocal             Target=68 Slot=27   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    StoreLocal            Slot=42 Source=68   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+  rcdrop_list_174:
+    LoadLocal             Target=69 Slot=42   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    LoadConstInt          Target=70 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    CmpIntNe              Target=71 Left=69 Right=70   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    JumpIfFalse           CondTemp=71 Target=rcdrop_list_end_176   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    RcIsUnique            Target=72 SourceTemp=69
+    JumpIfFalse           CondTemp=72 Target=rcdrop_list_shared_175   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    LoadMemOffset         Target=73 BasePtr=69 OffsetBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    RcDrop                SourceTemp=73 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=74 BasePtr=69 OffsetBytes=8   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=42 Source=74   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    Jump                  Target=rcdrop_list_174   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+  rcdrop_list_shared_175:
+    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_176   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+  rcdrop_list_end_176:
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=43
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=43
+    LoadLocal             Target=75 Slot=41   (rc_child_of_call_argument_kept_by_callee_result.ash:76:1)
+    StoreLocal            Slot=44 Source=75   (rc_child_of_call_argument_kept_by_callee_result.ash:58:1)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=45
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=45
+    LoadLocal             Target=77 Slot=44   (rc_child_of_call_argument_kept_by_callee_result.ash:58:1)
+    StoreLocal            Slot=46 Source=77   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    LoadLocal             Target=78 Slot=11   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    CleanupResource       SourceTemp=78 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=47
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=47
+    LoadLocal             Target=79 Slot=46   (rc_child_of_call_argument_kept_by_callee_result.ash:52:1)
+    StoreLocal            Slot=48 Source=79   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    LoadLocal             Target=80 Slot=8   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    CleanupResource       SourceTemp=80 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=49
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=49
+    LoadLocal             Target=81 Slot=48   (rc_child_of_call_argument_kept_by_callee_result.ash:44:1)
+    StoreLocal            Slot=50 Source=81   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    LoadLocal             Target=82 Slot=5   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    CleanupResource       SourceTemp=82 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=51
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=51
+    LoadLocal             Target=83 Slot=50   (rc_child_of_call_argument_kept_by_callee_result.ash:40:1)
+    StoreLocal            Slot=52 Source=83   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
+    LoadLocal             Target=84 Slot=2   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
+    CleanupResource       SourceTemp=84 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=53
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=53
+    LoadLocal             Target=85 Slot=52   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
+    Return                Source=85
 

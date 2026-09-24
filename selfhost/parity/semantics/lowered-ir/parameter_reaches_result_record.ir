@@ -1,8 +1,86 @@
 IR (lowered)
 ============
 
+function __rcnorm_1  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=10
+    LoadLocal             Target=0 Slot=1   (parameter_reaches_result_record.ash:5:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_4   (parameter_reaches_result_record.ash:5:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_representation_done_5   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_copy_4:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (parameter_reaches_result_record.ash:5:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_6   (parameter_reaches_result_record.ash:5:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_representation_done_7   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_copy_6:
+    CopyOutArena          DestTemp=7 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=7   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_done_7:
+    LoadLocal             Target=8 Slot=3   (parameter_reaches_result_record.ash:5:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=2 Source=3   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_done_5:
+    LoadLocal             Target=9 Slot=2   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=9   (parameter_reaches_result_record.ash:5:1)
+
+function __deepcopy_3  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (parameter_reaches_result_record.ash:5:1)
+    LoadEnv               Target=1 Index=0   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=2 Value=0   (parameter_reaches_result_record.ash:5:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_3_default   (parameter_reaches_result_record.ash:5:1)
+  __deepcopy_3_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (parameter_reaches_result_record.ash:5:1)
+    CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=3   (parameter_reaches_result_record.ash:5:1)
+  __deepcopy_3_default:
+    Return                Source=0   (parameter_reaches_result_record.ash:5:1)
+
+function __deepcopy_list_2  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (parameter_reaches_result_record.ash:5:1)
+    LoadEnv               Target=1 Index=0   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=2 Value=0   (parameter_reaches_result_record.ash:5:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_2_copy   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=4 Value=0   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=4   (parameter_reaches_result_record.ash:5:1)
+  __deepcopy_list_2_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (parameter_reaches_result_record.ash:5:1)
+    Alloc                 Target=7 SizeBytes=8   (parameter_reaches_result_record.ash:5:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_3 EnvPtrTemp=7 EnvSizeBytes=8   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (parameter_reaches_result_record.ash:5:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (parameter_reaches_result_record.ash:5:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (parameter_reaches_result_record.ash:5:1)
+    Alloc                 Target=11 SizeBytes=16   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=11   (parameter_reaches_result_record.ash:5:1)
+
+function __rcdrop_record_4  [RuntimeManagedAdtDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (parameter_reaches_result_record.ash:5:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_26   (parameter_reaches_result_record.ash:5:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (parameter_reaches_result_record.ash:5:1)
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+  rc_drop_shared_26:
+    RcDrop                SourceTemp=0 TypeName=Pair RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=3   (parameter_reaches_result_record.ash:5:1)
+
 function lambda_0  [SourceFunction from wrap]
-  locals=5 temps=19
+  locals=12 temps=58
     LoadLocal             Target=3 Slot=1   (parameter_reaches_result_record.ash:5:1)
     LoadArgumentOwnership Target=4   (parameter_reaches_result_record.ash:5:1)
     LoadConstInt          Target=5 Value=1   (parameter_reaches_result_record.ash:5:1)
@@ -17,38 +95,131 @@ function lambda_0  [SourceFunction from wrap]
     StoreLocal            Slot=3 Source=8   (parameter_reaches_result_record.ash:5:1)
     Jump                  Target=rc_representation_done_3   (parameter_reaches_result_record.ash:5:1)
   rc_representation_copy_2:
-    CopyOutArena          DestTemp=11 SrcTemp=3 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=12 Ptr=3 FieldIndex=0 Tagless=true   (parameter_reaches_result_record.ash:5:1)
-    IsReferenceCounted    Target=13 SourceTemp=12
-    JumpIfFalse           CondTemp=13 Target=rc_representation_copy_4   (parameter_reaches_result_record.ash:5:1)
-    RcDup                 Target=14 SourceTemp=12 RuntimeManaged=true
-    StoreLocal            Slot=4 Source=14   (parameter_reaches_result_record.ash:5:1)
-    Jump                  Target=rc_representation_done_5   (parameter_reaches_result_record.ash:5:1)
-  rc_representation_copy_4:
-    CopyOutArena          DestTemp=15 SrcTemp=12 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=4 Source=15   (parameter_reaches_result_record.ash:5:1)
-  rc_representation_done_5:
-    LoadLocal             Target=16 Slot=4   (parameter_reaches_result_record.ash:5:1)
-    SetAdtField           Ptr=11 FieldIndex=0 Source=16 Tagless=true   (parameter_reaches_result_record.ash:5:1)
-    StoreLocal            Slot=3 Source=11   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=11 Value=0   (parameter_reaches_result_record.ash:5:1)
+    CallKnown             Target=12 FuncLabel=__rcnorm_1 EnvTemp=11 ArgTemp=3   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=3 Source=12   (parameter_reaches_result_record.ash:5:1)
   rc_representation_done_3:
-    LoadLocal             Target=17 Slot=3   (parameter_reaches_result_record.ash:5:1)
-    StoreLocal            Slot=2 Source=17   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=13 Slot=3   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=2 Source=13   (parameter_reaches_result_record.ash:5:1)
   rc_arg_normalize_done_1:
-    LoadLocal             Target=18 Slot=2   (parameter_reaches_result_record.ash:5:1)
-    StoreLocal            Slot=1 Source=18   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=14 Slot=2   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=1 Source=14   (parameter_reaches_result_record.ash:5:1)
     LoadConstInt          Target=0 Value=0   (parameter_reaches_result_record.ash:5:25)
     LoadLocal             Target=1 Slot=1   (parameter_reaches_result_record.ash:5:26)
     Alloc                 Target=2 SizeBytes=16   (parameter_reaches_result_record.ash:5:25)
     StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=1   (parameter_reaches_result_record.ash:5:25)
     StoreMemOffset        BasePtr=2 OffsetBytes=8 Source=0   (parameter_reaches_result_record.ash:5:25)
-    Return                Source=2   (parameter_reaches_result_record.ash:5:1)
+    IsReferenceCounted    Target=15 SourceTemp=2
+    JumpIfFalse           CondTemp=15 Target=rc_representation_copy_8   (parameter_reaches_result_record.ash:5:1)
+    RcDup                 Target=16 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=16   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_representation_done_9   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_copy_8:
+    IsReferenceCounted    Target=18 SourceTemp=2
+    JumpIfFalse           CondTemp=18 Target=rc_representation_copy_10   (parameter_reaches_result_record.ash:5:1)
+    RcDup                 Target=19 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=19   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_representation_done_11   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_copy_10:
+    LoadConstInt          Target=20 Value=0   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=6 Source=2   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=7 Source=20   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=8 Source=20   (parameter_reaches_result_record.ash:5:1)
+  rc_normalize_list_12:
+    LoadLocal             Target=21 Slot=6   (parameter_reaches_result_record.ash:5:1)
+    CmpIntNe              Target=22 Left=21 Right=20   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=22 Target=rc_normalize_list_end_13   (parameter_reaches_result_record.ash:5:1)
+    IsReferenceCounted    Target=23 SourceTemp=21
+    JumpIfFalse           CondTemp=23 Target=rc_normalize_list_cell_14   (parameter_reaches_result_record.ash:5:1)
+    RcDup                 Target=24 SourceTemp=21 RuntimeManaged=true
+    LoadLocal             Target=25 Slot=7   (parameter_reaches_result_record.ash:5:1)
+    CmpIntNe              Target=26 Left=25 Right=20   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=26 Target=rc_normalize_list_first_15   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=27 Slot=8   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=27 OffsetBytes=8 Source=24   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_normalize_list_linked_16   (parameter_reaches_result_record.ash:5:1)
+  rc_normalize_list_first_15:
+    StoreLocal            Slot=7 Source=24   (parameter_reaches_result_record.ash:5:1)
+  rc_normalize_list_linked_16:
+    StoreLocal            Slot=8 Source=24   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_normalize_list_end_13   (parameter_reaches_result_record.ash:5:1)
+  rc_normalize_list_cell_14:
+    LoadMemOffset         Target=28 BasePtr=21 OffsetBytes=0   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=29 BasePtr=21 OffsetBytes=8   (parameter_reaches_result_record.ash:5:1)
+    IsReferenceCounted    Target=30 SourceTemp=28
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_17   (parameter_reaches_result_record.ash:5:1)
+    RcDup                 Target=31 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=9 Source=31   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_representation_done_18   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_copy_17:
+    LoadConstInt          Target=33 Value=0   (parameter_reaches_result_record.ash:5:1)
+    CallKnown             Target=34 FuncLabel=__rcnorm_1 EnvTemp=33 ArgTemp=28   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=9 Source=34   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_done_18:
+    LoadLocal             Target=35 Slot=9   (parameter_reaches_result_record.ash:5:1)
+    Alloc                 Target=36 SizeBytes=16 RuntimeManaged=true   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=36 OffsetBytes=0 Source=35   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=36 OffsetBytes=8 Source=20   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=37 Slot=7   (parameter_reaches_result_record.ash:5:1)
+    CmpIntNe              Target=38 Left=37 Right=20   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_first_19   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=39 Slot=8   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=39 OffsetBytes=8 Source=36   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_normalize_list_linked_20   (parameter_reaches_result_record.ash:5:1)
+  rc_normalize_list_first_19:
+    StoreLocal            Slot=7 Source=36   (parameter_reaches_result_record.ash:5:1)
+  rc_normalize_list_linked_20:
+    StoreLocal            Slot=8 Source=36   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=6 Source=29   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_normalize_list_12   (parameter_reaches_result_record.ash:5:1)
+  rc_normalize_list_end_13:
+    LoadLocal             Target=40 Slot=7   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=5 Source=40   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_done_11:
+    LoadLocal             Target=41 Slot=5   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=4 Source=41   (parameter_reaches_result_record.ash:5:1)
+  rc_representation_done_9:
+    LoadLocal             Target=42 Slot=4   (parameter_reaches_result_record.ash:5:1)
+    LoadArgumentOwnership Target=43   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=44 Value=1   (parameter_reaches_result_record.ash:5:1)
+    ShrInt                Target=45 Left=43 Right=44   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=45 Target=rc_result_owned_21   (parameter_reaches_result_record.ash:5:1)
+    Alloc                 Target=46 SizeBytes=8   (parameter_reaches_result_record.ash:5:1)
+    MakeClosure           Target=47 FuncLabel=__deepcopy_list_2 EnvPtrTemp=46 EnvSizeBytes=8   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=46 OffsetBytes=0 Source=47   (parameter_reaches_result_record.ash:5:1)
+    CallClosure           Target=48 ClosureTemp=47 ArgTemp=42   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=11 Source=42   (parameter_reaches_result_record.ash:5:1)
+  rcdrop_list_23:
+    LoadLocal             Target=49 Slot=11   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=50 Value=0   (parameter_reaches_result_record.ash:5:1)
+    CmpIntNe              Target=51 Left=49 Right=50   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_end_25   (parameter_reaches_result_record.ash:5:1)
+    RcIsUnique            Target=52 SourceTemp=49
+    JumpIfFalse           CondTemp=52 Target=rcdrop_list_shared_24   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=53 BasePtr=49 OffsetBytes=0   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=54 Value=0   (parameter_reaches_result_record.ash:5:1)
+    CallKnown             Target=55 FuncLabel=__rcdrop_record_4 EnvTemp=54 ArgTemp=53   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=56 BasePtr=49 OffsetBytes=8   (parameter_reaches_result_record.ash:5:1)
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=11 Source=56   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rcdrop_list_23   (parameter_reaches_result_record.ash:5:1)
+  rcdrop_list_shared_24:
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_25   (parameter_reaches_result_record.ash:5:1)
+  rcdrop_list_end_25:
+    StoreLocal            Slot=10 Source=48   (parameter_reaches_result_record.ash:5:1)
+    Jump                  Target=rc_result_done_22   (parameter_reaches_result_record.ash:5:1)
+  rc_result_owned_21:
+    StoreLocal            Slot=10 Source=42   (parameter_reaches_result_record.ash:5:1)
+  rc_result_done_22:
+    LoadLocal             Target=57 Slot=10   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=57   (parameter_reaches_result_record.ash:5:1)
 
 function _start_main  [ProgramEntry]
-  locals=19 temps=33
+  locals=20 temps=34
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (parameter_reaches_result_record.ash:5:1)
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 AcceptsRuntimeManagedArgument=true   (parameter_reaches_result_record.ash:5:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (parameter_reaches_result_record.ash:5:1)
     StoreLocal            Slot=2 Source=1   (parameter_reaches_result_record.ash:5:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadLocal             Target=2 Slot=2   (parameter_reaches_result_record.ash:7:7)
@@ -60,66 +231,70 @@ function _start_main  [ProgramEntry]
     SetAdtField           Ptr=7 FieldIndex=0 Source=5 Tagless=true   (parameter_reaches_result_record.ash:7:12)
     SetAdtField           Ptr=7 FieldIndex=1 Source=6 Tagless=true   (parameter_reaches_result_record.ash:7:12)
     CallClosure           Target=8 ClosureTemp=3 ArgTemp=7   (parameter_reaches_result_record.ash:7:7)
-    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
-    LoadConstInt          Target=9 Value=0   (parameter_reaches_result_record.ash:7:1)
-    CmpIntNe              Target=10 Left=8 Right=9   (parameter_reaches_result_record.ash:7:1)
-    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_9   (parameter_reaches_result_record.ash:7:1)
-    LoadMemOffset         Target=11 BasePtr=8 OffsetBytes=0   (parameter_reaches_result_record.ash:7:1)
-    LoadMemOffset         Target=12 BasePtr=8 OffsetBytes=8   (parameter_reaches_result_record.ash:7:1)
-    LoadConstInt          Target=13 Value=0   (parameter_reaches_result_record.ash:7:1)
-    CmpIntNe              Target=14 Left=11 Right=13   (parameter_reaches_result_record.ash:7:1)
-    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_9   (parameter_reaches_result_record.ash:7:1)
-    GetAdtField           Target=15 Ptr=11 FieldIndex=0 Tagless=true   (parameter_reaches_result_record.ash:7:1)
-    StoreLocal            Slot=9 Source=15   (parameter_reaches_result_record.ash:7:1)
-    LoadConstInt          Target=16 Value=0   (parameter_reaches_result_record.ash:7:1)
-    CmpIntEq              Target=17 Left=12 Right=16   (parameter_reaches_result_record.ash:7:1)
-    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_9   (parameter_reaches_result_record.ash:7:1)
-    LoadLocal             Target=18 Slot=9   (parameter_reaches_result_record.ash:8:54)
-    Borrow                Target=19 SourceTemp=18
-    PrintStr              Source=19   (parameter_reaches_result_record.ash:8:39)
-    RcDrop                SourceTemp=15 TypeName=String OwnerSlot=9
-    AllocAdt              Target=20 Tag=0 FieldCount=0   (parameter_reaches_result_record.ash:8:39)
-    StoreLocal            Slot=6 Source=20   (parameter_reaches_result_record.ash:7:1)
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
-    CopyOutArena          DestTemp=22 SrcTemp=20 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
-    StoreLocal            Slot=6 Source=22   (parameter_reaches_result_record.ash:7:1)
-    Jump                  Target=match_end_6   (parameter_reaches_result_record.ash:7:1)
-  match_arm_cleanup_9:
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=11
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=11
-    Jump                  Target=match_next_8   (parameter_reaches_result_record.ash:7:1)
-  match_next_8:
-    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
-    LoadConstStr          Target=23 StrLabel=str_0   (parameter_reaches_result_record.ash:9:27)
-    PrintStr              Source=23   (parameter_reaches_result_record.ash:9:12)
-    AllocAdt              Target=24 Tag=0 FieldCount=0   (parameter_reaches_result_record.ash:9:12)
-    IsReferenceCounted    Target=27 SourceTemp=24
-    JumpIfFalse           CondTemp=27 Target=rc_representation_copy_11   (parameter_reaches_result_record.ash:7:1)
-    RcDup                 Target=28 SourceTemp=24 RuntimeManaged=true
-    StoreLocal            Slot=16 Source=28   (parameter_reaches_result_record.ash:7:1)
-    Jump                  Target=rc_representation_done_12   (parameter_reaches_result_record.ash:7:1)
-  rc_representation_copy_11:
-    CopyOutArena          DestTemp=29 SrcTemp=24 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=16 Source=29   (parameter_reaches_result_record.ash:7:1)
-  rc_representation_done_12:
-    LoadLocal             Target=30 Slot=16   (parameter_reaches_result_record.ash:7:1)
-    StoreLocal            Slot=6 Source=30   (parameter_reaches_result_record.ash:7:1)
-    Jump                  Target=match_end_6   (parameter_reaches_result_record.ash:7:1)
-  match_arm_cleanup_10:
-    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
-    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
-    Jump                  Target=match_none_7   (parameter_reaches_result_record.ash:7:1)
-  match_none_7:
-    LoadConstInt          Target=25 Value=0   (parameter_reaches_result_record.ash:7:1)
-    StoreLocal            Slot=6 Source=25   (parameter_reaches_result_record.ash:7:1)
-  match_end_6:
-    LoadLocal             Target=26 Slot=6   (parameter_reaches_result_record.ash:7:1)
-    StoreLocal            Slot=17 Source=26   (parameter_reaches_result_record.ash:5:1)
-    LoadLocal             Target=31 Slot=2   (parameter_reaches_result_record.ash:5:1)
-    CleanupResource       SourceTemp=31 TypeName=Function
-    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=18
-    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=18
-    LoadLocal             Target=32 Slot=17   (parameter_reaches_result_record.ash:5:1)
-    Return                Source=32
+    StoreLocal            Slot=6 Source=8   (parameter_reaches_result_record.ash:7:7)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    LoadLocal             Target=9 Slot=6   (parameter_reaches_result_record.ash:7:7)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadConstInt          Target=10 Value=0   (parameter_reaches_result_record.ash:7:1)
+    CmpIntNe              Target=11 Left=9 Right=10   (parameter_reaches_result_record.ash:7:1)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_30   (parameter_reaches_result_record.ash:7:1)
+    LoadMemOffset         Target=12 BasePtr=9 OffsetBytes=0   (parameter_reaches_result_record.ash:7:1)
+    LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=8   (parameter_reaches_result_record.ash:7:1)
+    LoadConstInt          Target=14 Value=0   (parameter_reaches_result_record.ash:7:1)
+    CmpIntNe              Target=15 Left=12 Right=14   (parameter_reaches_result_record.ash:7:1)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_30   (parameter_reaches_result_record.ash:7:1)
+    GetAdtField           Target=16 Ptr=12 FieldIndex=0 Tagless=true   (parameter_reaches_result_record.ash:7:1)
+    StoreLocal            Slot=10 Source=16   (parameter_reaches_result_record.ash:7:1)
+    LoadConstInt          Target=17 Value=0   (parameter_reaches_result_record.ash:7:1)
+    CmpIntEq              Target=18 Left=13 Right=17   (parameter_reaches_result_record.ash:7:1)
+    JumpIfFalse           CondTemp=18 Target=match_arm_cleanup_30   (parameter_reaches_result_record.ash:7:1)
+    LoadLocal             Target=19 Slot=10   (parameter_reaches_result_record.ash:8:54)
+    Borrow                Target=20 SourceTemp=19
+    PrintStr              Source=20   (parameter_reaches_result_record.ash:8:39)
+    RcDrop                SourceTemp=16 TypeName=String OwnerSlot=10
+    AllocAdt              Target=21 Tag=0 FieldCount=0   (parameter_reaches_result_record.ash:8:39)
+    StoreLocal            Slot=7 Source=21   (parameter_reaches_result_record.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11
+    CopyOutArena          DestTemp=23 SrcTemp=21 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=11
+    StoreLocal            Slot=7 Source=23   (parameter_reaches_result_record.ash:7:1)
+    Jump                  Target=match_end_27   (parameter_reaches_result_record.ash:7:1)
+  match_arm_cleanup_30:
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=12
+    Jump                  Target=match_next_29   (parameter_reaches_result_record.ash:7:1)
+  match_next_29:
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstStr          Target=24 StrLabel=str_0   (parameter_reaches_result_record.ash:9:27)
+    PrintStr              Source=24   (parameter_reaches_result_record.ash:9:12)
+    AllocAdt              Target=25 Tag=0 FieldCount=0   (parameter_reaches_result_record.ash:9:12)
+    IsReferenceCounted    Target=28 SourceTemp=25
+    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_32   (parameter_reaches_result_record.ash:7:1)
+    RcDup                 Target=29 SourceTemp=25 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=29   (parameter_reaches_result_record.ash:7:1)
+    Jump                  Target=rc_representation_done_33   (parameter_reaches_result_record.ash:7:1)
+  rc_representation_copy_32:
+    CopyOutArena          DestTemp=30 SrcTemp=25 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=17 Source=30   (parameter_reaches_result_record.ash:7:1)
+  rc_representation_done_33:
+    LoadLocal             Target=31 Slot=17   (parameter_reaches_result_record.ash:7:1)
+    StoreLocal            Slot=7 Source=31   (parameter_reaches_result_record.ash:7:1)
+    Jump                  Target=match_end_27   (parameter_reaches_result_record.ash:7:1)
+  match_arm_cleanup_31:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_none_28   (parameter_reaches_result_record.ash:7:1)
+  match_none_28:
+    LoadConstInt          Target=26 Value=0   (parameter_reaches_result_record.ash:7:1)
+    StoreLocal            Slot=7 Source=26   (parameter_reaches_result_record.ash:7:1)
+  match_end_27:
+    LoadLocal             Target=27 Slot=7   (parameter_reaches_result_record.ash:7:1)
+    StoreLocal            Slot=18 Source=27   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=32 Slot=2   (parameter_reaches_result_record.ash:5:1)
+    CleanupResource       SourceTemp=32 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=19
+    LoadLocal             Target=33 Slot=18   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=33
 

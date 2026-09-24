@@ -5,14 +5,14 @@ Function: build
   ownership
     n: consumed, move-safe yes
     result fresh: yes
-  perceus [lambda_10]
-    dup:                  2
-    drop:                 2
-    uniqueness checks:    1
-  representation [lambda_10]
+  perceus [lambda_14]
+    dup:                  3
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_14]
     conservative unknown: 5
     region:               10
-    runtime rc:           10
+    runtime rc:           14
     copy value:           2
 
 Function: collect
@@ -21,27 +21,27 @@ Function: collect
     remaining: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_4]
-    dup:                  21
-    drop:                 13
-    uniqueness checks:    7
-  perceus [lambda_3]
+  perceus [lambda_9]
+    dup:                  14
+    drop:                 6
+    uniqueness checks:    4
+  perceus [lambda_8]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_2]
+  perceus [lambda_7]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_4]
-    conservative unknown: 14
-    region:               14
-    runtime rc:           81
+  representation [lambda_9]
+    conservative unknown: 18
+    region:               7
+    runtime rc:           64
     copy value:           5
-  representation [lambda_3]
+  representation [lambda_8]
     conservative unknown: 2
     region:               2
-  representation [lambda_2]
+  representation [lambda_7]
     conservative unknown: 2
     region:               3
 
@@ -49,11 +49,11 @@ Function: describe
   ownership
     entry: consumed, move-safe yes
     result fresh: yes
-  perceus [lambda_9]
+  perceus [lambda_13]
     dup:                  0
     drop:                 1
     uniqueness checks:    0
-  representation [lambda_9]
+  representation [lambda_13]
     conservative unknown: 10
     region:               7
     runtime rc:           3
@@ -64,24 +64,24 @@ Function: joinAll
     entries: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_13]
-    dup:                  8
-    drop:                 17
-    uniqueness checks:    9
-  perceus [lambda_12]
+  perceus [lambda_17]
+    dup:                  5
+    drop:                 11
+    uniqueness checks:    6
+  perceus [lambda_16]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_13__scalarenv0]
-    dup:                  8
-    drop:                 17
-    uniqueness checks:    9
-  representation [lambda_13]
+  perceus [lambda_17__scalarenv0]
+    dup:                  5
+    drop:                 11
+    uniqueness checks:    6
+  representation [lambda_17]
     conservative unknown: 16
     region:               7
-    runtime rc:           38
+    runtime rc:           27
     copy value:           2
-  representation [lambda_12]
+  representation [lambda_16]
     conservative unknown: 2
     region:               3
 
@@ -91,16 +91,21 @@ Function: placed
     anchor: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_0]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
+  perceus [lambda_1__scalarenv1]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
   representation [lambda_1]
-    conservative unknown: 6
-    region:               1
+    conservative unknown: 10
+    region:               10
+    runtime rc:           17
     copy value:           1
   representation [lambda_0]
     region:               2

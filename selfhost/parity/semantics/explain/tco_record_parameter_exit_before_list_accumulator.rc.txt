@@ -1,17 +1,17 @@
 RC report
 =========
 
-Function: collect [lambda_2]
+Function: __rcnorm_3
   Operations
-    dup:                  12
-    drop:                 9
-    uniqueness checks:    4
-    allocations:          5
+    dup:                  2
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               8
+    copies:               2
 
-Function: __rc_cdrop_3
+Function: __rcdrop_record_4
   Operations
     dup:                  0
     drop:                 2
@@ -21,15 +21,45 @@ Function: __rc_cdrop_3
     reuse tokens:         0
     copies:               0
 
+Function: __deepcopy_6
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_list_5
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: collect [lambda_2]
+  Operations
+    dup:                  13
+    drop:                 5
+    uniqueness checks:    2
+    allocations:          7
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
 Function: collect [lambda_2$env_normalize]
   Operations
-    dup:                  2
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               0
 
 Function: collect [lambda_1]
   Operations
@@ -51,15 +81,15 @@ Function: collect
     reuse tokens:         0
     copies:               0
 
-Function: labelBytes [lambda_5]
+Function: labelBytes [lambda_9]
   Operations
-    dup:                  4
-    drop:                 12
-    uniqueness checks:    6
+    dup:                  3
+    drop:                 6
+    uniqueness checks:    3
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               0
 
 Function: labelBytes
   Operations
@@ -71,15 +101,15 @@ Function: labelBytes
     reuse tokens:         0
     copies:               0
 
-Function: labelBytes [lambda_5__scalarenv0]
+Function: labelBytes [lambda_9__scalarenv0]
   Operations
-    dup:                  4
-    drop:                 12
-    uniqueness checks:    6
+    dup:                  3
+    drop:                 6
+    uniqueness checks:    3
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               0
 
 Function: _start_main
   Operations

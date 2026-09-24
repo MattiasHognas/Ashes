@@ -7,32 +7,32 @@ Function: carry
     s: consumed, move-safe yes
     pair: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_6]
-    dup:                  16
-    drop:                 24
-    uniqueness checks:    13
-  perceus [lambda_6$env_normalize]
-    dup:                  2
+  perceus [lambda_10]
+    dup:                  10
+    drop:                 1
+    uniqueness checks:    0
+  perceus [lambda_10$env_normalize]
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_5]
+  perceus [lambda_9]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_4]
+  perceus [lambda_8]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_6]
-    conservative unknown: 2
+  representation [lambda_10]
+    conservative unknown: 5
     region:               5
-    runtime rc:           28
+    runtime rc:           16
     copy value:           10
-  representation [lambda_5]
-    conservative unknown: 1
+  representation [lambda_9]
+    conservative unknown: 2
     region:               2
-    runtime rc:           6
-  representation [lambda_4]
+    runtime rc:           3
+  representation [lambda_8]
     region:               3
     copy value:           1
 
@@ -42,21 +42,21 @@ Function: walk
     pair: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  12
-    drop:                 18
-    uniqueness checks:    10
+    dup:                  7
+    drop:                 1
+    uniqueness checks:    0
   perceus [lambda_0]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
-    dup:                  12
-    drop:                 18
-    uniqueness checks:    10
+    dup:                  7
+    drop:                 1
+    uniqueness checks:    0
   representation [lambda_1]
-    conservative unknown: 4
+    conservative unknown: 8
     region:               12
-    runtime rc:           20
+    runtime rc:           26
     copy value:           9
   representation [lambda_0]
     region:               3
