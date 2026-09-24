@@ -443,6 +443,36 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    state that owns the copy. That is stage 3, and it comes with the copy cost made concrete: unless
    the lexer's list and the lists the parser builds are reference-counted to begin with, every
    adoption is a full copy.
+
+   Meanwhile the census, now able to name a root by what its first two words hold
+   (`REACH_SHAPE`), found most of the probe's leak in stage 1's own source patterns and in two
+   compiler rules, and removing them took the module probe from 2767 MB to 920 MB at the same
+   compile time:
+
+   | Change | Probe peak |
+   |---|---|
+   | `main` | 2767 MB |
+   | The parser concatenates its token lists with a typed helper instead of the generic `List.append` | 2491 MB |
+   | The pattern-binding walk threads its binders as a list instead of a record through a recursive group | 1499 MB |
+   | Module stitching searches the completed modules instead of concatenating them | 1449 MB |
+   | The admissibility walks keep types on their path instead of rendered names | 1271 MB |
+   | A reference-counted nullary constructor is one immortal cell per tag (both backends) | 1169 MB |
+   | Heap-layout children are built onto their tail instead of from pairs and a concatenation | 1038 MB |
+   | Shadowing a name that names no function leaves the reach scope as it is | 952 MB |
+   | A loop releases the value an earlier iteration left in an owned slot | 920 MB |
+
+   The last is a lowering rule, mirrored in stage 1: a loop threading a value through a helper's
+   owned result (`map |> keepFirst(k)(v) |> loop`) hands the result to its parameter, and the next
+   iteration's call overwrote the slot that held it, so every earlier version leaked. The slot's old
+   occupant now moves to a slot of its own before the store, and a back edge releases it once no
+   successor can still name it: each is inline, a read of an owned slot, a parameter normalized onto
+   the reference-counted heap, or of a type that cannot hold it. A parameter handed on unchanged
+   counts only by its type, since it may be that very value. The next class is the same shape one
+   level up: an arena record update retains the reference-counted fields it keeps, for the back edge
+   to take over when the update is the successor, but `(state with currentSpan = span) |>
+   withStateRecursiveDeclarationSpan(span)` hands the update to a helper instead, and those retains
+   are never released (`nested_group_replaced_by_helper_in_record_loop.ash`, about 76 MB of the
+   probe).
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
