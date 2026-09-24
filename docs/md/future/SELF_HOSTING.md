@@ -467,12 +467,14 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    occupant now moves to a slot of its own before the store, and a back edge releases it once no
    successor can still name it: each is inline, a read of an owned slot, a parameter normalized onto
    the reference-counted heap, or of a type that cannot hold it. A parameter handed on unchanged
-   counts only by its type, since it may be that very value. The next class is the same shape one
-   level up: an arena record update retains the reference-counted fields it keeps, for the back edge
-   to take over when the update is the successor, but `(state with currentSpan = span) |>
-   withStateRecursiveDeclarationSpan(span)` hands the update to a helper instead, and those retains
-   are never released (`nested_group_replaced_by_helper_in_record_loop.ash`, about 76 MB of the
-   probe).
+   counts only by its type, since it may be that very value. A related shape is reproduced and
+   not fixed: an arena record update of a loop parameter retains the reference-counted fields it
+   keeps, for the back edge to take over when the update is the successor, and when a helper takes
+   the update instead those retains are never released
+   (`nested_group_replaced_by_helper_in_record_loop.ash`). The probe's largest remaining single
+   class, about 12,000 leaked lowering-state records (76 MB), is not that one: folding the one such
+   update the census pointed at into a single helper changed neither the probe nor the leaked-state
+   count of a four-function program, so where those records come from is still open.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
