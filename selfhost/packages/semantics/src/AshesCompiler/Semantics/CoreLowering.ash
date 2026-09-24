@@ -17598,6 +17598,16 @@ let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tai
                                                     copied
                                                     |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
                                                     |> success(copiedTemp)(semanticType)
+                                // A record of the contract's types is copied by its normalization
+                                // helper when it is not reference-counted already.
+                                | NormalizerArgumentCopy(_named) as plan ->
+                                    match freshTemp(state) with
+                                        | FreshTemp { state = burned, temp = _unused } ->
+                                            match emitReferenceOrCopy(temp)(emitArgumentDeepCopy(temp)(plan))(burned) with
+                                                | (copied, copiedTemp) ->
+                                                    copied
+                                                    |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+                                                    |> success(copiedTemp)(semanticType)
                                 | _ -> reserveUnusedHeadTemp(lowered)
                         else reserveUnusedHeadTemp(lowered)
             else lowered
