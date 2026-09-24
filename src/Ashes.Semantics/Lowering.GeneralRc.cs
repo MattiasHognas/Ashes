@@ -627,17 +627,37 @@ public sealed partial class Lowering
         _ => false,
     };
 
-    private bool IsArenaResultRequestingCall(int resultTemp)
+    // A call whose result type was unresolved when it was emitted requests an arena result, for a
+    // caller that cannot own it. A result of the contract's types is owned by the caller once the
+    // call is lowered, so the request word is rewritten to ask for nothing: the callee then hands
+    // over its reference-counted result instead of deep-copying it into the arena.
+    private void CancelArenaResultRequest(int resultTemp)
     {
-        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 64; i--)
+        int callIndex = _inst.Count - 1;
+        while (callIndex >= 0 && callIndex >= _inst.Count - 64 && !(_inst[callIndex] is IrInst.CallClosure { } candidate && candidate.Target == resultTemp))
         {
-            if (_inst[i] is IrInst.CallClosure call && call.Target == resultTemp)
-            {
-                return _arenaResultRequestingCalls.Contains(call);
-            }
+            callIndex--;
         }
 
-        return false;
+        if (callIndex < 0 || _inst[callIndex] is not IrInst.CallClosure call || call.Target != resultTemp || !_arenaResultRequestingCalls.Contains(call))
+        {
+            return;
+        }
+
+        int requestTemp = call.RuntimeManagedArgumentFlagTemp;
+        for (int i = callIndex - 1; i >= 0 && i >= callIndex - 64; i--)
+        {
+            switch (_inst[i])
+            {
+                case IrInst.OrInt word when word.Target == requestTemp:
+                    requestTemp = word.Right;
+                    break;
+                case IrInst.LoadConstInt request when request.Target == requestTemp:
+                    _inst[i] = request with { Value = 0 };
+                    _arenaResultRequestingCalls.Remove(call);
+                    return;
+            }
+        }
     }
 
     /// <summary>
@@ -654,39 +674,22 @@ public sealed partial class Lowering
         TypeRef callResultType,
         bool calleeReturnsOwned)
     {
-        // A callee that honours the request for an arena result returns an arena copy, which is
-        // normalized; a reference-counted result is one it returned as it does without the request.
-        bool arenaResultRequested = IsArenaResultRequestingCall(currentTemp);
+        CancelArenaResultRequest(currentTemp);
         int ownedFlagTemp = calleeReturnsOwned ? -1 : TryEmitClosureReturnsGeneralRcOwnedFlag(currentTemp);
         int callPreRestoreEndSlot = NewLocal();
         int ownedSlot = NewLocal();
         int predecessorSlot = SaveGeneralRcOwnedPredecessor(ownedSlot);
         Emit(new IrInst.StoreLocal(ownedSlot, currentTemp));
         Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
-        if (!calleeReturnsOwned || arenaResultRequested)
+        if (!calleeReturnsOwned)
         {
             // A closure whose header says its function returns the result owned hands it over.
             string ownedLabel = NewLabel("general_rc_result_owned");
-            string? normalizeLabel = ownedFlagTemp >= 0 || arenaResultRequested ? NewLabel("general_rc_result_normalize") : null;
-            if (arenaResultRequested)
-            {
-                int referenceCountedTemp = NewTemp();
-                Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, currentTemp));
-                Emit(new IrInst.JumpIfFalse(referenceCountedTemp, normalizeLabel!));
-                if (calleeReturnsOwned)
-                {
-                    Emit(new IrInst.Jump(ownedLabel));
-                }
-            }
-
             if (ownedFlagTemp >= 0)
             {
-                Emit(new IrInst.JumpIfFalse(ownedFlagTemp, normalizeLabel!));
+                string normalizeLabel = NewLabel("general_rc_result_normalize");
+                Emit(new IrInst.JumpIfFalse(ownedFlagTemp, normalizeLabel));
                 Emit(new IrInst.Jump(ownedLabel));
-            }
-
-            if (normalizeLabel is not null)
-            {
                 Emit(new IrInst.Label(normalizeLabel));
             }
 
