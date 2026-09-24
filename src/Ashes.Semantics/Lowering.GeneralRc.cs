@@ -386,7 +386,7 @@ public sealed partial class Lowering
     private void RecordGeneralRcBackEdgeSlots(int pendingId, TcoContext tco, IReadOnlyList<Expr> arguments, IReadOnlyList<int> argumentTemps)
     {
         List<GeneralRcOwnedSlot> loopSlots = _generalRcOwnedSlots
-            .Where(owned => ReferenceEquals(owned.Loop, tco) && (Environment.GetEnvironmentVariable("TMP_ALL_ARMS") is not null || SharesIterationWith(owned.Branches)))
+            .Where(owned => ReferenceEquals(owned.Loop, tco) && SharesIterationWith(owned.Branches))
             .ToList();
         _generalRcBackEdgeSlots[pendingId] = loopSlots;
         _generalRcBackEdgeParameterParts[pendingId] = arguments
@@ -540,11 +540,6 @@ public sealed partial class Lowering
     private bool IsGeneralRcValueType(TypeRef type)
     {
         TypeRef pruned = Prune(type);
-        if (Environment.GetEnvironmentVariable("DEBUG_GRC") is { } debugName && pruned is TypeRef.TNamedType debugNamed && string.Equals(debugNamed.Symbol.Name, debugName, StringComparison.Ordinal))
-        {
-            Console.Error.WriteLine($"GRC {debugName}: enabled={GeneralRcEnabled} arena={CanArenaReset(pruned)} copyout={GetCallCopyOutKind(pruned, out _, out _)} unresolved={ContainsUnresolvedLayoutType(pruned, [])} admissible={IsGeneralRcAdmissible(pruned)} reaches={ReachesGeneralRcNamedType(pruned, new HashSet<string>(StringComparer.Ordinal))} named={IsGeneralRcNamedType(debugNamed)} normalizer={NeedsRuntimeManagedAdtNormalizer(debugNamed)} recursive={CanRuntimeManageRecursiveCopyAdt(debugNamed)} ownedChild={CanRuntimeManageOwnedChildAdt(debugNamed)}");
-        }
-
         return GeneralRcEnabled
             && !CanArenaReset(pruned)
             && GetCallCopyOutKind(pruned, out _, out _) == CopyOutKind.None
@@ -553,43 +548,13 @@ public sealed partial class Lowering
             && ReachesGeneralRcNamedType(pruned, new HashSet<string>(StringComparer.Ordinal));
     }
 
-    /// <summary>
-    /// A named type the contract governs: one only the normalization helper expresses, that owns
-    /// a heap child, and that the recursive and owned-child reference-counted paths do not already
-    /// manage on their own terms.
-    /// </summary>
     // A record the contract admits although its copy could be written inline: it is copied by the
     // synthesized normalizer all the same, one call per site instead of its whole graph.
     private bool IsInlineCopiedContractRecord(TypeRef.TNamedType named)
-        => Environment.GetEnvironmentVariable("GRC_INLINE_RECORDS") is not null
-            && GeneralRcEnabled
+        => GeneralRcEnabled
             && !NeedsRuntimeManagedAdtNormalizer(named)
             && IsNormalizableUncoveredRecord(named)
             && IsGeneralRcNamedType(named);
-
-    private static readonly HashSet<string>? InlineRecordNames =
-        Environment.GetEnvironmentVariable("GRC_INLINE_FILE") is { } path
-            ? new HashSet<string>(File.ReadAllLines(path), StringComparer.Ordinal)
-            : null;
-
-    private static readonly HashSet<string> LoggedInlineRecords = new(StringComparer.Ordinal);
-
-    private static bool InlineRecordSelected(TypeRef.TNamedType named)
-    {
-        string name = named.Symbol.Name;
-        if (Environment.GetEnvironmentVariable("GRC_INLINE_LOG") is not null)
-        {
-            lock (LoggedInlineRecords)
-            {
-                if (LoggedInlineRecords.Add(name))
-                {
-                    Console.Error.WriteLine($"INLREC {name}");
-                }
-            }
-        }
-
-        return InlineRecordNames is null || InlineRecordNames.Contains(name);
-    }
 
     private readonly Dictionary<string, string> _contractRecordDropperLabels = new(StringComparer.Ordinal);
     private readonly HashSet<string> _contractRecordDroppersInProgress = new(StringComparer.Ordinal);
@@ -599,7 +564,7 @@ public sealed partial class Lowering
     private bool TryEmitContractRecordDropCall(int valueTemp, TypeRef.TNamedType named)
     {
         string key = Pretty(named);
-        if (!IsInlineCopiedContractRecord(named) || _contractRecordDroppersInProgress.Contains(key) || Environment.GetEnvironmentVariable("GRC_NO_RECDROP") is not null)
+        if (!IsInlineCopiedContractRecord(named) || _contractRecordDroppersInProgress.Contains(key))
         {
             return false;
         }
@@ -640,8 +605,13 @@ public sealed partial class Lowering
         return true;
     }
 
+    /// <summary>
+    /// A named type the contract governs: one only the normalization helper expresses, or a record
+    /// the entry normalization re-establishes, that owns a heap child, and that the recursive and
+    /// owned-child reference-counted paths do not already manage on their own terms.
+    /// </summary>
     private bool IsGeneralRcNamedType(TypeRef.TNamedType named) =>
-        (NeedsRuntimeManagedAdtNormalizer(named) || (Environment.GetEnvironmentVariable("GRC_INLINE_RECORDS") is not null && IsNormalizableUncoveredRecord(named) && InlineRecordSelected(named)))
+        (NeedsRuntimeManagedAdtNormalizer(named) || IsNormalizableUncoveredRecord(named))
         && !CanRuntimeManageRecursiveCopyAdt(named)
         && !CanRuntimeManageOwnedChildAdt(named)
         && named.Symbol.Constructors.Any(constructor =>

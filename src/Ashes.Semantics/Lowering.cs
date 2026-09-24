@@ -1791,6 +1791,13 @@ public sealed partial class Lowering
                 sourceTemp, argType, alreadyRuntimeManaged, aliasesPredecessor, consumedListTail, sourceExpression));
     }
 
+    // The dying arena successor OWNS the references its construction dup-transferred in, so they are
+    // released (see EmitRuntimeManagedTcoConstructorDeepCopy). An aggregate of the general contract
+    // only borrows them, unless the record is built at the self-call itself.
+    private bool SuccessorOwnsItsChildren(TypeRef.TNamedType named, Expr? sourceExpression)
+        => !NeedsRuntimeManagedAdtNormalizer(named)
+            && (!IsInlineCopiedContractRecord(named) || sourceExpression is Expr.RecordLit || (sourceExpression is not null && IsConstructorExpression(sourceExpression)));
+
     private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
         int sourceTemp,
         TypeRef argType,
@@ -1841,10 +1848,7 @@ public sealed partial class Lowering
         }
         else if (argType is TypeRef.TNamedType named && !CanCopyOutAdt(named, out _))
         {
-            // The dying arena successor OWNS the references its construction dup-transferred in, so
-            // they are released (see EmitRuntimeManagedTcoConstructorDeepCopy); an aggregate of the
-            // general contract only borrows them.
-            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named, releaseAdtSourceChildren: !(NeedsRuntimeManagedAdtNormalizer(named) || IsInlineCopiedContractRecord(named)), sourceExpression);
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named, releaseAdtSourceChildren: SuccessorOwnsItsChildren(named, sourceExpression), sourceExpression);
         }
         else
         {
@@ -16174,7 +16178,7 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(emptyLabel));
         // The contract takes a reference-counted result as owned, so a base-case value it did not
         // produce (a borrowed parameter) holds its own reference here, as the last cell's tail does.
-        int emptyResultTemp = bodyRuntimeManaged || tco.ResultType is null || !IsGeneralRcValueType(Prune(tco.ResultType)) || Environment.GetEnvironmentVariable("GRC_NO_TMCEMPTY") is not null
+        int emptyResultTemp = bodyRuntimeManaged || tco.ResultType is null || !IsGeneralRcValueType(Prune(tco.ResultType))
             ? bodyTemp
             : EmitRuntimeManagedTcoParamCopy(bodyTemp, Prune(tco.ResultType));
         Emit(new IrInst.StoreLocal(resultSlot, emptyResultTemp));

@@ -7827,17 +7827,20 @@ public sealed class LinuxBackendCoverageTests
     private static void AssertRuntimeRcOwnedRecordTcoProbe()
     {
         IrProgram probe = LowerProgram(BuildRuntimeRcOwnedRecordTcoMemoryProgram(1));
-        // The two-field record has one constructor, so its cell is tagless: two payload words.
+        // The two-field record has one constructor, so its cell is tagless: two payload words. As a
+        // record of the ownership contract it is copied by its synthesized normalizer, called at
+        // each normalization site.
         AllInstructions(probe).Count(instruction =>
             instruction is IrInst.CopyOutArena
             {
                 StaticSizeBytes: 16,
                 RuntimeManaged: true
-            }).ShouldBeGreaterThanOrEqualTo(2,
+            }
+            || (instruction is IrInst.CallKnown call && call.FuncLabel.StartsWith("__rcnorm_", StringComparison.Ordinal))).ShouldBeGreaterThanOrEqualTo(2,
                 "The pointer-bearing record parent should normalize at entry and replacement.");
         AllInstructions(probe).Count(instruction =>
-            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(2,
-                "The record's complete list child should normalize with its parent.");
+            instruction is IrInst.CopyOutList { RuntimeManaged: true }).ShouldBeGreaterThanOrEqualTo(1,
+                "The record's complete list child should normalize with its parent, inside its normalizer.");
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.RcDrop
             {

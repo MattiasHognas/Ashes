@@ -108,11 +108,12 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
             $"the appended result must be deep-copied before its consumed arguments are released; dump:\n{dump}");
     }
 
-    // The deep copy leaves the appended result sharing nothing with the consumed map results, so
-    // they are released with their records ("rcdrop_list" with the element drops), never spine-only
-    // ("rcdrop_list_spine"): keeping their elements leaked every record and string once per call.
+    // The map results are lists of records the ownership contract covers: each is an owned call result
+    // the entry holds to its end, and the appended result is normalized from them. Nothing releases
+    // them, or their records, before that normalization reads them, and nothing releases them
+    // spine-only ("rcdrop_list_spine"), which kept their elements and leaked every record once per call.
     [Test]
-    public void Consumed_generic_map_results_are_released_with_their_elements_after_the_deep_copy()
+    public void Consumed_generic_map_results_are_kept_whole_until_the_deep_copy()
     {
         Diagnostics diagnostics = new();
         var program = new Parser(GenericAppendOfGenericMapResultsSource, diagnostics).ParseProgram();
@@ -139,14 +140,13 @@ public sealed class ConsumedArgumentsReleasedAfterResultNormalizationTests
                 0, $"expected three deep-copy walks in the program entry; dump:\n{dump}");
         }
 
-        string afterWalk = entryFunctionIr[walk..];
-        afterWalk.IndexOf("rcdrop_list_spine", StringComparison.Ordinal).ShouldBe(
+        entryFunctionIr.IndexOf("rcdrop_list_spine", StringComparison.Ordinal).ShouldBe(
             -1, $"a deep-copied result must not leave its consumed inputs released spine-only; dump:\n{dump}");
-        int release = afterWalk.IndexOf("rcdrop_list_", StringComparison.Ordinal);
-        release.ShouldBeGreaterThanOrEqualTo(
-            0, $"the consumed map results should be released after the deep copy; dump:\n{dump}");
-        afterWalk.IndexOf("TypeName=Item", release, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(
-            0, $"the consumed map results' records should be dropped with their spines; dump:\n{dump}");
+        string beforeWalk = entryFunctionIr[..walk];
+        beforeWalk.IndexOf("TypeName=Item", StringComparison.Ordinal).ShouldBe(
+            -1, $"no record is released before the deep copy reads it; dump:\n{dump}");
+        beforeWalk.IndexOf("FuncLabel=__rcdrop_record_", StringComparison.Ordinal).ShouldBe(
+            -1, $"no record is released before the deep copy reads it; dump:\n{dump}");
     }
 
     // The standard library's `append` borrows its parameters (its ownership summary says so), so

@@ -470,8 +470,8 @@ public sealed class OwnershipTests
 
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "TextBox", RuntimeManaged: true }).ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "String").ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "TextBox").ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
@@ -539,16 +539,17 @@ public sealed class OwnershipTests
 
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Wrapped", RuntimeManaged: true }).ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "Tuple").ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "Wrapped").ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
-    // A tuple with a list-of-records element falls back to an arena shell. A string bound out of the
-    // borrowed parameter has no release of its own, so the rebuilt tuple carries it as is; cloning it
-    // per call would copy a state string threaded through the tuple on every step.
+    // A tuple with a list-of-records element is of the ownership contract's types: the function hands
+    // it over owned, normalizing the tuple it built onto the reference-counted heap at its return. A
+    // string bound out of the borrowed parameter has no release of its own; the normalization retains
+    // it or copies it once, and nothing clones it on every step.
     [Test]
-    public void Escaping_arena_tuple_carries_a_string_bound_from_a_borrowed_parameter_without_a_clone()
+    public void Escaping_contract_tuple_carries_a_string_bound_from_a_borrowed_parameter_without_a_clone()
     {
         IrProgram ir = LowerProgram(
             """
@@ -564,13 +565,15 @@ public sealed class OwnershipTests
             """);
 
         IrFunction step = ir.Functions.Single(function =>
-            function.Instructions.Any(inst => inst is IrInst.AllocAdt));
-        step.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeFalse(
-            "the tuple stays an arena shell around the list of records");
+            !function.Label.StartsWith("__", StringComparison.Ordinal)
+            && function.Instructions.Any(inst => inst is IrInst.AllocAdt));
+        step.Instructions.Any(inst => inst is IrInst.Alloc { RuntimeManaged: true }).ShouldBeTrue(
+            "the result is normalized onto the reference-counted heap");
         step.Instructions.Any(inst =>
             inst is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.IndependentClone }).ShouldBeFalse(
             "the borrowed parameter's string is carried, not cloned");
-        step.Instructions.Any(inst =>
+        // The result's own references are released only where it is handed over as an arena copy.
+        step.Instructions.TakeWhile(inst => inst is not IrInst.LoadArgumentOwnership).Any(inst =>
             inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeFalse(
             "a borrowed parameter part has no release of its own");
     }
@@ -680,18 +683,13 @@ public sealed class OwnershipTests
             inst is IrInst.RcDup { RuntimeManaged: true, MayBeEmpty: false }).ShouldBe(
             1,
             "the child read out of the parameter is retained before the successor stores it");
-        instructions.Any(inst =>
-            inst is IrInst.RcDrop { TypeName: "Pair", RuntimeManaged: true }).ShouldBeTrue(
+        ReleaseIr.Releases(ir, instructions, "Pair").ShouldBeTrue(
             "the back edge still releases the parameter's own value");
-        // The successor's `previous` field is a fresh record literal: an arena cell with no
-        // reference count, so the back edge releases only the string it holds, never the cell.
-        // The `State` releases left are the retained `current` child of the dying successor,
-        // the two children of the old parameter's structural walk, the same two at the exit, and
-        // the two of the returned pair's release on its arena-result boundary.
-        instructions.Count(inst =>
-            inst is IrInst.RcDrop { TypeName: "State", RuntimeManaged: true }).ShouldBe(
-            7,
-            "a fresh literal child of the successor is never released as a reference-counted cell");
+        // After the successor is built, the back edge releases the dying successor's retained
+        // `current` child, and the old parameter's children with the parameter itself.
+        ReleaseIr.CountReleases(ir, instructions.Skip(successorIndex), "State").ShouldBeGreaterThanOrEqualTo(
+            2,
+            "the back edge releases the dying successor's retained child and the old parameter");
     }
 
     [Test]
@@ -720,8 +718,8 @@ public sealed class OwnershipTests
 
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "String").ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "Box").ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
@@ -731,11 +729,11 @@ public sealed class OwnershipTests
         IrProgram list = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box([40, 2]) in box) in match escaped with | Box(values) -> match values with | [] -> 0 | head :: _ -> head");
         IrProgram tuple = LowerProgram("type Box(a) = | Box(a)\nlet escaped = (let box = Box((40, 2)) in box) in match escaped with | Box((left, right)) -> left + right");
 
-        list.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "List", RuntimeManaged: true }).ShouldBeTrue();
-        list.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        ReleaseIr.Releases(list, list.EntryFunction.Instructions, "List").ShouldBeTrue();
+        ReleaseIr.Releases(list, list.EntryFunction.Instructions, "Box").ShouldBeTrue();
         list.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
-        tuple.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Tuple", RuntimeManaged: true }).ShouldBeTrue();
-        tuple.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        ReleaseIr.Releases(tuple, tuple.EntryFunction.Instructions, "Tuple").ShouldBeTrue();
+        ReleaseIr.Releases(tuple, tuple.EntryFunction.Instructions, "Box").ShouldBeTrue();
         tuple.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
@@ -1295,8 +1293,8 @@ public sealed class OwnershipTests
         IrProgram ir = LowerProgram("type Leaf = | value: Int\ntype Node = | child: Leaf | bonus: Int\nlet escaped = (let node = Node(child = Leaf(value = 40), bonus = 2) in node) in escaped.bonus");
 
         ir.EntryFunction.Instructions.Count(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBe(2);
-        ir.EntryFunction.Instructions.Count(inst => inst is IrInst.RcDrop { RuntimeManaged: true }).ShouldBe(2);
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcIsUnique).ShouldBeTrue();
+        ReleaseIr.CountReleases(ir, ir.EntryFunction.Instructions, "Node").ShouldBe(1);
+        ReleaseIr.CountReleases(ir, ir.EntryFunction.Instructions, "Leaf").ShouldBe(1);
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 
@@ -1316,8 +1314,8 @@ public sealed class OwnershipTests
 
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.TextFromInt { RuntimeManaged: true }).ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.AllocAdt { RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }).ShouldBeTrue();
-        ir.EntryFunction.Instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Box", RuntimeManaged: true }).ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "String").ShouldBeTrue();
+        ReleaseIr.Releases(ir, ir.EntryFunction.Instructions, "Box").ShouldBeTrue();
         ir.EntryFunction.Instructions.Any(inst => inst is IrInst.CopyOutArena).ShouldBeFalse();
     }
 

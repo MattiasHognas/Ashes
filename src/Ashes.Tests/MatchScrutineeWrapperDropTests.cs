@@ -56,9 +56,7 @@ public sealed class MatchScrutineeWrapperDropTests
             """);
         IrFunction loop = FunctionBinding(program, "st2");
 
-        loop.Instructions
-            .Count(inst => inst is IrInst.RcDrop { TypeName: "Step", RuntimeManaged: true })
-            .ShouldBeGreaterThanOrEqualTo(1);
+        ReleaseIr.CountReleases(program, loop.Instructions, "Step").ShouldBeGreaterThanOrEqualTo(1);
     }
 
     // Same wrapper shape, but reached through an ordinary (non-tail-call, non-loop) match where the
@@ -81,12 +79,10 @@ public sealed class MatchScrutineeWrapperDropTests
 
         IrFunction readOnce = FunctionBinding(program, "st2");
 
-        readOnce.Instructions
-            .Count(inst => inst is IrInst.RcDrop { TypeName: "Step", RuntimeManaged: true })
-            .ShouldBe(1);
-        readOnce.Instructions
-            .Count(inst => inst is IrInst.RcDrop { TypeName: "Pair", RuntimeManaged: true })
-            .ShouldBe(1);
+        // The wrapper is released once, and its dropper releases the field with it: the pattern's
+        // name only borrows the field of the owned call result.
+        ReleaseIr.CountReleases(program, readOnce.Instructions, "Step").ShouldBe(1);
+        ReleaseIr.CountReleases(program, readOnce.Instructions, "Pair").ShouldBe(1);
     }
 
     // The extracted field is used twice inside the arm body (never moved). Must not regress into a
