@@ -386,12 +386,18 @@ type CoreTcoReset =
     | resetId: Int
     | argumentTypes: List(SemanticType)
     | ownedDrops: List((Int, Str))
-    // The owned slots of the contract's values registered when the back edge was scheduled, stage 0's
-    // `RecordGeneralRcBackEdgeSlots`: a slot another path stored reads empty here and is skipped.
-    | generalRcOwnedSlots: List((Int, SemanticType))
-    // The predecessor slots registered by then, each with the ordinals of the successors that may still
-    // name its value unless they are placed on the reference-counted heap.
+    // The owned slots registered when the back edge was scheduled, stage 0's
+    // `RecordGeneralRcBackEdgeSlots` (a slot another path stored reads empty here and is skipped):
+    // the predecessor slots, each with the ordinals of the successors that may still name its value
+    // unless they are placed on the reference-counted heap.
     | generalRcPredecessorDrops: List((Int, SemanticType, List(Int)))
+    // The other owned slots, each with its fresh flag slot (-1 outside a loop) and the ordinals of
+    // the successors whose type may hold a part of its value (stage 0's `NoSuccessorCanHoldPartOf`
+    // type test); per successor, the owned slot it is a plain read of (-1 for none) and whether it
+    // is a loop parameter or a part of one (stage 0's `IsLoopParameterPart`).
+    | generalRcSlotFacts: List((Int, SemanticType, Int, List(Int)))
+    | argumentOwnedSlots: List(Int)
+    | argumentParameterParts: List(Bool)
     | arenaCursorSlot: Int
     | arenaEndSlot: Int
     | fixedCursorSlot: Int
@@ -542,6 +548,8 @@ type CoreOwnerState =
     // predecessor slots): registered among the owned slots too, and released at a back edge by a rule
     // of their own.
     | generalRcPredecessorSlots: List((Maybe(IrFunctionOrigin), Int, SemanticType))
+    // Each owned slot stored inside a loop with the flag slot saying this iteration stored it.
+    | generalRcFreshSlots: List((Maybe(IrFunctionOrigin), Int, Int))
     // The result temp a function already made its own at its return, with that function: a loop
     // finishes its result ahead of its exit drops, and the return must not finish it again.
     | generalRcFinishedResult: Maybe((Maybe(IrFunctionOrigin), Int))
@@ -1266,6 +1274,14 @@ let withStateGeneralRcPredecessorSlots value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcPredecessorSlots = value))
 
+let stateGeneralRcFreshSlots (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.generalRcFreshSlots)
+
+let withStateGeneralRcFreshSlots value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcFreshSlots = value))
+
 let withGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcFinishedResult = Some((stateActiveFunctionOrigin(state), temp))))
@@ -1935,6 +1951,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             ownerReleasePlans = [],
             generalRcOwnedSlots = [],
             generalRcPredecessorSlots = [],
+            generalRcFreshSlots = [],
             generalRcFinishedResult = None,
             pendingOwnerPlan = None,
             unresolvedCallResults = [],
@@ -7180,6 +7197,7 @@ let registerGeneralRcOwnedSlot (slot: Int) (semanticType: SemanticType) (state: 
                             |> emit(LoadConstInt(oneTemp)(1))
                             |> emit(StoreLocal(freshSlot)(oneTemp))
                             |> (given (stored: CoreLoweringState) -> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(stored), slot, semanticType) :: stateGeneralRcOwnedSlots(stored))(stored))
+                            |> (given (stored: CoreLoweringState) -> withStateGeneralRcFreshSlots((stateActiveFunctionOrigin(stored), slot, freshSlot) :: stateGeneralRcFreshSlots(stored))(stored))
 
 // Stage 0's `SaveGeneralRcOwnedPredecessor`: inside a loop, what the owned slot about to be stored
 // still holds moves into a slot of its own, a value an earlier iteration left to a successor (a
@@ -7476,24 +7494,6 @@ let emitReservationZeroing (arguments: List(TcoResetArgument)) (state: CoreLower
                     |> zeroArenaReservations(arguments)(reservations)(zeroTemp)
         | None -> state
 
-let recursive successorsOwnTheirParts (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
-    match arguments with
-        | [] -> true
-        | argument :: rest -> (resultSurvivesReset(argument.argumentType)(state) || argument.shape == TcoPassThroughShape || resetArgumentIsManaged(argument)) && successorsOwnTheirParts(rest)(state)
-
-let recursive emitOwnedSlotDropsOf (slots: List((Int, SemanticType))) (state: CoreLoweringState) =
-    match slots with
-        | [] -> state
-        | (slot, semanticType) :: rest ->
-            state
-            |> emitGeneralRcOwnedSlotDrop(slot)(semanticType)
-            |> emitOwnedSlotDropsOf(rest)
-
-// Stage 0's `EmitGeneralRcBackEdgeDrops` on a path that normalized its successors: the owned
-// values the iteration holds are released once every successor holds its own references, being an
-// inline value, the parameter handed on unchanged, or a parameter placed on the
-// reference-counted heap. Otherwise they are left, since an arena successor may name them
-// without a reference. The release carries no location, as the rest of the reset does.
 let recursive argumentIsManagedAt (ordinal: Int) (arguments: List(TcoResetArgument)) =
     match arguments with
         | [] -> false
@@ -7526,31 +7526,144 @@ let recursive emitGeneralRcPredecessorDrops (drops: List((Int, SemanticType, Lis
                     |> emitGeneralRcPredecessorDrops(rest)(arguments)(normalized)
                 else emitGeneralRcPredecessorDrops(rest)(arguments)(normalized)(state)
 
-let emitUnlocatedPredecessorDrops (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (normalized: Bool) (state: CoreLoweringState) =
-    match emitGeneralRcPredecessorDrops(reset.generalRcPredecessorDrops)(arguments)(normalized)((state with currentSpan = None)) with
-        | released -> released with currentSpan = state.currentSpan
-
 let recursive isPredecessorSlot (slot: Int) (drops: List((Int, SemanticType, List(Int)))) =
     match drops with
         | [] -> false
         | (candidate, _semanticType, _blockers) :: rest -> candidate == slot || isPredecessorSlot(slot)(rest)
 
-let recursive withoutPredecessorSlots (slots: List((Int, SemanticType))) (drops: List((Int, SemanticType, List(Int)))) =
-    match slots with
-        | [] -> []
-        | (slot, semanticType) :: rest ->
-            if isPredecessorSlot(slot)(drops)
-            then withoutPredecessorSlots(rest)(drops)
-            else (slot, semanticType) :: withoutPredecessorSlots(rest)(drops)
+let recursive flagAtOrdinal (ordinal: Int) (flags: List(Bool)) =
+    match flags with
+        | [] -> false
+        | flag :: rest ->
+            if ordinal == 0
+            then flag
+            else flagAtOrdinal(ordinal - 1)(rest)
 
-let emitBackEdgeGeneralRcOwnedSlotDrops (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
-    (let predecessorsReleased = emitUnlocatedPredecessorDrops(reset)(arguments)(true)(state)
-    in
-        if successorsOwnTheirParts(arguments)(predecessorsReleased)
+let recursive ownedReadAtOrdinal (ordinal: Int) (slots: List(Int)) =
+    match slots with
+        | [] -> -1
+        | slot :: rest ->
+            if ordinal == 0
+            then slot
+            else ownedReadAtOrdinal(ordinal - 1)(rest)
+
+let recursive resetArgumentAt (ordinal: Int) (arguments: List(TcoResetArgument)) =
+    match arguments with
+        | [] -> None
+        | argument :: rest ->
+            if argument.ordinal == ordinal
+            then Some(argument)
+            else resetArgumentAt(ordinal)(rest)
+
+// Stage 0's `successorsOwnTheirParts` in `EmitGeneralRcBackEdgeDrops`: each successor is inline,
+// handed on unchanged, a loop parameter's part in a tail-modulo-cons loop, or a parameter
+// normalized onto the reference-counted heap on this path.
+let recursive backEdgeSuccessorsOwnParts (arguments: List(TcoResetArgument)) (parts: List(Bool)) (tmc: Bool) (normalized: Bool) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> true
+        | argument :: rest -> (resultSurvivesReset(argument.argumentType)(state) || argument.shape == TcoPassThroughShape || tmc && flagAtOrdinal(argument.ordinal)(parts) || normalized && resetArgumentIsManaged(argument)) && backEdgeSuccessorsOwnParts(rest)(parts)(tmc)(normalized)(state)
+
+// The per-successor half of stage 0's `NoSuccessorCanHoldPartOf`: each successor whose type may
+// hold a part is handed on unchanged, a loop parameter's part in a tail-modulo-cons loop (or, for a
+// value this iteration produced, any loop parameter's part, which predates it), or normalized.
+let recursive typeBlockersExempt (blockers: List(Int)) (arguments: List(TcoResetArgument)) (parts: List(Bool)) (tmc: Bool) (useParameterParts: Bool) (normalized: Bool) =
+    match blockers with
+        | [] -> true
+        | ordinal :: rest ->
+            (match resetArgumentAt(ordinal)(arguments) with
+                | Some(argument) -> argument.shape == TcoPassThroughShape || (tmc || useParameterParts) && flagAtOrdinal(ordinal)(parts) || normalized && resetArgumentIsManaged(argument)
+                | None -> true) && typeBlockersExempt(rest)(arguments)(parts)(tmc)(useParameterParts)(normalized)
+
+// Stage 0's `OwnedSlotsTakenBySuccessors`: a successor that is a plain read of an owned slot and
+// whose parameter normalization took a reference of its own leaves the iteration's reference to
+// be released.
+let recursive takenOwnedSlots (arguments: List(TcoResetArgument)) (ownedReads: List(Int)) (normalized: Bool) =
+    match arguments with
+        | [] -> []
+        | argument :: rest ->
+            let slot = ownedReadAtOrdinal(argument.ordinal)(ownedReads)
+            in
+                if normalized && slot >= 0 && argument.shape != TcoPassThroughShape && !argument.argumentRuntime && resetArgumentIsManaged(argument)
+                then slot :: takenOwnedSlots(rest)(ownedReads)(normalized)
+                else takenOwnedSlots(rest)(ownedReads)(normalized)
+
+let generalRcSlotReleased (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (taken: List(Int)) (tmc: Bool) (normalized: Bool) (fact: (Int, SemanticType, Int, List(Int))) =
+    match fact with
+        | (slot, _semanticType, _freshSlot, blockers) -> containsInt(slot)(taken) || typeBlockersExempt(blockers)(arguments)(reset.argumentParameterParts)(tmc)(false)(normalized)
+
+let recursive emitReleasedGeneralRcSlots (facts: List((Int, SemanticType, Int, List(Int)))) released (state: CoreLoweringState) =
+    match facts with
+        | [] -> state
+        | ((slot, semanticType, _freshSlot, _blockers) as fact) :: rest ->
+            if released(fact)
+            then
+                state
+                |> emitGeneralRcOwnedSlotDrop(slot)(semanticType)
+                |> emitReleasedGeneralRcSlots(rest)(released)
+            else emitReleasedGeneralRcSlots(rest)(released)(state)
+
+// A value this iteration stored is released behind its fresh flag when only the loop's own
+// parameters could otherwise hold it; the flag is cleared either way, the value now being a
+// successor's or gone.
+let emitFreshGeneralRcSlotRelease (slot: Int) (semanticType: SemanticType) (freshSlot: Int) (releasable: Bool) (state: CoreLoweringState) =
+    (let guarded =
+        if releasable
         then
-            match emitOwnedSlotDropsOf(withoutPredecessorSlots(reset.generalRcOwnedSlots)(reset.generalRcPredecessorDrops))((predecessorsReleased with currentSpan = None)) with
-                | released -> released with currentSpan = state.currentSpan
-        else predecessorsReleased)
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = freshTempValue } ->
+                    match allocated
+                    |> emit(LoadLocal(freshTempValue)(freshSlot))
+                    |> freshLabel("general_rc_owned_stale") with
+                        | FreshLabel { state = labelled, label = staleLabel } ->
+                            labelled
+                            |> emit(JumpIfFalse(freshTempValue)(staleLabel))
+                            |> emitGeneralRcOwnedSlotDrop(slot)(semanticType)
+                            |> emit(Label(staleLabel))
+        else state
+    in
+        match freshTemp(guarded) with
+            | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                zeroState
+                |> emit(LoadConstInt(zeroTemp)(0))
+                |> emit(StoreLocal(freshSlot)(zeroTemp)))
+
+let recursive emitFreshGeneralRcSlots (facts: List((Int, SemanticType, Int, List(Int)))) released (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (tmc: Bool) (normalized: Bool) (state: CoreLoweringState) =
+    match facts with
+        | [] -> state
+        | ((slot, semanticType, freshSlot, blockers) as fact) :: rest ->
+            if released(fact) || freshSlot < 0
+            then emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)(state)
+            else
+                state
+                |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(blockers)(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized))
+                |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
+
+// Stage 0's `EmitGeneralRcBackEdgeDrops`: the earlier iterations' values first, then the owned
+// values this iteration holds, all released once every successor owns its parts, and otherwise
+// slot by slot: a value a normalized successor took, or that no successor can hold part of, is
+// released outright, and one this iteration stored behind its fresh flag when only the loop's
+// own parameters could hold it. The release carries no location, as the rest of the reset does.
+let emitBackEdgeGeneralRcOwnedSlotDrops (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (normalized: Bool) (state: CoreLoweringState) =
+    (let tmc =
+        match stateTcoLoop(state) with
+            | Some(loop) -> loop.tmcShapePresent
+            | None -> false
+    in
+        let unlocated = emitGeneralRcPredecessorDrops(reset.generalRcPredecessorDrops)(arguments)(normalized)((state with currentSpan = None))
+        in
+            let released =
+                if backEdgeSuccessorsOwnParts(arguments)(reset.argumentParameterParts)(tmc)(normalized)(unlocated)
+                then
+                    emitReleasedGeneralRcSlots(reset.generalRcSlotFacts)(given (_fact) -> true)(unlocated)
+                else
+                    let taken = takenOwnedSlots(arguments)(reset.argumentOwnedSlots)(normalized)
+                    in
+                        let releasedFact = generalRcSlotReleased(reset)(arguments)(taken)(tmc)(normalized)
+                        in
+                            unlocated
+                            |> emitReleasedGeneralRcSlots(reset.generalRcSlotFacts)(releasedFact)
+                            |> emitFreshGeneralRcSlots(reset.generalRcSlotFacts)(releasedFact)(reset)(arguments)(tmc)(normalized)
+            in released with currentSpan = state.currentSpan)
 
 let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
@@ -7560,7 +7673,7 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                     normalized
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
                     |> emitResolvedOwnedDrops(reset.ownedDrops)
-                    |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)
+                    |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> unlocatedInstruction(RestoreArenaState(reset.fixedCursorSlot)(reset.fixedEndSlot)(preRestoreSlot)(false))
                     |> emitReservationZeroing(arguments)
                     |> emitRuntimeManagedBackEdgeStores(stores)
@@ -7864,7 +7977,7 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
             allocated
             |> emitResolvedOwnedDrops(reset.ownedDrops)
-            |> emitUnlocatedPredecessorDrops(reset)(arguments)(false)
+            |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(false)
             |> (given (released: CoreLoweringState) ->
                 if allArgumentsSurvivePlainReset(arguments)(released)
                 then
@@ -7891,7 +8004,7 @@ let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: L
                     normalized
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
                     |> emitResolvedOwnedDrops(reset.ownedDrops)
-                    |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)
+                    |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> emitRuntimeManagedBackEdgeStores(stores)
 
 let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
@@ -21399,36 +21512,93 @@ let recursive predecessorDropsOf (predecessors: List((Int, SemanticType))) (argu
         | (slot, semanticType) :: rest ->
             (slot, semanticType, predecessorBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(temps)(ownedSlots)(state)) :: predecessorDropsOf(rest)(argumentTypes)(temps)(ownedSlots)(state)
 
+// The ordinals of the successors whose type may hold one of these heap parts: neither inline nor of
+// a type that cannot hold any of them.
+let recursive typeBlockers (ordinal: Int) (parts: List(SemanticType)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match argumentTypes with
+        | [] -> []
+        | argumentType :: rest ->
+            if resultSurvivesReset(argumentType)(state) || !resultMayHoldAnyPart(argumentType)(parts)(state)
+            then typeBlockers(ordinal + 1)(parts)(rest)(state)
+            else ordinal :: typeBlockers(ordinal + 1)(parts)(rest)(state)
+
+let recursive freshSlotOf (origin: Maybe(IrFunctionOrigin)) (slot: Int) (freshSlots: List((Maybe(IrFunctionOrigin), Int, Int))) =
+    match freshSlots with
+        | [] -> -1
+        | (owner, candidate, freshSlot) :: rest ->
+            if owner == origin && candidate == slot
+            then freshSlot
+            else freshSlotOf(origin)(slot)(rest)
+
+let recursive generalRcSlotFactsOf (slots: List((Int, SemanticType))) (predecessors: List((Int, SemanticType, List(Int)))) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | (slot, semanticType) :: rest ->
+            if isPredecessorSlot(slot)(predecessors)
+            then generalRcSlotFactsOf(rest)(predecessors)(argumentTypes)(state)
+            else
+                (slot, semanticType, state
+                |> stateGeneralRcFreshSlots
+                |> freshSlotOf(stateActiveFunctionOrigin(state))(slot), typeBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(state)) :: generalRcSlotFactsOf(rest)(predecessors)(argumentTypes)(state)
+
+// Stage 0's `OwnedSlotReadInto`: the owned slot a successor argument is a plain read of, or -1.
+let recursive ownedSlotReadOf (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then
+                if isOwnedSlotIn(slot)(ownedSlots)
+                then slot
+                else -1
+            else ownedSlotReadOf(temp)(ownedSlots)(rest)
+        | _ :: rest -> ownedSlotReadOf(temp)(ownedSlots)(rest)
+
+let recursive argumentOwnedSlotsOf (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match temps with
+        | [] -> []
+        | temp :: rest -> ownedSlotReadOf(temp)(ownedSlots)(state.reversedInstructions) :: argumentOwnedSlotsOf(rest)(ownedSlots)(state)
+
+let recursive argumentParameterPartsOf (arguments: List(Expr)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> []
+        | argument :: rest -> (argumentRootSlotOf(argument)(state) != None) :: argumentParameterPartsOf(rest)(state)
+
 let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
-    state
-    |> stateRuntimeOwners
-    |> iterationOwnedDrops(frame.ownerDepth)(state)
-    |> (given (drops: List((Int, Str))) ->
-        CoreTcoReset(
-            resetId = state
-            |> statePendingTcoResets
-            |> length,
-            argumentTypes = argumentTypes,
-            ownedDrops = drops,
-            generalRcOwnedSlots = ownedSlotsOfActiveFunction(state),
-            generalRcPredecessorDrops = predecessorDropsOf(ownedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcPredecessorSlots(state))([]))(argumentTypes)(temps)(ownedSlotsOfActiveFunction(state))(state),
-            arenaCursorSlot = frame.arenaCursorSlot,
-            arenaEndSlot = frame.arenaEndSlot,
-            fixedCursorSlot = frame.fixedCursorSlot,
-            fixedEndSlot = frame.fixedEndSlot,
-            argumentTemps = temps,
-            oldTemps = oldTemps,
-            argumentRuntime = runtimeTempFlags(temps)(state),
-            argumentExpressions = arguments
-        ))
-    |> (given (reset: CoreTcoReset) ->
+    (let predecessorDrops =
+        predecessorDropsOf(ownedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcPredecessorSlots(state))([]))(argumentTypes)(temps)(ownedSlotsOfActiveFunction(state))(state)
+    in
         state
-        |> emit([frame.fixedCursorSlot, frame.fixedEndSlot, frame.arenaCursorSlot, frame.arenaEndSlot, frame.compactionSizeSlot]
-        |> append(ownedDropSlots(reset.ownedDrops))
-        |> append(frame.parameterSlots)
-        |> append(listActiveSlotsOf(frame.listActiveSlots))
-        |> TcoResetPending(reset.resetId)(append(temps)(oldTemps)))
-        |> (given (scheduled: CoreLoweringState) -> withStatePendingTcoResets(reset :: statePendingTcoResets(scheduled))(scheduled)))
+        |> stateRuntimeOwners
+        |> iterationOwnedDrops(frame.ownerDepth)(state)
+        |> (given (drops: List((Int, Str))) ->
+            CoreTcoReset(
+                resetId = state
+                |> statePendingTcoResets
+                |> length,
+                argumentTypes = argumentTypes,
+                ownedDrops = drops,
+                generalRcPredecessorDrops = predecessorDrops,
+                generalRcSlotFacts = generalRcSlotFactsOf(ownedSlotsOfActiveFunction(state))(predecessorDrops)(argumentTypes)(state),
+                argumentOwnedSlots = argumentOwnedSlotsOf(temps)(ownedSlotsOfActiveFunction(state))(state),
+                argumentParameterParts = argumentParameterPartsOf(arguments)(state),
+                arenaCursorSlot = frame.arenaCursorSlot,
+                arenaEndSlot = frame.arenaEndSlot,
+                fixedCursorSlot = frame.fixedCursorSlot,
+                fixedEndSlot = frame.fixedEndSlot,
+                argumentTemps = temps,
+                oldTemps = oldTemps,
+                argumentRuntime = runtimeTempFlags(temps)(state),
+                argumentExpressions = arguments
+            ))
+        |> (given (reset: CoreTcoReset) ->
+            state
+            |> emit([frame.fixedCursorSlot, frame.fixedEndSlot, frame.arenaCursorSlot, frame.arenaEndSlot, frame.compactionSizeSlot]
+            |> append(ownedDropSlots(reset.ownedDrops))
+            |> append(frame.parameterSlots)
+            |> append(listActiveSlotsOf(frame.listActiveSlots))
+            |> TcoResetPending(reset.resetId)(append(temps)(oldTemps)))
+            |> (given (scheduled: CoreLoweringState) -> withStatePendingTcoResets(reset :: statePendingTcoResets(scheduled))(scheduled))))
 
 // The back edge cannot reach its expression join; its synthetic zero is the value the join
 // stores. Stage 0's `LowerCallTcoBackEdgeDummy` marks it a reference-counted value (so a join

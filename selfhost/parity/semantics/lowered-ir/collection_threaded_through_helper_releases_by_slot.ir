@@ -1,0 +1,377 @@
+IR (lowered)
+============
+
+function __rcnorm_3  [RuntimeManagedAdtNormalizer]
+  locals=7 temps=25
+    LoadLocal             Target=0 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rc_representation_done_3   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_copy_2:
+    GetAdtTag             Target=3 Ptr=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_4   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rcnorm_ctor_4:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=4   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rcnorm_end_6   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rcnorm_ctor_5:
+    CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=32 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=6 Ptr=0 FieldIndex=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    IsReferenceCounted    Target=7 SourceTemp=6
+    JumpIfFalse           CondTemp=7 Target=rc_representation_copy_7   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    RcDup                 Target=8 SourceTemp=6 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=8   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rc_representation_done_8   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_copy_7:
+    CopyOutArena          DestTemp=9 SrcTemp=6 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=9   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_done_8:
+    LoadLocal             Target=10 Slot=4   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    SetAdtField           Ptr=5 FieldIndex=0 Source=10   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    GetAdtField           Target=11 Ptr=0 FieldIndex=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=rc_representation_copy_9   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=13   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rc_representation_done_10   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_copy_9:
+    CopyOutList           DestTemp=14 SrcTemp=11 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreLocal            Slot=5 Source=14   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_done_10:
+    LoadLocal             Target=15 Slot=5   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    SetAdtField           Ptr=5 FieldIndex=1 Source=15   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    GetAdtField           Target=16 Ptr=0 FieldIndex=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    IsReferenceCounted    Target=17 SourceTemp=16
+    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_11   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    RcDup                 Target=18 SourceTemp=16 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=18   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rc_representation_done_12   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_copy_11:
+    LoadConstInt          Target=20 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    CallKnown             Target=21 FuncLabel=__rcnorm_3 EnvTemp=20 ArgTemp=16   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreLocal            Slot=6 Source=21   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_done_12:
+    LoadLocal             Target=22 Slot=6   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    SetAdtField           Ptr=5 FieldIndex=2 Source=22   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreLocal            Slot=3 Source=5   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rcnorm_end_6   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rcnorm_end_6:
+    LoadLocal             Target=23 Slot=3   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreLocal            Slot=2 Source=23   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_done_3:
+    LoadLocal             Target=24 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Return                Source=24   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+
+function lambda_2  [ClosureHelper from add]
+  locals=3 temps=10
+    LoadEnv               Target=0 Index=0   (collection_threaded_through_helper_releases_by_slot.ash:5:68)
+    LoadEnv               Target=1 Index=1   (collection_threaded_through_helper_releases_by_slot.ash:5:73)
+    LoadLocal             Target=2 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:5:80)
+    AllocAdt              Target=3 Tag=1 FieldCount=3   (collection_threaded_through_helper_releases_by_slot.ash:5:63)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=0   (collection_threaded_through_helper_releases_by_slot.ash:5:63)
+    SetAdtField           Ptr=3 FieldIndex=1 Source=1   (collection_threaded_through_helper_releases_by_slot.ash:5:63)
+    SetAdtField           Ptr=3 FieldIndex=2 Source=2   (collection_threaded_through_helper_releases_by_slot.ash:5:63)
+    IsReferenceCounted    Target=4 SourceTemp=3
+    JumpIfFalse           CondTemp=4 Target=rc_representation_copy_0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    RcDup                 Target=5 SourceTemp=3 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=5   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rc_representation_done_1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_copy_0:
+    LoadConstInt          Target=7 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    CallKnown             Target=8 FuncLabel=__rcnorm_3 EnvTemp=7 ArgTemp=3   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreLocal            Slot=2 Source=8   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_done_1:
+    LoadLocal             Target=9 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Return                Source=9   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+
+function lambda_1  [ClosureHelper from add]
+  locals=2 temps=4
+    Alloc                 Target=0 SizeBytes=16   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadEnv               Target=1 Index=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadLocal             Target=2 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Return                Source=3   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+
+function __rc_cdrop_4  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    RcDrop                SourceTemp=1 TypeName=String RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Return                Source=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from add]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadLocal             Target=1 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_13   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Jump                  Target=rc_representation_done_14   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_copy_13:
+    CopyOutArena          DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=5   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+  rc_representation_done_14:
+    LoadLocal             Target=6 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_4   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Return                Source=7   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+
+function lambda_0  [SourceFunction from add]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadLocal             Target=1 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    MakeClosure           Target=2 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Return                Source=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+
+function __deepcopy_7  [AdtDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadEnv               Target=1 Index=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    GetAdtTag             Target=2 Ptr=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_7_default   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  __deepcopy_7_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Return                Source=3   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  __deepcopy_7_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=3   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CopyOutArena          DestTemp=6 SrcTemp=5 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=16   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=16 Source=7   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=24   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CallClosure           Target=9 ClosureTemp=1 ArgTemp=8   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=24 Source=9   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Return                Source=4   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  __deepcopy_7_default:
+    Return                Source=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+
+function __rcdrop_general_8  [RuntimeManagedAdtDropper]
+  locals=3 temps=15
+    LoadLocal             Target=0 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_23   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    GetAdtTag             Target=2 Ptr=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_23   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  rcdrop_general_ctor_24:
+    Jump                  Target=rcdrop_general_shared_23   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  rcdrop_general_ctor_25:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    GetAdtField           Target=4 Ptr=0 FieldIndex=1   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreLocal            Slot=2 Source=4   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  rcdrop_list_26:
+    LoadLocal             Target=5 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadConstInt          Target=6 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CmpIntNe              Target=7 Left=5 Right=6   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_end_28   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    RcIsUnique            Target=8 SourceTemp=5
+    JumpIfFalse           CondTemp=8 Target=rcdrop_list_shared_27   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadMemOffset         Target=9 BasePtr=5 OffsetBytes=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=10 BasePtr=5 OffsetBytes=8   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    RcDrop                SourceTemp=5 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=10   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Jump                  Target=rcdrop_list_26   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  rcdrop_list_shared_27:
+    RcDrop                SourceTemp=5 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_28   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  rcdrop_list_end_28:
+    GetAdtField           Target=11 Ptr=0 FieldIndex=2   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadConstInt          Target=12 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CallKnown             Target=13 FuncLabel=__rcdrop_general_8 EnvTemp=12 ArgTemp=11   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Jump                  Target=rcdrop_general_shared_23   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  rcdrop_general_shared_23:
+    RcDrop                SourceTemp=0 TypeName=Bag RuntimeManaged=true
+    LoadConstInt          Target=14 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Return                Source=14   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+
+function lambda_6  [ClosureHelper from fill]
+  locals=29 temps=70
+    LoadEnv               Target=0 Index=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreLocal            Slot=2 Source=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreLocal            Slot=5 Source=1   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadLocal             Target=2 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:8:8)
+    LoadConstInt          Target=3 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:8:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (collection_threaded_through_helper_releases_by_slot.ash:8:8)
+    JumpIfFalse           CondTemp=4 Target=else_15   (collection_threaded_through_helper_releases_by_slot.ash:8:5)
+    LoadLocal             Target=5 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:10:15)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=6 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    CmpIntNe              Target=7 Left=5 Right=6   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_20   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    GetAdtTag             Target=8 Ptr=5   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    LoadConstInt          Target=10 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    CmpIntEq              Target=9 Left=8 Right=10   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_20   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    DropReuse             Target=11 SourceTemp=5 FieldCount=0
+    LoadConstInt          Target=12 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:11:24)
+    StoreLocal            Slot=10 Source=12   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    Jump                  Target=match_end_17   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+  match_arm_cleanup_20:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_19   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+  match_next_19:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=13 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    CmpIntNe              Target=14 Left=5 Right=13   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_21   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    GetAdtTag             Target=15 Ptr=5   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    LoadConstInt          Target=17 Value=1   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    CmpIntEq              Target=16 Left=15 Right=17   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_21   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    GetAdtField           Target=18 Ptr=5 FieldIndex=0   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    StoreLocal            Slot=17 Source=18   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    RcDrop                SourceTemp=18 TypeName=String OwnerSlot=17
+    GetAdtField           Target=19 Ptr=5 FieldIndex=1   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    StoreLocal            Slot=18 Source=19   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    RcDrop                SourceTemp=19 TypeName=List OwnerSlot=18
+    GetAdtField           Target=20 Ptr=5 FieldIndex=2   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    StoreLocal            Slot=19 Source=20   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    RcDrop                SourceTemp=20 TypeName=Bag OwnerSlot=19
+    DropReuse             Target=21 SourceTemp=5 FieldCount=3
+    LoadConstInt          Target=22 Value=1   (collection_threaded_through_helper_releases_by_slot.ash:12:44)
+    StoreLocal            Slot=10 Source=22   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    Jump                  Target=match_end_17   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+  match_arm_cleanup_21:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    Jump                  Target=match_none_18   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+  match_none_18:
+    LoadConstInt          Target=26 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    StoreLocal            Slot=10 Source=26   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+  match_end_17:
+    LoadLocal             Target=27 Slot=10   (collection_threaded_through_helper_releases_by_slot.ash:10:9)
+    StoreLocal            Slot=9 Source=27   (collection_threaded_through_helper_releases_by_slot.ash:8:5)
+    Jump                  Target=endif_16   (collection_threaded_through_helper_releases_by_slot.ash:8:5)
+  else_15:
+    LoadLocal             Target=28 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:16:17)
+    LoadConstInt          Target=29 Value=1   (collection_threaded_through_helper_releases_by_slot.ash:16:21)
+    SubInt                Target=30 Left=28 Right=29   (collection_threaded_through_helper_releases_by_slot.ash:16:17)
+    SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
+    LoadEnv               Target=31 Index=1   (collection_threaded_through_helper_releases_by_slot.ash:15:12)
+    Borrow                Target=32 SourceTemp=31
+    LoadConstStr          Target=33 StrLabel=str_0   (collection_threaded_through_helper_releases_by_slot.ash:15:16)
+    LoadLocal             Target=34 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:15:41)
+    TextFromInt           Target=35 ValueTemp=34   (collection_threaded_through_helper_releases_by_slot.ash:15:22)
+    ConcatStr             Target=36 Left=33 Right=35   (collection_threaded_through_helper_releases_by_slot.ash:15:16)
+    CallClosure           Target=37 ClosureTemp=32 ArgTemp=36   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadConstInt          Target=38 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:15:45)
+    LoadConstStr          Target=39 StrLabel=str_1   (collection_threaded_through_helper_releases_by_slot.ash:15:46)
+    Alloc                 Target=40 SizeBytes=16   (collection_threaded_through_helper_releases_by_slot.ash:15:45)
+    StoreMemOffset        BasePtr=40 OffsetBytes=0 Source=39   (collection_threaded_through_helper_releases_by_slot.ash:15:45)
+    StoreMemOffset        BasePtr=40 OffsetBytes=8 Source=38   (collection_threaded_through_helper_releases_by_slot.ash:15:45)
+    CallClosure           Target=41 ClosureTemp=37 ArgTemp=40   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadLocal             Target=42 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    CallClosure           Target=43 ClosureTemp=41 ArgTemp=42   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadLocal             Target=44 Slot=25   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    StoreLocal            Slot=26 Source=44   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    StoreLocal            Slot=25 Source=43   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=24
+    LoadConstInt          Target=45 Value=1   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    StoreLocal            Slot=27 Source=45   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadLocal             Target=46 Slot=25   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadLocal             Target=47 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadLocal             Target=48 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    StoreLocal            Slot=2 Source=30   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    StoreLocal            Slot=1 Source=46   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadLocal             Target=63 Slot=26
+    LoadConstInt          Target=64 Value=0
+    CmpIntNe              Target=65 Left=63 Right=64
+    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_30
+    IsReferenceCounted    Target=66 SourceTemp=63
+    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_30
+    LoadConstInt          Target=67 Value=0
+    CallKnown             Target=68 FuncLabel=__rcdrop_general_8 EnvTemp=67 ArgTemp=63
+    StoreLocal            Slot=26 Source=64
+  general_rc_owned_absent_30:
+    LoadConstInt          Target=69 Value=0
+    StoreLocal            Slot=27 Source=69
+    RestoreStackPointer   Slot=8   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    Jump                  Target=lambda_6_body   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    LoadConstInt          Target=49 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:14:9)
+    StoreLocal            Slot=9 Source=49   (collection_threaded_through_helper_releases_by_slot.ash:8:5)
+  endif_16:
+    LoadLocal             Target=50 Slot=9   (collection_threaded_through_helper_releases_by_slot.ash:8:5)
+    LoadLocal             Target=51 Slot=25   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadConstInt          Target=52 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CmpIntNe              Target=53 Left=51 Right=52   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    JumpIfFalse           CondTemp=53 Target=general_rc_owned_absent_22   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    IsReferenceCounted    Target=54 SourceTemp=51
+    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_22   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadConstInt          Target=55 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CallKnown             Target=56 FuncLabel=__rcdrop_general_8 EnvTemp=55 ArgTemp=51   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreLocal            Slot=25 Source=52   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  general_rc_owned_absent_22:
+    LoadLocal             Target=57 Slot=26   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadConstInt          Target=58 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CmpIntNe              Target=59 Left=57 Right=58   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    JumpIfFalse           CondTemp=59 Target=general_rc_owned_absent_29   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    IsReferenceCounted    Target=60 SourceTemp=57
+    JumpIfFalse           CondTemp=60 Target=general_rc_owned_absent_29   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadConstInt          Target=61 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    CallKnown             Target=62 FuncLabel=__rcdrop_general_8 EnvTemp=61 ArgTemp=57   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreLocal            Slot=26 Source=58   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+  general_rc_owned_absent_29:
+    Return                Source=50   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+
+function lambda_5  [SourceFunction from fill]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadLocal             Target=1 Slot=1   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadEnv               Target=4 Index=0   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    MakeClosure           Target=6 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=16   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Return                Source=6   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+
+function _start_main  [ProgramEntry]
+  locals=9 temps=14
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    StoreLocal            Slot=2 Source=1   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    Alloc                 Target=2 SizeBytes=8   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    LoadLocal             Target=3 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    MakeClosure           Target=5 FuncLabel=lambda_5 EnvPtrTemp=2 EnvSizeBytes=8   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    StoreLocal            Slot=3 Source=5   (collection_threaded_through_helper_releases_by_slot.ash:7:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadLocal             Target=6 Slot=3   (collection_threaded_through_helper_releases_by_slot.ash:18:16)
+    LoadConstInt          Target=7 Value=3   (collection_threaded_through_helper_releases_by_slot.ash:18:21)
+    CallClosure           Target=8 ClosureTemp=6 ArgTemp=7   (collection_threaded_through_helper_releases_by_slot.ash:18:16)
+    AllocAdt              Target=9 Tag=0 FieldCount=0   (collection_threaded_through_helper_releases_by_slot.ash:18:24)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (collection_threaded_through_helper_releases_by_slot.ash:18:16)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
+    PrintInt              Source=10   (collection_threaded_through_helper_releases_by_slot.ash:18:1)
+    AllocAdt              Target=11 Tag=0 FieldCount=0   (collection_threaded_through_helper_releases_by_slot.ash:18:1)
+    StoreLocal            Slot=7 Source=11   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    LoadLocal             Target=12 Slot=2   (collection_threaded_through_helper_releases_by_slot.ash:5:1)
+    CleanupResource       SourceTemp=12 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=8
+    CopyOutArena          DestTemp=13 SrcTemp=11 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=8
+    Return                Source=13
+

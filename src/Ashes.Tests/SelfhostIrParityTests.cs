@@ -56,6 +56,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("tco_accumulator_of_owned_call_results")]
     [Arguments("generic_collection_loop_reuses_matched_accumulator")]
     [Arguments("recursive_insert_curried_stage_requests_no_arena_result")]
+    [Arguments("collection_threaded_through_helper_releases_by_slot")]
     [Arguments("owned_result_of_unnamed_callee_read_from_closure_header")]
     [Arguments("parameter_released_behind_pair_result")]
     [Arguments("closure_environment_normalizes_record_of_list")]
