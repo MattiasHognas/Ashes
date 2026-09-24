@@ -469,6 +469,9 @@ type CoreProgramState =
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
+    // Per argument-free named type of the program: whether it is admissible to the general contract and
+    // whether it reaches a type the contract governs, each walked once when the program's lowering starts.
+    | generalRcTypeFacts: MapTree(Str, (Bool, Bool))
     // Stage 0's `_inlinableFunctions`: the let-bound non-recursive functions whose body allocates
     // or calls, spliced into a call site while a reuse token is live or under a loop's back edge
     // when their result is fresh; and stage 0's `_inliningInProgress`, the helpers whose bodies
@@ -1009,6 +1012,14 @@ let stateResultRcEligibility (state: CoreLoweringState) =
 let withStateResultRcEligibility value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with resultRcEligibility = value))
+
+let stateGeneralRcTypeFacts (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.generalRcTypeFacts)
+
+let withStateGeneralRcTypeFacts value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with generalRcTypeFacts = value))
 
 let stateProvenTraitGoals (state: CoreLoweringState) =
     (let group = state.programState
@@ -1913,6 +1924,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             programParameterOwnership = [],
             dropperLabels = emptyDropperLabelCache,
             resultRcEligibility = None,
+            generalRcTypeFacts = Ashes.Collection.Map.empty,
             inlinableHelpers = [],
             specializationCandidates = [],
             topLevelFunctionRefs = [],
@@ -4004,11 +4016,14 @@ let loweredValueOwnedTypeName lowered =
 
 let coverageEnvironment (state: CoreLoweringState) = stateCoverageTypes(state)
 
-// Recomputes the declared types' layout facts after a type declaration adds constructor layouts.
+// Recomputes the declared types' layout facts after a type declaration adds constructor layouts;
+// the contract's per-type answers, read from them, are dropped with them.
 let withRefreshedHeapLayoutFacts (state: CoreLoweringState) =
-    state |> withStateHeapLayoutFactsByType(state
+    state
+    |> withStateHeapLayoutFactsByType(state
     |> stateCoverageTypes
     |> heapLayoutFactsTableFor(stateConstructorLayouts(state)))
+    |> withStateGeneralRcTypeFacts(Ashes.Collection.Map.empty)
 
 let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
     (let resolved = resolveType(state)(semanticType)
@@ -5804,6 +5819,11 @@ let runtimeManagedAdtLayout (facts: HeapLayoutFacts) =
 // lists, tuples and algebraic data types, recursive and generic ones included. Closures,
 // resources, tasks and unresolved types are excluded. A named type already on the walk's path is
 // taken as admissible, which is what lets a recursive type through.
+let recordedGeneralRcTypeFacts (name: Str) (state: CoreLoweringState) =
+    state
+    |> stateGeneralRcTypeFacts
+    |> Ashes.Collection.Map.getStr(name)
+
 let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> true
@@ -5811,20 +5831,23 @@ let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Sem
         | SemBigInt -> true
         | SemList(element) -> isGeneralRcAdmissible(element)(path)(state)
         | SemTuple(elements) -> allGeneralRcAdmissible(elements)(path)(state)
-        | SemNamed(_symbolId, name, _arguments) as named ->
-            if resultSurvivesReset(named)(state)
-            then true
-            else
-                if name == "Task" || containsType(named)(path)
-                then name != "Task"
-                else
-                    match (state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
-                        | ([], _facts) -> false
-                        | (_layouts, HeapLayoutFacts { containsResource = true }) -> false
-                        | (_layouts, HeapLayoutFacts { containsUnresolvedType = true }) -> false
-                        | (_layouts, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
+        | SemNamed(_symbolId, name, arguments) as named ->
+            match (path, arguments, recordedGeneralRcTypeFacts(name)(state)) with
+                | ([], [], Some((admissible, _reaches))) -> admissible
+                | _ ->
+                    if resultSurvivesReset(named)(state)
+                    then true
+                    else
+                        if name == "Task" || containsType(named)(path)
+                        then name != "Task"
+                        else
+                            match (state
+                            |> stateConstructorLayouts
+                            |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
+                                | ([], _facts) -> false
+                                | (_layouts, HeapLayoutFacts { containsResource = true }) -> false
+                                | (_layouts, HeapLayoutFacts { containsUnresolvedType = true }) -> false
+                                | (_layouts, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
         | resolved -> canArenaResetLayout(resolved)
 and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -5935,8 +5958,11 @@ let recursive reachesGeneralRcNamedType (semanticType: SemanticType) (path: List
     match resolveType(state)(semanticType) with
         | SemList(element) -> reachesGeneralRcNamedType(element)(path)(state)
         | SemTuple(elements) -> anyReachesGeneralRcNamedType(elements)(path)(state)
-        | SemNamed(_symbolId, _name, _arguments) as named ->
-            isGeneralRcNamedType(named)(state) || !containsType(named)(path) && anyChildReachesGeneralRcNamedType(heapChildrenOfNamed(named)(state))(named :: path)(state)
+        | SemNamed(_symbolId, name, arguments) as named ->
+            match (path, arguments, recordedGeneralRcTypeFacts(name)(state)) with
+                | ([], [], Some((_admissible, reaches))) -> reaches
+                | _ ->
+                    isGeneralRcNamedType(named)(state) || !containsType(named)(path) && anyChildReachesGeneralRcNamedType(heapChildrenOfNamed(named)(state))(named :: path)(state)
         | _ -> false
 and anyReachesGeneralRcNamedType (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -5946,6 +5972,25 @@ and anyChildReachesGeneralRcNamedType (children: List(HeapLayoutChild)) (path: L
     match children with
         | [] -> false
         | HeapLayoutChild { childType = childType } :: rest -> reachesGeneralRcNamedType(childType)(path)(state) || anyChildReachesGeneralRcNamedType(rest)(path)(state)
+
+// Both walks' answers for every argument-free type the program declares whose layout facts are
+// settled (no unresolved type left for inference to close), so a question asked at a call site reads
+// them instead of walking the type's graph again.
+let recursive generalRcTypeFactsOf (types: List((Str, SemanticType))) (state: CoreLoweringState) (table: MapTree(Str, (Bool, Bool))) =
+    match types with
+        | [] -> table
+        | (name, named) :: rest ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(_facts) ->
+                    table
+                    |> Ashes.Collection.Map.setStr(name)((isGeneralRcAdmissible(named)([])(state), reachesGeneralRcNamedType(named)([])(state)))
+                    |> generalRcTypeFactsOf(rest)(state)
+                | None -> generalRcTypeFactsOf(rest)(state)(table)
+
+let recordGeneralRcTypeFacts (state: CoreLoweringState) =
+    withStateGeneralRcTypeFacts(generalRcTypeFactsOf(argumentFreeLayoutTypes(stateConstructorLayouts(state))([]))(state)(Ashes.Collection.Map.empty))(state)
 
 // Stage 0's `CanNormalizeIntoOwnedRuntimeValue`: the result types the guarded copy turns into an
 // owned reference-counted value. A list whose heads have no fixed copy is one too when its
@@ -11962,26 +12007,33 @@ let keptWholeUnderOwnedResult facts index argument argumentTemp (resultNormalize
 
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
 // the callee's result may keep is retained outright, its flag registered as pending. A value of
-// the contract's types is always passed borrowed, whatever the callee's own summary says.
+// the contract's types is always passed borrowed, whatever the callee's own summary says; the type
+// test only runs for an argument whose hand-off it can change (a reference-counted one, one read
+// from a loop parameter, or a fresh one), since it walks the type and every call argument passes
+// here.
 let argumentHandOffOf facts index argument argumentType argumentTemp (resultNormalizedOwned: Bool) state =
-    (let contractBorrow = isGeneralRcValueType(argumentType)(state)
-    in
-        match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state), argumentRootSlotOf(argument)(state), !contractBorrow && keptWholeUnderOwnedResult(facts)(index)(argument)(argumentTemp)(resultNormalizedOwned)(state)) with
-            | (runtimeArgument, rootSlot, keptWhole) ->
-                CoreArgumentHandOff(
-                    borrowsOnly = contractBorrow || calleeParameterBorrows(facts)(index),
-                    fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
-                    runtimeArgument = runtimeArgument || rootSlot != None,
-                    mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || (patternBindingArgumentRootSlot(argument)(state) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(state)) && calleeResultReachesArgument(facts)(index),
-                    transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
-                    keptWholeUnderOwnedResult = keptWhole,
-                    normalizes = calleeNormalizesArgument(facts)(index)(state),
-                    borrowedReach = rootSlot != None && calleeResultReachesArgument(facts)(index),
-                    cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
-                    pendingRootSlot = if runtimeArgument
-                    then None
-                    else rootSlot
-                ))
+    match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state), argumentRootSlotOf(argument)(state), isFreshRuntimeArgument(argument)(argumentTemp)(state)) with
+        | (runtimeArgument, rootSlot, fresh) ->
+            let calleeBorrows = calleeParameterBorrows(facts)(index)
+            in
+                let contractBorrow = !calleeBorrows && (runtimeArgument || rootSlot != None || fresh) && isGeneralRcValueType(argumentType)(state)
+                in
+                    let keptWhole = !contractBorrow && keptWholeUnderOwnedResult(facts)(index)(argument)(argumentTemp)(resultNormalizedOwned)(state)
+                    in
+                        CoreArgumentHandOff(
+                            borrowsOnly = contractBorrow || calleeBorrows,
+                            fresh = fresh,
+                            runtimeArgument = runtimeArgument || rootSlot != None,
+                            mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || (patternBindingArgumentRootSlot(argument)(state) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(state)) && calleeResultReachesArgument(facts)(index),
+                            transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
+                            keptWholeUnderOwnedResult = keptWhole,
+                            normalizes = calleeNormalizesArgument(facts)(index)(state),
+                            borrowedReach = rootSlot != None && calleeResultReachesArgument(facts)(index),
+                            cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
+                            pendingRootSlot = if runtimeArgument
+                            then None
+                            else rootSlot
+                        )
 
 // The callee's `AcceptsRuntimeManagedArgument` bit, bit 62 of the closure's packed environment
 // size word, in a fresh flag temp.
@@ -24023,6 +24075,7 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                                 | Ok(withImplementations) ->
                                     withImplementations
                                     |> ensureResultRcEligibility
+                                    |> recordGeneralRcTypeFacts
                                     |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
 // The goals a pass recorded whose type its own substitution has since resolved to a concrete one.
