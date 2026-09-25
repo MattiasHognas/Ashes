@@ -67,6 +67,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("arena_loop_parameter_copies_retained_successor")]
     [Arguments("self_call_inside_constructor_owns_its_result")]
     [Arguments("tco_predecessor_released_when_successors_are_its_parts")]
+    [Arguments("tco_record_blocked_by_sibling_keeps_field_retain_pending")]
     [Arguments("aggregate_borrowing_owner_kept_by_callee")]
     [Arguments("reuse_path_rebuild_declines_copy")]
     [Arguments("rc_child_of_call_argument_kept_by_callee_result")]

@@ -1,0 +1,40 @@
+// A loop threads a state record of the contract's types beside a list of records a helper's record
+// result rebuilds. The list may receive parts of the state, so it blocks the state from the
+// reference-counted heap. A record literal storing a field of the state reads a parameter that is
+// not placed, so its retain stays pending, and the frame's finalize withdraws it.
+type Close =
+    | closeName: Maybe(Str)
+    | closeBindings: List(Str)
+
+type State =
+    | bindings: List(Str)
+    | label: Str
+    | counter: Int
+
+type Opened =
+    | openedState: State
+    | openedPending: List(Close)
+
+let recursive countCloses (values: List(Close)) (total: Int) =
+    match values with
+        | [] -> total
+        | _ :: rest -> countCloses(rest)(total + 1)
+
+let open (value: Int) (pending: List(Close)) (state: State) = Opened(openedState = (state with counter = state.counter + value), openedPending = Close(closeName = Some("c"), closeBindings = state.bindings) :: pending)
+
+let recursive lowerItems (items: List(Int)) (pending: List(Close)) (state: State) =
+    match items with
+        | [] -> state.counter + countCloses(pending)(0)
+        | value :: rest ->
+            if value % 2 == 0
+            then lowerItems(rest)(Close(closeName = None, closeBindings = state.bindings) :: pending)((state with label = "even"))
+            else
+                match open(value)(pending)(state) with
+                    | Opened { openedState = opened, openedPending = nextPending } -> lowerItems(rest)(nextPending)(opened)
+
+let recursive items (n: Int) (built: List(Int)) =
+    if n == 0
+    then built
+    else items(n - 1)(n :: built)
+
+Ashes.IO.print(lowerItems(items(8)([]))([])(State(bindings = ["a", "b"], label = "s", counter = 0)))

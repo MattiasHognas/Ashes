@@ -12613,11 +12613,29 @@ let recursive parameterSlotAtOrdinal (ordinal: Int) (slots: List(Int)) =
 // Whether a loop parameter slot is admitted to the reference-counted heap at this point of the
 // body (stage 0's `IsRuntimeManagedTcoParamSlot`): a copy-ADT slot by its resolved type and
 // shape, a list slot by its shape and element type, a `Str` slot by the affine analysis.
+// Stage 0's `IsRuntimeManagedTcoParamSlot` reads a placement its evaluation already demoted when
+// a sibling parameter blocks the slot (`FindBlockingSiblingForCandidate`): an ADT slot its type
+// admits is on the reference-counted heap only when no sibling keeps it off, as the frame's
+// finalize decides. A retain taken for a slot admitted by its type alone would never be balanced.
+let recursive candidateAdtManagedAt (slot: Int) (candidates: List(TcoManagedCandidate)) =
+    match candidates with
+        | [] -> false
+        | candidate :: rest ->
+            if candidate.slot == slot
+            then candidateAdtManaged(candidate)
+            else candidateAdtManagedAt(slot)(rest)
+
+let adtSlotBlockedBySibling (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    state
+    |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
+    |> (given (candidates: List(TcoManagedCandidate)) ->
+        anyBlockingSibling(candidates)(state) && !candidateAdtManagedAt(slot)(demoteBlockedCandidates(candidates)(candidates)(loop)(state)))
+
 let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
         | Some(ordinal) ->
             let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
-            in tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            in tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) && !adtSlotBlockedBySibling(slot)(frame)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
         | None -> false
 
 // The loop parameter an aggregate child reads: the parameter itself, or a record field read out
