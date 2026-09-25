@@ -2881,6 +2881,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_handler_loop_literal_string_match_arm_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop that handles a capability matches the handled result into a literal string arm
+        // beside a fresh one. The function may run under a live handler post, so its string joins
+        // stay in the arena and nothing releases the join's owner: a literal copied onto the
+        // reference-counted heap there leaked one string per round.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildHandlerLoopLiteralStringArmProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 8}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("literal string match arm in a handler loop", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_scrutinee_loop_owned_results_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9710,6 +9735,33 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + Ashes.Collection.Map.size(dependentsOf(functions)(Ashes.Collection.Map.empty)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildHandlerLoopLiteralStringArmProgram(int rounds)
+        => $$"""
+            type Maybe2(a) =
+                | None2
+                | Some2(a)
+
+            capability Probe(a) =
+                | get : Unit -> a
+
+            let recursive loop : Int -> Int -> Int needs e =
+                given (n: Int) ->
+                    given (acc: Int) ->
+                        if n == 0
+                        then acc
+                        else
+                            let observed =
+                                match let r : Maybe2(Int) =
+                                    handle perform Probe.get(Unit) with
+                                        | Probe.get(_) -> resume(None2)
+                                        | return(x) -> x
+                                in r with
+                                    | None2 -> "FuzzNone"
+                                    | Some2(v) -> "FuzzSome(" + Ashes.Text.fromInt(v) + ")"
+                            in loop(n - 1)(acc + Ashes.Text.byteLength(observed))
+            in Ashes.IO.print(Ashes.Text.fromInt(loop({{rounds}})(0)))
             """;
 
     private static string BuildMapUpsertClosureResultLoopProgram(int rounds)

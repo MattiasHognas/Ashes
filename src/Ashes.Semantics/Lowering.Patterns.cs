@@ -52,7 +52,7 @@ public sealed partial class Lowering
             savedTailPos,
             reuseScrutineeName,
             runtimeReuseType,
-            ShouldNormalizeStaticStringMatchArms(match.Cases),
+            ShouldNormalizeStaticStringMatchJoin(match, request),
             WithReconcilableFreshStringJoinRequest(match, request));
 
         Emit(new IrInst.Label(noMatchLabel));
@@ -239,6 +239,16 @@ public sealed partial class Lowering
 
         return null;
     }
+
+    // A match normalizes its literal arms beside a fresh one only where the join is kept on the
+    // reference-counted heap: its consumer asked for a runtime-managed string, or the function may
+    // place ordinary values there and so releases the join's owner. A function that may run under
+    // a live handler post keeps its string joins in the arena, and a literal copied to the heap
+    // there would have no owner to release it.
+    private bool ShouldNormalizeStaticStringMatchJoin(Expr.Match match, LoweredValueRequest request)
+        => (request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)
+                || (AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement))
+            && ShouldNormalizeStaticStringMatchArms(match.Cases);
 
     private bool ShouldNormalizeStaticStringMatchArms(IReadOnlyList<MatchCase> cases)
     {
