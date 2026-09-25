@@ -77,6 +77,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("tco_consumed_record_list_tuple_result")]
     [Arguments("tco_list_walk")]
     [Arguments("tco_non_tail_self_call_in_operator_operand")]
+    [Arguments("tco_let_bound_self_call_before_tail_self_call")]
     [Arguments("tco_owned_child_record_accumulator")]
     [Arguments("tco_record_field_read_into_successor")]
     [Arguments("tco_record_head_consed_into_sibling_accumulator")]

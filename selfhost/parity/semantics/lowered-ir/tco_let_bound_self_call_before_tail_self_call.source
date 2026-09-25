@@ -1,0 +1,16 @@
+type T =
+    | Leaf
+    | Node(T, Int, T)
+
+let recursive go (acc: Int) (t: T) =
+    match t with
+        | Leaf -> acc
+        | Node(left, value, right) ->
+            let afterLeft = go(acc)(left)
+            in go(afterLeft + value)(right)
+
+Leaf
+|> Node(Leaf)(3)
+|> Node(Node(Leaf)(1)(Leaf))(2)
+|> go(0)
+|> Ashes.IO.print

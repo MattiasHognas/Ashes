@@ -15714,11 +15714,12 @@ let isImmediateSafeAdtMatchUse (name: Str) (value: Expr) (body: Expr) (state: Co
                 | (_fieldTypes, resultType) -> isImmediateAdtMatchUse(name)(body) && (canRuntimeManageRecursiveCopyAdt(resultType)(state) == false || immediateMatchArmsReuseSafe(body)(state))
 
 // The request a `let` value starts from, stage 0's `PushSequentialLet`: the enclosing request
-// without its expected type and with the transfer flag cleared, which each rule below then adds a
+// without its expected type, with the transfer flag cleared and out of tail position (the value is
+// not the result, so a self-call in it is an ordinary call), which each rule below then adds a
 // representation to. Starting from an empty request dropped the representation the enclosing
 // position had already asked for — a tuple an escaping result wants reference-counted lost its
 // request, and with it the retain its elements needed.
-let inheritedLetValueRequest (state: CoreLoweringState) = consumerRequestOf(state) with expectedType = None, argumentSite = None, transfersRuntimeManagedChildren = false
+let inheritedLetValueRequest (state: CoreLoweringState) = consumerRequestOf(state) with expectedType = None, argumentSite = None, transfersRuntimeManagedChildren = false, tailPosition = false, tailCall = false, consTailPosition = false
 
 // The representation a `let` asks of its aggregate value, stage 0's `TryLowerRuntimeRcRecordLet`,
 // `TryLowerRuntimeRcTupleLet`, `TryLowerRuntimeRcListLet`, and `TryLowerRuntimeRcAdtLet` in that
