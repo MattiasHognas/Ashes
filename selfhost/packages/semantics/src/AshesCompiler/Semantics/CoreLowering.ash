@@ -3587,10 +3587,11 @@ let transferRuntimeOwner (slot: Int) (temp: Int) (state: CoreLoweringState) =
         |> stateRuntimeOwners
         |> releaseRuntimeOwner(slot))(transferred))
 
-// The owner a match keeps its adopted scrutinee in lives for one arm. No binding names it, so
-// nothing goes out of scope with the arm: once the arm has released it, it is retired here, or a
-// later arm's back edge would release the slot again.
-let retireScrutineeOwner (slot: Int) (state: CoreLoweringState) =
+// An owner released at the end of its scope is retired: a loop's back edge releases every owner
+// still held, and one whose scope closed before the self call (the adopted scrutinee of an arm,
+// or a `let` in an operand of the self call) was released already. Stage 0's back edge sees only
+// the ownership scopes still open.
+let retireRuntimeOwner (slot: Int) (state: CoreLoweringState) =
     withStateRuntimeOwners(state
     |> stateRuntimeOwners
     |> releaseRuntimeOwner(slot))(state)
@@ -4520,6 +4521,7 @@ let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp r
                     match resultAllocated
                     |> emit(StoreLocal(resultSlot)(resultTemp))
                     |> emitOwnedLetRelease(typeName)(ownerSlot)
+                    |> retireRuntimeOwner(ownerSlot)
                     |> closeOwnedScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot) with
                         | (closed, Some(copyTemp)) -> (recordValuePlacement(copyTemp)(resultType)(closed), copyTemp)
                         | (closed, None) -> reloadLetResult(resultTemp)(resultSlot)(closed)
@@ -15094,12 +15096,12 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
                 | _ ->
                     state
                     |> emitScrutineeListRelease(slot)
-                    |> retireScrutineeOwner(slot)
+                    |> retireRuntimeOwner(slot)
                     |> emitArmOwnerReleases(body)(rest)
         | ArmScrutineeOwner(slot, typeName, false, _valueTemp, _scrutineeType) :: rest ->
             state
             |> emitOwnedLetRelease(typeName)(slot)
-            |> retireScrutineeOwner(slot)
+            |> retireRuntimeOwner(slot)
             |> emitArmOwnerReleases(body)(rest)
         | ArmResourceOwner(name, slot, typeName) :: rest ->
             if armResultIsBinding(name)(body)

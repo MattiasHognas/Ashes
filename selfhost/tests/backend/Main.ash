@@ -3603,6 +3603,12 @@ let testRunSharedTcoArenaVariantAccumulatorPlateau shipped unit =
 let testRunSharedCurriedSevenParameterLoopWithFunctionArgument shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/curried_seven_parameter_loop_with_function_argument.ash"))("selfhostBackendRunSharedCurriedSevenParameterLoop")("selfhost_backend_shared_curried_seven_parameter_loop_e2e")("5000")
 
+// A `let` whose scope closes inside an operand of the loop's self call is released at its scope
+// exit only: the back edge releases the owners still in scope, or the token's shared kind is freed
+// and later comparisons read a freed cell.
+let testRunSharedLetInSelfCallOperandReleasedOnce shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/let_in_self_call_operand_released_once.ash"))("selfhostBackendRunSharedLetInSelfCallOperandReleasedOnce")("selfhost_backend_shared_let_in_self_call_operand_released_once_e2e")("1000")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5516,6 +5522,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedFindRecordHeadPlateau(shipped)
     |> testRunSharedTcoArenaVariantAccumulatorPlateau(shipped)
     |> testRunSharedCurriedSevenParameterLoopWithFunctionArgument(shipped)
+    |> testRunSharedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
