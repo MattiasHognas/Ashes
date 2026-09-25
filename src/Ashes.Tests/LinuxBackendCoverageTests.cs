@@ -2728,6 +2728,80 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_update_successor_of_loop_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop whose state successor is an update of its own parameter: the unchanged list field
+        // and the tail of the consed field are loop-parameter reads stored into arena cells. The
+        // back edge's copy of the dying record borrows them, so the construction takes no reference
+        // of its own; one taken and never released left a list cell behind per iteration.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordUpdateSuccessorOfLoopParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 162}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update successor of a loop parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_literal_successor_borrowing_a_binding_of_an_arena_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A record literal successor holds `Some(span)`, a binding matched out of a list parameter the
+        // loop keeps in the arena: the construction only borrows it, so the back edge's copy must not
+        // release it the way it releases the retained fields beside it. Released, the spans of the
+        // shared input list were freed in the first round and read freed in the second.
+        int[] roundCounts = [1000, 4000, 16000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLiteralSuccessorBorrowingArenaBindingProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 80}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("literal successor borrowing an arena parameter's binding", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_loop_exit_record_holding_its_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop whose exit arm builds a record holding its record parameter, returned and copied by
+        // the result normalization, and one that builds such a record only to match its scalar field:
+        // neither cell's retain of the parameter had a release, so each round left the state behind.
+        int[] roundCounts = [50_000, 200_000, 800_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopExitRecordHoldingParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * (rounds + 1)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop exit record holding its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_inline_list_beside_recursive_list_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9796,6 +9870,125 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.Map.size(addDependents("f")(["k" + Ashes.Text.fromInt(n), "a", "b"])(Ashes.Collection.Map.empty)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordUpdateSuccessorOfLoopParameterProgram(int rounds)
+        => $$"""
+            type State =
+                | instructions: List(Int)
+                | labels: List(Str)
+                | counter: Int
+
+            let recursive countInts (items: List(Int)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countInts(tail)(total + 1)
+
+            let recursive countStrs (items: List(Str)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countStrs(tail)(total + 1)
+
+            let recursive lowerItems (items: List(Int)) (state: State) =
+                match items with
+                    | [] -> state.counter + countInts(state.instructions)(0) + countStrs(state.labels)(0)
+                    | value :: rest -> lowerItems(rest)((state with instructions = value :: state.instructions, counter = state.counter + 1))
+
+            let recursive numbers (n: Int) (built: List(Int)) =
+                if n == 0 then built
+                else numbers(n - 1)(n :: built)
+
+            let program = numbers(80)([])
+
+            let recursive repeat times total =
+                if times == 0 then total
+                else repeat(times - 1)(total + lowerItems(program)(State(instructions = [], labels = ["a", "b"], counter = 0)))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildLiteralSuccessorBorrowingArenaBindingProgram(int rounds)
+        => $$"""
+            type Span =
+                | start: Int
+                | length: Int
+
+            type Item =
+                | At(Span, Item)
+                | Decl(Int)
+                | Let(Int)
+
+            type FunctionGroup =
+                | declarationSpan: Maybe(Span)
+                | names: List(Str)
+
+            type State =
+                | instructions: List(Int)
+                | currentSpan: Maybe(Span)
+                | functionGroup: FunctionGroup
+                | counter: Int
+
+            let recursive countInts (items: List(Int)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countInts(tail)(total + 1)
+
+            let recursive lowerItems (items: List(Item)) (body: List(Str)) (seen: List(Str)) (state: State) =
+                match items with
+                    | [] -> state.counter + countInts(state.instructions)(0)
+                    | At(span, inner) :: rest ->
+                        State(instructions = state.instructions, currentSpan = Some(span), functionGroup = state.functionGroup, counter = state.counter)
+                        |> lowerItems(inner :: rest)(body)(seen)
+                    | Decl(_value) :: rest -> lowerItems(rest)(body)(seen)(state)
+                    | Let(value) :: rest -> lowerItems(rest)(body)(seen)((state with instructions = value :: state.instructions, counter = state.counter + 1))
+
+            let recursive items (n: Int) (built: List(Item)) =
+                if n == 0
+                then built
+                else items(n - 1)(At(Span(start = n, length = 1))(Decl(n)) :: At(Span(start = n, length = 2))(Let(n)) :: built)
+
+            let program = items(40)([])
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + lowerItems(program)(["body"])(["seen"])(State(instructions = [], currentSpan = None, functionGroup = FunctionGroup(declarationSpan = None, names = ["a"]), counter = 0)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildLoopExitRecordHoldingParameterProgram(int rounds)
+        => $$"""
+            type State =
+                | instructions: List(Int)
+                | counter: Int
+
+            type Arguments =
+                | state: State
+                | count: Int
+
+            let recursive lowerArguments (arguments: List(Int)) (state: State) =
+                match arguments with
+                    | [] -> Arguments(state = state, count = 0)
+                    | _argument :: rest -> lowerArguments(rest)(state)
+
+            let lowerCall (arguments: List(Int)) (state: State) =
+                match lowerArguments(arguments)(state) with
+                    | Arguments { state = argumentState, count = count } -> argumentState.counter + count
+
+            let recursive countArguments (arguments: List(Int)) (state: State) =
+                match arguments with
+                    | [] ->
+                        match Arguments(state = state, count = 0) with
+                            | Arguments { count = count } -> count + state.counter
+                    | _argument :: rest -> countArguments(rest)(state)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + lowerCall([1, 2, 3, 4, 5])(State(instructions = [n], counter = n)) + countArguments([1, 2, 3])(State(instructions = [n], counter = n)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

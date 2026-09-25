@@ -1484,9 +1484,7 @@ public sealed partial class Lowering
             }
             else
             {
-                normalizedTemps[i] = TcoBackEdgeNormalizeRuntimeManagedArg(
-                    info.ArgTemps[i], argType, info.RuntimeManagedArgResults[i],
-                    info.RuntimeManagedPredecessorAliases[i], info.ConsumedListTail[i], info.ArgExpressions[i]);
+                normalizedTemps[i] = TcoBackEdgeNormalizeSuccessor(info, i, argType);
             }
             bool movedListTail = argType is TypeRef.TList
                 && info.SingleFreshCons[i]
@@ -1797,6 +1795,32 @@ public sealed partial class Lowering
     private bool SuccessorOwnsItsChildren(TypeRef.TNamedType named, Expr? sourceExpression)
         => !NeedsRuntimeManagedAdtNormalizer(named)
             && (!IsInlineCopiedContractRecord(named) || sourceExpression is Expr.RecordLit || (sourceExpression is not null && IsConstructorExpression(sourceExpression)));
+
+    private int TcoBackEdgeNormalizeSuccessor(PendingTcoReset info, int index, TypeRef argType)
+    {
+        if (BackEdgeCopyBorrowsSuccessorChildren(info, index, argType))
+        {
+            WithdrawLoopParameterRetainsOfCopiedCells(info.ArgTemps[index], BackEdgeLoopParameters(info));
+        }
+
+        return TcoBackEdgeNormalizeRuntimeManagedArg(
+            info.ArgTemps[index], argType, info.RuntimeManagedArgResults[index],
+            info.RuntimeManagedPredecessorAliases[index], info.ConsumedListTail[index], info.ArgExpressions[index]);
+    }
+
+    // Each loop parameter's slot beside its active flag at a back edge, -1 for one without.
+    private static List<(int Slot, int ActiveSlot)> BackEdgeLoopParameters(PendingTcoReset info)
+        => [.. info.ParamSlots.Select((slot, index) => (slot, Math.Max(info.RuntimeManagedParamActiveSlots[index], info.RuntimeManagedClosureActiveSlots[index])))];
+
+    // An arena successor whose back-edge copy borrows its children rather than releasing them from
+    // the dying cell: the copy takes its own references before the old parameters are released,
+    // so the retains its construction made of loop-parameter reads are withdrawn.
+    private bool BackEdgeCopyBorrowsSuccessorChildren(PendingTcoReset info, int index, TypeRef argType)
+        => !info.RuntimeManagedArgResults[index]
+            && argType is TypeRef.TNamedType named
+            && !CanArenaReset(named)
+            && !CanCopyOutAdt(named, out _)
+            && !SuccessorOwnsItsChildren(named, info.ArgExpressions[index]);
 
     private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
         int sourceTemp,
@@ -2257,13 +2281,14 @@ public sealed partial class Lowering
         // release's cascading walk, not by the nested copy. A child the construction built as a
         // fresh aggregate literal is an arena cell rather than a reference: its own retained
         // children are released through the literal instead (see
-        // EmitRuntimeManagedTcoSourceChildRelease).
+        // EmitRuntimeManagedTcoSourceChildRelease). A child the construction only borrowed is
+        // not released.
         if (releaseSourceChildren)
         {
             IReadOnlyList<Expr>? fieldExpressions = ConstructorFieldExpressions(sourceExpression, constructor);
             foreach ((int childTemp, TypeRef childType, int index) in originalChildren)
             {
-                EmitRuntimeManagedTcoSourceChildRelease(childTemp, childType, fieldExpressions?[index]);
+                EmitRuntimeManagedTcoSourceChildRelease(childTemp, childType, fieldExpressions?[index], ConstructionFieldSource(sourceTemp, index));
             }
         }
 
@@ -2303,9 +2328,11 @@ public sealed partial class Lowering
     /// Releases the references a fresh aggregate literal built into the dying successor holds —
     /// the retained loop-parameter reads, field reads, and owned bindings stored in its fields,
     /// and, recursively, those of a nested literal — without touching the literal's own arena
-    /// cells. True when <paramref name="literal"/> matched the cell's type.
+    /// cells. <paramref name="constructionTemp"/> names the cell as this function built it, when it
+    /// did, so each child is paired with the retain its construction made. True when
+    /// <paramref name="literal"/> matched the cell's type.
     /// </summary>
-    private bool TryEmitRuntimeManagedTcoLiteralChildrenRelease(int cellTemp, TypeRef type, Expr literal)
+    private bool TryEmitRuntimeManagedTcoLiteralChildrenRelease(int cellTemp, TypeRef type, Expr literal, int? constructionTemp)
     {
         switch (Prune(type))
         {
@@ -2317,54 +2344,73 @@ public sealed partial class Lowering
                 {
                     int childTemp = NewTemp();
                     Emit(new IrInst.GetAdtField(childTemp, cellTemp, child.Index, IsTaglessConstructor(constructor)));
-                    EmitRuntimeManagedTcoSourceChildRelease(childTemp, child.Type, arguments[child.Index]);
+                    int? stored = constructionTemp is int cell ? ConstructionFieldSource(cell, child.Index) : null;
+                    EmitRuntimeManagedTcoSourceChildRelease(childTemp, child.Type, arguments[child.Index], stored);
                 }
 
                 return true;
             case TypeRef.TTuple tuple
                 when literal is Expr.TupleLit tupleLiteral && tupleLiteral.Elements.Count == tuple.Elements.Count:
-                for (int index = 0; index < tuple.Elements.Count; index++)
-                {
-                    if (CanArenaReset(Prune(tuple.Elements[index])))
-                    {
-                        continue;
-                    }
-
-                    int elementTemp = NewTemp();
-                    Emit(new IrInst.LoadMemOffset(elementTemp, cellTemp, index * 8));
-                    EmitRuntimeManagedTcoSourceChildRelease(elementTemp, tuple.Elements[index], tupleLiteral.Elements[index]);
-                }
-
+                EmitRuntimeManagedTcoTupleLiteralRelease(cellTemp, tuple, tupleLiteral, constructionTemp);
                 return true;
             case TypeRef.TList list when literal is Expr.ListLit listLiteral:
-                int currentTemp = cellTemp;
-                foreach (Expr element in listLiteral.Elements)
-                {
-                    EmitRuntimeManagedTcoListCellHeadRelease(currentTemp, list.Element, element);
-                    int tailTemp = NewTemp();
-                    Emit(new IrInst.LoadMemOffset(
-                        tailTemp,
-                        currentTemp,
-                        HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
-                    currentTemp = tailTemp;
-                }
-
+                EmitRuntimeManagedTcoListLiteralRelease(cellTemp, list, listLiteral.Elements, constructionTemp);
                 return true;
             case TypeRef.TList list when literal is Expr.Cons cons:
-                EmitRuntimeManagedTcoListCellHeadRelease(cellTemp, list.Element, cons.Head);
+                EmitRuntimeManagedTcoListCellHeadRelease(cellTemp, list.Element, cons.Head, constructionTemp);
                 int consTailTemp = NewTemp();
                 Emit(new IrInst.LoadMemOffset(
                     consTailTemp,
                     cellTemp,
                     HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
-                EmitRuntimeManagedTcoSourceChildRelease(consTailTemp, list, cons.Tail);
+                EmitRuntimeManagedTcoSourceChildRelease(consTailTemp, list, cons.Tail, ListCellConstructionWord(constructionTemp, HeapLayouts.ListTailIndex));
                 return true;
             default:
                 return false;
         }
     }
 
-    private void EmitRuntimeManagedTcoListCellHeadRelease(int cellTemp, TypeRef elementType, Expr element)
+    private void EmitRuntimeManagedTcoTupleLiteralRelease(int cellTemp, TypeRef.TTuple tuple, Expr.TupleLit tupleLiteral, int? constructionTemp)
+    {
+        for (int index = 0; index < tuple.Elements.Count; index++)
+        {
+            if (CanArenaReset(Prune(tuple.Elements[index])))
+            {
+                continue;
+            }
+
+            int elementTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(elementTemp, cellTemp, index * 8));
+            int? stored = constructionTemp is int cell ? ConstructionWordSource(cell, index * 8) : null;
+            EmitRuntimeManagedTcoSourceChildRelease(elementTemp, tuple.Elements[index], tupleLiteral.Elements[index], stored);
+        }
+    }
+
+    private void EmitRuntimeManagedTcoListLiteralRelease(int cellTemp, TypeRef.TList list, IReadOnlyList<Expr> elements, int? constructionTemp)
+    {
+        int currentTemp = cellTemp;
+        int? currentConstruction = constructionTemp;
+        foreach (Expr element in elements)
+        {
+            EmitRuntimeManagedTcoListCellHeadRelease(currentTemp, list.Element, element, currentConstruction);
+            int tailTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(
+                tailTemp,
+                currentTemp,
+                HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+            currentTemp = tailTemp;
+            currentConstruction = ListCellConstructionWord(currentConstruction, HeapLayouts.ListTailIndex);
+        }
+    }
+
+    // The temp the construction of a list cell stored in its head or tail word, when this function
+    // built that cell.
+    private int? ListCellConstructionWord(int? constructionTemp, int wordIndex)
+        => constructionTemp is int cell
+            ? ConstructionWordSource(cell, HeapLayouts.List.PayloadWordOffsetBytes(wordIndex))
+            : null;
+
+    private void EmitRuntimeManagedTcoListCellHeadRelease(int cellTemp, TypeRef elementType, Expr element, int? constructionTemp)
     {
         if (CanArenaReset(Prune(elementType)))
         {
@@ -2376,10 +2422,10 @@ public sealed partial class Lowering
             headTemp,
             cellTemp,
             HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
-        EmitRuntimeManagedTcoSourceChildRelease(headTemp, elementType, element);
+        EmitRuntimeManagedTcoSourceChildRelease(headTemp, elementType, element, ListCellConstructionWord(constructionTemp, HeapLayouts.ListHeadIndex));
     }
 
-    private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType, Expr? sourceExpression = null)
+    private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType, Expr? sourceExpression = null, int? storedTemp = null)
     {
         if (sourceExpression is not null && _ownedSlotConstructorArguments.Contains(sourceExpression))
         {
@@ -2388,7 +2434,15 @@ public sealed partial class Lowering
 
         if (sourceExpression is not null
             && IsFreshAggregateLiteral(sourceExpression)
-            && TryEmitRuntimeManagedTcoLiteralChildrenRelease(childTemp, childType, sourceExpression))
+            && TryEmitRuntimeManagedTcoLiteralChildrenRelease(childTemp, childType, sourceExpression, storedTemp))
+        {
+            return;
+        }
+
+        // A child whose retain finalization left without effect is only borrowed by the cell.
+        if (storedTemp is int stored
+            && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDCHILDKEEP") is null
+            && IsUnrealizedConstructionRetain(stored))
         {
             return;
         }
@@ -6929,7 +6983,7 @@ public sealed partial class Lowering
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
 
         bodyTemp = savedTcoCtx is { TmcActivated: true } tmc ? LowerLambdaCoreCloseTmcChain(tmc, bodyTemp) : bodyTemp;
-        bodyTemp = FinishGeneralRcFunctionResult(label, ReleaseNormalizedParameterBehindResult(lam, label, argSlot, paramTy, KeepPredictedRuntimeManagedResult(label, FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy), bodyType), bodyType, savedTcoCtx is null && !isChainLambda), bodyType, savedTcoCtx is { TmcActivated: true });
+        bodyTemp = FinishGeneralRcFunctionResult(label, ReleaseNormalizedParameterBehindResult(lam, label, argSlot, paramTy, KeepPredictedRuntimeManagedResult(label, FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy), bodyType), bodyType, savedTcoCtx is null && !isChainLambda), bodyType, savedTcoCtx is { TmcActivated: true }, savedTcoCtx);
         RecordReturnedClosureLabel(label, bodyTemp);
         // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
         // representation, closure capture — see _bodyRuntimeManagedByLabel's own doc). Threaded to this
@@ -7828,6 +7882,7 @@ public sealed partial class Lowering
         FinalizeTcoParameterAggregateRetains(tco);
         FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
+        WithdrawBorrowedScrutineeRetains(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
             tco,

@@ -40,6 +40,7 @@ import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreResultPipeLowering
 import AshesCompiler.Semantics.CoreExternalLowering
+import AshesCompiler.Semantics.ConstructionRetains
 import AshesCompiler.Semantics.DerivingExpansion.expandDerivedImplementations
 import AshesCompiler.Semantics.StandardTraits.standardTraitEnvironment
 import AshesCompiler.Semantics.TraitResolution
@@ -610,6 +611,10 @@ type CoreTcoState =
     // parameter slot and the read's type; promoted to real retains once the frame's placements
     // are known.
     | tcoParameterRetainSites: List((Int, Int, SemanticType))
+    // The arena cells a loop body built only to match them, with no arm binding a heap-typed part:
+    // the retains of loop-parameter reads they were built with are withdrawn once the loop's
+    // placements are final (stage 0's `_borrowedScrutinees`).
+    | borrowedScrutineeCells: List(Int)
     // The parameter slot whose tail self-call argument is being lowered, stage 0's
     // `_loweringTcoBackEdgeArgumentSlot`: a read of that parameter inside its own successor is
     // the reference the back edge moves, never retained.
@@ -1506,6 +1511,14 @@ let withStateTcoParameterRetainSites value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with tcoParameterRetainSites = value))
 
+let stateBorrowedScrutineeCells (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.borrowedScrutineeCells)
+
+let withStateBorrowedScrutineeCells value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with borrowedScrutineeCells = value))
+
 let stateBackEdgeArgumentSlot (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.backEdgeArgumentSlot)
@@ -2095,6 +2108,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         ),
         tcoState = CoreTcoState(
             tcoParameterRetainSites = [],
+            borrowedScrutineeCells = [],
             backEdgeArgumentSlot = None,
             affineAppendContext = None,
             affineAppendReservation = None,
@@ -5670,6 +5684,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
             |> withStatePatternOwnerSites([])
             |> withStatePatternOwnerResultTemps([])
             |> withStateTcoParameterRetainSites([])
+            |> withStateBorrowedScrutineeCells([])
             |> withStatePendingRuntimeArgumentFlags([])
             |> withStateBackEdgeArgumentSlot(None)
             |> withStateAffineAppendContext(None)
@@ -7351,43 +7366,66 @@ let emitGuardedSourceChildDrop (childTemp: Int) (childType: SemanticType) (state
                         |> emitOwnedValueRelease(unlocatedInstruction)(childTemp)(childType)
                         |> emit(Label(arenaLabel))
 
+// The temp the construction of `construction`, when this function built that cell, stored into
+// field `index` (stage 0's `ConstructionFieldSource`).
+let constructionFieldOf (construction: Maybe(Int)) (index: Int) (state: CoreLoweringState) =
+    match construction with
+        | Some(cellTemp) -> constructionFieldSource(cellTemp)(index)(state.reversedInstructions)
+        | None -> None
+
+// The temp the construction of the list or tuple cell `construction` stored at `offsetBytes`
+// (stage 0's `ConstructionWordSource`).
+let constructionWordOf (construction: Maybe(Int)) (offsetBytes: Int) (state: CoreLoweringState) =
+    match construction with
+        | Some(cellTemp) -> constructionWordSource(cellTemp)(offsetBytes)(state.reversedInstructions)
+        | None -> None
+
 // The release of one child the dying successor holds (stage 0's
 // `EmitRuntimeManagedTcoSourceChildRelease`): a child the construction built as a fresh
 // aggregate literal is an arena cell rather than a reference, so only the references the
 // literal itself holds are released, recursively; any other child is a reference the
-// construction retained and is released whole.
-let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) (expression: Maybe(Expr)) (state: CoreLoweringState) =
+// construction retained and is released whole, unless the retain the construction stored
+// (`stored`) was left without effect, when the cell only borrowed the child.
+let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) (expression: Maybe(Expr)) (stored: Maybe(Int)) (state: CoreLoweringState) =
     match expression with
         | Some(literal) ->
             if isFreshAggregateLiteral(literal)(state)
             then
-                emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(state)
+                emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(stored)(state)
+            else emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
+        | None -> emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
+and emitStoredSourceChildRelease (childTemp: Int) (childType: SemanticType) (stored: Maybe(Int)) (state: CoreLoweringState) =
+    match stored with
+        | Some(storedTemp) ->
+            if isUnrealizedConstructionRetain(storedTemp)(state.reversedInstructions)
+            then state
             else emitGuardedSourceChildDrop(childTemp)(childType)(state)
         | None -> emitGuardedSourceChildDrop(childTemp)(childType)(state)
-and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (literal: Expr) (state: CoreLoweringState) =
+and emitLiteralChildrenRelease (cellTemp: Int) (semanticType: SemanticType) (literal: Expr) (construction: Maybe(Int)) (state: CoreLoweringState) =
     match (resolveType(state)(semanticType), literal) with
         | (SemNamed(_symbolId, _name, _arguments) as named, _literal) ->
             match constructorFieldExpressionsOf(literal)(named)(state) with
                 | Some(arguments) ->
                     match inlineAdtCopyPlanOf(named)(state) with
                         | Some(ConstructorArgumentCopy((_tag, _sizeBytes, tagless, _childPlans))) ->
-                            releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedChildrenOfNamed(named)(state))(arguments)(state)
+                            releaseLiteralConstructorChildren(cellTemp)(tagless)(ownedChildrenOfNamed(named)(state))(arguments)(construction)(state)
                         | _plan -> emitOwnedValueRelease(unlocatedInstruction)(cellTemp)(semanticType)(state)
                 | None -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
         | (SemTuple(elements), ExprTuple(expressions)) ->
             if length(elements) == length(expressions)
-            then releaseLiteralTupleElements(cellTemp)(0)(elements)(expressions)(state)
+            then releaseLiteralTupleElements(cellTemp)(0)(elements)(expressions)(construction)(state)
             else emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
-        | (SemList(element), ExprList(expressions, _isMultiline)) -> releaseLiteralListElements(cellTemp)(element)(expressions)(state)
+        | (SemList(element), ExprList(expressions, _isMultiline)) -> releaseLiteralListElements(cellTemp)(element)(expressions)(construction)(state)
         | (SemList(element), ExprCons(head, tail)) ->
             match freshTemp(state) with
                 | FreshTemp { state = tailState, temp = tailTemp } ->
                     tailState
-                    |> releaseLiteralListHead(cellTemp)(element)(head)
+                    |> releaseLiteralListHead(cellTemp)(element)(head)(construction)
                     |> unlocatedInstruction(LoadMemOffset(tailTemp)(cellTemp)(8))
-                    |> emitSourceChildRelease(tailTemp)(SemList(element))(Some(tail))
+                    |> (given (headReleased: CoreLoweringState) ->
+                        emitSourceChildRelease(tailTemp)(SemList(element))(Some(tail))(constructionWordOf(construction)(8)(headReleased))(headReleased))
         | _ -> emitGuardedSourceChildDrop(cellTemp)(semanticType)(state)
-and releaseLiteralConstructorChildren (cellTemp: Int) (tagless: Bool) (children: List((Int, SemanticType))) (arguments: List(Expr)) (state: CoreLoweringState) =
+and releaseLiteralConstructorChildren (cellTemp: Int) (tagless: Bool) (children: List((Int, SemanticType))) (arguments: List(Expr)) (construction: Maybe(Int)) (state: CoreLoweringState) =
     match children with
         | [] -> state
         | (index, childType) :: rest ->
@@ -7395,22 +7433,24 @@ and releaseLiteralConstructorChildren (cellTemp: Int) (tagless: Bool) (children:
                 | FreshTemp { state = allocated, temp = childTemp } ->
                     allocated
                     |> unlocatedInstruction(GetAdtField(childTemp)(cellTemp)(index)(tagless))
-                    |> emitSourceChildRelease(childTemp)(childType)(expressionAt(index)(arguments))
-                    |> releaseLiteralConstructorChildren(cellTemp)(tagless)(rest)(arguments)
-and releaseLiteralTupleElements (cellTemp: Int) (index: Int) (elements: List(SemanticType)) (expressions: List(Expr)) (state: CoreLoweringState) =
+                    |> (given (read: CoreLoweringState) ->
+                        emitSourceChildRelease(childTemp)(childType)(expressionAt(index)(arguments))(constructionFieldOf(construction)(index)(read))(read))
+                    |> releaseLiteralConstructorChildren(cellTemp)(tagless)(rest)(arguments)(construction)
+and releaseLiteralTupleElements (cellTemp: Int) (index: Int) (elements: List(SemanticType)) (expressions: List(Expr)) (construction: Maybe(Int)) (state: CoreLoweringState) =
     match (elements, expressions) with
         | (element :: restElements, expression :: restExpressions) ->
             if resultSurvivesReset(element)(state)
-            then releaseLiteralTupleElements(cellTemp)(index + 1)(restElements)(restExpressions)(state)
+            then releaseLiteralTupleElements(cellTemp)(index + 1)(restElements)(restExpressions)(construction)(state)
             else
                 match freshTemp(state) with
                     | FreshTemp { state = allocated, temp = elementTemp } ->
                         allocated
                         |> unlocatedInstruction(LoadMemOffset(elementTemp)(cellTemp)(8 * index))
-                        |> emitSourceChildRelease(elementTemp)(element)(Some(expression))
-                        |> releaseLiteralTupleElements(cellTemp)(index + 1)(restElements)(restExpressions)
+                        |> (given (read: CoreLoweringState) ->
+                            emitSourceChildRelease(elementTemp)(element)(Some(expression))(constructionWordOf(construction)(8 * index)(read))(read))
+                        |> releaseLiteralTupleElements(cellTemp)(index + 1)(restElements)(restExpressions)(construction)
         | _ -> state
-and releaseLiteralListHead (cellTemp: Int) (element: SemanticType) (expression: Expr) (state: CoreLoweringState) =
+and releaseLiteralListHead (cellTemp: Int) (element: SemanticType) (expression: Expr) (construction: Maybe(Int)) (state: CoreLoweringState) =
     if resultSurvivesReset(element)(state)
     then state
     else
@@ -7418,27 +7458,29 @@ and releaseLiteralListHead (cellTemp: Int) (element: SemanticType) (expression: 
             | FreshTemp { state = allocated, temp = headTemp } ->
                 allocated
                 |> unlocatedInstruction(LoadMemOffset(headTemp)(cellTemp)(0))
-                |> emitSourceChildRelease(headTemp)(element)(Some(expression))
-and releaseLiteralListElements (cellTemp: Int) (element: SemanticType) (expressions: List(Expr)) (state: CoreLoweringState) =
+                |> (given (read: CoreLoweringState) ->
+                    emitSourceChildRelease(headTemp)(element)(Some(expression))(constructionWordOf(construction)(0)(read))(read))
+and releaseLiteralListElements (cellTemp: Int) (element: SemanticType) (expressions: List(Expr)) (construction: Maybe(Int)) (state: CoreLoweringState) =
     match expressions with
         | [] -> state
         | expression :: rest ->
             match freshTemp(state) with
                 | FreshTemp { state = tailState, temp = tailTemp } ->
                     tailState
-                    |> releaseLiteralListHead(cellTemp)(element)(expression)
+                    |> releaseLiteralListHead(cellTemp)(element)(expression)(construction)
                     |> unlocatedInstruction(LoadMemOffset(tailTemp)(cellTemp)(8))
-                    |> releaseLiteralListElements(tailTemp)(element)(rest)
+                    |> (given (headReleased: CoreLoweringState) ->
+                        releaseLiteralListElements(tailTemp)(element)(rest)(constructionWordOf(construction)(8)(headReleased))(headReleased))
 
-let recursive releaseBackEdgeSourceChildren (read: List((Int, SemanticType, Int))) (fieldExpressions: Maybe(List(Expr))) (state: CoreLoweringState) =
+let recursive releaseBackEdgeSourceChildren (sourceTemp: Int) (read: List((Int, SemanticType, Int))) (fieldExpressions: Maybe(List(Expr))) (state: CoreLoweringState) =
     match read with
         | [] -> state
         | (childTemp, childType, index) :: rest ->
             state
             |> emitSourceChildRelease(childTemp)(childType)(match fieldExpressions with
                 | Some(expressions) -> expressionAt(index)(expressions)
-                | None -> None)
-            |> releaseBackEdgeSourceChildren(rest)(fieldExpressions)
+                | None -> None)(constructionFieldSource(sourceTemp)(index)(state.reversedInstructions))
+            |> releaseBackEdgeSourceChildren(sourceTemp)(rest)(fieldExpressions)
 
 // Stage 0's back-edge copy of an arena successor into a runtime-managed ADT slot: the cell
 // copies out whole, a record's owned children copy after it, and the dying successor's own
@@ -7473,7 +7515,7 @@ let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expre
                         |> emitBackEdgeChildCopies(sourceTemp)(copyTemp)(tagless)(ownedChildrenOfNamed(semanticType)(state))([]) with
                             | (copied, read) ->
                                 copied
-                                |> releaseBackEdgeSourceChildren(read)(constructorFieldExpressionsOf(expression)(semanticType)(state))
+                                |> releaseBackEdgeSourceChildren(sourceTemp)(read)(constructorFieldExpressionsOf(expression)(semanticType)(state))
                                 |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
                                 |> (given (released: CoreLoweringState) -> (released, copyTemp))
         | NormalizerArgumentCopy(named) ->
@@ -7580,6 +7622,36 @@ let emitGeneralRcOwnedSlotDrops (state: CoreLoweringState) =
     emitGeneralRcOwnedSlotDropsOf(stateActiveFunctionOrigin(state))(state
     |> stateGeneralRcOwnedSlots
     |> reverse)(state)
+
+let backEdgeCopyBorrows (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
+    match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
+        | NormalizerArgumentCopy(_named) -> true
+        | _plan -> false
+
+// Stage 0's `BackEdgeCopyBorrowsSuccessorChildren`: an arena successor of a runtime-managed ADT
+// slot whose back-edge copy borrows its children (its normalization helper makes it) rather than
+// releasing them from the dying cell. The retains its construction made of loop-parameter reads
+// are withdrawn, since the copy takes its own references before the old parameters are released.
+let recursive withdrawBorrowedSuccessorRetains (arguments: List(TcoResetArgument)) (parameters: List((Int, Int))) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> state
+        | TcoResetArgument { managedAdt = Some((_activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = false, argumentExpression = expression } :: rest ->
+            if shape != TcoPassThroughShape && !isTcoBackEdgeArgPassThrough(expression)(slot)(state) && backEdgeCopyBorrows(semanticType)(expression)(state)
+            then withdrawBorrowedSuccessorRetains(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(temp)(parameters)(state.reversedInstructions)))
+            else withdrawBorrowedSuccessorRetains(rest)(parameters)(state)
+        | _argument :: rest -> withdrawBorrowedSuccessorRetains(rest)(parameters)(state)
+
+// Each loop parameter's slot beside its active flag at a back edge, -1 for one without (stage 0's
+// `BackEdgeLoopParameters`).
+let recursive resetArgumentParameters (arguments: List(TcoResetArgument)) =
+    match arguments with
+        | [] -> []
+        | TcoResetArgument { parameterSlot = slot, managedList = managedList, managedAdt = managedAdt, managedStr = managedStr } :: rest ->
+            (slot, match (managedList, managedAdt, managedStr) with
+                | (Some((activeSlot, _elementType)), _adt, _str) -> activeSlot
+                | (None, Some((activeSlot, _semanticType, _typeName)), _str) -> activeSlot
+                | (None, None, Some(activeSlot)) -> activeSlot
+                | _ -> -1) :: resetArgumentParameters(rest)
 
 // Stage 0's `TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs` for the list slots: the
 // pattern-bound tail of a consumed list is retained for the successor (null-tolerant, the tail
@@ -7987,7 +8059,9 @@ let emitBackEdgeGeneralRcOwnedSlotDrops (reset: CoreTcoReset) (arguments: List(T
 let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
-            match normalizeRuntimeManagedBackEdgeArguments(arguments)([])(allocated) with
+            match allocated
+            |> withdrawBorrowedSuccessorRetains(arguments)(resetArgumentParameters(arguments))
+            |> normalizeRuntimeManagedBackEdgeArguments(arguments)([]) with
                 | (normalized, stores) ->
                     normalized
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
@@ -8318,7 +8392,9 @@ let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (
 let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = allocated } ->
-            match normalizeRuntimeManagedBackEdgeArguments(arguments)([])(allocated) with
+            match allocated
+            |> withdrawBorrowedSuccessorRetains(arguments)(resetArgumentParameters(arguments))
+            |> normalizeRuntimeManagedBackEdgeArguments(arguments)([]) with
                 | (normalized, stores) ->
                     normalized
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
@@ -10595,15 +10671,36 @@ let emitTcoExitDrops (bodyTemp: Int) (resultType: SemanticType) (slots: List(Int
                                 |> emit(StoreLocal(transferSelectedSlot)(zeroTemp)), Some((transferSelectedSlot, zeroTemp)))
             else (state, None))
 
+let recursive loopParametersWithActiveSlots (slots: List(Int)) (pairs: List((Int, Int))) =
+    match slots with
+        | [] -> []
+        | slot :: rest ->
+            (slot, match lookupListActiveSlot(slot)(pairs) with
+                | Some(activeSlot) -> activeSlot
+                | None -> -1) :: loopParametersWithActiveSlots(rest)(pairs)
+
+// Each loop parameter's slot beside its active flag, -1 for one without (stage 0's
+// `LoopParametersOf`).
+let frameLoopParameters (frame: CoreTcoLoopFrame) = loopParametersWithActiveSlots(frame.parameterSlots)(frame.listActiveSlots)
+
+let withdrawCopiedLoopResultRetains (parameters: List((Int, Int))) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (isGeneralRcValueType(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
+        | (true, Some(_plan)) -> state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(bodyTemp)(parameters)(state.reversedInstructions)
+        | _ -> state
+
 // A loop whose result is of the contract's types makes it the function's own before its exit
 // releases the loop parameters, as stage 0 orders the two: the result then holds its own
 // reference, so every parameter goes and none is transferred as the result. An inline result
 // releases the function's owned slots there too, and is never transferred either. The return that
-// follows finds the result finished and leaves it.
-let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+// follows finds the result finished and leaves it. The copy of an arena result borrows its
+// children ahead of the exit releases, so the retains of loop-parameter reads its cells were built
+// with are withdrawn (stage 0's `EmitGeneralRcOwnedFunctionResult`).
+let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (parameters: List((Int, Int))) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcValueType(semanticType)(state) || resultSurvivesReset(semanticType)(state) && !isRuntimeTemp(bodyTemp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
     then
-        match finishGeneralRcFunctionResultAs(producedOwned)(label)(bodyTemp)(semanticType)(state) with
+        match state
+        |> withdrawCopiedLoopResultRetains(parameters)(bodyTemp)(semanticType)
+        |> finishGeneralRcFunctionResultAs(producedOwned)(label)(bodyTemp)(semanticType) with
             | (finished, resultTemp) -> (withGeneralRcFinishedResult(resultTemp)(finished), resultTemp)
     else (state, bodyTemp)
 
@@ -10617,7 +10714,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs)
             |> recordTcoNormalizedArgumentLabel(label)(entries)
             |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-            |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(bodyTemp)(semanticType)
+            |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(frameLoopParameters(frame))(bodyTemp)(semanticType)
             |> (given (finished: (CoreLoweringState, Int)) ->
                 match finished with
                     | (finishedState, resultTemp) ->
@@ -10694,6 +10791,17 @@ let retireUnusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((I
     |> unusedListActiveSlots(pairs)(managedLists)(managedAdts)
     |> append(stateRetiredLocals(state)))(state)
 
+let recursive withdrawScrutineeCells (cells: List(Int)) (parameters: List((Int, Int))) (state: CoreLoweringState) =
+    match cells with
+        | [] -> state
+        | cell :: rest -> withdrawScrutineeCells(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(cell)(parameters)(state.reversedInstructions)))
+
+// Stage 0's `WithdrawBorrowedScrutineeRetains`, run once the retains carry their resolved form.
+let withdrawBorrowedScrutineeRetains (parameters: List((Int, Int))) (state: CoreLoweringState) =
+    state
+    |> withdrawScrutineeCells(stateBorrowedScrutineeCells(state))(parameters)
+    |> withStateBorrowedScrutineeCells([])
+
 let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     state
     |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
@@ -10708,6 +10816,7 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
+                    |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
                     |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))
 
 // Stage 0's post-body refresh allocates the active flag of every candidate the loop entry and
@@ -16758,6 +16867,88 @@ let withStaticStringNormalization cases (plan: CoreMatchPlan) =
         | CoreMatchPlan { state = state } ->
             plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (body: Expr) -> isStaticConstructorArm(body)(state))(cases)
 
+// Stage 0's `PatternBindsHeapValue`: whether `pattern`, matched against a value of
+// `semanticType`, may bind a value that is not a copy type; any shape it cannot see through counts
+// as one. A constructor's field types are instantiated on a copy of the state the answer leaves.
+let recursive patternBindsHeapValue (pattern: Pattern) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match pattern with
+        | PatternAt(_span, inner) -> patternBindsHeapValue(inner)(semanticType)(state)
+        | PatternWildcard -> false
+        | PatternEmptyList -> false
+        | PatternInt(_value) -> false
+        | PatternString(_value) -> false
+        | PatternRune(_value) -> false
+        | PatternBool(_value) -> false
+        | PatternVar(_name) -> resultSurvivesReset(semanticType)(state) == false
+        | PatternAs(inner, _name) -> resultSurvivesReset(semanticType)(state) == false || patternBindsHeapValue(inner)(semanticType)(state)
+        | PatternOr(alternatives) -> patternsBindHeapValue(alternatives)(semanticType)(state)
+        | PatternTuple(elements) ->
+            match resolveType(state)(semanticType) with
+                | SemTuple(elementTypes) ->
+                    if length(elements) == length(elementTypes)
+                    then elementPatternsBindHeapValue(elements)(elementTypes)(state)
+                    else true
+                | _ -> true
+        | PatternCons(head, tail) ->
+            match resolveType(state)(semanticType) with
+                | SemList(element) -> patternBindsHeapValue(head)(element)(state) || patternBindsHeapValue(tail)(semanticType)(state)
+                | _ -> true
+        | PatternConstructor(name, patterns) ->
+            match constructorLayout(name)(state) with
+                | None -> true
+                | Some(layout) ->
+                    match instantiateConstructor(layout)(state) with
+                        | CoreConstructorShape { state = instantiated, parameterTypes = parameterTypes, resultType = resultType } ->
+                            match bindType(semanticType)(resultType)(instantiated) with
+                                | (typed, None) ->
+                                    if length(patterns) == length(parameterTypes)
+                                    then elementPatternsBindHeapValue(patterns)(parameterTypes)(typed)
+                                    else true
+                                | (_failed, Some(_error)) -> true
+        | PatternRecord(name, fields) ->
+            match constructorLayout(name)(state) with
+                | None -> true
+                | Some(layout) ->
+                    match instantiateConstructor(layout)(state) with
+                        | CoreConstructorShape { state = instantiated, layout = CoreConstructorLayout { fieldNames = fieldNames }, parameterTypes = parameterTypes, resultType = resultType } ->
+                            match bindType(semanticType)(resultType)(instantiated) with
+                                | (typed, None) -> fieldPatternsBindHeapValue(fields)(fieldNames)(parameterTypes)(typed)
+                                | (_failed, Some(_error)) -> true
+and patternsBindHeapValue (patterns: List(Pattern)) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match patterns with
+        | [] -> false
+        | pattern :: rest -> patternBindsHeapValue(pattern)(semanticType)(state) || patternsBindHeapValue(rest)(semanticType)(state)
+and elementPatternsBindHeapValue (patterns: List(Pattern)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (patterns, semanticTypes) with
+        | (pattern :: restPatterns, semanticType :: restTypes) -> patternBindsHeapValue(pattern)(semanticType)(state) || elementPatternsBindHeapValue(restPatterns)(restTypes)(state)
+        | _ -> false
+and fieldPatternsBindHeapValue (fields: List((Str, Pattern))) (fieldNames: List(Str)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match fields with
+        | [] -> false
+        | (fieldName, pattern) :: rest ->
+            match findPatternField(fieldName)(fieldNames)(fieldTypes)(0) with
+                | None -> true
+                | Some(CorePatternField { semanticType = fieldType }) -> patternBindsHeapValue(pattern)(fieldType)(state) || fieldPatternsBindHeapValue(rest)(fieldNames)(fieldTypes)(state)
+
+let recursive matchCasesBindHeapValue cases (semanticType: SemanticType) (state: CoreLoweringState) =
+    match cases with
+        | [] -> false
+        | (pattern, _body, _guard) :: rest -> patternBindsHeapValue(pattern)(semanticType)(state) || matchCasesBindHeapValue(rest)(semanticType)(state)
+
+// Stage 0's `RecordBorrowedScrutinee`: a fresh aggregate a loop body builds only to match it, with
+// no arm binding a heap-typed part of it, keeps nothing past the match, so the retains of
+// loop-parameter reads its cell was built with are withdrawn once the loop's placements are final.
+let recordBorrowedScrutinee (value: Expr) cases (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match stateTcoLoopFrame(state) with
+                | Some(_frame) ->
+                    if isFreshAggregateLiteral(value)(state) && matchCasesBindHeapValue(cases)(semanticType)(state) == false
+                    then lowered with state = withStateBorrowedScrutineeCells(temp :: stateBorrowedScrutineeCells(state))(state)
+                    else lowered
+                | None -> lowered
+        | _ -> lowered
+
 let lowerMatch value cases lower state =
     state
     |> clearConsumerRequest
@@ -16766,6 +16957,7 @@ let lowerMatch value cases lower state =
         then requestStackAllocatedConstructor(cleared)
         else cleared)
     |> lower(value)
+    |> recordBorrowedScrutinee(value)(cases)
     |> prepareMatchPlan
     |> withPlanArmRequest(withReconcilableFreshStringJoinRequest(ExprMatch(value)(cases)(None))(state
     |> consumerRequestOf
@@ -16864,6 +17056,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStatePatternOwnerSites([])
             |> withStatePatternOwnerResultTemps([])
             |> withStateTcoParameterRetainSites([])
+            |> withStateBorrowedScrutineeCells([])
             |> withStatePendingRuntimeArgumentFlags([])
             |> withStateBackEdgeArgumentSlot(None)
             |> withStateAffineAppendContext(None)

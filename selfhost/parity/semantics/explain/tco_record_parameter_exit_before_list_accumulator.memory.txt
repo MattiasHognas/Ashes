@@ -8,7 +8,7 @@ Function: collect
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_2]
-    dup:                  13
+    dup:                  11
     drop:                 5
     uniqueness checks:    2
   perceus [lambda_2$env_normalize]

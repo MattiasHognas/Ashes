@@ -172,9 +172,9 @@ function lambda_2  [ClosureHelper from collect]
     CmpIntEq              Target=5 Left=3 Right=4   (tco_record_parameter_exit_before_list_accumulator.ash:13:8)
     JumpIfFalse           CondTemp=5 Target=else_0   (tco_record_parameter_exit_before_list_accumulator.ash:13:5)
     LoadLocal             Target=6 Slot=3   (tco_record_parameter_exit_before_list_accumulator.ash:14:10)
-    RcDup                 Target=7 SourceTemp=6 RuntimeManaged=true
+    RcDup                 Target=7 SourceTemp=6
     LoadLocal             Target=8 Slot=1   (tco_record_parameter_exit_before_list_accumulator.ash:14:15)
-    RcDup                 Target=9 SourceTemp=8 RuntimeManaged=true MayBeEmpty=true
+    RcDup                 Target=9 SourceTemp=8
     Alloc                 Target=10 SizeBytes=16   (tco_record_parameter_exit_before_list_accumulator.ash:14:10)
     StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=7   (tco_record_parameter_exit_before_list_accumulator.ash:14:10)
     StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=9   (tco_record_parameter_exit_before_list_accumulator.ash:14:10)

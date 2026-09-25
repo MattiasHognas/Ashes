@@ -715,7 +715,7 @@ public sealed partial class Lowering
     /// list of scalars or strings) when the function holds owned values it might point into.
     /// Returns the temp to return.
     /// </summary>
-    private int FinishGeneralRcFunctionResult(string label, int bodyTemp, TypeRef bodyType, bool closesProducerChain = false)
+    private int FinishGeneralRcFunctionResult(string label, int bodyTemp, TypeRef bodyType, bool closesProducerChain = false, TcoContext? loopTco = null)
     {
         LeaveGeneralRcFunction(label);
         _generalRcIndependentResultTemp = -1;
@@ -752,12 +752,7 @@ public sealed partial class Lowering
         // join of a recursive producer's arms carries it while an arm's cells stay in the arena.
         else if (contractResult || (normalizesOwnedResult && !IsRuntimeManagedResultTemp(bodyTemp)))
         {
-            // A result the body produced owned (a fresh reference-counted value) is taken as it is
-            // when its cells turn out reference-counted, and copied when they are still in the arena.
-            resultTemp = contractResult && Environment.GetEnvironmentVariable("GRC_NO_KEEP") is null && (closesProducerChain || IsNewlyProducedRcTemp(bodyTemp) || IsNormalizedJoinTemp(bodyTemp))
-                ? EmitOwnedResultOrCopy(bodyTemp, pruned)
-                : EmitRuntimeManagedTcoDeepCopy(bodyTemp, pruned);
-            MarkRuntimeManagedTemp(resultTemp);
+            resultTemp = EmitGeneralRcOwnedFunctionResult(bodyTemp, pruned, contractResult, closesProducerChain, loopTco);
             _generalRcIndependentResultTemp = resultTemp;
         }
 
@@ -773,6 +768,23 @@ public sealed partial class Lowering
             EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
         }
 
+        return resultTemp;
+    }
+
+    // A result the body produced owned (a fresh reference-counted value) is taken as it is when its
+    // cells turn out reference-counted, and copied when they are still in the arena. The copy of an
+    // arena result borrows its children ahead of the loop's exit releases.
+    private int EmitGeneralRcOwnedFunctionResult(int bodyTemp, TypeRef pruned, bool contractResult, bool closesProducerChain, TcoContext? loopTco)
+    {
+        if (contractResult && loopTco is not null)
+        {
+            WithdrawLoopParameterRetainsOfCopiedCells(bodyTemp, LoopParametersOf(loopTco));
+        }
+
+        int resultTemp = contractResult && Environment.GetEnvironmentVariable("GRC_NO_KEEP") is null && (closesProducerChain || IsNewlyProducedRcTemp(bodyTemp) || IsNormalizedJoinTemp(bodyTemp))
+            ? EmitOwnedResultOrCopy(bodyTemp, pruned)
+            : EmitRuntimeManagedTcoDeepCopy(bodyTemp, pruned);
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 

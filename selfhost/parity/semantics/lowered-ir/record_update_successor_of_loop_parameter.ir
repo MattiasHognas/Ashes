@@ -303,10 +303,10 @@ function lambda_7  [ClosureHelper from scan]
     Borrow                Target=17 SourceTemp=16
     LoadLocal             Target=18 Slot=1   (record_update_successor_of_loop_parameter.ash:24:30)
     GetAdtField           Target=19 Ptr=18 FieldIndex=0 Tagless=true   (record_update_successor_of_loop_parameter.ash:24:30)
-    RcDup                 Target=20 SourceTemp=19 RuntimeManaged=true
+    RcDup                 Target=20 SourceTemp=19
     LoadConstBool         Target=21 Value=true   (record_update_successor_of_loop_parameter.ash:24:52)
     GetAdtField           Target=22 Ptr=18 FieldIndex=2 Tagless=true   (record_update_successor_of_loop_parameter.ash:24:30)
-    RcDup                 Target=23 SourceTemp=22 RuntimeManaged=true MayBeEmpty=true
+    RcDup                 Target=23 SourceTemp=22
     AllocAdt              Target=24 Tag=0 FieldCount=3 Tagless=true   (record_update_successor_of_loop_parameter.ash:24:30)
     SetAdtField           Ptr=24 FieldIndex=0 Source=20 Tagless=true   (record_update_successor_of_loop_parameter.ash:24:30)
     SetAdtField           Ptr=24 FieldIndex=1 Source=21 Tagless=true   (record_update_successor_of_loop_parameter.ash:24:30)

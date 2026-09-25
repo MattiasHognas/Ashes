@@ -43,7 +43,7 @@ Function: __deepcopy_list_5
 
 Function: collect [lambda_2]
   Operations
-    dup:                  14
+    dup:                  12
     drop:                 5
     uniqueness checks:    2
     allocations:          7

@@ -1380,8 +1380,17 @@ contract type, the caller owns it after all, so the request is withdrawn: the ca
 reference-counted result instead of deep-copying it into the arena for the caller to normalize back.
 
 A record successor written at the self-call (a record literal or a constructor application) holds
-the references its construction retained, so the back edge's copy releases them from the dying cell;
-any other successor, a call's result say, is borrowed by the copy, and its owner releases it.
+the references its construction retained, so the back edge's copy releases them from the dying cell:
+exactly those, read back from the instructions that built the cell, so a child the construction only
+borrowed (a retain marker finalization left an identity) is not released. Any other successor, a
+call's result say, is borrowed by the copy, and its owner releases it. A copy that borrows an arena
+cell's children takes its own reference to each before the loop releases its parameters, so the
+retains the cell's construction made of loop-parameter reads have nothing to balance them and are
+withdrawn: for a record update or a `let`-bound record successor, for a loop's result copied by its
+normalization helper, and for a record built only to be matched when no arm binds a heap-typed part
+of it. A retain is withdrawn only when the cell holds its sole reference and the parameter it reads
+is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
+child's root there).
 
 A back edge releases the owned slots its iteration may have stored. A slot stored inside another arm
 of a `match` or `if` that is still open at the back edge is skipped, since one iteration never runs

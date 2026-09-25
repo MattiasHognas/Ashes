@@ -73,7 +73,7 @@ Function: extend
 
 Function: scan [lambda_7]
   Operations
-    dup:                  20
+    dup:                  18
     drop:                 33
     uniqueness checks:    9
     allocations:          2
