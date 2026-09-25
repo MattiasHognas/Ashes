@@ -26,11 +26,14 @@ state of `main`. The fix, and the stage-0 leak fixes measured alongside it, sit 
 matching change to stage 1, so the shared parity fixtures fail on it and it cannot be merged as it
 is.
 
-**The next task** is step A of "First: land the memory work and restore stage parity" under the work
-order. Read that section before anything else: it holds what was measured, the order to land it in,
-the rule it establishes (a stage-0 ownership change ships with its stage-1 mirror), and the
-definition of leak-free that ends the memory work. Stage 1 still leaks after everything measured so
-far, and leak-free is the priority once parity is restored.
+**The next task** is step E of the work order, the leak work; steps A to D have landed. Read the
+work order's introduction before anything else. It holds:
+- what was measured;
+- the rule it establishes: a stage-0 ownership change ships with its stage-1 mirror;
+- the definition of leak-free that ends the memory work.
+
+Stage 1 still leaks after everything measured so far, and leak-free comes before the fixpoint work
+of steps F to J.
 
 The defect queue behind that is short. Three stops are known on the whole-tree build, listed in that
 section in the order the build reaches them. SEM-22, an `==` generalization gap that also blocks
@@ -78,13 +81,18 @@ than marking it done here. Read "How to work on this" below before your first ch
 
 ## Work order
 
-Every step names the checklist identifiers that gate it. Work them in this order.
+One list, worked top to bottom. Every step names the checklist identifiers that gate it, and a step
+starts once the one before it has landed. The stretches:
+- A to E land the memory work and restore stage parity.
+- F to J make the compiler compile itself, to a fixpoint.
+- K to M settle what the first two stretches left behind: a benchmark's memory, the size of the
+  self-hosted sources, and the editor tooling.
+- N to R make it a compiler anyone would use.
+- S and T replace the default toolchain.
 
-### First: land the memory work and restore stage parity
-
-These steps come before everything below. They exist because the memory work of 2026-09-20 sits on a
-branch, `stage0-rc-general-results`, that cannot be merged as it is: it changes how stage 0 lowers
-programs without the matching change to stage 1, and the shared parity fixtures say so.
+Steps A to E exist because the memory work of 2026-09-20 sat on a branch, `stage0-rc-general-results`,
+that could not be merged as it was. It changed how stage 0 lowers programs without the matching change
+to stage 1, and the shared parity fixtures said so.
 
 ```mermaid
 flowchart TD
@@ -92,10 +100,21 @@ flowchart TD
     B --> C[C. Port the ownership changes into stage 1, group by group]
     C --> D[D. Keep the tools, clean the workspace]
     D --> E[E. Finish the leak work under the mirror rule]
-    E --> F[F. Bring fannkuch-redux back to its memory footprint]
-    F --> G[G. Split the oversized self-hosted source files]
-    G --> H[H. Verify the language server and the debug adapter]
-    H --> I[I. Continue with step 1 below]
+    E --> F[F. Clear the blockers the probe reports]
+    F --> G[G. Compile the whole self-hosted tree with stage 1]
+    G --> H[H. Make stage 2 run]
+    H --> I[I. Remove the sources of nondeterminism]
+    I --> J[J. Establish the fixpoint]
+    J --> K[K. Bring fannkuch-redux back to its memory footprint]
+    K --> L[L. Split the oversized self-hosted source files]
+    L --> M[M. Verify the language server and the debug adapter]
+    M --> N[N. Full corpus]
+    N --> O[O. Command-line completion]
+    O --> P[P. The rest of the port]
+    P --> Q[Q. Targets beyond linux-x64, and debug information]
+    Q --> R[R. Editor and debugging tooling]
+    R --> S[S. Prove it in the open]
+    S --> T[T. Retire the .NET toolchain from the default and release paths]
 
     subgraph gaps["The 13 fixtures the whole-program runner names rather than compares"]
         P2["5: stage 1 admits a loop parameter once the body is lowered, where stage 0 admits it at the entry from the parameter type"]
@@ -106,7 +125,7 @@ flowchart TD
 
     P2 --> E
     P3 --> E
-    P1 --> H
+    P1 --> M
     P4 --> S3["Waits on the recursive-binding lowering port"]
 ```
 
@@ -161,7 +180,7 @@ green, and only the self-hosted `cli` and `backend` suites, which run code stage
 
 **The rule from here on.** A change to how stage 0 lowers ownership ships with its stage-1 mirror
 and regenerated fixtures in the same pull request. The branch above broke that rule, and the port in
-step C is the cost of it. The note under "Now" that leaves other self-hosted mirrors filed and
+step C is the cost of it. The note after the list that leaves other self-hosted mirrors filed and
 untouched still holds for fixes the compiler's own sources never depend on; the ownership contract
 is not one of those, because a stage 2 built by an unported stage 1 contains none of it.
 
@@ -507,101 +526,105 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    would do. Two follow-ups would win it back: build a fresh contract record result on the
    reference-counted heap in place, and let a back edge take over an owned slot its successor reads
    instead of retaining the value and releasing the slot.
-F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
-   `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
-   cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
-   in minutes: publish the compiler at a commit (`publishcli.sh`, or `publishref.sh` for a commit
-   that is not checked out) and compare with `challenge_ab.sh`. Find the commit, reduce the program
-   to the loop that grows, and fix the placement; if the footprint cannot be restored without giving
-   up a guarantee the contract needs, record why and what it would take instead.
-G. **Split the oversized self-hosted source files.** `CoreLowering.ash` is about 22,500 lines, five
-   times the next largest file (`TypeInference.ash` at 4,400, `Parser.ash` at 3,700, `IrOptimizer.ash`
-   at 3,000). Split it into `Lowering.<Concern>.ash` modules, the way the backend's code generator is
-   already split into `IrCodegen.<Concern>.ash`, and name each module after the stage-0
-   `Lowering.<Concern>.cs` partial it mirrors wherever one exists, so the mirror rule's "where does
-   this go in stage 1" has one obvious answer. Scoping is sequential and module imports are acyclic,
-   so the cut follows the dependency order the file already has: the state record and its accessors
-   first, then the emitters, then the concerns that use them. This is a move and nothing else: every
-   shared fixture and the whole-program parity suite stay byte-identical, and stage 1's compile time
-   and peak memory do not regress. It comes after the leak work rather than during it, because a
-   file this size that is also open on a long-lived branch turns every move into a merge conflict.
-   Once the pattern is settled, apply it to any other self-hosted file of several thousand lines.
-H. **Verify the language server and the debug adapter against the current codebase.** The memory
-   work changed the lowering that `Ashes.Lsp` consumes and the code `Ashes.Dap` debugs, the split
-   moved most of the self-hosted lowering between files, and their own test suites exercise
-   neither end to end: `Ashes.Lsp.Tests` drives the server's handlers, not an editor session, and
-   the adapter has no suite that steps through a program built by the current compiler. Open the
-   repository's own sources, the split modules included, and the examples in the VS Code extension
-   and check diagnostics, hover, completion and formatting for errors in the server's log; then
-   debug a program with `--debug` through the adapter under gdb and under lldb (breakpoints, step,
-   locals, a let binding's own position) and check the adapter's log the same way. Anything found
-   is fixed before the fixpoint work starts, with a test at the layer that would have caught it.
-I. **Then the fixpoint**, steps 1 to 5 below, starting from the three defects listed above. For the
-   first, prefer splitting `lookupIndexed` into a `Str`-keyed and an `Int`-keyed version over waiting
-   for trait dictionary passing; it keeps the diagnostic and unblocks the sweep. The rest of this
-   document follows once the fixpoint holds.
+F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
+   parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
+   fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
+   for instruction is a debugging aid, not a requirement.
 
-### Now: make the compiler compile itself
+   Start from the three stops the stage-2 build is known to reach, listed under "What was found"
+   above. For the first, prefer splitting `lookupIndexed` into a `Str`-keyed and an `Int`-keyed
+   version over waiting for trait dictionary passing; it keeps the diagnostic and unblocks the sweep.
 
-The near-term goal is a fixpoint, not feature parity with stage 0. Stage 2 and stage 3 are both
-produced by the self-hosted compiler, so the fixpoint is blind to any disagreement between stage 0
-and stage 1. That has a sharp consequence for what is worth doing: matching stage 0 instruction for
-instruction is a debugging aid, not a requirement.
-
-1. **Clear the blockers the probe reports.** Run the bootstrap probe over every module of a package
-   before fixing the next failure it names, so what remains is a list ordered by how often a shape
-   recurs rather than a queue discovered one failure at a time. The semantics package was last swept
-   on 2026-09-17 and is due again once step A has landed: what remained there was SEM-22, confined to
-   its own module, and a memory cap that was mostly repeated lowering. Gates: BOOT-2.
-2. **Compile the whole self-hosted tree with stage 1.** With step A landed this is a loop of about
+   Then run the bootstrap probe over every module of a package before fixing the next failure it
+   names. What remains is then a list ordered by how often a shape recurs, rather than a queue
+   discovered one failure at a time. The semantics package was last swept on 2026-09-17 and is due
+   again. What remained there was SEM-22, confined to its own module, and a memory cap that was mostly
+   repeated lowering. Gates: BOOT-2.
+G. **Compile the whole self-hosted tree with stage 1.** With step A landed this is a loop of about
    two and a half minutes, a stage-1 build and a run, rather than a run that dies of memory: read the
-   first diagnostic, find where it was raised, fix it, repeat. Three stops are already known and
-   listed under "First". Prefer a small change to the self-hosted sources over a new stage-1 feature
+   first diagnostic, find where it was raised, fix it, repeat. The three known stops are the ones
+   step F starts from. Prefer a small change to the self-hosted sources over a new stage-1 feature
    wherever both would work, since a source change reaches every stage at once. Expect more stops
    behind the known ones, and keep them as a list. Gates: BOOT-2, OPT-85.
-3. **Make stage 2 run.** A stage-2 binary that faults on its own sources is a different class of
-   defect from a stage-1 miscompile, because stage 1 is what compiled it, and the reduction
-   technique that works for one does not transfer to the other. Do not trust the binary because it
-   linked: compile the small programs with it and compare against stage 0, then build the six
-   self-hosted suites with stage 1 instead of stage 0 and run them, which exercises stage 1's code
-   generator far harder than anything has so far. Then measure stage 2 building stage 3. If it does
-   not fit in memory, count what it allocates before assuming a missing release: identical objects
-   in power-of-two multiplicities are repeated work. Gates: BOOT-2.
-4. **Remove the sources of nondeterminism.** Hash-ordered iteration, address-derived values,
+H. **Make stage 2 run.** A stage-2 binary that faults on its own sources is a different class of
+   defect from a stage-1 miscompile. Stage 1 is what compiled it, and the reduction technique that
+   works for one does not transfer to the other.
+
+   Do not trust the binary because it linked. Compile the small programs with it and compare against
+   stage 0. Then build the six self-hosted suites with stage 1 instead of stage 0 and run them, which
+   exercises stage 1's code generator far harder than anything has so far.
+
+   Then measure stage 2 building stage 3. If it does not fit in memory, count what it allocates before
+   assuming a missing release: identical objects in power-of-two multiplicities are repeated work.
+   Gates: BOOT-2.
+I. **Remove the sources of nondeterminism.** Hash-ordered iteration, address-derived values,
    traversal-seeded counters, timestamps and absolute paths baked into artifacts. Each produces a
    difference that looks like a miscompile and is not, so audit the emitters before comparing
    anything. Gates: BOOT-12.
-5. **Establish the fixpoint.** Stage 2 compiles the same sources to a stage 3 byte-identical to
+J. **Establish the fixpoint.** Stage 2 compiles the same sources to a stage 3 byte-identical to
    stage 2. Gates: BOOT-3.
+K. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
+   `main` where its README records 8 MB. It did so before the ownership contract landed, so the
+   cause is older than step C.
 
-Deliberately **not** on this path, however real: the self-hosted mirrors of stage-0 lowering fixes
-the compiler's own sources never depend on (OPT-82, OPT-84), stage-0 defects those sources never
-reach (OPT-83 and the JSON view path), and exact-IR parity work for its own sake. File them, leave
-them. The ownership contract is the exception, and is on the path as step C above: it decides
-whether each later stage leaks, a stage 2 built by an unported stage 1 contains none of it, and
-leaving it unmirrored is what turned the shared parity fixtures red.
+   It is a plain program with a fixed input, which makes it bisectable in minutes: publish the
+   compiler at a commit (`publishcli.sh`, or `publishref.sh` for a commit that is not checked out) and
+   compare with `challenge_ab.sh`. Find the commit, reduce the program to the loop that grows, and fix
+   the placement. If the footprint cannot be restored without giving up a guarantee the contract
+   needs, record why and what it would take instead.
+L. **Split the oversized self-hosted source files.** `CoreLowering.ash` is about 24,900 lines, more
+   than five times the next largest file (`TypeInference.ash` at 4,400, `Parser.ash` at 3,700,
+   `IrOptimizer.ash` at 3,000).
 
-### Next: make it a compiler anyone would use
+   Split it into `Lowering.<Concern>.ash` modules, the way the backend's code generator is already
+   split into `IrCodegen.<Concern>.ash`. Name each module after the stage-0 `Lowering.<Concern>.cs`
+   partial it mirrors wherever one exists, so the mirror rule's "where does this go in stage 1" has
+   one obvious answer. Scoping is sequential and module imports are acyclic, so the cut follows the
+   dependency order the file already has: the state record and its accessors first, then the
+   emitters, then the concerns that use them.
 
-6. **Full corpus.** Compile and run the compiler, standard library, examples and the whole test
+   This is a move and nothing else. Every shared fixture and the whole-program parity suite stay
+   byte-identical, and stage 1's compile time and peak memory do not regress. It comes after the leak
+   work rather than during it, because a file this size that is also open on a long-lived branch
+   turns every move into a merge conflict. Once the pattern is settled, apply it to any other
+   self-hosted file of several thousand lines.
+M. **Verify the language server and the debug adapter against the current codebase.** The memory
+   work changed the lowering that `Ashes.Lsp` consumes and the code `Ashes.Dap` debugs, and the
+   split moved most of the self-hosted lowering between files. Their own test suites exercise
+   neither end to end: `Ashes.Lsp.Tests` drives the server's handlers, not an editor session, and
+   the adapter has no suite that steps through a program built by the current compiler.
+
+   Open the repository's own sources, the split modules included, and the examples in the VS Code
+   extension, and check diagnostics, hover, completion and formatting for errors in the server's log.
+   Then debug a program built with `--debug` through the adapter under gdb and under lldb
+   (breakpoints, step, locals, a let binding's own position), and check the adapter's log the same
+   way. Anything found is fixed before step N, with a test at the layer that would have caught it.
+N. **Full corpus.** Compile and run the compiler, standard library, examples and the whole test
    corpus with the self-hosted compiler. Gates: BOOT-4, the TestRunner items (TR-1..TR-9).
-7. **Command-line completion.** Option parity for `compile` and `run`, the reporting flags, and the
+O. **Command-line completion.** Option parity for `compile` and `run`, the reporting flags, and the
    remaining commands. Gates: CLI-1..CLI-12.
-8. **The rest of the port.** Trait and capability physical lowering, the async and task arc,
+P. **The rest of the port.** Trait and capability physical lowering, the async and task arc,
    optimizer and performance parity, sockets and the vendored bitcode payloads. These are ordered
    among themselves by the checklist's own dependencies, not by urgency to the bootstrap.
-9. **Targets beyond linux-x64, and debug information.** Object-parsing generalization first, then
+Q. **Targets beyond linux-x64, and debug information.** Object-parsing generalization first, then
    the remaining three targets. Gates: the linker items (LNK-*) and the code-generation items.
-10. **Editor and debugging tooling.** Language server, debug adapter, the fuzzing runner. These
-    follow the compiler and gate nothing before it.
+R. **Editor and debugging tooling.** Language server, debug adapter, the fuzzing runner. These
+   follow the compiler and gate nothing before it.
+S. **Prove it in the open.** Bootstrap, parity, packaging and release jobs in both local and hosted
+   continuous integration, and the performance acceptance gate. Gates: BOOT-7, BOOT-8, BOOT-9.
+T. **Retire the .NET toolchain from the default and release paths**, keeping its sources buildable
+   and tested as the permanent stage-0 and behavioral reference. Only then consider any source-tree
+   reorganization, as its own mechanical change. Gates: BOOT-10, BOOT-11.
 
-### Last: replace the default toolchain
+Deliberately **not** on the path to the fixpoint (F to J), however real, and so filed and left alone:
+- the self-hosted mirrors of stage-0 lowering fixes the compiler's own sources never depend on
+  (OPT-82, OPT-84);
+- stage-0 defects those sources never reach (OPT-83 and the JSON view path);
+- exact-IR parity work for its own sake.
 
-11. **Prove it in the open.** Bootstrap, parity, packaging and release jobs in both local and hosted
-    continuous integration, and the performance acceptance gate. Gates: BOOT-7, BOOT-8, BOOT-9.
-12. **Retire the .NET toolchain from the default and release paths**, keeping its sources buildable
-    and tested as the permanent stage-0 and behavioral reference. Only then consider any source-tree
-    reorganization, as its own mechanical change. Gates: BOOT-10, BOOT-11.
+The ownership contract is the exception, and is on the path as step C above. It decides whether each
+later stage leaks, a stage 2 built by an unported stage 1 contains none of it, and leaving it
+unmirrored is what turned the shared parity fixtures red.
 
 ## How to work on this
 
@@ -1951,7 +1974,7 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
     finalization in stage 0 and is zeroed by this lowering. Mirror the rest and return the
     fixtures to the comparison.
   - [ ] **OPT-85** Cut what the arena accumulates while the optimizer runs, so a whole package fits.
-    This is the live memory task and what step 2 of the work order waits on. Last measured
+    This is the live memory task and what step G of the work order waits on. Last measured
     (2026-09-14, after OPT-80h): `TypeResolution` peaks at 7.9 GiB in 2.9 s, and the semantics
     package dies at a 30 GiB cap in 3.5 s; one module through the full pipeline costs roughly 9 GB
     and two and a half minutes (2026-09-15). Half of that is now gone — the quadratic association
