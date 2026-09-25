@@ -521,7 +521,7 @@ public sealed partial class Lowering
         int siblingOrdinal,
         int accumulatorOrdinal,
         TypeRef accumulatorType)
-        => CallResultMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal))
+        => TypeMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal), instantiated: false)
             && (tco.SelfCallParameterFlow is not { } flow
                 || (flow.TryGetValue(siblingOrdinal, out HashSet<int>? sources) && sources.Contains(accumulatorOrdinal)));
 

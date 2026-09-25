@@ -14215,6 +14215,12 @@ public sealed partial class Lowering
     // unresolved variable or a rigid type parameter stands for a type that could be anything, and a
     // function value can have captured anything, so both answer yes.
     private bool CallResultMayContainArgumentType(TypeRef resultType, TypeRef argumentType, HashSet<string> expandedTypeNames)
+        => TypeMayContainArgumentType(resultType, argumentType, expandedTypeNames, instantiated: true);
+
+    // A named type's fields are read at its instantiation (`instantiated`), so a field of its own
+    // type parameter is the argument in its place; the loop placement's sibling question reads them
+    // as declared, where such a field may hold a value of any type.
+    private bool TypeMayContainArgumentType(TypeRef resultType, TypeRef argumentType, HashSet<string> expandedTypeNames, bool instantiated)
     {
         TypeRef pruned = Prune(resultType);
         if (pruned is TypeRef.TVar or TypeRef.TTypeParam or TypeRef.TFun
@@ -14225,7 +14231,7 @@ public sealed partial class Lowering
 
         foreach (TypeRef component in StructuralComponentTypes(pruned))
         {
-            if (CallResultMayContainArgumentType(component, argumentType, expandedTypeNames))
+            if (TypeMayContainArgumentType(component, argumentType, expandedTypeNames, instantiated))
             {
                 return true;
             }
@@ -14241,9 +14247,20 @@ public sealed partial class Lowering
         }
 
         return named.Symbol.Constructors.Any(constructor =>
-            constructor.ParameterTypes.Any(field =>
-                CallResultMayContainArgumentType(field, argumentType, expandedTypeNames)));
+            Enumerable.Range(0, constructor.Arity).Any(index =>
+                TypeMayContainArgumentType(
+                    InstantiatedFieldType(constructor, index, named, instantiated),
+                    argumentType,
+                    expandedTypeNames,
+                    instantiated)));
     }
+
+    private TypeRef InstantiatedFieldType(ConstructorSymbol constructor, int index, TypeRef.TNamedType named, bool instantiated)
+        => instantiated
+            && Environment.GetEnvironmentVariable("GRC_NO_FIELDINSTANCE") is null
+            && named.TypeArgs.Count == named.Symbol.TypeParameters.Count
+                ? InstantiateConstructorParameterType(constructor, index, named)
+                : constructor.ParameterTypes[index];
 
     // The types structurally reachable from a type without expanding a named type's declaration.
     private static IEnumerable<TypeRef> StructuralComponentTypes(TypeRef type)

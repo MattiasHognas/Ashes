@@ -2956,6 +2956,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_loop_parameter_handed_to_helper_returning_optional_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop hands its reference-counted list parameter to a helper returning `Maybe(Int)`. The
+        // retain taken for the call is released when the callee did not adopt it and its result
+        // cannot hold the list; reading the generic `Maybe`'s field as a value of any type kept the
+        // retain, one list cell per iteration.
+        int[] roundCounts = [4000, 32000, 256000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopParameterHandedToOptionalHelperProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop parameter handed to a helper returning an optional", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_arena_loop_parameter_retained_successor_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10195,6 +10220,38 @@ public sealed class LinuxBackendCoverageTests
         let quantified = [1, 2, 3, 4, 5, 6, 7, 8]
 
         """;
+
+    private static string BuildLoopParameterHandedToOptionalHelperProgram(int rounds)
+        => $$"""
+            type State =
+                | slot: Maybe(Int)
+                | names: List(Str)
+
+            let headSlotOf (slots: List(Int)) =
+                match slots with
+                    | slot :: _rest -> Some(slot)
+                    | [] -> None
+
+            let restSlotsOf (slots: List(Int)) =
+                match slots with
+                    | _slot :: rest -> rest
+                    | [] -> []
+
+            let recursive loop (items: List(Int)) (slots: List(Int)) (state: State) =
+                match items with
+                    | [] ->
+                        match state.slot with
+                            | Some(s) -> s
+                            | None -> 0
+                    | _ :: rest -> loop(rest)(restSlotsOf(slots))(state with slot = headSlotOf(slots))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + loop([1, 2, 3, 4, 5, 6])([1, 2, 3, 4, 5, 6])(State(slot = None, names = ["a"])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
 
     private static string BuildArenaLoopParameterRetainedSuccessorProgram(int rounds)
         => SubstitutionPreludeSource + $$"""
