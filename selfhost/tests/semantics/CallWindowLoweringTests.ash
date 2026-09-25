@@ -266,14 +266,13 @@ let expectConcatCarriesRuntimeFlag unit =
 
 // A generic callee's list result over records (`mapAll(toItem)([1, 2, 3])`) has no call
 // copy-out, so the program entry deep-copies it out of the call window through the
-// `rc_normalize_list` walk, unconditionally since the call read no returns flag, and the
-// consumed argument is released outright after it, matching stage 0 instruction for
-// instruction. Locations are left out: stage 0 tags the closure construction of a top-level
-// `let` with its declaration span, which the self-hosted lowering does not attach yet, and the
-// same gap keeps the whole program (the synthesized copier and epilogue of `toItem`) out of the
-// parity runner. Labels are compared by their order within the entry: `mapAll`'s helper is
-// lowered with tail-modulo-constructor here and without it by stage 0 (OPT-63), and its extra
-// labels shift the program-wide numbering of every label after it.
+// `rc_normalize_list` walk, and the consumed argument is released outright after it, matching
+// stage 0 instruction for instruction. `mapAll` binds its recursive call before consing onto
+// it, so it is no tail-modulo-constructor producer and stage 0 does not route the call to an
+// element specialization, which the self-hosted lowering does not have. Locations are left
+// out: stage 0 tags the closure construction of a top-level `let` with its declaration span,
+// which the self-hosted lowering does not attach yet, and the same gap keeps the whole program
+// out of the parity runner. Labels are compared by their order within the entry.
 let expectGenericListResultDeepCopyMatchesStageZero unit =
     "generic_list_result_deep_copy"
     |> loweredFixtureLines

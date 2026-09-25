@@ -475,6 +475,26 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    class, about 12,000 leaked lowering-state records (76 MB), is not that one: folding the one such
    update the census pointed at into a single helper changed neither the probe nor the leaked-state
    count of a four-function program, so where those records come from is still open.
+
+   **Class C, closed for records.** Stage 1 threads most of its state through single-constructor
+   records a recursive group passes between siblings (`ParserState`, `ResultReachState`, `Token`),
+   and those records were not contract types: the normalizer could copy them inline, so they never
+   got an owned slot, a dropper or an owned-result bit, and every sibling result was the C shape.
+   Such a record (one constructor, a heap child, not recursive) is now a contract type, copied by its
+   normalization helper and released by a per-type dropper (`__rcdrop_record_N`); the rules are in
+   [architecture.md](../internals/architecture.md#borrowed-parameters-owned-results). Admitting all
+   134 of them at once first made the probe worse (1741 MB against 902 MB), for two reasons found on
+   the real parser run in a loop. A group sibling's result type is unresolved where the call is
+   emitted, so the call asked for an arena result: the callee deep-copied its `(X, ParserState)`
+   pair, token list included, and the caller copied it back, once per call. The request is now
+   withdrawn once the result turns out to be a contract type. And a `let` whose body is a normalized
+   join lost that fact on the reload after its window, so the function retained its result a second
+   time and every consumed pair leaked. With both fixed the module probe peaks at 660 MB, down from
+   902 MB, in the same 76 s. Making the records contract types also multiplied the back-edge drops in
+   stage 1's large folds (every owned slot at every arm's back edge, 38,900 IR instructions for
+   `foldLoop`); a back edge now skips the slots of a sibling arm of a join it is inside, which one
+   iteration never both runs, and the stage-0 compile of stage 1 is back to 66 s. Stage 1 mirrors all
+   of it, and the whole-program parity suite passes.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
