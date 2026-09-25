@@ -12503,6 +12503,8 @@ type CoreCallStage =
     // The result was normalized into an owned value on both of its branches, so it holds a
     // handed-over argument only as itself.
     | resultNormalizedOwned: Bool
+    // The result is one of the contract's types, kept in an owned slot (stage 0's `generalRcResult`).
+    | resultGeneralRc: Bool
 
 let callStageOf (lowered: LoweredCoreValue) =
     CoreCallStage(
@@ -12511,7 +12513,8 @@ let callStageOf (lowered: LoweredCoreValue) =
         resultDeepCopied = false,
         resultNormalizedOwned = false,
         consumedArguments = [],
-        resultFlagTemp = -1
+        resultFlagTemp = -1,
+        resultGeneralRc = false
     )
 
 // The argument position of the application `arity` stages from the end of the spine.
@@ -13196,7 +13199,8 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                         resultFlagTemp = resultFlagTemp,
                                         resultNormalized = false,
                                         resultDeepCopied = false,
-                                        resultNormalizedOwned = resultNormalizedOwned
+                                        resultNormalizedOwned = resultNormalizedOwned,
+                                        resultGeneralRc = false
                                     )
 
 // A callee whose own scheme leaves a parameter quantified is compiled once for every
@@ -13840,11 +13844,16 @@ let handedOverReleaseGuard (context: CoreCallContext) (resultType: SemanticType)
 // The generic list deep copy rebuilds every element and its owned parts on the arena branch of
 // the result flag, so the copied result shares nothing with a handed-over argument either: the
 // reference handed to the callee is released where the copy ran.
+// A result of the contract's types is owned by the caller on every path, so the release is not
+// guarded by the result-ownership bit.
 let deepCopiedResultSevers (stage: CoreCallStage) (guard: (Bool, Int)) =
     match guard with
         | (false, _flagTemp) ->
             if stage.resultDeepCopied
-            then (true, stage.resultFlagTemp)
+            then
+                (true, if stage.resultGeneralRc
+                then -1
+                else stage.resultFlagTemp)
             else guard
         | _ -> guard
 
@@ -14198,7 +14207,8 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                         then
                             allocated
                             |> lowerGeneralRcCallResult(context)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)
-                            |> closedCallStage(stage)(false)(false)
+                            |> closedCallStage(stage)(true)(true)
+                            |> (given (closed: CoreCallStage) -> closed with resultGeneralRc = true)
                         else
                             match (callCopyOutOf(semanticType)(allocated), flagTemp >= 0) with
                                 | (Some(copyOut), true) ->
