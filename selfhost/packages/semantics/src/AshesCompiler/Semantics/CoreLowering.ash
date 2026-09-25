@@ -21692,6 +21692,16 @@ let failedTailSelfCallArguments state error =
         error = Some(error)
     )
 
+// Built outside the argument loop: a record the loop's exit builds around its own state parameter
+// keeps a reference to it that nothing releases.
+let loweredTailSelfCallArguments (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
+    CoreTailSelfCallArguments(
+        state = state,
+        temps = reverse(reversedTemps),
+        argumentTypes = reverse(reversedTypes),
+        error = None
+    )
+
 // The request a tail self-call argument is lowered under: the loop function's parameter type,
 // the children transfer, and — for a parameter every self-call grows by one cons cell (stage 0's
 // `AffineConsList` request, `OwnedRuntime(List)`) — a runtime list, so the cell is allocated on
@@ -21771,13 +21781,7 @@ let restSlotsOf (slots: List(Int)) =
 
 let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (ordinal: Int) (loop: CoreTcoLoop) (reservations: List((Int, Int, Int))) functionType lower (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
     match arguments with
-        | [] ->
-            CoreTailSelfCallArguments(
-                state = state,
-                temps = reverse(reversedTemps),
-                argumentTypes = reverse(reversedTypes),
-                error = None
-            )
+        | [] -> loweredTailSelfCallArguments(state)(reversedTemps)(reversedTypes)
         | argument :: rest ->
             match ensureFunctionType(functionType)(state) with
                 | FunctionTypeResolution { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
