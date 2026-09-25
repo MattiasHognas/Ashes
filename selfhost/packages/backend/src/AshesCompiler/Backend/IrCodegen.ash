@@ -279,10 +279,18 @@ let recursive declareLiftedFunctions module_ closureFnType functions =
 
 // Allocates one `i64` slot per local, `0..count-1`, and returns the fixed `IrLocal -> LLVMValueRef`
 // mapping every `StoreLocal`/`LoadLocal` in the function looks up by index.
+// Every local slot starts at zero, as stage 0's `EmitFunctionBodyAllocateSlots` stores: lowering
+// reads a slot no path may have stored yet (an owned call-result slot released at a loop's exit or
+// back edge is tested against zero first), so an uninitialized slot is garbage it would release.
 let recursive allocateLocalSlots builder i64 count index =
     if index >= count
     then []
-    else (index, buildAlloca(builder)(i64)("local" + Ashes.Text.fromInt(index))) :: allocateLocalSlots(builder)(i64)(count)(index + 1)
+    else
+        let slot = buildAlloca(builder)(i64)("local" + Ashes.Text.fromInt(index))
+        in
+            let _ =
+                buildStore(builder)(constInt(i64)(0u64)(false))(slot)
+            in (index, slot) :: allocateLocalSlots(builder)(i64)(count)(index + 1)
 
 let recursive collectLabelNames instructions =
     match instructions with
@@ -1661,13 +1669,13 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
                                         let _ =
                                             localSlots
                                             |> lookupIndexed(0)
                                             |> buildStore(builder)(getParam(functionValue)(0u32))
                                         in
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                             let _ =
                                                 localSlots
                                                 |> lookupIndexed(1)
@@ -1697,13 +1705,13 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         in Unit
                                         else Unit
                                     in
+                                        // Every argument string and cons cell comes out of the
+                                        // arena, so the walk follows the first chunk's mapping.
                                         let _ =
                                             if isEntry
                                             then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
                                             else Unit
                                         in
-                                        // Every argument string and cons cell comes out of the
-                                        // arena, so the walk follows the first chunk's mapping.
                                             let _ =
                                                 if isEntry && mc.moduleUsesProgramArgs
                                                 then

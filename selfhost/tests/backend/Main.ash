@@ -2968,6 +2968,39 @@ let testRunStaticExecutableForRealIrMultiParamGenericTypeModule unit =
                                                         let _ = test.assertEqual("7")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// A loop threading a map through its generic setter's owned result tests its owned result slots
+// against zero at the back edge and at the exit, including a slot no path has stored yet (one
+// round leaves the predecessor slot unwritten). The slots start at zero, as stage 0's backend
+// makes them; an uninitialized slot is stack garbage the loop would release, which hung this
+// program. The run is bounded by `timeout` so a hang fails the test instead of the suite.
+let unwrittenLoopSlotSource = "type Tree(K, V) =\n    | Empty\n    | Node(Int, Tree, K, V, Tree)\n\nlet height map =\n    match map with\n        | Empty -> 0\n        | Node(nodeHeight, _left, _key, _value, _right) -> nodeHeight\n\nlet makeNode left key value right = Node(height(left) + height(right) + 1)(left)(key)(value)(right)\n\nlet setInt (newKey: Int) newValue =\n    (let recursive go map =\n        match map with\n            | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)\n            | Node(_height, left, key, value, right) ->\n                if newKey == key\n                then makeNode(left)(key)(newValue)(right)\n                else\n                    if newKey < key\n                    then\n                        makeNode(go(left))(key)(value)(right)\n                    else\n                        right\n                        |> go\n                        |> makeNode(left)(key)(value)\n    in go)\n\nlet recursive size (map: Tree(Int, Bool)) =\n    match map with\n        | Empty -> 0\n        | Node(_h, left, _k, _v, right) -> size(left) + 1 + size(right)\n\nlet recursive keysOf (n: Int) (keys: Tree(Int, Bool)) =\n    if n == 0\n    then keys\n    else\n        keys\n        |> setInt(n)(true)\n        |> keysOf(n - 1)\n\nEmpty\n|> keysOf(1)\n|> size\n|> Ashes.IO.print"
+
+let buildRealIrUnwrittenLoopSlotModule name context = codegenOptimizedRealSource(unwrittenLoopSlotSource)(name)(context)
+
+let testRunStaticExecutableForRealIrUnwrittenLoopSlotModule unit =
+    match emitModule(buildRealIrUnwrittenLoopSlotModule)("selfhostBackendRunUnwrittenLoopSlot")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunUnwrittenLoopSlot") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_unwritten_loop_slot_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_unwritten_loop_slot_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("/usr/bin/timeout")(["10", "./selfhost_backend_unwritten_loop_slot_e2e"]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("the loop over an unwritten owned slot printed nothing (crashed or hung)")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("1")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 let testRunStaticExecutableForRealIrMatchSomeModule unit =
     match emitModule(buildRealIrMatchSomeModule)("selfhostBackendRunMatchSome")(objectFileType) with
         | Error(message) -> test.fail(message)
@@ -5488,6 +5521,7 @@ let run shipped =
     |> testRunStaticExecutableForRealIrStringConcatModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForSwitchTagModule
+    |> testRunStaticExecutableForRealIrUnwrittenLoopSlotModule
     |> testRunStaticExecutableForRealIrRecordFieldModule
     |> testRunStaticExecutableForRealIrMultiConstructorModule
     |> testRunStaticExecutableForRealIrGenericTypeModule
