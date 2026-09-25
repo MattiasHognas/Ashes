@@ -89,7 +89,6 @@ internal sealed class IrInvariantVerifier
 
         Dictionary<string, int> labels = new(StringComparer.Ordinal);
         HashSet<int> reuseTokens = [];
-        Dictionary<int, int> reuseTokenConsumers = [];
         for (int index = 0; index < function.Instructions.Count; index++)
         {
             IrInst instruction = function.Instructions[index];
@@ -133,20 +132,10 @@ internal sealed class IrInvariantVerifier
                 case IrInst.AllocReusing reuse when !reuseTokens.Contains(reuse.TokenTemp):
                     errors.Add($"Function '{function.Label}' consumes unknown reuse token %{reuse.TokenTemp}.");
                     break;
-                case IrInst.AllocReusing reuse:
-                    reuseTokenConsumers[reuse.TokenTemp] = reuseTokenConsumers.GetValueOrDefault(reuse.TokenTemp) + 1;
-                    break;
             }
         }
 
-        foreach (int token in reuseTokens)
-        {
-            int consumers = reuseTokenConsumers.GetValueOrDefault(token);
-            if (consumers > 1)
-            {
-                errors.Add($"Function '{function.Label}' reuse token %{token} has {consumers} consumers; expected at most one.");
-            }
-        }
+        VerifyReuseTokensConsumedOncePerPath(function, labels, errors);
 
         VerifyLocalMetadata(function, function.LocalNames?.Keys, "name", errors);
         VerifyLocalMetadata(function, function.LocalTypes?.Keys, "type", errors);
@@ -158,6 +147,53 @@ internal sealed class IrInvariantVerifier
         IrFunction function,
         IReadOnlyDictionary<string, int> labels,
         List<string> errors)
+    {
+        (HashSet<int>[] input, bool[] reachable) = ConsumedOnSomePath(function, labels, ConsumedSource);
+        for (int index = 0; index < function.Instructions.Count; index++)
+        {
+            if (!reachable[index])
+            {
+                continue;
+            }
+            foreach (int used in Sources(function.Instructions[index]))
+            {
+                if (input[index].Contains(used))
+                {
+                    errors.Add($"Function '{function.Label}' instruction {index} '{function.Instructions[index].GetType().Name}' uses consumed temp %{used}.");
+                }
+            }
+        }
+    }
+
+    // A reuse token is one dead cell, so no path may consume it twice. Branches that each rebuild
+    // the cell (the arms of a match or an `if`) consume it once each, on disjoint paths; reading
+    // the token's old fields after the consumption is allowed.
+    private static void VerifyReuseTokensConsumedOncePerPath(
+        IrFunction function,
+        IReadOnlyDictionary<string, int> labels,
+        List<string> errors)
+    {
+        (HashSet<int>[] input, bool[] reachable) = ConsumedOnSomePath(
+            function,
+            labels,
+            instruction => instruction is IrInst.AllocReusing reuse ? reuse.TokenTemp : null);
+        for (int index = 0; index < function.Instructions.Count; index++)
+        {
+            if (reachable[index]
+                && function.Instructions[index] is IrInst.AllocReusing reuse
+                && input[index].Contains(reuse.TokenTemp))
+            {
+                errors.Add($"Function '{function.Label}' instruction {index} consumes reuse token %{reuse.TokenTemp} a second time on one path.");
+            }
+        }
+    }
+
+    // A forward may-analysis: the temps some path to each instruction has consumed (by
+    // <paramref name="consumed"/>) and not redefined since.
+    private static (HashSet<int>[] Input, bool[] Reachable) ConsumedOnSomePath(
+        IrFunction function,
+        IReadOnlyDictionary<string, int> labels,
+        Func<IrInst, int?> consumed)
     {
         int count = function.Instructions.Count;
         List<int>[] successors = BuildSuccessors(function, labels);
@@ -190,9 +226,9 @@ internal sealed class IrInvariantVerifier
                 }
                 HashSet<int> nextOutput = new(nextInput);
                 nextOutput.ExceptWith(Destinations(function.Instructions[index]));
-                if (ConsumedSource(function.Instructions[index]) is int consumed)
+                if (consumed(function.Instructions[index]) is int consumedTemp)
                 {
-                    nextOutput.Add(consumed);
+                    nextOutput.Add(consumedTemp);
                 }
                 if (!input[index].SetEquals(nextInput) || !output[index].SetEquals(nextOutput))
                 {
@@ -204,20 +240,7 @@ internal sealed class IrInvariantVerifier
         }
         while (changed);
 
-        for (int index = 0; index < count; index++)
-        {
-            if (!reachable[index])
-            {
-                continue;
-            }
-            foreach (int used in Sources(function.Instructions[index]))
-            {
-                if (input[index].Contains(used))
-                {
-                    errors.Add($"Function '{function.Label}' instruction {index} '{function.Instructions[index].GetType().Name}' uses consumed temp %{used}.");
-                }
-            }
-        }
+        return (input, reachable);
     }
 
     private static int? ConsumedSource(IrInst instruction) => instruction switch
