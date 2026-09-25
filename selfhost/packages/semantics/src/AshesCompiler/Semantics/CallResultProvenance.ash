@@ -200,9 +200,9 @@ let recursive functionsByKey (functions: List(ProvenanceFunction)) (byKey: MapTr
     match functions with
         | [] -> byKey
         | (ProvenanceFunction { key = key } as function) :: rest ->
-            byKey
-            |> Ashes.Collection.Map.upsertStr(key)(function)(given (existing) -> existing)
-            |> functionsByKey(rest)
+            (match Ashes.Collection.Map.getStr(key)(byKey) with
+                | Some(_existing) -> byKey
+                | None -> Ashes.Collection.Map.setStr(key)(function)(byKey)) |> functionsByKey(rest)
 
 let lookupFunction (key: Str) (functions: MapTree(Str, ProvenanceFunction)) = Ashes.Collection.Map.getStr(key)(functions)
 
