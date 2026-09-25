@@ -1,0 +1,36 @@
+// A loop whose record state is updated at its self call with a call's fresh result in one field, and
+// rebuilt as a literal at another self call with a fresh result in the same field. The record is of
+// the contract's types, so both cells stay in the arena and each fresh list goes to an owned slot the
+// back edge releases; the literal's copy releases only the field it retained, not the one the slot
+// owns.
+type State =
+    | bindings: List(Str)
+    | label: Str
+    | counter: Int
+
+let grow (value: Int) (old: List(Str)) =
+    if value % 3 == 0
+    then ["x", "y"]
+    else "z" :: old
+
+let recursive count (items: List(Str)) (total: Int) =
+    match items with
+        | [] -> total
+        | _ :: rest -> count(rest)(total + 1)
+
+let recursive lowerItems (items: List(Int)) (state: State) =
+    match items with
+        | [] -> state.counter + count(state.bindings)(0)
+        | value :: rest ->
+            if value % 2 == 0
+            then lowerItems(rest)((state with bindings = grow(value)(state.bindings), counter = state.counter + 1))
+            else lowerItems(rest)(State(bindings = grow(value)(state.bindings), label = state.label, counter = state.counter + 1))
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else rounds(n - 1)(total + lowerItems([1, 2, 3, 4, 5, 6])(State(bindings = ["a", "b"], label = "s", counter = 0)))
+
+0
+|> rounds(10)
+|> Ashes.IO.print

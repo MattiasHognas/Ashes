@@ -233,6 +233,10 @@ let recursive printEach (lines: List(Str)) =
 // tco_list_parameter_resolved_by_back_edge walks a list into an unannotated accumulator with
 // no operator in the body: the accumulator's type is a variable at the loop entry, so its
 // active flag is allocated where the back edge resolves it, after the arm's pattern locals.
+// record_update_fresh_call_field_owned_by_slot stores a call's fresh result into a field of a
+// contract record, once through a record update and once through a literal, both at a self call:
+// each cell stays in the arena and hands the fresh value to an owned slot the back edge releases,
+// and the literal's copy leaves that field to the slot.
 let fixtures =
     [
         "simple_arith",
@@ -304,7 +308,8 @@ let fixtures =
         "parameter_released_behind_pair_result",
         "closure_environment_normalizes_record_of_list",
         "fresh_argument_released_behind_unproven_result",
-        "tco_state_record_and_inline_list_beside_recursive_list"
+        "tco_state_record_and_inline_list_beside_recursive_list",
+        "record_update_fresh_call_field_owned_by_slot"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

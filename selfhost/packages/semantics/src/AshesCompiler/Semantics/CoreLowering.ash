@@ -59,6 +59,7 @@ import AshesCompiler.Semantics.HelperInlining.isInlinableHelperValue
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
+import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.FunctionOrigins.createAdtNormalizerOrigin
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
@@ -7400,19 +7401,54 @@ let constructionWordOf (construction: Maybe(Int)) (offsetBytes: Int) (state: Cor
         | Some(cellTemp) -> constructionWordSource(cellTemp)(offsetBytes)(state.reversedInstructions)
         | None -> None
 
+// Whether `temp` was stored into one of `slots` after its definition: the walk runs from the most
+// recent instruction back and stops at the instruction defining `temp`.
+let recursive storesIntoSlotOf (temp: Int) (slots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: rest ->
+            if source == temp && ownedSlotListed(slot)(slots)
+            then true
+            else storesIntoSlotOf(temp)(slots)(rest)
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getDefinedTemps
+            |> containsInt(temp)
+            then false
+            else storesIntoSlotOf(temp)(slots)(rest)
+and ownedSlotListed (slot: Int) (slots: List((Int, SemanticType))) =
+    match slots with
+        | [] -> false
+        | (candidate, _semanticType) :: rest -> candidate == slot || ownedSlotListed(slot)(rest)
+
+// Whether the constructor argument stored as `stored` went to an owned slot of the function being
+// lowered rather than to the arena cell storing it (stage 0's `_ownedSlotConstructorArguments`):
+// the slot releases the value, so a release of the cell's children skips that field.
+let storedInOwnedSlot (stored: Maybe(Int)) (state: CoreLoweringState) =
+    match stored with
+        | Some(temp) ->
+            match ownedSlotsOfActiveFunction(state) with
+                | [] -> false
+                | owned -> storesIntoSlotOf(temp)(owned)(state.reversedInstructions)
+        | None -> false
+
 // The release of one child the dying successor holds (stage 0's
-// `EmitRuntimeManagedTcoSourceChildRelease`): a child the construction built as a fresh
-// aggregate literal is an arena cell rather than a reference, so only the references the
-// literal itself holds are released, recursively; any other child is a reference the
-// construction retained and is released whole, unless the retain the construction stored
-// (`stored`) was left without effect, when the cell only borrowed the child.
+// `EmitRuntimeManagedTcoSourceChildRelease`): a child the construction handed to an owned slot is
+// that slot's to release; a child the construction built as a fresh aggregate literal is an arena
+// cell rather than a reference, so only the references the literal itself holds are released,
+// recursively; any other child is a reference the construction retained and is released whole,
+// unless the retain the construction stored (`stored`) was left without effect, when the cell
+// only borrowed the child.
 let recursive emitSourceChildRelease (childTemp: Int) (childType: SemanticType) (expression: Maybe(Expr)) (stored: Maybe(Int)) (state: CoreLoweringState) =
     match expression with
         | Some(literal) ->
-            if isFreshAggregateLiteral(literal)(state)
-            then
-                emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(stored)(state)
-            else emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
+            if storedInOwnedSlot(stored)(state)
+            then state
+            else
+                if isFreshAggregateLiteral(literal)(state)
+                then
+                    emitLiteralChildrenRelease(childTemp)(childType)(unspanArgument(literal))(stored)(state)
+                else emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
         | None -> emitStoredSourceChildRelease(childTemp)(childType)(stored)(state)
 and emitStoredSourceChildRelease (childTemp: Int) (childType: SemanticType) (stored: Maybe(Int)) (state: CoreLoweringState) =
     match stored with
@@ -18893,6 +18929,70 @@ let retainConstructorLoopParameterArguments arguments lowered =
                 | (marked, markedTemps) -> lowered with state = marked, temps = markedTemps
         | _ -> lowered
 
+// Stage 0's `IsFreshOwnedConstructorArgument`: a value produced by the argument expression itself
+// (not read from a binding) that is owned on the reference-counted heap. A self call's
+// placeholder result decides nothing about ownership.
+let recursive producesOwnValue (argument: Expr) =
+    match unspanArgument(argument) with
+        | ExprLet(_name, _value, body, _parameters, _annotation, _constraints) -> producesOwnValue(body)
+        | ExprVar(_name) -> false
+        | ExprQualifiedVar(_owner, _member) -> false
+        | _ -> true
+
+let isFreshOwnedConstructorArgument (argument: Expr) (temp: Int) (state: CoreLoweringState) =
+    producesOwnValue(argument) && isRuntimeTemp(temp)(state) && containsInt(temp)(stateBackEdgeDummyTemps(state)) == false
+
+// Stage 0's `CanNormalizeIntoOwnedRuntimeValue` for a constructor's own type.
+let normalizesIntoOwnedValue (semanticType: SemanticType) (state: CoreLoweringState) =
+    match ownedResultPlanOf(semanticType)(state) with
+        | Some(ScalarArgumentCopy) -> false
+        | Some(_plan) -> true
+        | None -> false
+
+// The records whose arena cell hands a fresh child over to an owned slot (stage 0's first branch
+// of `PlaceConstructorOwningFreshChild`, and `HandFreshRecordUpdateChildToOwnedSlot`): a value of
+// the contract's own types is passed borrowed, so its cell stays in the arena, and a record the
+// runtime cannot normalize has no reference-counted placement either.
+let handsFreshChildrenToOwnedSlots (resultType: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(resultType)(state) == false && (isGeneralRcValueType(resultType)(state) || normalizesIntoOwnedValue(resultType)(state) == false)
+
+// Stage 0's `HandFreshConstructorChildrenToOwnedSlots` for one argument: the arena cell never
+// releases what it holds, so a fresh reference-counted value stored into it goes to an owned slot
+// the function releases.
+let handFreshChildToOwnedSlot (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(semanticType)(state) || containsUnresolvedLayout(semanticType)(state) || isFreshOwnedConstructorArgument(argument)(temp)(state) == false
+    then state
+    else
+        match freshLocal(state) with
+            | FreshLocal { state = allocated, local = ownedSlot } ->
+                allocated
+                |> emit(StoreLocal(ownedSlot)(temp))
+                |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+
+let recursive handFreshChildrenToOwnedSlots (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, temps, semanticTypes) with
+        | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
+            state
+            |> handFreshChildToOwnedSlot(argument)(temp)(resolveType(state)(semanticType))
+            |> handFreshChildrenToOwnedSlots(restArguments)(restTemps)(restTypes)
+        | _ -> state
+
+let recursive anyFreshOwnedArgument (arguments: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
+    match (arguments, temps) with
+        | (argument :: restArguments, temp :: restTemps) -> isFreshOwnedConstructorArgument(argument)(temp)(state) || anyFreshOwnedArgument(restArguments)(restTemps)(state)
+        | _ -> false
+
+// A constructor whose arena cell would hold a fresh reference-counted value hands it to an owned
+// slot, ahead of the retains the constructor's preparation takes. A cell placed on the
+// reference-counted heap or on the stack, and a zero-cost constructor, own nothing of the kind.
+let handConstructorFreshChildren (layout: CoreConstructorLayout) arguments (resultType: SemanticType) (runtimeManaged: Bool) (stackAllocate: Bool) lowered =
+    match (layout, lowered) with
+        | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> lowered
+        | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
+            if runtimeManaged || stackAllocate || anyFreshOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false
+            then lowered
+            else lowered with state = handFreshChildrenToOwnedSlots(arguments)(temps)(semanticTypes)(state)
+        | _ -> lowered
+
 let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
     match (arguments, fieldTypes) with
         | (argument :: restArguments, fieldType :: restTypes) ->
@@ -18974,6 +19074,7 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                                             | (failedState, Some(error)) -> failure(failedState)(error)
                                             | (typedState, None) ->
                                                 (lowered with state = typedState)
+                                                |> handConstructorFreshChildren(layout)(arguments)(resultType)(runtimeManaged)(stackAllocate)
                                                 |> retainConstructorLoopParameterArguments(arguments)
                                                 |> retainRuntimeCellChildren(runtimeManaged)(arguments)
                                                 |> finishConstructorAllocation(arguments)(stackAllocate)(layout)(resultType)(runtimeManaged)
@@ -19625,7 +19726,19 @@ let loadUnchangedRecordField targetTemp targetSlot index tagless fieldType state
                         error = None
                     )
 
-let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless lower reversedTemps reversedTypes state =
+// Stage 0's `HandFreshRecordUpdateChildToOwnedSlot`: a record update builds its cell in the arena,
+// which never releases what it holds, so a fresh reference-counted value stored into an updated
+// field goes to an owned slot, as a constructor's does, for the same records.
+let handUpdatedFieldToOwnedSlot (expression: Expr) (fieldType: SemanticType) (handsOver: Bool) lowered =
+    match lowered with
+        | LoweredCoreValues { state = state, temps = temp :: _rest, error = None } ->
+            if handsOver
+            then
+                lowered with state = handFreshChildToOwnedSlot(expression)(temp)(resolveType(state)(fieldType))(state)
+            else lowered
+        | _ -> lowered
+
+let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless handsOver lower reversedTemps reversedTypes state =
     match (fieldNames, fieldTypes) with
         | ([], []) -> finishCoreValues(state)(reversedTemps)(reversedTypes)
         | (fieldName :: fieldRest, fieldType :: typeRest) ->
@@ -19646,6 +19759,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                         state
                         |> lower(expression)
                         |> finishUpdatedRecordField(fieldType)(reversedTemps)(reversedTypes)
+                        |> handUpdatedFieldToOwnedSlot(expression)(fieldType)(handsOver)
             in
                 match loweredField with
                     | LoweredCoreValues { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
@@ -19658,6 +19772,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                             targetSlot,
                             index + 1,
                             tagless,
+                            handsOver,
                             lower,
                             nextTemps,
                             nextTypes,
@@ -19670,7 +19785,7 @@ let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldType
         | (_layout, (failedState, Some(error))) -> failure(failedState)(error)
         | (CoreConstructorLayout { tagless = tagless }, (typedState, None)) ->
             typedState
-            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(0)(tagless)(lower)([])([])
+            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(0)(tagless)(runtimeManaged == false && handsFreshChildrenToOwnedSlots(resultType)(typedState))(lower)([])([])
             |> finishConstructorAllocation([])(false)(layout)(resultType)(runtimeManaged)
 
 let finishRecordUpdateShape layout fieldNames fields targetTemp targetSlot targetType lower shape =
