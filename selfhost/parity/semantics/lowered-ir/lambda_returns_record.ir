@@ -103,7 +103,7 @@ function lambda_0  [SourceFunction from label]
     Return                Source=20   (lambda_returns_record.ash:5:1)
 
 function _start_main  [ProgramEntry]
-  locals=20 temps=23
+  locals=20 temps=29
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (lambda_returns_record.ash:5:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (lambda_returns_record.ash:5:1)
@@ -159,5 +159,15 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=19
     LoadLocal             Target=22 Slot=18   (lambda_returns_record.ash:5:1)
+    LoadLocal             Target=23 Slot=8
+    LoadConstInt          Target=24 Value=0
+    CmpIntNe              Target=25 Left=23 Right=24
+    JumpIfFalse           CondTemp=25 Target=general_rc_owned_absent_14
+    IsReferenceCounted    Target=26 SourceTemp=23
+    JumpIfFalse           CondTemp=26 Target=general_rc_owned_absent_14
+    LoadConstInt          Target=27 Value=0
+    CallKnown             Target=28 FuncLabel=__rcdrop_record_3 EnvTemp=27 ArgTemp=23
+    StoreLocal            Slot=8 Source=24
+  general_rc_owned_absent_14:
     Return                Source=22
 

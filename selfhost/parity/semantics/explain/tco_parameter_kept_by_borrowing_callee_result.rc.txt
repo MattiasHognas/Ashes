@@ -204,8 +204,8 @@ Function: placed [lambda_1__scalarenv1]
 Function: _start_main
   Operations
     dup:                  0
-    drop:                 1
-    uniqueness checks:    0
+    drop:                 4
+    uniqueness checks:    2
     allocations:          6
     reused allocations:   0
     reuse tokens:         0

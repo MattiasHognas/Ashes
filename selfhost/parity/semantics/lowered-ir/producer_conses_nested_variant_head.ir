@@ -924,27 +924,27 @@ function lambda_10  [ClosureHelper from count]
     StoreLocal            Slot=2 Source=15   (producer_conses_nested_variant_head.ash:21:24)
     StoreLocal            Slot=1 Source=14   (producer_conses_nested_variant_head.ash:21:24)
     LoadLocal             Target=94 Slot=8
-    JumpIfFalse           CondTemp=94 Target=rc_tco_drop_inactive_120
+    JumpIfFalse           CondTemp=94 Target=rc_tco_drop_inactive_128
     StoreLocal            Slot=36 Source=26
-  rcdrop_list_121:
+  rcdrop_list_129:
     LoadLocal             Target=95 Slot=36
     LoadConstInt          Target=96 Value=0
     CmpIntNe              Target=97 Left=95 Right=96
-    JumpIfFalse           CondTemp=97 Target=rcdrop_list_end_123
+    JumpIfFalse           CondTemp=97 Target=rcdrop_list_end_131
     RcIsUnique            Target=98 SourceTemp=95
-    JumpIfFalse           CondTemp=98 Target=rcdrop_list_shared_122
+    JumpIfFalse           CondTemp=98 Target=rcdrop_list_shared_130
     LoadMemOffset         Target=99 BasePtr=95 OffsetBytes=0
     LoadConstInt          Target=100 Value=0
     CallKnown             Target=101 FuncLabel=__rcdrop_6 EnvTemp=100 ArgTemp=99
     LoadMemOffset         Target=102 BasePtr=95 OffsetBytes=8
     RcDrop                SourceTemp=95 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=36 Source=102
-    Jump                  Target=rcdrop_list_121
-  rcdrop_list_shared_122:
+    Jump                  Target=rcdrop_list_129
+  rcdrop_list_shared_130:
     RcDrop                SourceTemp=95 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_123
-  rcdrop_list_end_123:
-  rc_tco_drop_inactive_120:
+    Jump                  Target=rcdrop_list_end_131
+  rcdrop_list_end_131:
+  rc_tco_drop_inactive_128:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=35
     LoadConstInt          Target=103 Value=0
     StoreLocal            Slot=6 Source=103
@@ -1003,7 +1003,7 @@ function lambda_9  [SourceFunction from count]
     Return                Source=4   (producer_conses_nested_variant_head.ash:18:1)
 
 function _start_main  [ProgramEntry]
-  locals=13 temps=38
+  locals=15 temps=62
     LoadConstInt          Target=0 Value=0   (producer_conses_nested_variant_head.ash:10:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (producer_conses_nested_variant_head.ash:10:1)
     StoreLocal            Slot=0 Source=1   (producer_conses_nested_variant_head.ash:10:1)
@@ -1077,5 +1077,59 @@ function _start_main  [ProgramEntry]
     TextFromInt           Target=36 ValueTemp=35   (producer_conses_nested_variant_head.ash:23:16)
     PrintStr              Source=36   (producer_conses_nested_variant_head.ash:23:1)
     AllocAdt              Target=37 Tag=0 FieldCount=0   (producer_conses_nested_variant_head.ash:23:1)
+    LoadLocal             Target=38 Slot=9
+    LoadConstInt          Target=39 Value=0
+    CmpIntNe              Target=40 Left=38 Right=39
+    JumpIfFalse           CondTemp=40 Target=general_rc_owned_absent_120
+    IsReferenceCounted    Target=41 SourceTemp=38
+    JumpIfFalse           CondTemp=41 Target=general_rc_owned_absent_120
+    StoreLocal            Slot=13 Source=38
+  rcdrop_list_121:
+    LoadLocal             Target=42 Slot=13
+    LoadConstInt          Target=43 Value=0
+    CmpIntNe              Target=44 Left=42 Right=43
+    JumpIfFalse           CondTemp=44 Target=rcdrop_list_end_123
+    RcIsUnique            Target=45 SourceTemp=42
+    JumpIfFalse           CondTemp=45 Target=rcdrop_list_shared_122
+    LoadMemOffset         Target=46 BasePtr=42 OffsetBytes=0
+    LoadConstInt          Target=47 Value=0
+    CallKnown             Target=48 FuncLabel=__rcdrop_6 EnvTemp=47 ArgTemp=46
+    LoadMemOffset         Target=49 BasePtr=42 OffsetBytes=8
+    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=13 Source=49
+    Jump                  Target=rcdrop_list_121
+  rcdrop_list_shared_122:
+    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_123
+  rcdrop_list_end_123:
+    StoreLocal            Slot=9 Source=39
+  general_rc_owned_absent_120:
+    LoadLocal             Target=50 Slot=11
+    LoadConstInt          Target=51 Value=0
+    CmpIntNe              Target=52 Left=50 Right=51
+    JumpIfFalse           CondTemp=52 Target=general_rc_owned_absent_124
+    IsReferenceCounted    Target=53 SourceTemp=50
+    JumpIfFalse           CondTemp=53 Target=general_rc_owned_absent_124
+    StoreLocal            Slot=14 Source=50
+  rcdrop_list_125:
+    LoadLocal             Target=54 Slot=14
+    LoadConstInt          Target=55 Value=0
+    CmpIntNe              Target=56 Left=54 Right=55
+    JumpIfFalse           CondTemp=56 Target=rcdrop_list_end_127
+    RcIsUnique            Target=57 SourceTemp=54
+    JumpIfFalse           CondTemp=57 Target=rcdrop_list_shared_126
+    LoadMemOffset         Target=58 BasePtr=54 OffsetBytes=0
+    LoadConstInt          Target=59 Value=0
+    CallKnown             Target=60 FuncLabel=__rcdrop_6 EnvTemp=59 ArgTemp=58
+    LoadMemOffset         Target=61 BasePtr=54 OffsetBytes=8
+    RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=14 Source=61
+    Jump                  Target=rcdrop_list_125
+  rcdrop_list_shared_126:
+    RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_127
+  rcdrop_list_end_127:
+    StoreLocal            Slot=11 Source=51
+  general_rc_owned_absent_124:
     Return                Source=37
 

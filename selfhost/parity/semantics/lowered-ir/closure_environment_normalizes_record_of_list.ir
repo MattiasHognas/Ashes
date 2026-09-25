@@ -670,27 +670,27 @@ function lambda_13  [ClosureHelper from weigh]
     StoreLocal            Slot=2 Source=23   (closure_environment_normalizes_record_of_list.ash:21:50)
     StoreLocal            Slot=1 Source=22   (closure_environment_normalizes_record_of_list.ash:21:50)
     LoadLocal             Target=75 Slot=8
-    JumpIfFalse           CondTemp=75 Target=rc_tco_drop_inactive_77
+    JumpIfFalse           CondTemp=75 Target=rc_tco_drop_inactive_78
     StoreLocal            Slot=32 Source=34
-  rcdrop_list_78:
+  rcdrop_list_79:
     LoadLocal             Target=76 Slot=32
     LoadConstInt          Target=77 Value=0
     CmpIntNe              Target=78 Left=76 Right=77
-    JumpIfFalse           CondTemp=78 Target=rcdrop_list_end_80
+    JumpIfFalse           CondTemp=78 Target=rcdrop_list_end_81
     RcIsUnique            Target=79 SourceTemp=76
-    JumpIfFalse           CondTemp=79 Target=rcdrop_list_shared_79
+    JumpIfFalse           CondTemp=79 Target=rcdrop_list_shared_80
     LoadMemOffset         Target=80 BasePtr=76 OffsetBytes=0
     LoadConstInt          Target=81 Value=0
     CallKnown             Target=82 FuncLabel=__rcdrop_record_4 EnvTemp=81 ArgTemp=80
     LoadMemOffset         Target=83 BasePtr=76 OffsetBytes=8
     RcDrop                SourceTemp=76 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=32 Source=83
-    Jump                  Target=rcdrop_list_78
-  rcdrop_list_shared_79:
+    Jump                  Target=rcdrop_list_79
+  rcdrop_list_shared_80:
     RcDrop                SourceTemp=76 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_80
-  rcdrop_list_end_80:
-  rc_tco_drop_inactive_77:
+    Jump                  Target=rcdrop_list_end_81
+  rcdrop_list_end_81:
+  rc_tco_drop_inactive_78:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
     LoadConstInt          Target=84 Value=0
     StoreLocal            Slot=6 Source=84
@@ -794,7 +794,7 @@ function lambda_14  [SourceFunction from describe]
     Return                Source=19   (closure_environment_normalizes_record_of_list.ash:23:1)
 
 function _start_main  [ProgramEntry]
-  locals=28 temps=32
+  locals=28 temps=38
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (closure_environment_normalizes_record_of_list.ash:12:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (closure_environment_normalizes_record_of_list.ash:12:1)
@@ -863,5 +863,15 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=27
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=27
     LoadLocal             Target=31 Slot=26   (closure_environment_normalizes_record_of_list.ash:12:1)
+    LoadLocal             Target=32 Slot=18
+    LoadConstInt          Target=33 Value=0
+    CmpIntNe              Target=34 Left=32 Right=33
+    JumpIfFalse           CondTemp=34 Target=general_rc_owned_absent_77
+    IsReferenceCounted    Target=35 SourceTemp=32
+    JumpIfFalse           CondTemp=35 Target=general_rc_owned_absent_77
+    LoadConstInt          Target=36 Value=0
+    CallKnown             Target=37 FuncLabel=__rcdrop_record_8 EnvTemp=36 ArgTemp=32
+    StoreLocal            Slot=18 Source=33
+  general_rc_owned_absent_77:
     Return                Source=31
 

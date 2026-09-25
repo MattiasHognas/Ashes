@@ -25602,8 +25602,46 @@ let markOwnedResultClosures (labels: List(Str)) (functions: List(IrFunction)) =
     map((given (function_: IrFunction) ->
         function_ with instructions = map(markOwnedResultClosure(labels))(function_.instructions)))(functions)
 
+let recursive allLayoutsNullary (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> true
+        | layout :: rest -> constructorArity(layout) == 0 && allLayoutsNullary(rest)
+
+let declaredAllNullary (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> false
+        | _ -> allLayoutsNullary(layouts)
+
+// Stage 0's `ReleaseEntryGeneralRcOwnedSlots`: the program's entry holds owned call results like
+// any function (a fresh argument of the trailing pipe, say) and releases them at its end, as a
+// function does at its return, when its value cannot point into them: a scalar, or a value of a
+// type whose constructors all carry nothing. The releases carry no source location, as stage 0 emits
+// them once the entry's own expression is lowered.
+let entryValueHoldsNoHeap (semanticType: SemanticType) (state: CoreLoweringState) =
+    resultSurvivesReset(semanticType)(state) || (match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, _arguments) ->
+            state
+            |> stateConstructorLayouts
+            |> constructorLayoutsOfType(name)
+            |> declaredAllNullary
+        | _ -> false)
+
+let emitUnlocatedGeneralRcOwnedSlotDrops (state: CoreLoweringState) =
+    (let released = emitGeneralRcOwnedSlotDrops((state with currentSpan = None))
+    in released with currentSpan = state.currentSpan)
+
+let releaseEntryGeneralRcOwnedSlots (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
+            if entryValueHoldsNoHeap(semanticType)(state)
+            then lowered with state = emitUnlocatedGeneralRcOwnedSlotDrops(state)
+            else lowered
+        | _ -> lowered
+
 let buildProgram lowered =
-    match resolveLoweredPendingBlocks(lowered) with
+    match lowered
+    |> releaseEntryGeneralRcOwnedSlots
+    |> resolveLoweredPendingBlocks with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match state with

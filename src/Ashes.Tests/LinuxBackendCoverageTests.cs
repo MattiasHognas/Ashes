@@ -3055,6 +3055,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Program_entry_releases_the_fresh_argument_of_its_trailing_pipe()
+    {
+        // `0 |> pass(build(8)([]))`: the entry keeps the list `build` returns in an owned slot, as
+        // a function does, and releases it at its end; the same pipe inside a function was already
+        // released at that function's return.
+        IrProgram ir = LowerProgram(BuildTrailingPipeFreshArgumentProgram(8));
+        ir.EntryFunction.Instructions
+            .OfType<IrInst.Label>()
+            .Count(label => label.Name.StartsWith("general_rc_owned_absent_", StringComparison.Ordinal))
+            .ShouldBe(1);
+
+        if (OperatingSystem.IsLinux())
+        {
+            ExecutionResult result = await CompileRunWithLinuxLlvmAsync(ir).ConfigureAwait(false);
+            result.Stdout.ShouldBe("44\n");
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_scrutinee_loop_owned_results_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9952,6 +9971,35 @@ public sealed class LinuxBackendCoverageTests
 
             0
             |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildTrailingPipeFreshArgumentProgram(int count)
+        => $$"""
+            type Where =
+                | line: Int
+                | column: Int
+
+            type Instr =
+                | kind: Int
+                | location: Where
+
+            let step (kind: Int) (location: Where) = (kind, Instr(kind = kind + 1, location = location))
+
+            let recursive pass (instructions: List(Instr)) (total: Int) =
+                match instructions with
+                    | [] -> total
+                    | Instr { kind = kind, location = location } :: tail ->
+                        match step(kind)(location) with
+                            | (_n, rewritten) -> pass(tail)(total + rewritten.kind)
+
+            let recursive build (n: Int) (acc: List(Instr)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Instr(kind = n, location = Where(line = n, column = 1)) :: acc)
+
+            0
+            |> pass(build({{count}})([]))
             |> Ashes.IO.print
             """;
 

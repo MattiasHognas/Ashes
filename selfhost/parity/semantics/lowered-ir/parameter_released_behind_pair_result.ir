@@ -367,7 +367,7 @@ function lambda_8  [SourceFunction from weigh]
     Return                Source=15   (parameter_released_behind_pair_result.ash:21:1)
 
 function _start_main  [ProgramEntry]
-  locals=22 temps=28
+  locals=22 temps=34
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (parameter_released_behind_pair_result.ash:13:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (parameter_released_behind_pair_result.ash:13:1)
@@ -428,5 +428,15 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=21
     LoadLocal             Target=27 Slot=20   (parameter_released_behind_pair_result.ash:13:1)
+    LoadLocal             Target=28 Slot=14
+    LoadConstInt          Target=29 Value=0
+    CmpIntNe              Target=30 Left=28 Right=29
+    JumpIfFalse           CondTemp=30 Target=general_rc_owned_absent_35
+    IsReferenceCounted    Target=31 SourceTemp=28
+    JumpIfFalse           CondTemp=31 Target=general_rc_owned_absent_35
+    LoadConstInt          Target=32 Value=0
+    CallKnown             Target=33 FuncLabel=__rcdrop_record_6 EnvTemp=32 ArgTemp=28
+    StoreLocal            Slot=14 Source=29
+  general_rc_owned_absent_35:
     Return                Source=27
 

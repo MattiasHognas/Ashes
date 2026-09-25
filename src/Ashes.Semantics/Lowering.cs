@@ -1148,6 +1148,7 @@ public sealed partial class Lowering
         LastTraitConstraints = SimplifyAndResolveTraitConstraints(
             PopTraitConstraintScope(),
             GetSpan(expr));
+        ReleaseEntryGeneralRcOwnedSlots(resultType);
         Emit(new IrInst.Return(resultTemp));
 
         Ashes.Frontend.CompilePhaseTiming.Measure("lower.entry-inference", () => FinishEntryInference(resultType));

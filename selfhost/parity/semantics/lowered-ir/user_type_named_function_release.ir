@@ -571,27 +571,27 @@ function lambda_9  [ClosureHelper from count]
     StoreLocal            Slot=2 Source=15   (user_type_named_function_release.ash:15:24)
     StoreLocal            Slot=1 Source=14   (user_type_named_function_release.ash:15:24)
     LoadLocal             Target=64 Slot=8
-    JumpIfFalse           CondTemp=64 Target=rc_tco_drop_inactive_74
+    JumpIfFalse           CondTemp=64 Target=rc_tco_drop_inactive_80
     StoreLocal            Slot=30 Source=26
-  rcdrop_list_75:
+  rcdrop_list_81:
     LoadLocal             Target=65 Slot=30
     LoadConstInt          Target=66 Value=0
     CmpIntNe              Target=67 Left=65 Right=66
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_77
+    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_83
     RcIsUnique            Target=68 SourceTemp=65
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_76
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_82
     LoadMemOffset         Target=69 BasePtr=65 OffsetBytes=0
     LoadConstInt          Target=70 Value=0
     CallKnown             Target=71 FuncLabel=__rcdrop_record_4 EnvTemp=70 ArgTemp=69
     LoadMemOffset         Target=72 BasePtr=65 OffsetBytes=8
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=72
-    Jump                  Target=rcdrop_list_75
-  rcdrop_list_shared_76:
+    Jump                  Target=rcdrop_list_81
+  rcdrop_list_shared_82:
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_77
-  rcdrop_list_end_77:
-  rc_tco_drop_inactive_74:
+    Jump                  Target=rcdrop_list_end_83
+  rcdrop_list_end_83:
+  rc_tco_drop_inactive_80:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
     LoadConstInt          Target=73 Value=0
     StoreLocal            Slot=6 Source=73
@@ -650,7 +650,7 @@ function lambda_8  [SourceFunction from count]
     Return                Source=4   (user_type_named_function_release.ash:12:1)
 
 function _start_main  [ProgramEntry]
-  locals=22 temps=30
+  locals=23 temps=54
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (user_type_named_function_release.ash:5:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (user_type_named_function_release.ash:5:1)
@@ -709,5 +709,52 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=21
     CopyOutArena          DestTemp=29 SrcTemp=27 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=21
+    LoadLocal             Target=30 Slot=12
+    LoadConstInt          Target=31 Value=0
+    CmpIntNe              Target=32 Left=30 Right=31
+    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_74
+    IsReferenceCounted    Target=33 SourceTemp=30
+    JumpIfFalse           CondTemp=33 Target=general_rc_owned_absent_74
+    LoadConstInt          Target=34 Value=0
+    CallKnown             Target=35 FuncLabel=__rcdrop_record_4 EnvTemp=34 ArgTemp=30
+    StoreLocal            Slot=12 Source=31
+  general_rc_owned_absent_74:
+    LoadLocal             Target=36 Slot=16
+    LoadConstInt          Target=37 Value=0
+    CmpIntNe              Target=38 Left=36 Right=37
+    JumpIfFalse           CondTemp=38 Target=general_rc_owned_absent_75
+    IsReferenceCounted    Target=39 SourceTemp=36
+    JumpIfFalse           CondTemp=39 Target=general_rc_owned_absent_75
+    LoadConstInt          Target=40 Value=0
+    CallKnown             Target=41 FuncLabel=__rcdrop_record_4 EnvTemp=40 ArgTemp=36
+    StoreLocal            Slot=16 Source=37
+  general_rc_owned_absent_75:
+    LoadLocal             Target=42 Slot=18
+    LoadConstInt          Target=43 Value=0
+    CmpIntNe              Target=44 Left=42 Right=43
+    JumpIfFalse           CondTemp=44 Target=general_rc_owned_absent_76
+    IsReferenceCounted    Target=45 SourceTemp=42
+    JumpIfFalse           CondTemp=45 Target=general_rc_owned_absent_76
+    StoreLocal            Slot=22 Source=42
+  rcdrop_list_77:
+    LoadLocal             Target=46 Slot=22
+    LoadConstInt          Target=47 Value=0
+    CmpIntNe              Target=48 Left=46 Right=47
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_79
+    RcIsUnique            Target=49 SourceTemp=46
+    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_78
+    LoadMemOffset         Target=50 BasePtr=46 OffsetBytes=0
+    LoadConstInt          Target=51 Value=0
+    CallKnown             Target=52 FuncLabel=__rcdrop_record_4 EnvTemp=51 ArgTemp=50
+    LoadMemOffset         Target=53 BasePtr=46 OffsetBytes=8
+    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=22 Source=53
+    Jump                  Target=rcdrop_list_77
+  rcdrop_list_shared_78:
+    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_79
+  rcdrop_list_end_79:
+    StoreLocal            Slot=18 Source=43
+  general_rc_owned_absent_76:
     Return                Source=29
 

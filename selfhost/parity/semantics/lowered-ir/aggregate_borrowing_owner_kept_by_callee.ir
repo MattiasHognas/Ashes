@@ -1746,26 +1746,26 @@ function lambda_18  [ClosureHelper from count]
     StoreLocal            Slot=2 Source=15   (aggregate_borrowing_owner_kept_by_callee.ash:43:24)
     StoreLocal            Slot=1 Source=14   (aggregate_borrowing_owner_kept_by_callee.ash:43:24)
     LoadLocal             Target=44 Slot=8
-    JumpIfFalse           CondTemp=44 Target=rc_tco_drop_inactive_244
+    JumpIfFalse           CondTemp=44 Target=rc_tco_drop_inactive_245
     StoreLocal            Slot=26 Source=24
-  rcdrop_list_245:
+  rcdrop_list_246:
     LoadLocal             Target=45 Slot=26
     LoadConstInt          Target=46 Value=0
     CmpIntNe              Target=47 Left=45 Right=46
-    JumpIfFalse           CondTemp=47 Target=rcdrop_list_end_247
+    JumpIfFalse           CondTemp=47 Target=rcdrop_list_end_248
     RcIsUnique            Target=48 SourceTemp=45
-    JumpIfFalse           CondTemp=48 Target=rcdrop_list_shared_246
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_shared_247
     LoadMemOffset         Target=49 BasePtr=45 OffsetBytes=0
     RcDrop                SourceTemp=49 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=50 BasePtr=45 OffsetBytes=8
     RcDrop                SourceTemp=45 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=26 Source=50
-    Jump                  Target=rcdrop_list_245
-  rcdrop_list_shared_246:
+    Jump                  Target=rcdrop_list_246
+  rcdrop_list_shared_247:
     RcDrop                SourceTemp=45 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_247
-  rcdrop_list_end_247:
-  rc_tco_drop_inactive_244:
+    Jump                  Target=rcdrop_list_end_248
+  rcdrop_list_end_248:
+  rc_tco_drop_inactive_245:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=25
     LoadConstInt          Target=51 Value=0
     StoreLocal            Slot=6 Source=51
@@ -1823,7 +1823,7 @@ function lambda_17  [SourceFunction from count]
     Return                Source=4   (aggregate_borrowing_owner_kept_by_callee.ash:40:1)
 
 function _start_main  [ProgramEntry]
-  locals=35 temps=44
+  locals=35 temps=50
     LoadConstInt          Target=0 Value=0   (aggregate_borrowing_owner_kept_by_callee.ash:13:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (aggregate_borrowing_owner_kept_by_callee.ash:13:1)
     StoreLocal            Slot=0 Source=1   (aggregate_borrowing_owner_kept_by_callee.ash:13:1)
@@ -1913,5 +1913,15 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=34
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=34
     LoadLocal             Target=43 Slot=33   (aggregate_borrowing_owner_kept_by_callee.ash:23:1)
+    LoadLocal             Target=44 Slot=20
+    LoadConstInt          Target=45 Value=0
+    CmpIntNe              Target=46 Left=44 Right=45
+    JumpIfFalse           CondTemp=46 Target=general_rc_owned_absent_244
+    IsReferenceCounted    Target=47 SourceTemp=44
+    JumpIfFalse           CondTemp=47 Target=general_rc_owned_absent_244
+    LoadConstInt          Target=48 Value=0
+    CallKnown             Target=49 FuncLabel=__rcdrop_record_16 EnvTemp=48 ArgTemp=44
+    StoreLocal            Slot=20 Source=45
+  general_rc_owned_absent_244:
     Return                Source=43
 

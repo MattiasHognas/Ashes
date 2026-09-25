@@ -121,36 +121,36 @@ function lambda_1  [ClosureHelper from step]
     StoreLocal            Slot=2 Source=8   (tco_owned_child_record_accumulator.ash:14:10)
     StoreLocal            Slot=1 Source=17   (tco_owned_child_record_accumulator.ash:14:10)
     IsReferenceCounted    Target=54 SourceTemp=17
-    JumpIfFalse           CondTemp=54 Target=rc_representation_copy_16
+    JumpIfFalse           CondTemp=54 Target=rc_representation_copy_17
     RcDup                 Target=55 SourceTemp=17 RuntimeManaged=true
     StoreLocal            Slot=18 Source=55
-    Jump                  Target=rc_representation_done_17
-  rc_representation_copy_16:
+    Jump                  Target=rc_representation_done_18
+  rc_representation_copy_17:
     CopyOutArena          DestTemp=58 SrcTemp=17 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=59 Ptr=17 FieldIndex=0 Tagless=true
     IsReferenceCounted    Target=60 SourceTemp=59
-    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_18
+    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_19
     RcDup                 Target=61 SourceTemp=59 RuntimeManaged=true
     StoreLocal            Slot=19 Source=61
-    Jump                  Target=rc_representation_done_19
-  rc_representation_copy_18:
+    Jump                  Target=rc_representation_done_20
+  rc_representation_copy_19:
     CopyOutArena          DestTemp=62 SrcTemp=59 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=19 Source=62
-  rc_representation_done_19:
+  rc_representation_done_20:
     LoadLocal             Target=63 Slot=19
     SetAdtField           Ptr=58 FieldIndex=0 Source=63 Tagless=true
     IsReferenceCounted    Target=64 SourceTemp=59
-    JumpIfFalse           CondTemp=64 Target=rc_source_child_in_arena_20
+    JumpIfFalse           CondTemp=64 Target=rc_source_child_in_arena_21
     RcDrop                SourceTemp=59 TypeName=String RuntimeManaged=true
-  rc_source_child_in_arena_20:
+  rc_source_child_in_arena_21:
     StoreLocal            Slot=18 Source=58
-  rc_representation_done_17:
+  rc_representation_done_18:
     LoadLocal             Target=65 Slot=18
     LoadLocal             Target=66 Slot=8
-    JumpIfFalse           CondTemp=66 Target=rc_tco_drop_inactive_21
+    JumpIfFalse           CondTemp=66 Target=rc_tco_drop_inactive_22
     LoadConstInt          Target=67 Value=0
     CallKnown             Target=68 FuncLabel=__rcdrop_record_3 EnvTemp=67 ArgTemp=19
-  rc_tco_drop_inactive_21:
+  rc_tco_drop_inactive_22:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=17
     LoadConstInt          Target=69 Value=0
     StoreLocal            Slot=6 Source=69
@@ -218,7 +218,7 @@ function lambda_0  [SourceFunction from step]
     Return                Source=4   (tco_owned_child_record_accumulator.ash:11:1)
 
 function _start_main  [ProgramEntry]
-  locals=10 temps=21
+  locals=10 temps=27
     LoadConstInt          Target=0 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_owned_child_record_accumulator.ash:11:1)
     StoreLocal            Slot=0 Source=1   (tco_owned_child_record_accumulator.ash:11:1)
@@ -253,5 +253,15 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=9
     CopyOutArena          DestTemp=20 SrcTemp=18 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=9
+    LoadLocal             Target=21 Slot=6
+    LoadConstInt          Target=22 Value=0
+    CmpIntNe              Target=23 Left=21 Right=22
+    JumpIfFalse           CondTemp=23 Target=general_rc_owned_absent_16
+    IsReferenceCounted    Target=24 SourceTemp=21
+    JumpIfFalse           CondTemp=24 Target=general_rc_owned_absent_16
+    LoadConstInt          Target=25 Value=0
+    CallKnown             Target=26 FuncLabel=__rcdrop_record_3 EnvTemp=25 ArgTemp=21
+    StoreLocal            Slot=6 Source=22
+  general_rc_owned_absent_16:
     Return                Source=20
 

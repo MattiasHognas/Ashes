@@ -592,13 +592,13 @@ function lambda_9  [ClosureHelper from collect]
     LoadLocal             Target=212 Slot=27
     LoadConstInt          Target=213 Value=0
     CmpIntNe              Target=214 Left=212 Right=213
-    JumpIfFalse           CondTemp=214 Target=general_rc_owned_absent_158
+    JumpIfFalse           CondTemp=214 Target=general_rc_owned_absent_164
     IsReferenceCounted    Target=215 SourceTemp=212
-    JumpIfFalse           CondTemp=215 Target=general_rc_owned_absent_158
+    JumpIfFalse           CondTemp=215 Target=general_rc_owned_absent_164
     LoadConstInt          Target=216 Value=0
     CallKnown             Target=217 FuncLabel=__rcdrop_record_5 EnvTemp=216 ArgTemp=212
     StoreLocal            Slot=27 Source=213
-  general_rc_owned_absent_158:
+  general_rc_owned_absent_164:
     LoadLocal             Target=218 Slot=26
     LoadConstInt          Target=219 Value=0
     CmpIntNe              Target=220 Left=218 Right=219
@@ -609,7 +609,7 @@ function lambda_9  [ClosureHelper from collect]
     CallKnown             Target=223 FuncLabel=__rcdrop_record_5 EnvTemp=222 ArgTemp=218
     RcDrop                SourceTemp=9 TypeName=PatternBinding OwnerSlot=19
     StoreLocal            Slot=26 Source=219
-  general_rc_owned_absent_159:
+  general_rc_owned_absent_165:
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=60
     StoreLocal            Slot=1 Source=81
     LoadConstInt          Target=224 Value=1
@@ -815,10 +815,10 @@ function lambda_9  [ClosureHelper from collect]
     Return                Source=211   (tco_parameter_kept_by_borrowing_callee_result.ash:16:1)
   lambda_9_rc_edge_19_53:
     RcDrop                SourceTemp=9 TypeName=PatternBinding OwnerSlot=19
-    Jump                  Target=general_rc_owned_absent_159
+    Jump                  Target=general_rc_owned_absent_165
   lambda_9_rc_edge_19_54:
     RcDrop                SourceTemp=9 TypeName=PatternBinding OwnerSlot=19
-    Jump                  Target=general_rc_owned_absent_159
+    Jump                  Target=general_rc_owned_absent_165
 
 function lambda_8  [ClosureHelper from collect]
   locals=2 temps=7
@@ -1302,32 +1302,32 @@ function lambda_17  [ClosureHelper from joinAll]
     StoreLocal            Slot=2 Source=69   (tco_parameter_kept_by_borrowing_callee_result.ash:33:28)
     StoreLocal            Slot=1 Source=68   (tco_parameter_kept_by_borrowing_callee_result.ash:33:28)
     LoadLocal             Target=161 Slot=8
-    JumpIfFalse           CondTemp=161 Target=rc_tco_drop_inactive_160
+    JumpIfFalse           CondTemp=161 Target=rc_tco_drop_inactive_166
     StoreLocal            Slot=52 Source=82
-  rcdrop_list_161:
+  rcdrop_list_167:
     LoadLocal             Target=162 Slot=52
     LoadConstInt          Target=163 Value=0
     CmpIntNe              Target=164 Left=162 Right=163
-    JumpIfFalse           CondTemp=164 Target=rcdrop_list_end_163
+    JumpIfFalse           CondTemp=164 Target=rcdrop_list_end_169
     RcIsUnique            Target=165 SourceTemp=162
-    JumpIfFalse           CondTemp=165 Target=rcdrop_list_shared_162
+    JumpIfFalse           CondTemp=165 Target=rcdrop_list_shared_168
     LoadMemOffset         Target=166 BasePtr=162 OffsetBytes=0
     RcIsUnique            Target=167 SourceTemp=166
-    JumpIfFalse           CondTemp=167 Target=rc_drop_tuple_shared_164
+    JumpIfFalse           CondTemp=167 Target=rc_drop_tuple_shared_170
     LoadMemOffset         Target=168 BasePtr=166 OffsetBytes=8
     LoadConstInt          Target=169 Value=0
     CallKnown             Target=170 FuncLabel=__rcdrop_record_5 EnvTemp=169 ArgTemp=168
-  rc_drop_tuple_shared_164:
+  rc_drop_tuple_shared_170:
     RcDrop                SourceTemp=166 TypeName=Tuple RuntimeManaged=true
     LoadMemOffset         Target=171 BasePtr=162 OffsetBytes=8
     RcDrop                SourceTemp=162 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=52 Source=171
-    Jump                  Target=rcdrop_list_161
-  rcdrop_list_shared_162:
+    Jump                  Target=rcdrop_list_167
+  rcdrop_list_shared_168:
     RcDrop                SourceTemp=162 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_163
-  rcdrop_list_end_163:
-  rc_tco_drop_inactive_160:
+    Jump                  Target=rcdrop_list_end_169
+  rcdrop_list_end_169:
+  rc_tco_drop_inactive_166:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=51
     LoadConstInt          Target=172 Value=0
     StoreLocal            Slot=2 Source=69
@@ -1435,7 +1435,7 @@ function lambda_16  [SourceFunction from joinAll]
     Return                Source=6   (tco_parameter_kept_by_borrowing_callee_result.ash:30:1)
 
 function _start_main  [ProgramEntry]
-  locals=28 temps=46
+  locals=29 temps=66
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (tco_parameter_kept_by_borrowing_callee_result.ash:12:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_parameter_kept_by_borrowing_callee_result.ash:12:1)
@@ -1523,5 +1523,47 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=27
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=27
     LoadLocal             Target=45 Slot=26   (tco_parameter_kept_by_borrowing_callee_result.ash:12:1)
+    LoadLocal             Target=46 Slot=18
+    LoadConstInt          Target=47 Value=0
+    CmpIntNe              Target=48 Left=46 Right=47
+    JumpIfFalse           CondTemp=48 Target=general_rc_owned_absent_158
+    IsReferenceCounted    Target=49 SourceTemp=46
+    JumpIfFalse           CondTemp=49 Target=general_rc_owned_absent_158
+    LoadConstInt          Target=50 Value=0
+    CallKnown             Target=51 FuncLabel=__rcdrop_record_10 EnvTemp=50 ArgTemp=46
+    StoreLocal            Slot=18 Source=47
+  general_rc_owned_absent_158:
+    LoadLocal             Target=52 Slot=20
+    LoadConstInt          Target=53 Value=0
+    CmpIntNe              Target=54 Left=52 Right=53
+    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_159
+    IsReferenceCounted    Target=55 SourceTemp=52
+    JumpIfFalse           CondTemp=55 Target=general_rc_owned_absent_159
+    StoreLocal            Slot=28 Source=52
+  rcdrop_list_160:
+    LoadLocal             Target=56 Slot=28
+    LoadConstInt          Target=57 Value=0
+    CmpIntNe              Target=58 Left=56 Right=57
+    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_162
+    RcIsUnique            Target=59 SourceTemp=56
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_161
+    LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=0
+    RcIsUnique            Target=61 SourceTemp=60
+    JumpIfFalse           CondTemp=61 Target=rc_drop_tuple_shared_163
+    LoadMemOffset         Target=62 BasePtr=60 OffsetBytes=8
+    LoadConstInt          Target=63 Value=0
+    CallKnown             Target=64 FuncLabel=__rcdrop_record_5 EnvTemp=63 ArgTemp=62
+  rc_drop_tuple_shared_163:
+    RcDrop                SourceTemp=60 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=65 BasePtr=56 OffsetBytes=8
+    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=65
+    Jump                  Target=rcdrop_list_160
+  rcdrop_list_shared_161:
+    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_162
+  rcdrop_list_end_162:
+    StoreLocal            Slot=20 Source=53
+  general_rc_owned_absent_159:
     Return                Source=45
 

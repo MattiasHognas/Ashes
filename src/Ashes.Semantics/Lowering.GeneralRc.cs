@@ -1094,6 +1094,21 @@ public sealed partial class Lowering
         return iterationSlots.Where(owned => taken.Contains(owned.Slot)).ToList();
     }
 
+    // The program's entry holds owned call results like any function (a fresh argument of the
+    // trailing pipe, say) and releases them at its end, as a function does at its return, when its
+    // value cannot point into them: a scalar, or a value of a type whose constructors all carry
+    // nothing.
+    private void ReleaseEntryGeneralRcOwnedSlots(TypeRef resultType)
+    {
+        TypeRef pruned = Prune(resultType);
+        if (GeneralRcEnabled
+            && (CanArenaReset(pruned)
+                || pruned is TypeRef.TNamedType { Symbol.Constructors: { Count: > 0 } constructors } && constructors.All(constructor => constructor.Arity == 0)))
+        {
+            EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
+        }
+    }
+
     private void EmitGeneralRcOwnedSlotDrops(List<GeneralRcOwnedSlot> ownedSlots)
     {
         foreach (GeneralRcOwnedSlot owned in ownedSlots)

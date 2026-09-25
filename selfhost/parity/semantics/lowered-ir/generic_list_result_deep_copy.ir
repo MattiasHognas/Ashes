@@ -238,7 +238,7 @@ function lambda_6  [SourceFunction from firstName]
     Return                Source=25   (generic_list_result_deep_copy.ash:14:1)
 
 function _start_main  [ProgramEntry]
-  locals=24 temps=63
+  locals=25 temps=75
     LoadConstInt          Target=0 Value=0   (generic_list_result_deep_copy.ash:5:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (generic_list_result_deep_copy.ash:5:1)
     StoreLocal            Slot=0 Source=1   (generic_list_result_deep_copy.ash:5:1)
@@ -378,5 +378,32 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=23
     LoadLocal             Target=62 Slot=22   (generic_list_result_deep_copy.ash:12:1)
+    LoadLocal             Target=63 Slot=12
+    LoadConstInt          Target=64 Value=0
+    CmpIntNe              Target=65 Left=63 Right=64
+    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_40
+    IsReferenceCounted    Target=66 SourceTemp=63
+    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_40
+    StoreLocal            Slot=24 Source=63
+  rcdrop_list_41:
+    LoadLocal             Target=67 Slot=24
+    LoadConstInt          Target=68 Value=0
+    CmpIntNe              Target=69 Left=67 Right=68
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_end_43
+    RcIsUnique            Target=70 SourceTemp=67
+    JumpIfFalse           CondTemp=70 Target=rcdrop_list_shared_42
+    LoadMemOffset         Target=71 BasePtr=67 OffsetBytes=0
+    LoadConstInt          Target=72 Value=0
+    CallKnown             Target=73 FuncLabel=__rcdrop_record_5 EnvTemp=72 ArgTemp=71
+    LoadMemOffset         Target=74 BasePtr=67 OffsetBytes=8
+    RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=24 Source=74
+    Jump                  Target=rcdrop_list_41
+  rcdrop_list_shared_42:
+    RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_43
+  rcdrop_list_end_43:
+    StoreLocal            Slot=12 Source=64
+  general_rc_owned_absent_40:
     Return                Source=62
 
