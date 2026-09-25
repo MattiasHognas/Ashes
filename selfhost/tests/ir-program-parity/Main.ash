@@ -303,7 +303,8 @@ let fixtures =
         "owned_result_of_unnamed_callee_read_from_closure_header",
         "parameter_released_behind_pair_result",
         "closure_environment_normalizes_record_of_list",
-        "fresh_argument_released_behind_unproven_result"
+        "fresh_argument_released_behind_unproven_result",
+        "tco_state_record_and_inline_list_beside_recursive_list"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

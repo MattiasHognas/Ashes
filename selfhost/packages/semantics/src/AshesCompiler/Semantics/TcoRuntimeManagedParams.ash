@@ -35,6 +35,7 @@ export (
     value tcoSelfCallShapes,
     value isTcoListShape,
     value selfCallOrdinalPassing,
+    value tcoSelfCallParameterFlow,
 )
 
 // The reference-ownership shape shared by every exact tail self-call argument at one parameter
@@ -571,3 +572,204 @@ and selfCallOrdinalPassingCases (cases: List((Pattern, Expr, Maybe(Expr)))) (nam
             self
             |> selfCallOrdinalPassingCases(rest)(name)
             |> shapeFirstSome(selfCallOrdinalPassing(body)(name)(self))
+
+let recursive flowMatchChildren (cases: List((Pattern, Expr, Maybe(Expr)))) (children: List(Expr)) =
+    match cases with
+        | [] -> children
+        | (_pattern, body, Some(guard)) :: rest -> flowMatchChildren(rest)(body :: guard :: children)
+        | (_pattern, body, None) :: rest -> flowMatchChildren(rest)(body :: children)
+
+let recursive flowFieldValues (fields: List((Str, Expr))) (children: List(Expr)) =
+    match fields with
+        | [] -> children
+        | (_name, value) :: rest -> flowFieldValues(rest)(value :: children)
+
+// The operands of an operator node, stage 0's `EnumerateChildren` over the operators the flow walk
+// knows; None for any other node.
+let flowOperatorChildren (expression: Expr) =
+    match expression with
+        | ExprAdd(left, right) -> Some([left, right])
+        | ExprSubtract(left, right) -> Some([left, right])
+        | ExprMultiply(left, right) -> Some([left, right])
+        | ExprDivide(left, right) -> Some([left, right])
+        | ExprModulo(left, right) -> Some([left, right])
+        | ExprBitwiseAnd(left, right) -> Some([left, right])
+        | ExprBitwiseOr(left, right) -> Some([left, right])
+        | ExprBitwiseXor(left, right) -> Some([left, right])
+        | ExprShiftLeft(left, right) -> Some([left, right])
+        | ExprShiftRight(left, right) -> Some([left, right])
+        | ExprLogicalAnd(left, right) -> Some([left, right])
+        | ExprLogicalOr(left, right) -> Some([left, right])
+        | ExprGreaterThan(left, right) -> Some([left, right])
+        | ExprLessThan(left, right) -> Some([left, right])
+        | ExprGreaterOrEqual(left, right) -> Some([left, right])
+        | ExprLessOrEqual(left, right) -> Some([left, right])
+        | ExprEqual(left, right) -> Some([left, right])
+        | ExprNotEqual(left, right) -> Some([left, right])
+        | ExprCons(left, right) -> Some([left, right])
+        | ExprResultPipe(left, right) -> Some([left, right])
+        | ExprResultMapErrorPipe(left, right) -> Some([left, right])
+        | ExprBitwiseNot(operand) -> Some([operand])
+        | ExprLogicalNot(operand) -> Some([operand])
+        | ExprAwait(operand) -> Some([operand])
+        | _ -> None
+
+// The subexpressions the self-call flow walk descends into, stage 0's `FlowChildren`: None for a
+// node the walk does not know, which leaves the flow unclaimed.
+let flowChildren (expression: Expr) =
+    match expression with
+        | ExprLet(_name, value, body, _parameters, _annotation, _requirements) -> Some([value, body])
+        | ExprLetResult(_name, value, body) -> Some([value, body])
+        | ExprLetRecursive(_name, value, body, _parameters, _annotation, _requirements) -> Some([value, body])
+        | ExprIf(condition, thenBranch, elseBranch) -> Some([condition, thenBranch, elseBranch])
+        | ExprLambda(_parameter, body, _annotation) -> Some([body])
+        | ExprMatch(value, cases, _position) -> Some(value :: flowMatchChildren(cases)([]))
+        | ExprVar(_name) -> Some([])
+        | ExprQualifiedVar(_qualifier, _member) -> Some([])
+        | ExprInt(_value) -> Some([])
+        | ExprUInt(_value, _bits, _text) -> Some([])
+        | ExprBigInt(_text) -> Some([])
+        | ExprFloat(_value, _text) -> Some([])
+        | ExprString(_value) -> Some([])
+        | ExprRune(_value) -> Some([])
+        | ExprBool(_value) -> Some([])
+        | ExprTuple(elements) -> Some(elements)
+        | ExprList(elements, _isMultiline) -> Some(elements)
+        | ExprRecord(_constructorName, fields, _isMultiline) ->
+            []
+            |> flowFieldValues(fields)
+            |> Some
+        | ExprRecordUpdate(target, fields) -> Some(target :: flowFieldValues(fields)([]))
+        | _ -> flowOperatorChildren(expression)
+
+// Every node of a body, stage 0's `EnumerateFlowNodes`: an application chain is one node, its
+// callee and arguments nodes of their own. None when the body holds a node the walk does not know.
+let recursive flowNodes (pending: List(Expr)) (nodes: List(Expr)) =
+    match pending with
+        | [] -> Some(nodes)
+        | ExprAt(_span, inner) :: rest -> flowNodes(inner :: rest)(nodes)
+        | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
+            match shapeCallSpine(call)([]) with
+                | (root, arguments) -> flowNodes(root :: append(arguments)(rest))(call :: nodes)
+        | expression :: rest ->
+            match flowChildren(expression) with
+                | Some(children) ->
+                    flowNodes(append(children)(rest))(expression :: nodes)
+                | None -> None
+
+let recursive flowCaseBinders (cases: List((Pattern, Expr, Maybe(Expr)))) (names: List(Str)) =
+    match cases with
+        | [] -> names
+        | (pattern, _body, _guard) :: rest ->
+            names
+            |> shapePatternNames(pattern)
+            |> flowCaseBinders(rest)
+
+// Each `match` and `let` of the body with the names it binds from its value: a parameter's parts
+// are what these bind from a value that reads the parameter or one of its parts.
+let recursive flowDerivations (nodes: List(Expr)) (derivations: List((Expr, List(Str)))) =
+    match nodes with
+        | [] -> derivations
+        | ExprMatch(value, cases, _position) :: rest -> flowDerivations(rest)((value, flowCaseBinders(cases)([])) :: derivations)
+        | ExprLet(name, value, _body, _parameters, _annotation, _requirements) :: rest -> flowDerivations(rest)((value, [name]) :: derivations)
+        | _node :: rest -> flowDerivations(rest)(derivations)
+
+let recursive flowReadsAny (names: List(Str)) (expression: Expr) =
+    match names with
+        | [] -> false
+        | name :: rest -> exprReadsName(name)(expression) || flowReadsAny(rest)(expression)
+
+let recursive flowAddNew (candidates: List(Str)) (names: List(Str)) =
+    match candidates with
+        | [] -> names
+        | candidate :: rest ->
+            if shapeContainsName(candidate)(names)
+            then flowAddNew(rest)(names)
+            else flowAddNew(rest)(candidate :: names)
+
+let recursive flowDerivePass (derivations: List((Expr, List(Str)))) (names: List(Str)) =
+    match derivations with
+        | [] -> names
+        | (value, binders) :: rest ->
+            flowDerivePass(rest)(if flowReadsAny(names)(value)
+            then flowAddNew(binders)(names)
+            else names)
+
+// A parameter's name with every name derived from it, to a fixed point.
+let recursive flowDerivedNames (derivations: List((Expr, List(Str)))) (names: List(Str)) =
+    (let next = flowDerivePass(derivations)(names)
+    in
+        if length(next) == length(names)
+        then names
+        else flowDerivedNames(derivations)(next))
+
+let recursive flowDerivedOf (derivations: List((Expr, List(Str)))) (parameters: List(Str)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest -> flowDerivedNames(derivations)([parameter]) :: flowDerivedOf(derivations)(rest)
+
+let recursive flowContainsInt (value: Int) (values: List(Int)) =
+    match values with
+        | [] -> false
+        | candidate :: rest -> candidate == value || flowContainsInt(value)(rest)
+
+// The source parameters an argument reads, by ordinal, added to the sources a position already has.
+let recursive flowArgumentSources (argument: Expr) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =
+    match derived with
+        | [] -> sources
+        | names :: rest ->
+            flowArgumentSources(argument)(rest)(source + 1)(if !flowContainsInt(source)(sources) && flowReadsAny(names)(argument)
+            then source :: sources
+            else sources)
+
+let recursive flowRecordCall (arguments: List(Expr)) (derived: List(List(Str))) (flow: List(List(Int))) =
+    match (arguments, flow) with
+        | (argument :: restArguments, sources :: restFlow) -> flowArgumentSources(argument)(derived)(0)(sources) :: flowRecordCall(restArguments)(derived)(restFlow)
+        | _ -> flow
+
+type FlowCount =
+    | selfReferences: Int
+    | recognizedCalls: Int
+    | flow: List(List(Int))
+
+let flowCountCall (self: Str) (arity: Int) (derived: List(List(Str))) (call: Expr) (count: FlowCount) =
+    match shapeCallSpine(call)([]) with
+        | (ExprVar(callee), arguments) ->
+            if callee == self && length(arguments) == arity
+            then count with recognizedCalls = count.recognizedCalls + 1, flow = flowRecordCall(arguments)(derived)(count.flow)
+            else count
+        | _ -> count
+
+let recursive flowCountNodes (self: Str) (arity: Int) (derived: List(List(Str))) (nodes: List(Expr)) (count: FlowCount) =
+    match nodes with
+        | [] -> count
+        | ExprVar(name) :: rest ->
+            flowCountNodes(self)(arity)(derived)(rest)((if name == self
+            then count with selfReferences = count.selfReferences + 1
+            else count))
+        | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
+            count
+            |> flowCountCall(self)(arity)(derived)(call)
+            |> flowCountNodes(self)(arity)(derived)(rest)
+        | _node :: rest -> flowCountNodes(self)(arity)(derived)(rest)(count)
+
+let recursive flowEmpty (count: Int) =
+    if count == 0
+    then []
+    else [] :: flowEmpty(count - 1)
+
+// Stage 0's `CollectSelfCallParameterFlow`: for every parameter position of a self-call, the source
+// parameters whose value, or a part of it, the position may receive. None when some reference to
+// the function is not a full self-call, or the body holds a node the walk does not know, so nothing
+// is claimed about the flow.
+let tcoSelfCallParameterFlow (self: Str) (parameters: List(Str)) (body: Expr) =
+    match flowNodes([body])([]) with
+        | None -> None
+        | Some(nodes) ->
+            match FlowCount(selfReferences = 0, recognizedCalls = 0, flow = parameters
+            |> length
+            |> flowEmpty) |> flowCountNodes(self)(length(parameters))(parameters |> flowDerivedOf(flowDerivations(nodes)([])))(nodes) with
+                | FlowCount { selfReferences = references, recognizedCalls = calls, flow = flow } ->
+                    if references == calls
+                    then Some(flow)
+                    else None

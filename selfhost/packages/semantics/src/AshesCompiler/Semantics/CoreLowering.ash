@@ -323,6 +323,10 @@ type CoreTcoLoop =
     // of a filter-shaped body, whose ordinary tail self-call in one arm is reached before the
     // transformed cons in the other.
     | tmcShapePresent: Bool
+    // For every parameter position of a self-call, the parameters whose value or a part of it the
+    // position may receive; None when the body refers to the function other than by a full
+    // self-call, or holds a node the walk does not follow (stage 0's `SelfCallParameterFlow`).
+    | selfCallParameterFlow: Maybe(List(List(Int)))
     | emitsLoop: Bool
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
@@ -9724,8 +9728,64 @@ let recursive allScalarElements (elements: List(SemanticType)) (state: CoreLower
 // tuple of scalars copies its cell whole at entry and at every back edge and releases as one
 // `RcDrop` under the type's name (`Tuple` for a tuple); a record with owned children
 // (`CanRuntimeManageTcoAdt`) copies its children with the cell and releases them through the
-// cell's structural walk. Answers the resolved type and that name.
-let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
+// cell's structural walk; a parameter of the contract's own types is normalized by its helper
+// (`tcoGeneralRcParameterPlacement`). Answers the resolved type and that name.
+let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
+    match (layouts, heapFactsOf(named)(state)) with
+        | (_layout :: [], HeapLayoutFacts { structuralCopy = ShallowCopy }) -> Some((named, name))
+        | (_layout :: [], facts) ->
+            if runtimeManagedAdtLayout(facts)
+            then
+                match inlineAdtCopyPlanOf(named)(state) with
+                    | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
+                    | _ -> None
+            else None
+        | _ -> None
+
+let recursive loopParameterNameAt (ordinal: Int) (names: List(Str)) =
+    match names with
+        | [] -> None
+        | name :: rest ->
+            if ordinal == 0
+            then Some(name)
+            else loopParameterNameAt(ordinal - 1)(rest)
+
+let recursive namesSpecializationAccumulator (name: Str) (accumulators: List((Str, Str))) =
+    match accumulators with
+        | [] -> false
+        | (accumulator, _callee) :: rest -> accumulator == name || namesSpecializationAccumulator(name)(rest)
+
+let isSpecializationAccumulatorAt (ordinal: Int) (loop: CoreTcoLoop) =
+    match loopParameterNameAt(ordinal)(loop.parameterNames) with
+        | Some(name) -> namesSpecializationAccumulator(name)(loop.specializationAccumulators)
+        | None -> false
+
+let isSingleRecordLayout (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | CoreConstructorLayout { fieldNames = _field :: _fields } :: [] -> true
+        | _ -> false
+
+// Stage 0's `IsGeneralRcTcoParameterType`: a record only the normalization helper expresses (a
+// state threaded through a loop) is placed on the reference-counted heap like any other aggregate,
+// normalized at entry and at the back edge, its predecessor released; so is a monomorphic variant
+// of the contract's types (a syntax node), which left in the arena would block every sibling that
+// may hold it. A variant stays in the arena in a tail-modulo-cons loop, whose self-call embeds it
+// in the cells the loop produces, and either one does when the loop hands it to a specializable
+// rewriter, whose persistent region keeps it. None for any other type, Some with whether it is
+// placed for one of these.
+let tcoGeneralRcParameterPlacement (ordinal: Int) (named: SemanticType) (layouts: List(CoreConstructorLayout)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match (named, isSingleRecordLayout(layouts)) with
+        | (SemNamed(_symbolId, _name, _arguments), true) ->
+            if isGeneralRcNamedType(named)(state)
+            then Some(!isSpecializationAccumulatorAt(ordinal)(loop))
+            else None
+        | (SemNamed(_symbolId, _name, []), false) ->
+            if isGeneralRcNamedType(named)(state)
+            then Some(!isSpecializationAccumulatorAt(ordinal)(loop) && !loop.tmcShapePresent)
+            else None
+        | _ -> None
+
+let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if isTcoListShape(shape) || shape == TcoPassThroughShape
     then None
     else
@@ -9734,18 +9794,15 @@ let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringSta
                 if isResourceHandle(named)(state)
                 then None
                 else
-                    match (state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
-                        | (_layout :: [], HeapLayoutFacts { structuralCopy = ShallowCopy }) -> Some((named, name))
-                        | (_layout :: [], facts) ->
-                            if runtimeManagedAdtLayout(facts)
-                            then
-                                match inlineAdtCopyPlanOf(named)(state) with
-                                    | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
-                                    | _ -> None
-                            else None
-                        | _ -> None
+                    let layouts =
+                        state
+                        |> stateConstructorLayouts
+                        |> constructorLayoutsOfType(name)
+                    in
+                        match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
+                            | Some(true) -> Some((named, name))
+                            | Some(false) -> None
+                            | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
             | Some(SemTuple(elements) as tuple) ->
                 if length(elements) > 0 && allScalarElements(elements)(state)
                 then Some((tuple, "Tuple"))
@@ -9760,8 +9817,8 @@ let tcoAdtSlotCopy (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringSta
                 else None
             | _ -> None
 
-let tcoAdtSlotAdmitted (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
-    match tcoAdtSlotCopy(slot)(shape)(state) with
+let tcoAdtSlotAdmitted (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match tcoAdtSlotCopy(ordinal)(slot)(shape)(loop)(state) with
         | Some(_copy) -> true
         | None -> false
 
@@ -9776,14 +9833,6 @@ type TcoManagedCandidate =
     | strManaged: Bool
     | listElement: Maybe(SemanticType)
     | adtCopy: Maybe((SemanticType, Str))
-
-let recursive loopParameterNameAt (ordinal: Int) (names: List(Str)) =
-    match names with
-        | [] -> None
-        | name :: rest ->
-            if ordinal == 0
-            then Some(name)
-            else loopParameterNameAt(ordinal - 1)(rest)
 
 let recursive loopShapeAtOrdinal (ordinal: Int) (shapes: List(TcoArgumentShape)) =
     match shapes with
@@ -9837,7 +9886,7 @@ let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: Li
                         else None,
                         adtCopy = if strManaged || linearReuse
                         then None
-                        else tcoAdtSlotCopy(slot)(shape)(state)
+                        else tcoAdtSlotCopy(ordinal)(slot)(shape)(loop)(state)
                     )) :: tcoManagedCandidates(ordinal + 1)(restSlots)(restShapes)(loop)(state)
         | _ -> []
 
@@ -9922,54 +9971,70 @@ let recursive anyBlockingSibling (candidates: List(TcoManagedCandidate)) (state:
         | [] -> false
         | candidate :: rest -> tcoParameterBlocksFrame(candidate)(state) || anyBlockingSibling(rest)(state)
 
-// Stage 0's `IsHeapListAccumulatorElement`: a list whose cells the loop builds on the
-// reference-counted heap whatever its placement, one of strings or of any element that owns heap
-// parts.
-let isHeapListAccumulatorElement (element: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(element) with
-        | SemString -> true
-        | resolved -> !resultSurvivesReset(resolved)(state)
-
-// The list accumulator a blocking sibling does not demote, stage 0's `unblockedAccumulator`:
-// reference-counted cells reach such a list whatever its placement, and kept in the arena for a
-// sibling's sake it would hold them without releasing them.
-let unblockedAccumulatorType (candidate: TcoManagedCandidate) (state: CoreLoweringState) =
+// The accumulator a blocking sibling does not demote, stage 0's `unblockedAccumulator`. Reference-
+// counted cells reach a list accumulator whatever its placement: one of strings or of heap
+// elements has its cells built on the reference-counted heap, and one of inline elements has the
+// type of a list field of the contract values the iteration owns. Kept in the arena for a
+// sibling's sake, the list would keep them without the back edge releasing any. So would a value
+// of the contract's own types threaded through the loop (a state each iteration rebuilds), once
+// the self-calls' parameter flow is known.
+let unblockedAccumulatorType (candidate: TcoManagedCandidate) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if candidate.shape == TcoConsumedTailShape
     then None
     else
-        match slotResolvedType(candidate.slot)(state.bindings)(state) with
-            | Some(SemList(element) as accumulator) ->
-                if isHeapListAccumulatorElement(element)(state)
-                then Some(accumulator)
+        match (slotResolvedType(candidate.slot)(state.bindings)(state), loop.selfCallParameterFlow) with
+            | (Some(SemList(_element) as accumulator), _flow) -> Some(accumulator)
+            | (Some(resolved), Some(_flow)) ->
+                if isGeneralRcValueType(resolved)(state)
+                then Some(resolved)
                 else None
             | _ -> None
 
-// Stage 0's `SiblingMayReceiveAccumulator` by type: a sibling that could hold the accumulator, or
-// a part of it, would keep that part without a reference of its own, so it still blocks.
-let siblingMayReceiveAccumulator (sibling: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (state: CoreLoweringState) =
+let recursive flowSourcesAt (ordinal: Int) (flow: List(List(Int))) =
+    match flow with
+        | [] -> []
+        | sources :: rest ->
+            if ordinal == 0
+            then sources
+            else flowSourcesAt(ordinal - 1)(rest)
+
+// Whether a self-call may pass the accumulator, or a part of it, in the sibling's position: from
+// the self-calls' parameter flow when it was followed, from the sibling's type otherwise.
+let flowMayPass (siblingOrdinal: Int) (accumulatorOrdinal: Int) (flow: Maybe(List(List(Int)))) =
+    match flow with
+        | None -> true
+        | Some(positions) ->
+            positions
+            |> flowSourcesAt(siblingOrdinal)
+            |> containsInt(accumulatorOrdinal)
+
+// Stage 0's `SiblingMayReceiveAccumulator`: a sibling that could hold the accumulator, or a part of
+// it, would keep that part without a reference of its own, so it still blocks.
+let siblingMayReceiveAccumulator (sibling: TcoManagedCandidate) (candidate: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (accumulator, slotResolvedType(sibling.slot)(state.bindings)(state)) with
-        | (Some(accumulatorType), Some(siblingType)) -> callResultMayContainArgumentType(siblingType)(accumulatorType)([])(state)
+        | (Some(accumulatorType), Some(siblingType)) -> flowMayPass(sibling.ordinal)(candidate.ordinal)(loop.selfCallParameterFlow) && callResultMayContainArgumentType(siblingType)(accumulatorType)([])(state)
         | _ -> true
 
 // Stage 0's `FindBlockingSiblingForCandidate`: whether some other parameter of the frame keeps this
 // candidate off the reference-counted heap.
-let recursive candidateBlockedBySibling (candidate: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (siblings: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+let recursive candidateBlockedBySibling (candidate: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (siblings: List(TcoManagedCandidate)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match siblings with
         | [] -> false
-        | sibling :: rest -> sibling.ordinal != candidate.ordinal && tcoParameterBlocksFrame(sibling)(state) && siblingMayReceiveAccumulator(sibling)(accumulator)(state) || candidateBlockedBySibling(candidate)(accumulator)(rest)(state)
+        | sibling :: rest -> sibling.ordinal != candidate.ordinal && tcoParameterBlocksFrame(sibling)(state) && siblingMayReceiveAccumulator(sibling)(candidate)(accumulator)(loop)(state) || candidateBlockedBySibling(candidate)(accumulator)(rest)(loop)(state)
 
-let recursive demoteBlockedCandidates (candidates: List(TcoManagedCandidate)) (siblings: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+// A candidate the frame does not place on the reference-counted heap has nothing to demote.
+let recursive demoteBlockedCandidates (candidates: List(TcoManagedCandidate)) (siblings: List(TcoManagedCandidate)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match candidates with
         | [] -> []
         | candidate :: rest ->
-            (if candidateBlockedBySibling(candidate)(unblockedAccumulatorType(candidate)(state))(siblings)(state)
+            (if (candidateListManaged(candidate) || candidateAdtManaged(candidate)) && candidateBlockedBySibling(candidate)(unblockedAccumulatorType(candidate)(loop)(state))(siblings)(loop)(state)
             then candidate with listElement = None, adtCopy = None
-            else candidate) :: demoteBlockedCandidates(rest)(siblings)(state)
+            else candidate) :: demoteBlockedCandidates(rest)(siblings)(loop)(state)
 
 // The frame's candidates with every one a sibling blocks taken off the reference-counted heap.
-let unblockedCandidates (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+let unblockedCandidates (candidates: List(TcoManagedCandidate)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if anyBlockingSibling(candidates)(state)
-    then demoteBlockedCandidates(candidates)(candidates)(state)
+    then demoteBlockedCandidates(candidates)(candidates)(loop)(state)
     else candidates
 
 let recursive lookupListActiveSlot (slot: Int) (pairs: List((Int, Int))) =
@@ -10532,10 +10597,11 @@ let emitTcoExitDrops (bodyTemp: Int) (resultType: SemanticType) (slots: List(Int
 
 // A loop whose result is of the contract's types makes it the function's own before its exit
 // releases the loop parameters, as stage 0 orders the two: the result then holds its own
-// reference, so every parameter goes and none is transferred as the result. The return that
+// reference, so every parameter goes and none is transferred as the result. An inline result
+// releases the function's owned slots there too, and is never transferred either. The return that
 // follows finds the result finished and leaves it.
 let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if isGeneralRcValueType(semanticType)(state)
+    if isGeneralRcValueType(semanticType)(state) || resultSurvivesReset(semanticType)(state) && !isRuntimeTemp(bodyTemp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
     then
         match finishGeneralRcFunctionResultAs(producedOwned)(label)(bodyTemp)(semanticType)(state) with
             | (finished, resultTemp) -> (withGeneralRcFinishedResult(resultTemp)(finished), resultTemp)
@@ -10565,7 +10631,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
 // (`EvaluateTcoListRcEligibility`, `facts.FreshRebuiltList`), so such a parameter gets its active
 // flag at the loop entry like a grown or consumed one, and its placement follows from its type
 // rather than waiting for the body.
-let listActiveSlotCandidate (ordinal: Int) (runtimeManagedOrdinals: List(Int)) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(runtimeManagedOrdinals)
+let listActiveSlotCandidate (ordinal: Int) (loop: CoreTcoLoop) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
 
 // Stage 0 places a loop parameter on the reference-counted heap only once its type has a
 // resolved layout (`ResolvedLayoutEligible`), so a parameter whose type is still a variable at
@@ -10583,7 +10649,7 @@ let loopSlotTypeResolved (slot: Int) (state: CoreLoweringState) =
 let recursive allocatePendingListActiveSlots (ordinal: Int) (loop: CoreTcoLoop) (slots: List(Int)) (resolved: List(Bool)) (pairs: List((Int, Int))) (state: CoreLoweringState) =
     match (slots, resolved, loopShapeAtOrdinal(ordinal)(loop.argumentShapes)) with
         | (slot :: restSlots, slotResolved :: restResolved, Some(shape)) ->
-            if slotResolved && lookupListActiveSlot(slot)(pairs) == None && listActiveSlotCandidate(ordinal)(loop.runtimeManagedOrdinals)(shape)(slot)(state)
+            if slotResolved && lookupListActiveSlot(slot)(pairs) == None && listActiveSlotCandidate(ordinal)(loop)(shape)(slot)(state)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = allocated, local = activeSlot } ->
@@ -10642,7 +10708,7 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> finalizePatternOwnerSites(managedLists)(managedAdts)(candidates)
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
-                    |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots)))
+                    |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))
 
 // Stage 0's post-body refresh allocates the active flag of every candidate the loop entry and
 // the back edges left without one, ahead of the entry normalization's own locals.
@@ -10856,6 +10922,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
                             specializationAccumulators = collectSpecializableCallArgs(parameters)(singleParameterCandidateNames(candidates))(innermost)([]),
                             tmcShapePresent = hasTmcConsSelfCalls(innermost)(name)(arity),
+                            selfCallParameterFlow = tcoSelfCallParameterFlow(name)(parameters)(innermost),
                             emitsLoop = emitsLoop
                         ))
                     else None)
@@ -10966,16 +11033,16 @@ let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (f
 // and whose type is already resolved, allocated in parameter order ahead of the body label the
 // way stage 0 allocates `RuntimeManagedParamActiveSlots` at its loop entry; a parameter the
 // resolved types later keep in the arena leaves its local unwritten.
-let recursive allocateListActiveSlots (ordinal: Int) (runtimeManagedOrdinals: List(Int)) (shapes: List(TcoArgumentShape)) (slots: List(Int)) (state: CoreLoweringState) =
+let recursive allocateListActiveSlots (ordinal: Int) (loop: CoreTcoLoop) (shapes: List(TcoArgumentShape)) (slots: List(Int)) (state: CoreLoweringState) =
     match (shapes, slots) with
         | (shape :: restShapes, slot :: restSlots) ->
-            if listActiveSlotCandidate(ordinal)(runtimeManagedOrdinals)(shape)(slot)(state) && loopSlotTypeResolved(slot)(state)
+            if listActiveSlotCandidate(ordinal)(loop)(shape)(slot)(state) && loopSlotTypeResolved(slot)(state)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = allocated, local = activeSlot } ->
-                        match allocateListActiveSlots(ordinal + 1)(runtimeManagedOrdinals)(restShapes)(restSlots)(allocated) with
+                        match allocateListActiveSlots(ordinal + 1)(loop)(restShapes)(restSlots)(allocated) with
                             | (rest, pairs) -> (rest, (slot, activeSlot) :: pairs)
-            else allocateListActiveSlots(ordinal + 1)(runtimeManagedOrdinals)(restShapes)(restSlots)(state)
+            else allocateListActiveSlots(ordinal + 1)(loop)(restShapes)(restSlots)(state)
         | _ -> (state, [])
 
 // The tail-modulo-constructor spine's two loop-carried slots, zeroed once before the body label:
@@ -11009,7 +11076,7 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
                             |> emit(StoreLocal(compactionSizeSlot)(zeroTemp))
                             |> emitAffineReservations(loop.affineOrdinals)(slots)(0)(zeroTemp) with
                                 | (reservedState, affineReservations) ->
-                                    match allocateListActiveSlots(0)(loop.runtimeManagedOrdinals)(loop.argumentShapes)(slots)(reservedState) with
+                                    match allocateListActiveSlots(0)(loop)(loop.argumentShapes)(slots)(reservedState) with
                                         | (activeState, listActiveSlots) ->
                                             match allocateTmcChainSlots(loop.tmcShapePresent)(zeroTemp)(activeState) with
                                                 | (tmcState, tmcDestSlot, tmcResultSlot) ->
@@ -11022,7 +11089,7 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
 let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopShapeAtOrdinal(ordinal)(loop.argumentShapes) with
-        | Some(shape) -> isTcoListShape(shape) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(slot)(shape)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+        | Some(shape) -> isTcoListShape(shape) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
         | None -> false
 
 // A non-resource ADT whose whole cell has no shallow copy and that the contract does not govern:
@@ -12195,7 +12262,7 @@ let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTc
     match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
         | Some(ordinal) ->
             let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
-            in tcoAdtSlotAdmitted(slot)(shape)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            in tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
         | None -> false
 
 // The loop parameter an aggregate child reads: the parameter itself, or a record field read out
@@ -17754,7 +17821,7 @@ let reserveUnusedHeadTemp (lowered: LoweredCoreValue) =
                 | FreshTemp { state = reserved } -> lowered with state = reserved
         | _ -> lowered
 
-let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
+let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
@@ -17807,6 +17874,16 @@ let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tai
                                 | _ -> reserveUnusedHeadTemp(lowered)
                         else reserveUnusedHeadTemp(lowered)
             else lowered
+        | _ -> lowered
+
+// An inline head of a reference-counted cell over a loop's list parameter, which stage 0 leaves as
+// it is, costs that unused temp as well.
+let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !isRuntimeTemp(temp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
+            then reserveUnusedHeadTemp(lowered)
+            else normalizeRuntimeManagedHeapConsHead(request)(head)(tail)(lowered)
         | _ -> lowered
 
 // Stage 0's `IsRecursiveProducerTail`: a cons whose tail calls a member of the enclosing recursive
@@ -22078,7 +22155,10 @@ let rootPlacedAtBackEdge (rootSlot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTc
             state
             |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
             |> (given (candidates: List(TcoManagedCandidate)) ->
-                managedSlotResult(rootSlot)(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(state))(frame.listActiveSlots))([]) || !anyBlockingSibling(candidates)(state) && candidateStrManaged(rootSlot)(candidates))
+                state
+                |> unblockedCandidates(candidates)(loop)
+                |> (given (unblocked: List(TcoManagedCandidate)) ->
+                    managedSlotResult(rootSlot)(tcoRuntimeManagedListSlotsOf(unblocked)(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblocked)(frame.listActiveSlots))([]) || !anyBlockingSibling(candidates)(state) && candidateStrManaged(rootSlot)(candidates)))
 
 // Stage 0's `LowerCallTcoTransferPatternBindings`, first half: a tail self-call argument that
 // reads the unchanged successor of a root placed on the reference-counted heap takes one

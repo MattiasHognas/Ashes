@@ -61,6 +61,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("parameter_released_behind_pair_result")]
     [Arguments("closure_environment_normalizes_record_of_list")]
     [Arguments("fresh_argument_released_behind_unproven_result")]
+    [Arguments("tco_state_record_and_inline_list_beside_recursive_list")]
     [Arguments("aggregate_borrowing_owner_kept_by_callee")]
     [Arguments("reuse_path_rebuild_declines_copy")]
     [Arguments("rc_child_of_call_argument_kept_by_callee_result")]

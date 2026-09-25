@@ -1,0 +1,49 @@
+// A loop over a list of a recursive type, which never leaves the arena, threads a state record of
+// the contract's types and a list of integers beside it. Neither can hold part of the recursive
+// list, so both are placed on the reference-counted heap: the record is normalized at entry and at
+// every back edge and its predecessor released, and the integer list's cells are released with it.
+type Expr =
+    | ExprVar(Str)
+    | ExprAdd(Expr, Expr)
+    | ExprInt(Int)
+
+type State =
+    | slot: Maybe(Int)
+    | count: Int
+    | items: List(Int)
+
+type Lowered =
+    | state: State
+    | temp: Int
+    | error: Maybe(Str)
+
+let recursive countInts (items: List(Int)) (total: Int) =
+    match items with
+        | [] -> total
+        | _ :: rest -> countInts(rest)(total + 1)
+
+let withSlot value (state: State) = state with slot = value
+
+let lowerOne (argument: Expr) (state: State) =
+    match argument with
+        | ExprInt(v) -> Lowered(state = (state with count = state.count + v, items = v :: state.items), temp = state.count, error = None)
+        | _ -> Lowered(state = (state with items = 0 :: state.items), temp = state.count, error = None)
+
+let recursive loop (arguments: List(Expr)) (ordinal: Int) (state: State) (temps: List(Int)) =
+    match arguments with
+        | [] -> state.count + countInts(temps)(0) + countInts(state.items)(0)
+        | argument :: rest ->
+            match state
+            |> withSlot(Some(ordinal))
+            |> lowerOne(argument) with
+                | Lowered { state = failedState, error = Some(_error) } -> failedState.count
+                | Lowered { state = argumentState, temp = temp, error = None } -> loop(rest)(ordinal + 1)(argumentState)(temp :: temps)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else rounds(n - 1)(total + loop([ExprInt(1), ExprVar("a"), ExprInt(3), ExprInt(4), ExprInt(5), ExprVar("b")])(n % 7)(State(slot = None, count = 0, items = []))([]))
+
+0
+|> rounds(10)
+|> Ashes.IO.print
