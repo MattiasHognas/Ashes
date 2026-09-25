@@ -1383,7 +1383,9 @@ A tuple beside a value of unresolved layout (a generic function's parameter, say
 reference-counted heap, and nothing releases what an arena tuple holds. Such a tuple never holds the
 only reference to a reference-counted value: an element that may be reference-counted (other than
 one of the contract's types) is copied into the arena beside it, a fresh one is released after its
-copy, and no reference is taken for the tuple.
+copy, and no reference is taken for the tuple. Likewise, a loop parameter kept in the arena on a
+back edge that does not reset the arena takes an arena copy of a successor retained out of an owner
+the iteration releases (a bounded value: no list, no recursive type), and the retain is released.
 
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:

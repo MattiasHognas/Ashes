@@ -110,6 +110,86 @@ public sealed partial class Lowering
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(elementType));
     }
 
+    // Per function body, the successor temps a tail self-call retained for the transfer out of an
+    // iteration-local owner.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _transferRetainedSuccessorsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordTransferRetainedSuccessor(int borrowedTemp, int successorTemp)
+    {
+        if (successorTemp == borrowedTemp || Environment.GetEnvironmentVariable("GRC_NO_ARENASUCCESSORCOPY") is not null)
+        {
+            return;
+        }
+
+        if (!_transferRetainedSuccessorsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _transferRetainedSuccessorsByBody[_inst] = temps;
+        }
+
+        temps.Add(successorTemp);
+    }
+
+    private bool IsTransferRetainedSuccessor(int temp)
+        => _transferRetainedSuccessorsByBody.TryGetValue(_inst, out HashSet<int>? temps) && temps.Contains(temp);
+
+    /// <summary>
+    /// A back edge that keeps the iteration's arena (no reset) hands an arena parameter a successor
+    /// it retained out of an owner the iteration releases. The parameter releases nothing, so that
+    /// reference was never released: the parameter takes an arena copy instead, and the retained
+    /// reference is released after the copy. The arena copy lives as long as the loop's arena does,
+    /// which no reset on this edge shortens.
+    /// </summary>
+    private void CopyTransferRetainedSuccessorsIntoArena(PendingTcoReset info)
+    {
+        for (int i = 0; i < info.TransferRetainedArgs.Length && i < info.ParamSlots.Length; i++)
+        {
+            TypeRef type = Prune(info.ArgTypes[i]);
+            if (!info.TransferRetainedArgs[i]
+                || info.ParamPlacements[i]?.Representation == TcoPlacementRepresentation.RuntimeRc
+                || CanArenaReset(type)
+                || ContainsUnresolvedLayoutType(type, [])
+                || !IsGeneralRcAdmissible(type)
+                || !HasBoundedCopy(type, []))
+            {
+                continue;
+            }
+
+            int slot = info.ParamSlots[i];
+            int successorTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(successorTemp, slot));
+            Emit(new IrInst.StoreLocal(slot, EmitArenaCopyOfReferenceCounted(successorTemp, type, releasesSource: true)));
+        }
+    }
+
+    // Whether a value of the type is a bounded graph: no list and no recursive type, so copying it
+    // on every iteration costs the same each time rather than growing with what the loop builds.
+    private bool HasBoundedCopy(TypeRef type, HashSet<string> path)
+    {
+        switch (Prune(type))
+        {
+            case TypeRef.TList:
+                return false;
+            case TypeRef.TTuple tuple:
+                return tuple.Elements.All(element => HasBoundedCopy(element, path));
+            case TypeRef.TNamedType named:
+                string key = Pretty(named);
+                if (!path.Add(key))
+                {
+                    return false;
+                }
+
+                bool bounded = named.Symbol.Constructors.All(constructor =>
+                    Enumerable.Range(0, constructor.Arity).All(index =>
+                        HasBoundedCopy(InstantiateConstructorParameterType(constructor, index, named), path)));
+                path.Remove(key);
+                return bounded;
+            default:
+                return true;
+        }
+    }
+
     /// <summary>
     /// A loop that can neither reset its arena plainly nor copy every argument out still owns the
     /// reference-counted parameters it placed there: each successor takes a reference of its own

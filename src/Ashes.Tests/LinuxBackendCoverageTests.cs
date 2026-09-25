@@ -2956,6 +2956,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_arena_loop_parameter_retained_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop threading a generic list keeps its state parameter in the arena and never resets
+        // it; the successor state is read out of a call's reference-counted pair and retained for
+        // the transfer. The parameter releases nothing, so it takes an arena copy and the retain is
+        // released: kept as it was, one state leaked per iteration.
+        int[] roundCounts = [4000, 32000, 256000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaLoopParameterRetainedSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 17 / 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena loop parameter holding a retained successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_fresh_operand_of_derived_equality_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10170,6 +10195,25 @@ public sealed class LinuxBackendCoverageTests
         let quantified = [1, 2, 3, 4, 5, 6, 7, 8]
 
         """;
+
+    private static string BuildArenaLoopParameterRetainedSuccessorProgram(int rounds)
+        => SubstitutionPreludeSource + $$"""
+            let recursive instantiateQuantifiers quantified supply substitution =
+                match quantified with
+                    | [] -> (substitution, supply)
+                    | variableId :: tail ->
+                        match fresh(supply) with
+                            | (freshVariable, nextSupply) -> instantiateQuantifiers(tail)(nextSupply)((variableId, freshVariable) :: substitution)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match instantiateQuantifiers(quantified)(Supply(nextId = n))([]) with
+                        | (substitution, Supply { nextId = next }) -> rounds(n - 1)(total + count(substitution)(0) + next % 2)
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
 
     private static string BuildGenericTupleBesideReferenceCountedElementProgram(int rounds)
         => SubstitutionPreludeSource + $$"""

@@ -1253,7 +1253,12 @@ public sealed partial class Lowering
         bool CoroutineLoop,
         int CompactionSizeSlot,
         int[] ArgResvStartSlots,
-        int[] ArgResvEndSlots);
+        int[] ArgResvEndSlots)
+    {
+        // Successors retained for the transfer out of an iteration-local owner: the reference the
+        // parameter takes over.
+        public bool[] TransferRetainedArgs { get; init; } = [];
+    }
 
     private readonly Dictionary<int, PendingTcoReset> _pendingTcoResets = new();
     private int _nextTcoResetId;
@@ -1363,7 +1368,7 @@ public sealed partial class Lowering
         int resetCursorSlot = useFixedWatermark ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = useFixedWatermark ? info.FixedEndSlot : info.ArenaEndSlot;
 
-        if (!allCopyable) { return; } // no arena reset for complex heap types
+        if (!allCopyable) { CopyTransferRetainedSuccessorsIntoArena(info); return; } // no arena reset for complex heap types
 
         // Two-pass copy-out. Carrying TWO+ freshly heap-allocated args across the back-edge cannot
         // be done with a single round of copy-outs to the watermark W: each copy-out compacts its
@@ -11441,7 +11446,9 @@ public sealed partial class Lowering
             }
             (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
+            int borrowedTemp = lowered.Temp;
             lowered.Temp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, lowered.Temp, lowered.Type);
+            RecordTransferRetainedSuccessor(borrowedTemp, lowered.Temp);
             return lowered;
         }
         finally
@@ -11708,7 +11715,10 @@ public sealed partial class Lowering
             Enumerable.Range(0, collectedArgs.Count).Select(k =>
                 k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rp) ? rp.Start : -1).ToArray(),
             Enumerable.Range(0, collectedArgs.Count).Select(k =>
-                k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rq) ? rq.End : -1).ToArray());
+                k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rq) ? rq.End : -1).ToArray())
+        {
+            TransferRetainedArgs = newArgTemps.Select(IsTransferRetainedSuccessor).ToArray(),
+        };
 
         // Every reset is resolved after the complete lambda body has been lowered. A later sibling
         // branch can promote additional parameters to runtime RC; emitting an earlier branch here

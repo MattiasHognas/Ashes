@@ -414,6 +414,9 @@ type CoreTcoReset =
     | oldTemps: List(Int)
     | argumentRuntime: List(Bool)
     | argumentExpressions: List(Expr)
+    // Per successor, whether it is a retain taken for the transfer out of an iteration-local owner
+    // (stage 0's `TransferRetainedArgs`).
+    | argumentTransferRetained: List(Bool)
 
 // A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
 // `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the one
@@ -8417,6 +8420,108 @@ let emitCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(TcoResetAr
                     |> unlocatedInstruction(ReclaimArenaChunks(frame.fixedEndSlot)(preRestoreSlot)(false))
                     |> emitCompactionRecord(frame)(skipLabel)
 
+// Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
+// value's layout.
+let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemList(element) -> containsUnresolvedLayout(element)(state)
+        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
+        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
+        | _ -> false
+and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
+
+let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
+                | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
+
+let releaseDemotedSource (releasesSource: Bool) (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if releasesSource
+    then emitOwnedValueChildDrop(sourceTemp)(semanticType)(state)
+    else state
+
+// Stage 0's `EmitArenaCopyOfReferenceCounted`: an arena copy of a value that may be
+// reference-counted, releasing the original when the caller owned it; a value already outside the
+// reference-counted heap is used as it is.
+let emitArenaCopyOfReferenceCounted (sourceTemp: Int) (semanticType: SemanticType) (releasesSource: Bool) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotted, local = resultSlot } ->
+            match slotted
+            |> emit(StoreLocal(resultSlot)(sourceTemp))
+            |> freshTemp with
+                | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+                    match freshLabel("rc_arena_demote_done")(tested) with
+                        | FreshLabel { state = labelled, label = doneLabel } ->
+                            match labelled
+                            |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
+                            |> emit(JumpIfFalse(referenceCountedTemp)(doneLabel))
+                            |> emitLocatedDeepCopy(sourceTemp)(semanticType) with
+                                | (copied, copyTemp) ->
+                                    match copied
+                                    |> emit(StoreLocal(resultSlot)(copyTemp))
+                                    |> releaseDemotedSource(releasesSource)(sourceTemp)(semanticType)
+                                    |> emit(Label(doneLabel))
+                                    |> freshTemp with
+                                        | FreshTemp { state = loaded, temp = resultTemp } ->
+                                            (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
+
+// Stage 0's `HasBoundedCopy`: a value of the type is a bounded graph, no list and no recursive
+// type, so copying it on every iteration costs the same each time rather than growing with what
+// the loop builds.
+let recursive hasBoundedCopy (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(_element) -> false
+        | SemTuple(elements) -> allBoundedCopies(elements)(path)(state)
+        | SemNamed(_symbolId, _name, _arguments) as named ->
+            if containsType(named)(path)
+            then false
+            else
+                match heapFactsOf(named)(state) with
+                    | HeapLayoutFacts { children = children } -> allChildrenBoundedCopies(children)(named :: path)(state)
+        | _ -> true
+and allBoundedCopies (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> true
+        | semanticType :: rest -> hasBoundedCopy(semanticType)(path)(state) && allBoundedCopies(rest)(path)(state)
+and allChildrenBoundedCopies (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match children with
+        | [] -> true
+        | HeapLayoutChild { childType = childType } :: rest -> hasBoundedCopy(childType)(path)(state) && allChildrenBoundedCopies(rest)(path)(state)
+
+// Stage 0's `CopyTransferRetainedSuccessorsIntoArena` for one parameter: a back edge that keeps
+// the iteration's arena hands an arena parameter a successor it retained out of an owner the
+// iteration releases. The parameter releases nothing, so it takes an arena copy instead and the
+// retained reference is released after the copy.
+let copyTransferRetainedSuccessor (argument: TcoResetArgument) (retained: Bool) (state: CoreLoweringState) =
+    match argument with
+        | TcoResetArgument { parameterSlot = slot, argumentType = argumentType, managedList = None, managedAdt = None, managedStr = None } ->
+            if retained && !resultSurvivesReset(argumentType)(state) && !containsUnresolvedLayout(argumentType)(state) && isGeneralRcAdmissible(argumentType)([])(state) && hasBoundedCopy(argumentType)([])(state)
+            then
+                // The back edge's block is unlocated, as stage 0 splices it.
+                match freshTemp((state with currentSpan = None)) with
+                    | FreshTemp { state = allocated, temp = successorTemp } ->
+                        match allocated
+                        |> emit(LoadLocal(successorTemp)(slot))
+                        |> emitArenaCopyOfReferenceCounted(successorTemp)(argumentType)(true) with
+                            | (copied, copyTemp) ->
+                                emit(StoreLocal(slot)(copyTemp))(copied) with currentSpan = state.currentSpan
+            else state
+        | _ -> state
+
+let recursive copyTransferRetainedSuccessors (arguments: List(TcoResetArgument)) (retained: List(Bool)) (state: CoreLoweringState) =
+    match (arguments, retained) with
+        | (argument :: rest, flag :: restFlags) ->
+            state
+            |> copyTransferRetainedSuccessor(argument)(flag)
+            |> copyTransferRetainedSuccessors(rest)(restFlags)
+        | _ -> state
+
 // The back edge of a loop the runtime-managed reset does not admit: the iteration-local owners
 // are released, then the per-iteration watermark is restored when every argument survives a reset
 // on its own (stage 0's `TcoBackEdgeTryEmitPlainReset`), the fixed watermark compacted when every
@@ -8436,7 +8541,7 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
                 else
                     if allArgumentsCompactable(arguments)(released)
                     then emitCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
-                    else released)
+                    else copyTransferRetainedSuccessors(arguments)(reset.argumentTransferRetained)(released))
 
 // Stage 0's `TcoBackEdgeTryEmitRuntimeManagedSuccessorsWithoutReset`: a loop that can neither
 // reset its arena plainly nor copy every argument out still owns the list and aggregate parameters
@@ -10923,12 +11028,6 @@ let recursive revertReuseAllocations (count: Int) (instructions: List(IrInstruct
             | IrInstruction { instruction = AllocReusing(target, tag, fieldCount, _token, _runtimeManaged, _flag, tagless), location = location } :: rest -> IrInstruction(instruction = AllocAdt(target)(tag)(fieldCount)(false)(tagless), location = location) :: revertReuseAllocations(count - 1)(rest)
             | instruction :: rest -> instruction :: revertReuseAllocations(count - 1)(rest)
 
-let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
-                | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
-
 // The entry deep copy of every direct-reuse accumulator the move analysis did not prove unique:
 // the accumulator is loaded, cloned, and stored back, so the loop body may overwrite its
 // matched cells in place.
@@ -11633,21 +11732,6 @@ let loopBodyTailPosition (state: CoreLoweringState) =
         | None -> false
 
 let withLoopBodyRequest (request: ConsumerRequest) (state: CoreLoweringState) = withConsumerRequest((request with tailPosition = loopBodyTailPosition(state), consTailPosition = loopBodyTailPosition(state)))(state)
-
-// Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
-// value's layout.
-let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemList(element) -> containsUnresolvedLayout(element)(state)
-        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
-        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
-        | _ -> false
-and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
-    match types with
-        | [] -> false
-        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
 
 // Stage 0's `RequestsArenaResult`: a call whose result has no static layout here (a generic body
 // applying a closure parameter, or a result type inference has not resolved yet) cannot own a
@@ -17852,36 +17936,6 @@ let neutralizeElementDuplicate (temp: Int) (state: CoreLoweringState) =
         | Some(source) -> ((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)), source)
         | None -> (state, temp)
 
-let releaseDemotedSource (releasesSource: Bool) (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if releasesSource
-    then emitOwnedValueChildDrop(sourceTemp)(semanticType)(state)
-    else state
-
-// Stage 0's `EmitArenaCopyOfReferenceCounted`: an arena copy of a value that may be
-// reference-counted, releasing the original when it was fresh; a value already outside the
-// reference-counted heap is used as it is.
-let emitArenaCopyOfReferenceCounted (sourceTemp: Int) (semanticType: SemanticType) (releasesSource: Bool) (state: CoreLoweringState) =
-    match freshLocal(state) with
-        | FreshLocal { state = slotted, local = resultSlot } ->
-            match slotted
-            |> emit(StoreLocal(resultSlot)(sourceTemp))
-            |> freshTemp with
-                | FreshTemp { state = tested, temp = referenceCountedTemp } ->
-                    match freshLabel("rc_arena_demote_done")(tested) with
-                        | FreshLabel { state = labelled, label = doneLabel } ->
-                            match labelled
-                            |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
-                            |> emit(JumpIfFalse(referenceCountedTemp)(doneLabel))
-                            |> emitLocatedDeepCopy(sourceTemp)(semanticType) with
-                                | (copied, copyTemp) ->
-                                    match copied
-                                    |> emit(StoreLocal(resultSlot)(copyTemp))
-                                    |> releaseDemotedSource(releasesSource)(sourceTemp)(semanticType)
-                                    |> emit(Label(doneLabel))
-                                    |> freshTemp with
-                                        | FreshTemp { state = loaded, temp = resultTemp } ->
-                                            (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
-
 // Whether an element of an arena tuple beside a generic sibling is copied into the arena: a
 // resolved heap value the reference-counted heap may hold, other than one of the contract's types.
 let demotesTupleElement (semanticType: SemanticType) (state: CoreLoweringState) = !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && !isGeneralRcValueType(semanticType)(state)
@@ -22584,6 +22638,22 @@ let recursive argumentParameterPartsOf (arguments: List(Expr)) (state: CoreLower
         | [] -> []
         | argument :: rest -> (argumentRootSlotOf(argument)(state) != None) :: argumentParameterPartsOf(rest)(state)
 
+// Whether a successor temp is a transfer retain: the temp a runtime-managed duplicate defines
+// (the retain `retainTransferredChild` takes of a live owner's read).
+let recursive isTransferRetainIn (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged
+            else isTransferRetainIn(temp)(rest)
+        | _ :: rest -> isTransferRetainIn(temp)(rest)
+
+let recursive transferRetainedFlags (temps: List(Int)) (state: CoreLoweringState) =
+    match temps with
+        | [] -> []
+        | temp :: rest -> isTransferRetainIn(temp)(state.reversedInstructions) :: transferRetainedFlags(rest)(state)
+
 let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
     (let loopSlots =
         slotsSharingIteration(ownedSlotsOfActiveFunction(state))(state)
@@ -22612,7 +22682,8 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     argumentTemps = temps,
                     oldTemps = oldTemps,
                     argumentRuntime = runtimeTempFlags(temps)(state),
-                    argumentExpressions = arguments
+                    argumentExpressions = arguments,
+                    argumentTransferRetained = transferRetainedFlags(temps)(state)
                 ))
             |> (given (reset: CoreTcoReset) ->
                 state
