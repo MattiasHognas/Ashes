@@ -2728,6 +2728,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_update_successor_of_loop_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop whose state successor is an update of its own parameter: the unchanged list field
+        // and the tail of the consed field are retained into arena cells, and the back edge's copy
+        // of the dying record releases them, as it does for a record literal.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordUpdateSuccessorOfLoopParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 162}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update successor of a loop parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_scrutinee_loop_owned_results_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9458,6 +9482,41 @@ public sealed class LinuxBackendCoverageTests
 
     // The state's instruction list has a self-recursive element, which makes the record one of the
     // general ownership contract's types, the ones whose constructor and update cells stay in the arena.
+    private static string BuildRecordUpdateSuccessorOfLoopParameterProgram(int rounds)
+        => $$"""
+            type State =
+                | instructions: List(Int)
+                | labels: List(Str)
+                | counter: Int
+
+            let recursive countInts (items: List(Int)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countInts(tail)(total + 1)
+
+            let recursive countStrs (items: List(Str)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: tail -> countStrs(tail)(total + 1)
+
+            let recursive lowerItems (items: List(Int)) (state: State) =
+                match items with
+                    | [] -> state.counter + countInts(state.instructions)(0) + countStrs(state.labels)(0)
+                    | value :: rest -> lowerItems(rest)((state with instructions = value :: state.instructions, counter = state.counter + 1))
+
+            let recursive numbers (n: Int) (built: List(Int)) =
+                if n == 0 then built
+                else numbers(n - 1)(n :: built)
+
+            let program = numbers(80)([])
+
+            let recursive repeat times total =
+                if times == 0 then total
+                else repeat(times - 1)(total + lowerItems(program)(State(instructions = [], labels = ["a", "b"], counter = 0)))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
     private static string BuildRecordUpdateFreshCallResultFieldProgram(int rounds)
         => $$"""
             type Instruction =

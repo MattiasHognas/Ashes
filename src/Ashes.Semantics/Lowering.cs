@@ -1793,10 +1793,26 @@ public sealed partial class Lowering
 
     // The dying arena successor OWNS the references its construction dup-transferred in, so they are
     // released (see EmitRuntimeManagedTcoConstructorDeepCopy). An aggregate of the general contract
-    // only borrows them, unless the record is built at the self-call itself.
+    // only borrows them, unless the record is built at the self-call itself: a literal, a constructor
+    // application, or an update of a loop parameter, whose unchanged fields are retained reads of it.
     private bool SuccessorOwnsItsChildren(TypeRef.TNamedType named, Expr? sourceExpression)
         => !NeedsRuntimeManagedAdtNormalizer(named)
-            && (!IsInlineCopiedContractRecord(named) || sourceExpression is Expr.RecordLit || (sourceExpression is not null && IsConstructorExpression(sourceExpression)));
+            && (!IsInlineCopiedContractRecord(named)
+                || sourceExpression is Expr.RecordLit
+                || (sourceExpression is not null
+                    && (IsConstructorExpression(sourceExpression) || _loopParameterUpdateSuccessors.Contains(sourceExpression))));
+
+    // The self-call arguments that update a loop parameter's record, recorded at the self call while
+    // the parameter is in scope: the back edge's copy, emitted once the body is lowered, reads them.
+    private readonly HashSet<Expr> _loopParameterUpdateSuccessors = new(ReferenceEqualityComparer.Instance);
+
+    // The loop parameter a record update rebuilds, when the update's target is one read whole.
+    private string? LoopParameterRecordUpdateTarget(Expr expression)
+        => expression is Expr.RecordUpdate { Target: Expr.Var target }
+            && TryResolveTcoParameterRead(target, new TypeRef.TInt(), out bool isFieldRead) is not null
+            && !isFieldRead
+                ? target.Name
+                : null;
 
     private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
         int sourceTemp,
@@ -2278,6 +2294,11 @@ public sealed partial class Lowering
     /// </summary>
     private IReadOnlyList<Expr>? ConstructorFieldExpressions(Expr? expression, ConstructorSymbol constructor)
     {
+        if (expression is Expr.RecordUpdate { Target: Expr.Var { Name: string target } } update && _loopParameterUpdateSuccessors.Contains(update))
+        {
+            return RecordUpdateFieldExpressions(update, target, constructor);
+        }
+
         if (expression is null
             || !TryDescribeConstructorExpression(expression, out ConstructorSymbol? found, out List<Expr>? arguments, out _)
             || found is null
@@ -2289,6 +2310,29 @@ public sealed partial class Lowering
         }
 
         return arguments;
+    }
+
+    /// <summary>
+    /// The field expressions of a record update of a loop parameter, in field order: an updated
+    /// field's own expression, and a read of the parameter's field for an unchanged one.
+    /// </summary>
+    private static IReadOnlyList<Expr> RecordUpdateFieldExpressions(Expr.RecordUpdate update, string target, ConstructorSymbol constructor)
+    {
+        IReadOnlyList<string> fieldNames = constructor.DeclaringSyntax.FieldNames;
+        Expr[] expressions = new Expr[fieldNames.Count];
+        for (int i = 0; i < fieldNames.Count; i++)
+        {
+            expressions[i] = new Expr.QualifiedVar(target, fieldNames[i]);
+            foreach ((string name, Expr value) in update.Updates)
+            {
+                if (string.Equals(name, fieldNames[i], StringComparison.Ordinal))
+                {
+                    expressions[i] = value;
+                }
+            }
+        }
+
+        return expressions;
     }
 
     /// <summary>
@@ -11594,6 +11638,14 @@ public sealed partial class Lowering
         IReadOnlyList<OwnershipInfo> iterationOwnedDrops,
         (bool[] PassThrough, bool[] SingleFreshCons, bool[] FreshListRebuild, bool[] StableAccArg) facts)
     {
+        foreach (Expr argument in collectedArgs)
+        {
+            if (LoopParameterRecordUpdateTarget(argument) is not null)
+            {
+                _loopParameterUpdateSuccessors.Add(argument);
+            }
+        }
+
         var resetInfo = new PendingTcoReset(
             tco,
             newArgTemps,
