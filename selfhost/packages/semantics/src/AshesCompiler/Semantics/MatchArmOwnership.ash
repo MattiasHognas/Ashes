@@ -19,6 +19,7 @@ export (
     value staticStringArmBody,
     value joinIsRuntimeManaged,
     value joinIsNewlyProduced,
+    value reachingArmsAllNewlyProduced,
     value joinIsRetainedOwner,
     value branchIsEmptyListLiteral,
     value scrutineeHasOwnerCandidate,
@@ -116,6 +117,17 @@ let joinIsNewlyProduced (arms: List(MatchArmResult)) =
         | [] -> false
         | _ ->
             allArms(given (arm: MatchArmResult) -> arm.armNewlyProduced)(arms)
+
+let recursive anyArmNeverReachesJoin (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp < 0 || anyArmNeverReachesJoin(rest)
+
+// Stage 0's `ReachingArmsAllNewlyProduced`: a join some arms of which never reach it (a tail self
+// call jumps back), every one of the rest handing over a value it just produced and borrowing
+// nothing from a loop parameter: the join's value is fresh and its own.
+let reachingArmsAllNewlyProduced (arms: List(MatchArmResult)) =
+    anyArmNeverReachesJoin(arms) && !allArms(given (arm: MatchArmResult) -> arm.armStoreTemp < 0)(arms) && allArms(given (arm: MatchArmResult) -> arm.armStoreTemp < 0 || arm.armNewlyProduced && !arm.armBorrowsLoopParameter)(arms)
 
 // The join holds a pattern owner's retained reference when every arm that reaches it does.
 let joinIsRetainedOwner (arms: List(MatchArmResult)) =

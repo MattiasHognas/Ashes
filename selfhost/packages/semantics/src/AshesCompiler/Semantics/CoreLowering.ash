@@ -14210,21 +14210,43 @@ let recursive constructsFreshCell (body: Expr) (state: CoreLoweringState) =
         | ExprRecord(_name, _fields, _isMultiline) -> false
         | other -> isConstructorExpression(other)(state)
 
+// Whether a temp is defined by a retain, the duplicate a branch takes of the pattern binding it
+// returns.
+let recursive definedByRetain (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, _runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then true
+            else definedByRetain(temp)(rest)
+        | IrInstruction { instruction = LoadLocal(target, _slot) } :: rest ->
+            if target == temp
+            then false
+            else definedByRetain(temp)(rest)
+        | _ :: rest -> definedByRetain(temp)(rest)
+
 // What a branch stored into its join slot: a reference-counted value when its final temp is one,
 // or when it is the empty list literal of a list-typed join; newly produced only when the temp
-// itself was freshly produced.
-let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+// itself was freshly produced. A branch returning a pattern binding of a loop parameter retained
+// it before the binding's scope releases it (stage 0's `IsRetainedPatternOwnerArm`): the arm hands
+// the join a reference of its own, not one the parameter owns.
+let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrowsParameter: Bool) (retainedParameterPart: Bool) (state: CoreLoweringState) =
     MatchArmResult(
         armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
-        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state),
+        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart,
         armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
-        armOwned = isRuntimeTemp(finalTemp)(state),
-        armBorrowsLoopParameter = armBorrowsLoopParameterOf(body)(state),
+        armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
+        armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
         armFreshCell = constructsFreshCell(body)(state),
         armStoreTemp = if armNeverReachesJoin(body)(state)
         then -1
         else finalTemp
     )
+
+let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let borrowsParameter = armBorrowsLoopParameterOf(body)(state)
+    in
+        matchArmResultWith(body)(finalTemp)(resultType)(borrowsParameter)(borrowsParameter && containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && definedByRetain(finalTemp)(state.reversedInstructions))(state))
 
 let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false)
 
@@ -14369,7 +14391,7 @@ let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: C
     ((given (marked: CoreLoweringState) ->
         if joinIsRetainedOwner(arms)
         then withStatePatternOwnerResultTemps(resultTemp :: statePatternOwnerResultTemps(marked))(marked)
-        else marked))(match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
+        else marked))(match (joinIsRuntimeManaged(arms) || reachingArmsAllNewlyProduced(arms), joinIsNewlyProduced(arms) || reachingArmsAllNewlyProduced(arms)) with
         | (true, true) ->
             state
             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)

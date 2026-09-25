@@ -116,7 +116,7 @@ public sealed partial class Lowering
 
         List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
         return reaching.Count > 0
-            && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && IsNewlyProducedRcTemp(store.Source));
+            && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && (IsNewlyProducedRcTemp(store.Source) || IsRetainedPatternOwnerArm(arm)));
     }
 
     // An arm that hands the join a reference-counted value: one it owns, or one a loop parameter owns.
@@ -127,7 +127,7 @@ public sealed partial class Lowering
 
     // A nested join already normalized holds its own reference, whatever facts its reload carries.
     private bool IsOwnedValueArm(JoinArm arm)
-        => arm.Owned || (arm.Store is { } store && IsNormalizedJoinTemp(store.Source));
+        => arm.Owned || IsRetainedPatternOwnerArm(arm) || (arm.Store is { } store && IsNormalizedJoinTemp(store.Source));
 
     // A join every reaching arm of which hands over a reference of its own (a normalized join, a cell
     // it built, nil) owns its value as the normalized joins do.
@@ -190,11 +190,32 @@ public sealed partial class Lowering
     private readonly Dictionary<List<IrInst>, HashSet<int>> _parameterBorrowingJoinTempsByBody =
         new(ReferenceEqualityComparer.Instance);
 
+    // A branch returning a pattern binding of a loop parameter retains it before the binding's scope
+    // releases it: the arm hands the join a reference of its own, not one the parameter owns.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _retainedPatternOwnerArmTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordRetainedPatternOwnerArmTemp(int temp)
+    {
+        if (!_retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _retainedPatternOwnerArmTempsByBody[_inst] = temps;
+        }
+
+        temps.Add(temp);
+    }
+
+    private bool IsRetainedPatternOwnerArm(JoinArm arm)
+        => arm.Store is { } store
+            && _retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
+            && temps.Contains(store.Source);
+
     // Nil joins as a reference-counted list too, but it owns nothing and borrows from nothing. A
     // nested join normalized in place borrowed from a parameter before its arms were retained, and
-    // holds its own reference since.
+    // holds its own reference since, as does an arm that retained the pattern binding it returns.
     private bool BorrowsLoopParameter(JoinArm arm)
-        => (arm.JoinsRuntimeManaged && !(arm.Body is { } body && IsEmptyListLiteral(body)))
+        => (arm.JoinsRuntimeManaged && !(arm.Body is { } body && IsEmptyListLiteral(body)) && !IsRetainedPatternOwnerArm(arm))
             || (arm.Store is { } store
                 && !IsNormalizedJoinTemp(store.Source)
                 && _parameterBorrowingJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)

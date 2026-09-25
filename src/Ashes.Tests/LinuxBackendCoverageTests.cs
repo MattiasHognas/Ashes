@@ -3082,6 +3082,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_loop_returning_pattern_binding_of_its_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A tail-recursive walk whose exit arm returns a pattern binding of its loop parameter whole
+        // (`other -> other`). The arm retains the binding before its scope releases it, so the join
+        // holds a reference of its own; the function's result retained it again as if the join
+        // borrowed from the parameter, one reference per call left behind.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopReturningPatternBindingOfParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop returning a pattern binding of its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_recursive_map_bound_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10290,6 +10315,47 @@ public sealed class LinuxBackendCoverageTests
             let recursive repeat times total =
                 if times == 0 then total
                 else repeat(times - 1)(total + lowerArguments([1, 1, 1, 1, 1, 1])(functionType)(initial))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildLoopReturningPatternBindingOfParameterProgram(int rounds)
+        => $$"""
+            type T =
+                | Fn(T, T)
+                | Named(Int, Str, List(T))
+                | Var(Int)
+
+            let recursive resultType (t: T) =
+                match t with
+                    | Fn(_parameter, result) -> resultType(result)
+                    | other -> other
+
+            let recursive seenName (name: Str) (names: List(Str)) =
+                match names with
+                    | [] -> false
+                    | candidate :: rest -> candidate == name || seenName(name)(rest)
+
+            let recursive freeTypes (items: List(T)) (seen: List(Str)) =
+                match items with
+                    | [] -> []
+                    | body :: rest ->
+                        match resultType(body) with
+                            | Named(_id, name, []) as named ->
+                                if seenName(name)(seen)
+                                then freeTypes(rest)(seen)
+                                else (name, named) :: freeTypes(rest)(name :: seen)
+                            | _ -> freeTypes(rest)(seen)
+
+            let recursive countItems (values: List((Str, T))) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _ :: rest -> countItems(rest)(total + 1)
+
+            let items = [Fn(Var(1), Named(0, "Maybe", [Var(1)])), Named(0, "Int", []), Fn(Var(2), Named(0, "Int", [])), Named(0, "List", [Var(3)])]
+            let recursive repeat times total =
+                if times == 0 then total
+                else repeat(times - 1)(total + countItems(freeTypes(items)([]))(0))
 
             Ashes.IO.print(repeat({{rounds}})(0))
             """;

@@ -6777,7 +6777,13 @@ public sealed partial class Lowering
 
         if (result is Expr.Var variable && IsRuntimeManagedPatternOwnerOfTcoParameter(variable))
         {
-            return DuplicatePerceusPatternOwnerForAggregate(result, branchTemp);
+            int retainedTemp = DuplicatePerceusPatternOwnerForAggregate(result, branchTemp);
+            if (retainedTemp != branchTemp)
+            {
+                RecordRetainedPatternOwnerArmTemp(retainedTemp);
+            }
+
+            return retainedTemp;
         }
 
         // A loop exit returning a heap field of a loop parameter hands out a child the exit's
