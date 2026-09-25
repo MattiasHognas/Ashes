@@ -19,6 +19,7 @@
 //   partially.
 
 import Ashes.Collection.List.append
+import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.filter
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
@@ -100,7 +101,7 @@ type DropperBody =
     | nextLambdaId: Int
     | nextLabelId: Int
     | environment: TypeEnvironment
-    | contractRecord: SemanticType -> Bool
+    | contractRecords: MapTree(Str, Bool)
     | recordsInProgress: List(Str)
 
 let recursive schemeResultTypeName (body: SemanticType) =
@@ -166,21 +167,19 @@ let renumberDefinition (ids: List((Str, Int))) (definition: ConstructorInference
 // declared type, every definition renumbered to those ids, and the definitions indexed by the type
 // each builds. Preparing this costs a pass over every constructor of the program, so it is built
 // where the constructors change and shared by every synthesis until they change again.
-// The lowering fills in `contractRecord` where it synthesizes, from its own state: a record of the
-// ownership contract is released through a dropper of its own.
+// The lowering fills in `contractRecords` where it synthesizes, from its own state: an argument-free
+// record of the ownership contract, by name, is released through a dropper of its own.
 type DropperTypes =
     | dropperTypeIds: List((Str, Int))
     | dropperTypeEnvironment: TypeEnvironment
-    | contractRecord: SemanticType -> Bool
-
-let noContractRecord (_named: SemanticType) = false
+    | contractRecords: MapTree(Str, Bool)
 
 let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
     (let ids = namedTypeIds(definitions)([])
     in
         let renumbered =
             map(renumberDefinition(ids))(definitions)
-        in DropperTypes(dropperTypeIds = ids, dropperTypeEnvironment = (emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)), contractRecord = noContractRecord))
+        in DropperTypes(dropperTypeIds = ids, dropperTypeEnvironment = (emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)), contractRecords = Ashes.Collection.Map.empty))
 
 let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     (let ids = dropperTypes.dropperTypeIds
@@ -194,7 +193,7 @@ let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nex
             nextLambdaId = nextLambdaId,
             nextLabelId = nextLabelId,
             environment = dropperTypes.dropperTypeEnvironment,
-            contractRecord = dropperTypes.contractRecord,
+            contractRecords = dropperTypes.contractRecords,
             recordsInProgress = []
         )))
 
@@ -432,7 +431,10 @@ let recursive containsKey (key: Str) (keys: List(Str)) =
 
 // A record the lowering says joins the ownership contract, outside its own dropper's body.
 let usesRecordDropper (named: SemanticType) (body: DropperBody) =
-    body.contractRecord(named) && !containsKey(formatSemanticType(named))(body.recordsInProgress)
+    match named with
+        | SemNamed(_symbolId, name, []) ->
+            Ashes.Collection.Map.getStr(name)(body.contractRecords) == Some(true) && !containsKey(formatSemanticType(named))(body.recordsInProgress)
+        | _ -> false
 
 // Whether two named types are the same one for the admissibility walk's recursion check, as their
 // rendered text would say: an argument-free type by its name, without rendering a copy of it.

@@ -472,10 +472,9 @@ type CoreProgramState =
     // Per argument-free named type of the program: whether it is admissible to the general contract and
     // whether it reaches a type the contract governs, each walked once when the program's lowering starts.
     | generalRcTypeFacts: MapTree(Str, (Bool, Bool))
-    // Whether a record joins the ownership contract and is released by a dropper of its own, the
-    // question the drop synthesis asks of the lowering: answered from the program's types as they
-    // stand when its lowering starts.
-    | contractRecordTest: SemanticType -> Bool
+    // Per argument-free named type of the program: whether it is a record that joins the contract,
+    // classified once when the program's lowering starts, each type after the ones it holds.
+    | contractRecordFacts: MapTree(Str, Bool)
     // Stage 0's `_inlinableFunctions`: the let-bound non-recursive functions whose body allocates
     // or calls, spliced into a call site while a reuse token is live or under a loop's back edge
     // when their result is fresh; and stage 0's `_inliningInProgress`, the helpers whose bodies
@@ -1032,9 +1031,17 @@ let withStateGeneralRcTypeFacts value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with generalRcTypeFacts = value))
 
-let withStateContractRecordTest value (state: CoreLoweringState) =
+let withStateContractRecordFacts value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with contractRecordTest = value))
+    in state with programState = (group with contractRecordFacts = value))
+
+// The recorded answer for an argument-free named type, when the program's start classified it.
+let recordedContractRecord (semanticType: SemanticType) (state: CoreLoweringState) =
+    match semanticType with
+        | SemNamed(_symbolId, name, []) ->
+            let group = state.programState
+            in Ashes.Collection.Map.getStr(name)(group.contractRecordFacts)
+        | _ -> None
 
 // The drop synthesis's view of the program's types, answering from this state whether a record
 // joins the ownership contract.
@@ -1046,10 +1053,8 @@ let dropperTypesOf (state: CoreLoweringState) =
         let reuse = state.reuseState
         in
             match reuse.specializationFreshInputs with
-                | None -> group.dropperTypes with contractRecord = group.contractRecordTest
+                | None -> group.dropperTypes with contractRecords = group.contractRecordFacts
                 | Some(_inputs) -> group.dropperTypes)
-
-let noContractRecordTest (_named: SemanticType) = false
 
 let stateProvenTraitGoals (state: CoreLoweringState) =
     (let group = state.programState
@@ -2031,7 +2036,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             dropperLabels = emptyDropperLabelCache,
             resultRcEligibility = None,
             generalRcTypeFacts = Ashes.Collection.Map.empty,
-            contractRecordTest = noContractRecordTest,
+            contractRecordFacts = Ashes.Collection.Map.empty,
             inlinableHelpers = [],
             specializationCandidates = [],
             topLevelFunctionRefs = [],
@@ -4134,6 +4139,7 @@ let withRefreshedHeapLayoutFacts (state: CoreLoweringState) =
     |> stateCoverageTypes
     |> heapLayoutFactsTableFor(stateConstructorLayouts(state)))
     |> withStateGeneralRcTypeFacts(Ashes.Collection.Map.empty)
+    |> withStateContractRecordFacts(Ashes.Collection.Map.empty)
 
 let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
     (let resolved = resolveType(state)(semanticType)
@@ -6049,8 +6055,14 @@ and adtCopyPlanOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (ch
 // Stage 0's `IsInlineCopiedContractRecord`: a record the entry normalization re-establishes (one
 // constructor, an inline copy, an arena deep copy) with a heap child, that the owned-child and
 // recursive-copy paths do not manage. It joins the ownership contract and is copied by its
-// synthesized normalization helper, one call per site instead of its whole graph.
+// synthesized normalization helper, one call per site instead of its whole graph. An
+// argument-free type is answered from the table the program's start recorded: classifying one
+// walks its children's copy plans, which ask the same of every record nested in it.
 and isInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+    match recordedContractRecord(named)(state) with
+        | Some(answer) -> answer
+        | None -> classifyInlineCopiedContractRecord(named)(layouts)(facts)(state)
+and classifyInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
     match (layouts, facts) with
         | (_layout :: [], HeapLayoutFacts { runtimeOwnedChildAdtSupported = false, arenaDeepCopySupported = true, children = children }) ->
             anyChildSurvivesNoReset(children)(state) && !canRuntimeManageRecursiveCopyAdt(named)(state) && (match adtCopyPlanOfWith(false)(layouts)(children)(state) with
@@ -6089,18 +6101,16 @@ let entryCopyPlanOf (semanticType: SemanticType) (plan: ArgumentCopyPlan) (state
         | Some(general) -> general
         | None -> plan
 
-// Stage 0's `IsInlineCopiedContractRecord` as the drop synthesis asks it: the record joins the
-// contract. Whether the contract governs the lowering asking is `dropperTypesOf`'s to say.
-let isContractRecordType (named: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(named) with
-        | SemNamed(_symbolId, name, _arguments) as resolved ->
-            match heapFactsOf(resolved)(state) with
-                | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
-                | facts ->
-                    runtimeManagedAdtLayout(facts) && isInlineCopiedContractRecord(resolved)(state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name))(facts)(state)
-        | _ -> false
+// Stage 0's `IsInlineCopiedContractRecord` for a named type with these layout facts, under the
+// guards every question of it sits behind: an aggregate the runtime manages that a shallow copy
+// does not express.
+let contractRecordAnswer (named: SemanticType) (name: Str) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+    match facts with
+        | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
+        | _ ->
+            runtimeManagedAdtLayout(facts) && classifyInlineCopiedContractRecord(named)(state
+            |> stateConstructorLayouts
+            |> constructorLayoutsOfType(name))(facts)(state)
 
 // Stage 0's `IsGeneralRcNamedType`: a named type the contract governs, one only the normalization
 // helper expresses, that owns a heap child, and that the recursive-copy path does not already
@@ -6149,6 +6159,57 @@ let recursive generalRcTypeFactsOf (types: List((Str, SemanticType))) (state: Co
 
 let recordGeneralRcTypeFacts (state: CoreLoweringState) =
     withStateGeneralRcTypeFacts(generalRcTypeFactsOf(argumentFreeLayoutTypes(stateConstructorLayouts(state))([]))(state)(Ashes.Collection.Map.empty))(state)
+
+// Classifies an argument-free type for the contract-record table after the argument-free types its
+// children name, so each classification reads its nested records' answers instead of walking them
+// again. A type already on the walk's path is left to the walk that reached it first.
+let recursive recordContractRecordOf (name: Str) (named: SemanticType) (visiting: List(Str)) (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match (Ashes.Collection.Map.getStr(name)(group.contractRecordFacts), seenLayoutTypeName(name)(visiting), Ashes.Collection.Map.getStr(name)(group.heapLayoutFactsByType)) with
+            | (None, false, Some(HeapLayoutFacts { children = children } as facts)) ->
+                let withChildren = recordChildContractRecords(children)(name :: visiting)(state)
+                in
+                    let answer = contractRecordAnswer(named)(name)(facts)(withChildren)
+                    in
+                        let recorded = withChildren.programState
+                        in
+                            withStateContractRecordFacts(Ashes.Collection.Map.setStr(name)(answer)(recorded.contractRecordFacts))(withChildren)
+            | _ -> state)
+and recordChildContractRecords (children: List(HeapLayoutChild)) (visiting: List(Str)) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | HeapLayoutChild { childType = childType } :: rest ->
+            state
+            |> recordTypeContractRecords(childType)(visiting)
+            |> recordChildContractRecords(rest)(visiting)
+// The argument-free types a child's type names, through the lists and tuples holding them.
+and recordTypeContractRecords (semanticType: SemanticType) (visiting: List(Str)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, []) as named -> recordContractRecordOf(name)(named)(visiting)(state)
+        | SemList(element) -> recordTypeContractRecords(element)(visiting)(state)
+        | SemTuple(elements) -> recordTypesContractRecords(elements)(visiting)(state)
+        | _ -> state
+and recordTypesContractRecords (types: List(SemanticType)) (visiting: List(Str)) (state: CoreLoweringState) =
+    match types with
+        | [] -> state
+        | semanticType :: rest ->
+            state
+            |> recordTypeContractRecords(semanticType)(visiting)
+            |> recordTypesContractRecords(rest)(visiting)
+
+let recursive recordContractRecordFactsOf (types: List((Str, SemanticType))) (state: CoreLoweringState) =
+    match types with
+        | [] -> state
+        | (name, named) :: rest ->
+            state
+            |> recordContractRecordOf(name)(named)([])
+            |> recordContractRecordFactsOf(rest)
+
+// Stage 0's `IsInlineCopiedContractRecord` for every argument-free type the program declares whose
+// layout facts are settled, recorded once when the program's lowering starts.
+let recordContractRecordFacts (state: CoreLoweringState) =
+    recordContractRecordFactsOf(argumentFreeLayoutTypes(stateConstructorLayouts(state))([]))(state)
 
 // Stage 0's `CanNormalizeIntoOwnedRuntimeValue`: the result types the guarded copy turns into an
 // owned reference-counted value. A list whose heads have no fixed copy is one too when its
@@ -12904,13 +12965,14 @@ let emitRecordDropperCall (valueTemp: Int) (named: SemanticType) (state: CoreLow
                             |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
                 | _ -> state
 
-// A record the lowering says joins the ownership contract, where the contract governs the lowering.
+// An argument-free record the program's start recorded as joining the ownership contract, where
+// the contract governs the lowering.
 let usesRecordDropper (named: SemanticType) (state: CoreLoweringState) =
     (let types = dropperTypesOf(state)
     in
-        named
-        |> resolveType(state)
-        |> types.contractRecord)
+        match resolveType(state)(named) with
+            | SemNamed(_symbolId, name, []) -> Ashes.Collection.Map.getStr(name)(types.contractRecords) == Some(true)
+            | _ -> false)
 
 // A recursive-copy or owned-child ADT is released by its own constructor-switching dropper.
 let usesAdtDropper (named: SemanticType) (state: CoreLoweringState) =
@@ -24347,8 +24409,7 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                                 | Ok(withImplementations) ->
                                     withImplementations
                                     |> ensureResultRcEligibility
-                                    |> (given (started: CoreLoweringState) ->
-                                        withStateContractRecordTest(given (named) -> isContractRecordType(named)(started))(started))
+                                    |> recordContractRecordFacts
                                     |> recordGeneralRcTypeFacts
                                     |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 

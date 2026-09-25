@@ -489,12 +489,24 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    pair, token list included, and the caller copied it back, once per call. The request is now
    withdrawn once the result turns out to be a contract type. And a `let` whose body is a normalized
    join lost that fact on the reload after its window, so the function retained its result a second
-   time and every consumed pair leaked. With both fixed the module probe peaks at 660 MB, down from
-   902 MB, in the same 76 s. Making the records contract types also multiplied the back-edge drops in
-   stage 1's large folds (every owned slot at every arm's back edge, 38,900 IR instructions for
-   `foldLoop`); a back edge now skips the slots of a sibling arm of a join it is inside, which one
-   iteration never both runs, and the stage-0 compile of stage 1 is back to 66 s. Stage 1 mirrors all
-   of it, and the whole-program parity suite passes.
+   time and every consumed pair leaked. Making the records contract types also multiplied the
+   back-edge drops in stage 1's large folds (every owned slot at every arm's back edge, 38,900 IR
+   instructions for `foldLoop`); a back edge now skips the slots of a sibling arm of a join it is
+   inside, which one iteration never both runs, and the stage-0 compile of stage 1 is back to 66 s.
+   Stage 1 mirrors all of it, and the whole-program parity suite passes. The mirror's first version
+   handed the drop synthesis its contract question as a closure stored in the lowering state, which
+   took every state record out of the contract (a record holding a closure is not admissible) and
+   sent the probe to 3.4 GB; the answers are now a table of type names filled once when the program's
+   lowering starts. The module probe peaks at 658 MB in 74.7 s, against 902 MB in 77.5 s on `main`.
+
+   One `challenges/` program pays for it: `n-body` runs 4 to 5% slower (2.46 s against 2.57 s, best of
+   three), with the same output and memory. Its `System` holds five `Body` cells, so it is a contract
+   record now: `advance` copies its fresh result onto the reference-counted heap through the
+   normalization helper, where the loop used to copy the arena successor inline at its back edge, and
+   the loop retains that result for its parameter and releases the call's owned slot, where one move
+   would do. Two follow-ups would win it back: build a fresh contract record result on the
+   reference-counted heap in place, and let a back edge take over an owned slot its successor reads
+   instead of retaining the value and releasing the slot.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable
