@@ -20,7 +20,7 @@ public sealed partial class Lowering
             changed = false;
             foreach (Expr? node in EnumerateFlowNodes(body))
             {
-                changed |= node is not null && AddDerivedBinders(node, derived);
+                changed |= node is not null && AddDerivedBinders(node, derived, parameters);
             }
         }
 
@@ -42,21 +42,21 @@ public sealed partial class Lowering
             if (TryUnwindSelfCall(node, selfName, parameters.Count, out List<Expr> arguments))
             {
                 recognizedCalls++;
-                RecordSelfCallFlow(arguments, derived, flow);
+                RecordSelfCallFlow(arguments, derived, parameters, flow);
             }
         }
 
         return selfReferences == recognizedCalls ? flow : null;
     }
 
-    private static bool AddDerivedBinders(Expr node, List<HashSet<string>> derived)
+    private static bool AddDerivedBinders(Expr node, List<HashSet<string>> derived, List<string> parameters)
     {
         bool changed = false;
         foreach (HashSet<string> names in derived)
         {
             switch (node)
             {
-                case Expr.Match match when names.Any(name => ExprMentionsName(match.Value, name, 0)):
+                case Expr.Match match when names.Any(name => FlowMentionsName(match.Value, name, parameters, 0)):
                     foreach (MatchCase matchCase in match.Cases)
                     {
                         HashSet<string> binders = new(StringComparer.Ordinal);
@@ -68,7 +68,7 @@ public sealed partial class Lowering
                     }
 
                     break;
-                case Expr.Let let when names.Any(name => ExprMentionsName(let.Value, name, 0)):
+                case Expr.Let let when names.Any(name => FlowMentionsName(let.Value, name, parameters, 0)):
                     changed |= names.Add(let.Name);
                     break;
             }
@@ -77,13 +77,13 @@ public sealed partial class Lowering
         return changed;
     }
 
-    private static void RecordSelfCallFlow(List<Expr> arguments, List<HashSet<string>> derived, Dictionary<int, HashSet<int>> flow)
+    private static void RecordSelfCallFlow(List<Expr> arguments, List<HashSet<string>> derived, List<string> parameters, Dictionary<int, HashSet<int>> flow)
     {
         for (int position = 0; position < arguments.Count; position++)
         {
             for (int source = 0; source < derived.Count; source++)
             {
-                if (derived[source].Any(name => ExprMentionsName(arguments[position], name, 0)))
+                if (derived[source].Any(name => FlowMentionsName(arguments[position], name, parameters, 0)))
                 {
                     if (!flow.TryGetValue(position, out HashSet<int>? sources))
                     {
@@ -96,6 +96,25 @@ public sealed partial class Lowering
             }
         }
     }
+
+    // Whether a value computed by `expression` may hold `name`'s value or a part of it. An operator's
+    // result holds nothing of its operands (a number, a truth value, a fresh string), except that a
+    // string append grows a loop parameter on its left in place, so such an append is followed.
+    private static bool FlowMentionsName(Expr expression, string name, List<string> parameters, int depth)
+        => Environment.GetEnvironmentVariable("GRC_NO_OPERATORFLOW") is not null
+            ? ExprMentionsName(expression, name, depth)
+            : depth > 256 || expression switch
+            {
+                Expr.Add { Left: Expr.Var left } => parameters.Contains(left.Name, StringComparer.Ordinal) && string.Equals(left.Name, name, StringComparison.Ordinal),
+                Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
+                    or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft
+                    or Expr.ShiftRight or Expr.BitwiseNot or Expr.LogicalNot or Expr.LogicalAnd or Expr.LogicalOr
+                    or Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
+                    or Expr.Equal or Expr.NotEqual => false,
+                Expr.Call call => FlowMentionsName(call.Func, name, parameters, depth + 1) || FlowMentionsName(call.Arg, name, parameters, depth + 1),
+                Expr.Cons or Expr.TupleLit or Expr.ListLit => EnumerateChildren(expression).Any(child => FlowMentionsName(child, name, parameters, depth + 1)),
+                _ => ExprMentionsName(expression, name, depth),
+            };
 
     // A call applying the function to exactly its parameter count, one argument at a time.
     private static bool TryUnwindSelfCall(Expr node, string selfName, int parameterCount, out List<Expr> arguments)

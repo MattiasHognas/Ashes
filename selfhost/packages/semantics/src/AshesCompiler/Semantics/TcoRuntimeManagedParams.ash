@@ -42,7 +42,8 @@ export (
 // position, stage 0's `TcoSelfCallArgumentShape`: the parameter's own unchanged read, a cons cell
 // whose tail is that read (the accumulator grows by one cell per iteration), a name bound as the
 // cons-tail of a `match` on that parameter one level up (the parameter shrinks by one cell), a
-// choice between handing the parameter on and consing onto it, or
+// choice between handing the parameter on and consing onto it, the parameter's consumed tail at
+// some self-calls and a call's result at others (a worklist walked and refilled), or
 // anything else — a different shape at some self-call, a fresh rebuild, or a value the walk does
 // not classify.
 type TcoArgumentShape =
@@ -51,6 +52,7 @@ type TcoArgumentShape =
     | TcoConsumedTailShape
     | TcoFreshListShape
     | TcoChoiceAccumulatorShape
+    | TcoWalkedOrRefilledShape
     | TcoOtherShape
     deriving {Eq, Show}
 
@@ -421,9 +423,29 @@ let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =
         | ExprCall(function, argument, _sugar, _layout) -> shapeCallSpine(function)(argument :: arguments)
         | root -> (root, arguments)
 
+// Per parameter position, whether every self-call so far passed the parameter's consumed tail, the
+// parameter itself, or a call's result, whether one passed the consumed tail, and whether one passed
+// a call's result, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge` and `AnyRefillEdge`.
+let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (walks: List((Bool, Bool, Bool))) =
+    match (arguments, walks) with
+        | (argument :: restArguments, (everyEdge, anyWalk, anyRefill) :: restWalks) ->
+            (let local = shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters)
+            in
+                let refill =
+                    local != TcoConsumedTailShape && local != TcoPassThroughShape && (match parameters
+                    |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
+                    |> shapeUnspan with
+                        | ExprCall(_function, _argument, _sugar, _layout) -> true
+                        | _ -> false)
+                in
+                    let walk = local == TcoConsumedTailShape
+                    in (everyEdge && (walk || refill || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill)) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restWalks)
+        | _ -> walks
+
 type ShapeWalk =
     | observed: List(Maybe(TcoArgumentShape))
     | choices: List((Bool, Bool))
+    | walks: List((Bool, Bool, Bool))
     | sawSelfCall: Bool
 
 let recursive shapeWalk (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (walk: ShapeWalk) =
@@ -458,7 +480,7 @@ and shapeWalkCall (self: Str) (parameters: List(Str)) (expression: Expr) (shadow
     match shapeCallSpine(expression)([]) with
         | (ExprVar(callee), arguments) ->
             if callee == self && !shapeContainsName(self)(shadowed) && length(arguments) == length(parameters)
-            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), sawSelfCall = true)
+            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(walk.walks), sawSelfCall = true)
             else walk
         | _ -> walk
 
@@ -472,13 +494,22 @@ let recursive shapeInitialChoices (count: Int) =
     then []
     else (true, false) :: shapeInitialChoices(count - 1)
 
+let recursive shapeInitialWalks (count: Int) =
+    if count == 0
+    then []
+    else (true, false, false) :: shapeInitialWalks(count - 1)
+
 // A position no single shape describes is a choice accumulator when every self-call passed an
-// accumulator edge there and one of them chose between two, stage 0's `ChoiceAccumulatorRebuild`.
-let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool))) =
-    match (observed, choices) with
-        | (Some(TcoOtherShape) :: rest, (true, true) :: restChoices) -> TcoChoiceAccumulatorShape :: shapeResolveObserved(rest)(restChoices)
-        | (Some(shape) :: rest, _choice :: restChoices) -> shape :: shapeResolveObserved(rest)(restChoices)
-        | (None :: rest, _choice :: restChoices) -> TcoOtherShape :: shapeResolveObserved(rest)(restChoices)
+// accumulator edge there and one of them chose between two, stage 0's `ChoiceAccumulatorRebuild`;
+// and a walked-or-refilled list when every self-call passed the parameter's consumed tail, the
+// parameter itself, or a call's result, both a consumed tail and a call's result among them,
+// stage 0's `WalkedOrRefilled`.
+let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool))) (walks: List((Bool, Bool, Bool))) =
+    match (observed, choices, walks) with
+        | (Some(TcoOtherShape) :: rest, (true, true) :: restChoices, _walk :: restWalks) -> TcoChoiceAccumulatorShape :: shapeResolveObserved(rest)(restChoices)(restWalks)
+        | (Some(TcoOtherShape) :: rest, _choice :: restChoices, (true, true, true) :: restWalks) -> TcoWalkedOrRefilledShape :: shapeResolveObserved(rest)(restChoices)(restWalks)
+        | (Some(shape) :: rest, _choice :: restChoices, _walk :: restWalks) -> shape :: shapeResolveObserved(rest)(restChoices)(restWalks)
+        | (None :: rest, _choice :: restChoices, _walk :: restWalks) -> TcoOtherShape :: shapeResolveObserved(rest)(restChoices)(restWalks)
         | _ -> []
 
 let recursive shapeAllOther (count: Int) =
@@ -494,8 +525,10 @@ let tcoSelfCallShapes (self: Str) (parameters: List(Str)) (body: Expr) =
     |> length
     |> shapeInitial, choices = parameters
     |> length
-    |> shapeInitialChoices, sawSelfCall = false)) with
-        | ShapeWalk { observed = observed, choices = choices, sawSelfCall = true } -> shapeResolveObserved(observed)(choices)
+    |> shapeInitialChoices, walks = parameters
+    |> length
+    |> shapeInitialWalks, sawSelfCall = false)) with
+        | ShapeWalk { observed = observed, choices = choices, walks = walks, sawSelfCall = true } -> shapeResolveObserved(observed)(choices)(walks)
         | _ ->
             parameters
             |> length
@@ -509,6 +542,7 @@ let isTcoListShape (shape: TcoArgumentShape) =
         | TcoGrownConsShape -> true
         | TcoConsumedTailShape -> true
         | TcoChoiceAccumulatorShape -> true
+        | TcoWalkedOrRefilledShape -> true
         | _ -> false
 
 // Stage 0's `SelfCallArgumentOrdinal`: the position a call's argument takes in a call of `self`,
@@ -674,10 +708,52 @@ let recursive flowDerivations (nodes: List(Expr)) (derivations: List((Expr, List
         | ExprLet(name, value, _body, _parameters, _annotation, _requirements) :: rest -> flowDerivations(rest)((value, [name]) :: derivations)
         | _node :: rest -> flowDerivations(rest)(derivations)
 
-let recursive flowReadsAny (names: List(Str)) (expression: Expr) =
+// Stage 0's `FlowMentionsName`: whether a value computed by `expression` may hold `name`'s value or
+// a part of it. An operator's result holds nothing of its operands (a number, a truth value, a
+// fresh string), except that a string append grows a loop parameter on its left in place.
+let recursive flowReadsName (name: Str) (parameters: List(Str)) (depth: Int) (expression: Expr) =
+    if depth > 256
+    then true
+    else
+        match expression with
+            | ExprAt(_span, inner) -> flowReadsName(name)(parameters)(depth)(inner)
+            | ExprAdd(left, _right) ->
+                match shapeUnspan(left) with
+                    | ExprVar(leftName) -> shapeContainsName(leftName)(parameters) && leftName == name
+                    | _ -> false
+            | ExprSubtract(_left, _right) -> false
+            | ExprMultiply(_left, _right) -> false
+            | ExprDivide(_left, _right) -> false
+            | ExprModulo(_left, _right) -> false
+            | ExprBitwiseAnd(_left, _right) -> false
+            | ExprBitwiseOr(_left, _right) -> false
+            | ExprBitwiseXor(_left, _right) -> false
+            | ExprShiftLeft(_left, _right) -> false
+            | ExprShiftRight(_left, _right) -> false
+            | ExprBitwiseNot(_operand) -> false
+            | ExprLogicalNot(_operand) -> false
+            | ExprLogicalAnd(_left, _right) -> false
+            | ExprLogicalOr(_left, _right) -> false
+            | ExprGreaterThan(_left, _right) -> false
+            | ExprLessThan(_left, _right) -> false
+            | ExprGreaterOrEqual(_left, _right) -> false
+            | ExprLessOrEqual(_left, _right) -> false
+            | ExprEqual(_left, _right) -> false
+            | ExprNotEqual(_left, _right) -> false
+            | ExprCall(function, argument, _sugar, _layout) -> flowReadsName(name)(parameters)(depth + 1)(function) || flowReadsName(name)(parameters)(depth + 1)(argument)
+            | ExprCons(head, tail) -> flowReadsName(name)(parameters)(depth + 1)(head) || flowReadsName(name)(parameters)(depth + 1)(tail)
+            | ExprTuple(elements) -> flowListReadsName(name)(parameters)(depth + 1)(elements)
+            | ExprList(elements, _isMultiline) -> flowListReadsName(name)(parameters)(depth + 1)(elements)
+            | _ -> exprReadsName(name)(expression)
+and flowListReadsName (name: Str) (parameters: List(Str)) (depth: Int) (expressions: List(Expr)) =
+    match expressions with
+        | [] -> false
+        | expression :: rest -> flowReadsName(name)(parameters)(depth)(expression) || flowListReadsName(name)(parameters)(depth)(rest)
+
+let recursive flowReadsAny (names: List(Str)) (parameters: List(Str)) (expression: Expr) =
     match names with
         | [] -> false
-        | name :: rest -> exprReadsName(name)(expression) || flowReadsAny(rest)(expression)
+        | name :: rest -> flowReadsName(name)(parameters)(0)(expression) || flowReadsAny(rest)(parameters)(expression)
 
 let recursive flowAddNew (candidates: List(Str)) (names: List(Str)) =
     match candidates with
@@ -687,26 +763,26 @@ let recursive flowAddNew (candidates: List(Str)) (names: List(Str)) =
             then flowAddNew(rest)(names)
             else flowAddNew(rest)(candidate :: names)
 
-let recursive flowDerivePass (derivations: List((Expr, List(Str)))) (names: List(Str)) =
+let recursive flowDerivePass (derivations: List((Expr, List(Str)))) (parameters: List(Str)) (names: List(Str)) =
     match derivations with
         | [] -> names
         | (value, binders) :: rest ->
-            flowDerivePass(rest)(if flowReadsAny(names)(value)
+            flowDerivePass(rest)(parameters)(if flowReadsAny(names)(parameters)(value)
             then flowAddNew(binders)(names)
             else names)
 
 // A parameter's name with every name derived from it, to a fixed point.
-let recursive flowDerivedNames (derivations: List((Expr, List(Str)))) (names: List(Str)) =
-    (let next = flowDerivePass(derivations)(names)
+let recursive flowDerivedNames (derivations: List((Expr, List(Str)))) (parameters: List(Str)) (names: List(Str)) =
+    (let next = flowDerivePass(derivations)(parameters)(names)
     in
         if length(next) == length(names)
         then names
-        else flowDerivedNames(derivations)(next))
+        else flowDerivedNames(derivations)(parameters)(next))
 
-let recursive flowDerivedOf (derivations: List((Expr, List(Str)))) (parameters: List(Str)) =
+let recursive flowDerivedOf (derivations: List((Expr, List(Str)))) (allParameters: List(Str)) (parameters: List(Str)) =
     match parameters with
         | [] -> []
-        | parameter :: rest -> flowDerivedNames(derivations)([parameter]) :: flowDerivedOf(derivations)(rest)
+        | parameter :: rest -> flowDerivedNames(derivations)(allParameters)([parameter]) :: flowDerivedOf(derivations)(allParameters)(rest)
 
 let recursive flowContainsInt (value: Int) (values: List(Int)) =
     match values with
@@ -714,17 +790,17 @@ let recursive flowContainsInt (value: Int) (values: List(Int)) =
         | candidate :: rest -> candidate == value || flowContainsInt(value)(rest)
 
 // The source parameters an argument reads, by ordinal, added to the sources a position already has.
-let recursive flowArgumentSources (argument: Expr) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =
+let recursive flowArgumentSources (argument: Expr) (parameters: List(Str)) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =
     match derived with
         | [] -> sources
         | names :: rest ->
-            flowArgumentSources(argument)(rest)(source + 1)(if !flowContainsInt(source)(sources) && flowReadsAny(names)(argument)
+            flowArgumentSources(argument)(parameters)(rest)(source + 1)(if !flowContainsInt(source)(sources) && flowReadsAny(names)(parameters)(argument)
             then source :: sources
             else sources)
 
-let recursive flowRecordCall (arguments: List(Expr)) (derived: List(List(Str))) (flow: List(List(Int))) =
+let recursive flowRecordCall (arguments: List(Expr)) (parameters: List(Str)) (derived: List(List(Str))) (flow: List(List(Int))) =
     match (arguments, flow) with
-        | (argument :: restArguments, sources :: restFlow) -> flowArgumentSources(argument)(derived)(0)(sources) :: flowRecordCall(restArguments)(derived)(restFlow)
+        | (argument :: restArguments, sources :: restFlow) -> flowArgumentSources(argument)(parameters)(derived)(0)(sources) :: flowRecordCall(restArguments)(parameters)(derived)(restFlow)
         | _ -> flow
 
 type FlowCount =
@@ -732,26 +808,26 @@ type FlowCount =
     | recognizedCalls: Int
     | flow: List(List(Int))
 
-let flowCountCall (self: Str) (arity: Int) (derived: List(List(Str))) (call: Expr) (count: FlowCount) =
+let flowCountCall (self: Str) (parameters: List(Str)) (derived: List(List(Str))) (call: Expr) (count: FlowCount) =
     match shapeCallSpine(call)([]) with
         | (ExprVar(callee), arguments) ->
-            if callee == self && length(arguments) == arity
-            then count with recognizedCalls = count.recognizedCalls + 1, flow = flowRecordCall(arguments)(derived)(count.flow)
+            if callee == self && length(arguments) == length(parameters)
+            then count with recognizedCalls = count.recognizedCalls + 1, flow = flowRecordCall(arguments)(parameters)(derived)(count.flow)
             else count
         | _ -> count
 
-let recursive flowCountNodes (self: Str) (arity: Int) (derived: List(List(Str))) (nodes: List(Expr)) (count: FlowCount) =
+let recursive flowCountNodes (self: Str) (parameters: List(Str)) (derived: List(List(Str))) (nodes: List(Expr)) (count: FlowCount) =
     match nodes with
         | [] -> count
         | ExprVar(name) :: rest ->
-            flowCountNodes(self)(arity)(derived)(rest)((if name == self
+            flowCountNodes(self)(parameters)(derived)(rest)((if name == self
             then count with selfReferences = count.selfReferences + 1
             else count))
         | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
             count
-            |> flowCountCall(self)(arity)(derived)(call)
-            |> flowCountNodes(self)(arity)(derived)(rest)
-        | _node :: rest -> flowCountNodes(self)(arity)(derived)(rest)(count)
+            |> flowCountCall(self)(parameters)(derived)(call)
+            |> flowCountNodes(self)(parameters)(derived)(rest)
+        | _node :: rest -> flowCountNodes(self)(parameters)(derived)(rest)(count)
 
 let recursive flowEmpty (count: Int) =
     if count == 0
@@ -768,7 +844,7 @@ let tcoSelfCallParameterFlow (self: Str) (parameters: List(Str)) (body: Expr) =
         | Some(nodes) ->
             match FlowCount(selfReferences = 0, recognizedCalls = 0, flow = parameters
             |> length
-            |> flowEmpty) |> flowCountNodes(self)(length(parameters))(parameters |> flowDerivedOf(flowDerivations(nodes)([])))(nodes) with
+            |> flowEmpty) |> flowCountNodes(self)(parameters)(parameters |> flowDerivedOf(flowDerivations(nodes)([]))(parameters))(nodes) with
                 | FlowCount { selfReferences = references, recognizedCalls = calls, flow = flow } ->
                     if references == calls
                     then Some(flow)

@@ -2802,6 +2802,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_worklist_front_walked_and_refilled_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist whose front queue is walked by its consumed tail and refilled from the reversed
+        // back queue, each step pairing the grown back queue with a grown tree. Left in the arena,
+        // the front borrowed the heads of the earlier pairs, so none of them could be released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildWorklistFrontWalkedAndRefilledProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 10}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("worklist front walked and refilled", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_inline_list_beside_recursive_list_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10213,6 +10237,50 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + lowerCall([1, 2, 3, 4, 5])(State(instructions = [n], counter = n)) + countArguments([1, 2, 3])(State(instructions = [n], counter = n)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistFrontWalkedAndRefilledProgram(int rounds)
+        => $$"""
+            type Seen =
+                | Leaf
+                | Node(Seen, Str, Seen)
+
+            let recursive insert (key: Str) (seen: Seen) =
+                match seen with
+                    | Leaf -> Node(Leaf, key, Leaf)
+                    | Node(left, current, right) -> Node(insert(key)(left), current, right)
+
+            let recursive countSeen (seen: Seen) =
+                match seen with
+                    | Leaf -> 0
+                    | Node(left, _current, right) -> countSeen(left) + 1 + countSeen(right)
+
+            let recursive reverseAll (values: List(Str)) (acc: List(Str)) =
+                match values with
+                    | [] -> acc
+                    | value :: rest -> reverseAll(rest)(value :: acc)
+
+            let enqueue (key: Str) (back: List(Str)) (seen: Seen) = (key :: back, insert(key)(seen))
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (seen: Seen) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> countSeen(seen)
+                            | _ -> solve(reverseAll(back)([]))([])(seen)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then countSeen(seen)
+                        else
+                            match enqueue(key + "x")(back)(seen) with
+                                | (nextBack, nextSeen) -> solve(rest)(nextBack)(nextSeen)(fuel - 1)
+
+            let recursive rounds (keys: List(Str)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
+
+            Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
             """;
 
     private static string BuildRecordUpdateFreshCallResultFieldProgram(int rounds)

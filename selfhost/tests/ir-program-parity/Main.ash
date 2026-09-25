@@ -237,6 +237,9 @@ let recursive printEach (lines: List(Str)) =
 // contract record, once through a record update and once through a literal, both at a self call:
 // each cell stays in the arena and hands the fresh value to an owned slot the back edge releases,
 // and the literal's copy leaves that field to the slot.
+// tco_worklist_front_walked_or_refilled walks a front queue by its consumed tail and refills it
+// with the reversed back queue: the front is placed on the reference-counted heap, the refill taken
+// at the back edge and the walked tail retained as the pattern-bound successor.
 let fixtures =
     [
         "simple_arith",
@@ -315,7 +318,8 @@ let fixtures =
         "self_call_inside_constructor_owns_its_result",
         "tco_predecessor_released_when_successors_are_its_parts",
         "tco_record_blocked_by_sibling_keeps_field_retain_pending",
-        "back_edge_helper_calling_unreachable_helper_is_called"
+        "back_edge_helper_calling_unreachable_helper_is_called",
+        "tco_worklist_front_walked_or_refilled"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

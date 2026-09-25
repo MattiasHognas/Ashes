@@ -1192,6 +1192,9 @@ public sealed partial class Lowering
         public required bool[] AnyRebuildEdge { get; init; }
         public required bool?[] ChoiceAccumulatorEdges { get; init; }
         public required bool[] AnyChoiceEdge { get; init; }
+        public required bool?[] WalkOrRefillEdges { get; init; }
+        public required bool[] AnyWalkEdge { get; init; }
+        public required bool[] AnyRefillEdge { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
 
@@ -1206,6 +1209,9 @@ public sealed partial class Lowering
                 AnyRebuildEdge = new bool[count],
                 ChoiceAccumulatorEdges = new bool?[count],
                 AnyChoiceEdge = new bool[count],
+                WalkOrRefillEdges = new bool?[count],
+                AnyWalkEdge = new bool[count],
+                AnyRefillEdge = new bool[count],
                 SelfName = selfName,
             };
     }
@@ -1275,7 +1281,8 @@ public sealed partial class Lowering
                         ? TcoParamReuseAffinity.SelfAppendOnly
                         : TcoParamReuseAffinity.GeneralOrUnknown,
                     state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i],
-                    state.ChoiceAccumulatorEdges[i] == true && state.AnyChoiceEdge[i]));
+                    state.ChoiceAccumulatorEdges[i] == true && state.AnyChoiceEdge[i],
+                    state.WalkOrRefillEdges[i] == true && state.AnyWalkEdge[i] && state.AnyRefillEdge[i]));
             }
         }
 
@@ -2532,7 +2539,22 @@ public sealed partial class Lowering
             state.ChoiceAccumulatorEdges[i] = (state.ChoiceAccumulatorEdges[i] ?? true)
                 && (choiceEdge || IsAccumulatorEdgeArm(structural, paramNames[i], i, parameterScope));
             state.AnyChoiceEdge[i] |= choiceEdge;
+            RecordWalkOrRefillEdge(state, i, local, structural);
         }
+    }
+
+    // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
+    // or a call's result.
+    private static void RecordWalkOrRefillEdge(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape local, Expr structural)
+    {
+        bool walk = local == TcoSelfCallArgumentShape.ConsumedTail;
+        bool refill = local != TcoSelfCallArgumentShape.ConsumedTail
+            && local != TcoSelfCallArgumentShape.UnchangedPassthrough
+            && structural is Expr.Call;
+        state.WalkOrRefillEdges[ordinal] = (state.WalkOrRefillEdges[ordinal] ?? true)
+            && (walk || refill || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
+        state.AnyWalkEdge[ordinal] |= walk;
+        state.AnyRefillEdge[ordinal] |= refill;
     }
 
     // A choice between accumulator edges (the parameter handed on in one arm, a cons onto it in

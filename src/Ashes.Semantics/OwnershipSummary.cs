@@ -289,6 +289,11 @@ internal enum TcoParamReuseAffinity
 /// head reads a loop parameter: a head that is a sibling parameter is released with that
 /// parameter's predecessor at the back edge.
 /// </param>
+/// <param name="WalkedOrRefilled">
+/// True when every self-recursive call site passes the parameter's own consumed tail, the parameter
+/// itself, or a call's result, and both a consumed tail and a call's result occur: a list the loop
+/// walks and refills (a worklist's front queue refilled from its back queue).
+/// </param>
 internal sealed record TcoParamStructuralFacts(
     int ParameterOrdinal,
     string ParameterName,
@@ -299,7 +304,8 @@ internal sealed record TcoParamStructuralFacts(
     TcoParamUseMode UseMode,
     TcoParamReuseAffinity ReuseAffinity,
     bool AccumulatorRebuild = false,
-    bool ChoiceAccumulatorRebuild = false);
+    bool ChoiceAccumulatorRebuild = false,
+    bool WalkedOrRefilled = false);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge

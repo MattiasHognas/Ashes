@@ -7752,6 +7752,8 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                                 (copied with currentSpan = state.currentSpan)
                                 |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
                                 |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)
+        // A walked-or-refilled list's successor is normalized as a choice accumulator's is.
+        | (TcoResetArgument { managedList = Some(_managed), shape = TcoWalkedOrRefilledShape } as argument) :: rest -> normalizeRuntimeManagedBackEdgeArguments((argument with shape = TcoChoiceAccumulatorShape) :: rest)(reversedStores)(state)
         // A choice accumulator's successor is whatever the chosen arm handed over: an owned
         // reference-counted list is stored as it is, the parameter's own value is retained, since
         // the predecessor release still runs, and anything else is taken by reference when it
@@ -7846,6 +7848,10 @@ let recursive dropRuntimeManagedBackEdgePredecessors (arguments: List(TcoResetAr
                 |> dropRuntimeManagedBackEdgePredecessors(rest)
             else dropRuntimeManagedBackEdgePredecessors(rest)(state)
         | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoChoiceAccumulatorShape, oldTemp = oldTemp } :: rest ->
+            state
+            |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
+            |> dropRuntimeManagedBackEdgePredecessors(rest)
+        | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoWalkedOrRefilledShape, oldTemp = oldTemp } :: rest ->
             state
             |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
             |> dropRuntimeManagedBackEdgePredecessors(rest)
@@ -10052,7 +10058,7 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (sta
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || shape == TcoWalkedOrRefilledShape && resolveType(state)(element) == SemString || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None

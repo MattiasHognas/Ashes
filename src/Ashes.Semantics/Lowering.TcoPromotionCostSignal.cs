@@ -403,7 +403,7 @@ public sealed partial class Lowering
 
     private TcoRcEligibility EvaluateTcoListRcEligibility(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
     {
-        bool generalAccumulator = IsGeneralRcAccumulatorList(tco, facts, list);
+        bool generalAccumulator = IsGeneralRcAccumulatorList(tco, facts, list) || IsWalkedOrRefilledList(tco, facts, list);
         bool layoutEligible = (CanRuntimeManageTcoListElement(list.Element)
                 || (IsGeneralRcTcoListElement(list.Element) && facts.AffineConsList && !facts.ConsumedListTail)
                 || generalAccumulator)
@@ -449,6 +449,23 @@ public sealed partial class Lowering
                 || (IsChoiceAccumulatorElement(list.Element)
                     && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.ChoiceAccumulatorRebuild)
                         .Contains(facts.ParameterOrdinal)));
+
+    // A list the loop walks by its consumed tail and refills with a call's result (a worklist's
+    // front queue refilled from its back queue). Left in the arena, a refill borrows the heads of
+    // whatever value the call was given, often a part of an earlier iteration's owned result, and
+    // that result could then never be released. Placed on the reference-counted heap, the refill
+    // is taken or copied at the back edge and the walk retains the tail it moves on to. Only a list
+    // of strings: a string head matched out of the list is protected wherever it escapes, where a
+    // head of any other heap type returned from the loop would be released with the list.
+    private bool IsWalkedOrRefilledList(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
+        => GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_WALKREFILL") is null
+            && !tco.TmcShapePresent
+            && !facts.ConsumedListTail
+            && !facts.LoopInvariant
+            && Prune(list.Element) is TypeRef.TStr
+            && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.WalkedOrRefilled)
+                .Contains(facts.ParameterOrdinal);
 
     private bool IsChoiceAccumulatorElement(TypeRef element)
         => Environment.GetEnvironmentVariable("GRC_NO_BRANCHACCUMULATOR") is null
