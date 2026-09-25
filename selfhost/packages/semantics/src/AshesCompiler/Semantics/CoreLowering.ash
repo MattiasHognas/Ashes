@@ -557,6 +557,10 @@ type CoreOwnerState =
     | generalRcPredecessorSlots: List((Maybe(IrFunctionOrigin), Int, SemanticType))
     // Each owned slot stored inside a loop with the flag slot saying this iteration stored it.
     | generalRcFreshSlots: List((Maybe(IrFunctionOrigin), Int, Int))
+    // The match arms and if branches being lowered, innermost first, each by its join label and a
+    // label of its own; and, per owned slot, the ones it was stored inside.
+    | generalRcBranches: List((Str, Str))
+    | generalRcSlotBranches: List((Maybe(IrFunctionOrigin), Int, List((Str, Str))))
     // The result temp a function already made its own at its return, with that function: a loop
     // finishes its result ahead of its exit drops, and the return must not finish it again.
     | generalRcFinishedResult: Maybe((Maybe(IrFunctionOrigin), Int))
@@ -1355,6 +1359,70 @@ let recursive ownedSlotsOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe
 let ownedSlotsOfActiveFunction (state: CoreLoweringState) =
     ownedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcOwnedSlots(state))([])
 
+// Stage 0's `EnterGeneralRcBranch` / `LeaveGeneralRcBranch`: the arm or branch of the join
+// labelled `join` being lowered.
+let enterGeneralRcBranch (join: Str) (arm: Str) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcBranches = (join, arm) :: group.generalRcBranches))
+
+let leaveGeneralRcBranch (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in
+        match group.generalRcBranches with
+            | [] -> state
+            | _innermost :: outer -> state with ownerState = (group with generalRcBranches = outer))
+
+// A branch body lowered inside its arm of the join.
+let lowerInGeneralRcBranch (join: Str) (arm: Str) lowerBranch (state: CoreLoweringState) =
+    match state
+    |> enterGeneralRcBranch(join)(arm)
+    |> lowerBranch with
+        | LoweredCoreValue { state = lowered, temp = temp, semanticType = semanticType, error = error } -> LoweredCoreValue(state = leaveGeneralRcBranch(lowered), temp = temp, semanticType = semanticType, error = error)
+
+// Records the branches the owned slot just registered was stored inside.
+let recordGeneralRcSlotBranches (slot: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcSlotBranches = (stateActiveFunctionOrigin(state), slot, group.generalRcBranches) :: group.generalRcSlotBranches))
+
+let recursive branchesOfSlot (origin: Maybe(IrFunctionOrigin)) (slot: Int) (recorded: List((Maybe(IrFunctionOrigin), Int, List((Str, Str))))) =
+    match recorded with
+        | [] -> []
+        | (owner, recordedSlot, branches) :: rest ->
+            if owner == origin && recordedSlot == slot
+            then branches
+            else branchesOfSlot(origin)(slot)(rest)
+
+// Compares two branch paths outermost first: they diverge harmlessly at a different join, and
+// exclusively at two arms of the same one.
+let recursive branchPathsShareIteration (slotPath: List((Str, Str))) (currentPath: List((Str, Str))) =
+    match (slotPath, currentPath) with
+        | ((slotJoin, slotArm) :: slotRest, (currentJoin, currentArm) :: currentRest) ->
+            if slotJoin == currentJoin && slotArm == currentArm
+            then branchPathsShareIteration(slotRest)(currentRest)
+            else slotJoin != currentJoin
+        | _ -> true
+
+// Stage 0's `SharesIterationWith`: whether the owned slot can hold this iteration's value where
+// the lowering is now. Not when the two sit in different arms of the same join, which one
+// iteration never both runs; a value an earlier iteration left there is released at its own arm's
+// back edge or at the loop's exit.
+let slotSharesIteration (slot: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in
+        group.generalRcBranches
+        |> reverse
+        |> branchPathsShareIteration(group.generalRcSlotBranches
+        |> branchesOfSlot(stateActiveFunctionOrigin(state))(slot)
+        |> reverse))
+
+let recursive slotsSharingIteration (slots: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | (slot, semanticType) :: rest ->
+            if slotSharesIteration(slot)(state)
+            then (slot, semanticType) :: slotsSharingIteration(rest)(state)
+            else slotsSharingIteration(rest)(state)
+
 let statePendingOwnerPlan (state: CoreLoweringState) =
     (let group = state.ownerState
     in group.pendingOwnerPlan)
@@ -2003,6 +2071,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             generalRcOwnedSlots = [],
             generalRcPredecessorSlots = [],
             generalRcFreshSlots = [],
+            generalRcBranches = [],
+            generalRcSlotBranches = [],
             generalRcFinishedResult = None,
             closedProducerChain = None,
             pendingOwnerPlan = None,
@@ -7302,7 +7372,8 @@ let recursive releaseBackEdgeSourceChildren (read: List((Int, SemanticType, Int)
 // burned ahead of the copy's own.
 // A record of the contract's types takes that copy only when the successor is built at the
 // self-call itself (stage 0's `SuccessorOwnsItsChildren`); any other successor of such a record is
-// borrowed by the copy, which its normalization helper makes.
+// borrowed by the copy, which its normalization helper makes; stage 0 reaches that helper behind a
+// second representation test of its own, with one temp burned ahead of each test.
 let backEdgeAdtCopyPlanOf (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match (tcoAdtCopyPlanOf(semanticType)(state), constructorFieldExpressionsOf(expression)(semanticType)(state)) with
         | (NormalizerArgumentCopy(named), Some(_fields)) ->
@@ -7326,6 +7397,10 @@ let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expre
                                 |> releaseBackEdgeSourceChildren(read)(constructorFieldExpressionsOf(expression)(semanticType)(state))
                                 |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
                                 |> (given (released: CoreLoweringState) -> (released, copyTemp))
+        | NormalizerArgumentCopy(named) ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved } ->
+                    emitBackEdgeReferenceOrCopy(sourceTemp)(semanticType)(unlocatedDeepCopy(sourceTemp)(NormalizerArgumentCopy(named)))(reserved)
         | plan -> unlocatedDeepCopy(sourceTemp)(plan)(state)
 
 // Stage 0's `RegisterGeneralRcOwnedSlot`: the slot just stored holds a value of the contract's
@@ -7333,7 +7408,10 @@ let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expre
 // value sits in it.
 let registerGeneralRcOwnedSlot (slot: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match stateTcoLoopFrame(state) with
-        | None -> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(state), slot, semanticType) :: stateGeneralRcOwnedSlots(state))(state)
+        | None ->
+            state
+            |> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(state), slot, semanticType) :: stateGeneralRcOwnedSlots(state))
+            |> recordGeneralRcSlotBranches(slot)
         | Some(_frame) ->
             match freshLocal(state) with
                 | FreshLocal { state = flagged, local = freshSlot } ->
@@ -7344,6 +7422,7 @@ let registerGeneralRcOwnedSlot (slot: Int) (semanticType: SemanticType) (state: 
                             |> emit(StoreLocal(freshSlot)(oneTemp))
                             |> (given (stored: CoreLoweringState) -> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(stored), slot, semanticType) :: stateGeneralRcOwnedSlots(stored))(stored))
                             |> (given (stored: CoreLoweringState) -> withStateGeneralRcFreshSlots((stateActiveFunctionOrigin(stored), slot, freshSlot) :: stateGeneralRcFreshSlots(stored))(stored))
+                            |> recordGeneralRcSlotBranches(slot)
 
 // Stage 0's `SaveGeneralRcOwnedPredecessor`: inside a loop, what the owned slot about to be stored
 // still holds moves into a slot of its own, a value an earlier iteration left to a successor (a
@@ -7369,6 +7448,7 @@ let registerGeneralRcOwnedPredecessor (predecessorSlot: Int) (semanticType: Sema
         state
         |> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(state), predecessorSlot, semanticType) :: stateGeneralRcOwnedSlots(state))
         |> withStateGeneralRcPredecessorSlots((stateActiveFunctionOrigin(state), predecessorSlot, semanticType) :: stateGeneralRcPredecessorSlots(state))
+        |> recordGeneralRcSlotBranches(predecessorSlot)
 
 // The release of one owned value by its type, spliced in from the dropper synthesis.
 let emitOwnedValueChildDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -14071,7 +14151,7 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStri
         | CoreIfPlan { state = thenState, resultSlot = resultSlot, elseLabel = elseLabel, endLabel = endLabel, error = None } ->
             match thenState
             |> withConsumerRequest(request)
-            |> lowerStaticStringNormalizedBody(thenBranch)(normalizeStaticStrings)(lower) with
+            |> lowerInGeneralRcBranch(endLabel)("then")(lowerStaticStringNormalizedBody(thenBranch)(normalizeStaticStrings)(lower)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } ->
                     CoreIfThen(
                         state = failedState,
@@ -14102,7 +14182,7 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStr
     match loweredThen with
         | CoreIfThen { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | CoreIfThen { state = elseState, resultSlot = resultSlot, endLabel = endLabel, thenType = thenType, thenArm = thenArm, error = None } ->
-            match lowerStaticStringNormalizedBody(elseBranch)(normalizeStaticStrings)(lower)(withConsumerRequest((request with expectedType = Some(thenType)))(elseState)) with
+            match lowerInGeneralRcBranch(endLabel)("else")(lowerStaticStringNormalizedBody(elseBranch)(normalizeStaticStrings)(lower))(withConsumerRequest((request with expectedType = Some(thenType)))(elseState)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = loweredTemp, semanticType = elseType, error = None } ->
                     match bindType(thenType)(elseType)(resultState) with
@@ -15139,13 +15219,13 @@ let transferScrutineeChildResult (body: Expr) (temp: Int) (bodyType: SemanticTyp
                 | None -> (state, temp)
         | _ -> (state, temp)
 
-let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
+let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armLabel: Str) resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
         | LoweredCoreValue { state = bodyState, error = None } ->
             match bodyState
             |> withConsumerRequest(request)
-            |> lowerMatchArmBody(body)(normalizeStaticStrings)(lower) with
+            |> lowerInGeneralRcBranch(endLabel)(armLabel)(lowerMatchArmBody(body)(normalizeStaticStrings)(lower)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = bodyType, error = None } ->
                     match bindType(resultType)(bodyType)(resultState) with
@@ -15859,7 +15939,7 @@ let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: M
             |> adoptScrutineeOwner(valueTemp)(scrutineeOwner)(pattern)(outerBindings) with
                 | (guarded, scrutineeOwners) ->
                     guarded
-                    |> finishMatchArm(body)(normalizeStaticStrings)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(append(armOwners(outerBindings)(reusedPatternResult))(scrutineeOwners))(bodyLower)
+                    |> finishMatchArm(body)(normalizeStaticStrings)(resultSlot)(endLabel)(failLabel)(resultType)(request)(outerBindings)(bracket)(append(armOwners(outerBindings)(reusedPatternResult))(scrutineeOwners))(bodyLower)
                     |> reuseTruncateArmTokens(tokensBefore)
 
 // One arm is bracketed on its own: `SaveArenaState` before the pattern test, and a matching
@@ -21782,40 +21862,43 @@ let recursive argumentParameterPartsOf (arguments: List(Expr)) (state: CoreLower
         | argument :: rest -> (argumentRootSlotOf(argument)(state) != None) :: argumentParameterPartsOf(rest)(state)
 
 let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
-    (let predecessorDrops =
-        predecessorDropsOf(ownedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcPredecessorSlots(state))([]))(argumentTypes)(temps)(ownedSlotsOfActiveFunction(state))(state)
+    (let loopSlots =
+        slotsSharingIteration(ownedSlotsOfActiveFunction(state))(state)
     in
-        state
-        |> stateRuntimeOwners
-        |> iterationOwnedDrops(frame.ownerDepth)(state)
-        |> (given (drops: List((Int, Str))) ->
-            CoreTcoReset(
-                resetId = state
-                |> statePendingTcoResets
-                |> length,
-                argumentTypes = argumentTypes,
-                ownedDrops = drops,
-                generalRcPredecessorDrops = predecessorDrops,
-                generalRcSlotFacts = generalRcSlotFactsOf(ownedSlotsOfActiveFunction(state))(predecessorDrops)(argumentTypes)(state),
-                argumentOwnedSlots = argumentOwnedSlotsOf(temps)(ownedSlotsOfActiveFunction(state))(state),
-                argumentParameterParts = argumentParameterPartsOf(arguments)(state),
-                arenaCursorSlot = frame.arenaCursorSlot,
-                arenaEndSlot = frame.arenaEndSlot,
-                fixedCursorSlot = frame.fixedCursorSlot,
-                fixedEndSlot = frame.fixedEndSlot,
-                argumentTemps = temps,
-                oldTemps = oldTemps,
-                argumentRuntime = runtimeTempFlags(temps)(state),
-                argumentExpressions = arguments
-            ))
-        |> (given (reset: CoreTcoReset) ->
+        let predecessorDrops =
+            predecessorDropsOf(slotsSharingIteration(ownedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcPredecessorSlots(state))([]))(state))(argumentTypes)(temps)(loopSlots)(state)
+        in
             state
-            |> emit([frame.fixedCursorSlot, frame.fixedEndSlot, frame.arenaCursorSlot, frame.arenaEndSlot, frame.compactionSizeSlot]
-            |> append(ownedDropSlots(reset.ownedDrops))
-            |> append(frame.parameterSlots)
-            |> append(listActiveSlotsOf(frame.listActiveSlots))
-            |> TcoResetPending(reset.resetId)(append(temps)(oldTemps)))
-            |> (given (scheduled: CoreLoweringState) -> withStatePendingTcoResets(reset :: statePendingTcoResets(scheduled))(scheduled))))
+            |> stateRuntimeOwners
+            |> iterationOwnedDrops(frame.ownerDepth)(state)
+            |> (given (drops: List((Int, Str))) ->
+                CoreTcoReset(
+                    resetId = state
+                    |> statePendingTcoResets
+                    |> length,
+                    argumentTypes = argumentTypes,
+                    ownedDrops = drops,
+                    generalRcPredecessorDrops = predecessorDrops,
+                    generalRcSlotFacts = generalRcSlotFactsOf(loopSlots)(predecessorDrops)(argumentTypes)(state),
+                    argumentOwnedSlots = argumentOwnedSlotsOf(temps)(loopSlots)(state),
+                    argumentParameterParts = argumentParameterPartsOf(arguments)(state),
+                    arenaCursorSlot = frame.arenaCursorSlot,
+                    arenaEndSlot = frame.arenaEndSlot,
+                    fixedCursorSlot = frame.fixedCursorSlot,
+                    fixedEndSlot = frame.fixedEndSlot,
+                    argumentTemps = temps,
+                    oldTemps = oldTemps,
+                    argumentRuntime = runtimeTempFlags(temps)(state),
+                    argumentExpressions = arguments
+                ))
+            |> (given (reset: CoreTcoReset) ->
+                state
+                |> emit([frame.fixedCursorSlot, frame.fixedEndSlot, frame.arenaCursorSlot, frame.arenaEndSlot, frame.compactionSizeSlot]
+                |> append(ownedDropSlots(reset.ownedDrops))
+                |> append(frame.parameterSlots)
+                |> append(listActiveSlotsOf(frame.listActiveSlots))
+                |> TcoResetPending(reset.resetId)(append(temps)(oldTemps)))
+                |> (given (scheduled: CoreLoweringState) -> withStatePendingTcoResets(reset :: statePendingTcoResets(scheduled))(scheduled))))
 
 // The back edge cannot reach its expression join; its synthetic zero is the value the join
 // stores. Stage 0's `LowerCallTcoBackEdgeDummy` marks it a reference-counted value (so a join
