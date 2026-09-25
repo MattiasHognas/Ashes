@@ -546,12 +546,21 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    cannot hold it (the per-argument states of the tail self-call loop), an earlier iteration's value
    released when the other successors only walk the loop's entry values (mirrored in stage 1), a
    fresh comparison operand released after the call (mirrored), no borrowed-owner retain for an arena
-   binding copied into an aggregate, a record-update successor releasing what its construction
-   retained, and capture pruning and the constant folder's joins annotated. The probe went from
-   658 MB and 75 seconds to 526 MB and about 55 seconds, and the census from 63% leaked to 55%. On the
-   way the census found #1139 freeing a record literal successor's fresh field twice, and stage 1's
-   linker placing an AVX-512 constant section at 32-byte rather than 64-byte alignment, which made
-   stage 1's output of a loop with a seven-value closure fault on this host; both are fixed.
+   binding copied into an aggregate, and capture pruning and the constant folder's joins annotated.
+   The probe went from 658 MB and 75 seconds to 526 MB and about 55 seconds, and the census from 63%
+   leaked to 55%. On the way the census found #1139 freeing a record literal successor's fresh field
+   twice, and stage 1's linker placing an AVX-512 constant section at 32-byte rather than 64-byte
+   alignment, which made stage 1's output of a loop with a seven-value closure fault on this host;
+   both are fixed.
+
+   One stage-0 fix was withdrawn. A loop whose successor updates its own record retains the
+   unchanged fields and the field reads nested in the updated ones into arena cells, and the back
+   edge's copy borrows them, one reference left per iteration (stage 1 borrows these fields and does
+   not leak). Releasing them as a record literal's are exposed an older defect of that literal
+   release: it frees every child a fresh literal holds, including one the construction only
+   borrowed, such as a binding matched out of a sibling parameter kept in the arena, and the leak had
+   been hiding that. A release must follow the retain it balances, not the literal's shape; until
+   then the literal release is a latent use-after-free on `main`.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
