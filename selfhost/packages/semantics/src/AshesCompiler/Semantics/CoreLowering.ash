@@ -17672,17 +17672,32 @@ let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticTy
                     | _ -> (state, temp)
         | _ -> (state, temp)
 
+let firstDemoted (demoted: List(Bool)) =
+    match demoted with
+        | first :: _rest -> first
+        | [] -> false
+
+let restDemoted (demoted: List(Bool)) =
+    match demoted with
+        | _first :: rest -> rest
+        | [] -> []
+
 // Stage 0's `RetainRuntimeManagedTupleChildren`: a tuple element read from a live owner or a
-// loop parameter is retained for the cell.
-let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+// loop parameter is retained for the cell, except one the cell holds an arena copy of.
+let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (elements, temps, semanticTypes) with
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
-            match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
-                | (retained, retainedTemp) ->
-                    match retained
-                    |> success(retainedTemp)(semanticType)
-                    |> retainLoopParameterChild(element)(temp) with
-                        | LoweredCoreValue { state = marked, temp = markedTemp } -> retainAggregateChildTemps(restElements)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
+            if firstDemoted(demoted)
+            then
+                retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(state)(temp :: reversed)
+            else
+                match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
+                    | (retained, retainedTemp) ->
+                        match retained
+                        |> success(retainedTemp)(semanticType)
+                        |> retainLoopParameterChild(element)(temp) with
+                            | LoweredCoreValue { state = marked, temp = markedTemp } ->
+                                retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
 // The request each tuple element is lowered under, stage 0's `LowerTupleElement`: the tuple's
@@ -17755,9 +17770,9 @@ let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: B
                         unifyTupleElementWithExpected(expectedElements)(semanticType)(nextState)
                     )
 
-let retainTupleChildren (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (retains: Bool) (state: CoreLoweringState) =
+let retainTupleChildren (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (retains: Bool) (state: CoreLoweringState) =
     if retains
-    then retainAggregateChildTemps(elements)(temps)(semanticTypes)(state)([])
+    then retainAggregateChildTemps(elements)(temps)(semanticTypes)(demoted)(state)([])
     else (state, temps)
 
 let markAggregateRuntimeManaged (temp: Int) (runtimeManaged: Bool) (state: CoreLoweringState) =
@@ -17810,8 +17825,97 @@ let recursive normalizeTupleSiblings (copiesSiblings: Bool) (elements: List(Expr
                         | (normalized, rest) -> (normalized, temp :: rest)
         | _ -> (state, [])
 
-let finishPlacedTuple elements (temps: List(Int)) (semanticTypes: List(SemanticType)) (tupleTemp: Int) (runtimeManaged: Bool) (transfers: Bool) (state: CoreLoweringState) =
-    match retainTupleChildren(elements)(temps)(semanticTypes)(runtimeManaged || transfers)(state) with
+// The most recent identity duplicate a pattern-owner read took of a tuple element, made a plain
+// borrow: the cell holds a copy instead, and a marker left behind could still be promoted to a
+// retain nothing releases. Yields the value the element was read as, or none when no marker made it.
+let recursive findElementDuplicate (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = RcDup(target, source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            match (target == temp, runtimeManaged) with
+                | (true, false) -> Some(source)
+                | (true, true) -> None
+                | _ -> findElementDuplicate(temp)(rest)
+        | _instruction :: rest -> findElementDuplicate(temp)(rest)
+
+let recursive borrowElementDuplicate (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, source, _runtimeManaged, _mayBeEmpty) } as instruction) :: rest ->
+            if target == temp
+            then (instruction with instruction = Borrow(target)(source)) :: rest
+            else instruction :: borrowElementDuplicate(temp)(rest)
+        | instruction :: rest -> instruction :: borrowElementDuplicate(temp)(rest)
+
+let neutralizeElementDuplicate (temp: Int) (state: CoreLoweringState) =
+    match findElementDuplicate(temp)(state.reversedInstructions) with
+        | Some(source) -> ((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)), source)
+        | None -> (state, temp)
+
+let releaseDemotedSource (releasesSource: Bool) (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if releasesSource
+    then emitOwnedValueChildDrop(sourceTemp)(semanticType)(state)
+    else state
+
+// Stage 0's `EmitArenaCopyOfReferenceCounted`: an arena copy of a value that may be
+// reference-counted, releasing the original when it was fresh; a value already outside the
+// reference-counted heap is used as it is.
+let emitArenaCopyOfReferenceCounted (sourceTemp: Int) (semanticType: SemanticType) (releasesSource: Bool) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotted, local = resultSlot } ->
+            match slotted
+            |> emit(StoreLocal(resultSlot)(sourceTemp))
+            |> freshTemp with
+                | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+                    match freshLabel("rc_arena_demote_done")(tested) with
+                        | FreshLabel { state = labelled, label = doneLabel } ->
+                            match labelled
+                            |> emit(IsReferenceCounted(referenceCountedTemp)(sourceTemp))
+                            |> emit(JumpIfFalse(referenceCountedTemp)(doneLabel))
+                            |> emitLocatedDeepCopy(sourceTemp)(semanticType) with
+                                | (copied, copyTemp) ->
+                                    match copied
+                                    |> emit(StoreLocal(resultSlot)(copyTemp))
+                                    |> releaseDemotedSource(releasesSource)(sourceTemp)(semanticType)
+                                    |> emit(Label(doneLabel))
+                                    |> freshTemp with
+                                        | FreshTemp { state = loaded, temp = resultTemp } ->
+                                            (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
+
+// Whether an element of an arena tuple beside a generic sibling is copied into the arena: a
+// resolved heap value the reference-counted heap may hold, other than one of the contract's types.
+let demotesTupleElement (semanticType: SemanticType) (state: CoreLoweringState) = !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && !isGeneralRcValueType(semanticType)(state)
+
+let recursive demoteTupleElements (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (temps, semanticTypes) with
+        | (temp :: restTemps, semanticType :: restTypes) ->
+            if demotesTupleElement(semanticType)(state)
+            then
+                match neutralizeElementDuplicate(temp)(state) with
+                    | (neutralized, sourceTemp) ->
+                        match emitArenaCopyOfReferenceCounted(sourceTemp)(semanticType)(tempIsNewlyProduced(sourceTemp)(neutralized))(neutralized) with
+                            | (copied, copyTemp) ->
+                                match demoteTupleElements(restTemps)(restTypes)(copied) with
+                                    | (demotedState, restCopies, restFlags) -> (demotedState, copyTemp :: restCopies, true :: restFlags)
+            else
+                match demoteTupleElements(restTemps)(restTypes)(state) with
+                    | (demotedState, restCopies, restFlags) -> (demotedState, temp :: restCopies, false :: restFlags)
+        | _ -> (state, temps, [])
+
+// Stage 0's `DemoteElementsBesideAbstractSibling`: a tuple beside an element of unresolved layout
+// (a generic value) stays in the arena, where nothing releases what it holds, so it never holds
+// the only reference to a reference-counted value. Such an element is copied into the arena, a
+// fresh one released after the copy, and none is retained for the tuple.
+let demoteArenaTupleElements (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match stateSpecializationFreshInputs(state) with
+        | None ->
+            if anyUnresolvedLayout(semanticTypes)(state)
+            then demoteTupleElements(temps)(semanticTypes)(state)
+            else (state, temps, [])
+        | Some(_inputs) -> (state, temps, [])
+
+let finishPlacedTuple elements (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (tupleTemp: Int) (runtimeManaged: Bool) (transfers: Bool) (state: CoreLoweringState) =
+    match retainTupleChildren(elements)(temps)(semanticTypes)(demoted)(runtimeManaged || transfers)(state) with
         | (retainedState, storedTemps) ->
             retainedState
             |> emit(Alloc(tupleTemp)(coreListLength(storedTemps) * 8)(runtimeManaged))
@@ -17828,8 +17932,10 @@ let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered 
                     if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
                     then
                         match normalizeTupleSiblings(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
-                            | (normalizedState, temps) -> finishPlacedTuple(elements)(temps)(semanticTypes)(tupleTemp)(true)(transfers)(normalizedState)
-                    else finishPlacedTuple(elements)(loweredTemps)(semanticTypes)(tupleTemp)(false)(transfers)(reservedState)
+                            | (normalizedState, temps) -> finishPlacedTuple(elements)(temps)(semanticTypes)([])(tupleTemp)(true)(transfers)(normalizedState)
+                    else
+                        match demoteArenaTupleElements(loweredTemps)(semanticTypes)(reservedState) with
+                            | (demotedState, temps, demoted) -> finishPlacedTuple(elements)(temps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(demotedState)
 
 let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
     match (request, stateTcoLoop(state)) with

@@ -15659,12 +15659,13 @@ public sealed partial class Lowering
 
         int tupleTemp = NewTemp();
         bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request);
+        bool[] demoted = DemoteElementsBesideAbstractSibling(elements, runtimeManaged);
         MaterializeEscapingArenaTupleElements(
             tuple,
             elements,
             request,
             runtimeManaged);
-        RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged);
+        RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged, demoted);
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elements.Count; i++)
         {
@@ -15688,7 +15689,8 @@ public sealed partial class Lowering
         Expr.TupleLit tuple,
         List<LoweredValue> elements,
         LoweredValueRequest request,
-        bool runtimeManaged)
+        bool runtimeManaged,
+        bool[] demoted)
     {
         if (!runtimeManaged && !request.TransfersRuntimeManagedChildren)
         {
@@ -15697,6 +15699,11 @@ public sealed partial class Lowering
 
         for (int i = 0; i < elements.Count; i++)
         {
+            if (demoted[i])
+            {
+                continue;
+            }
+
             int retainedTemp = RetainRuntimeManagedAggregateChild(
                 tuple.Elements[i],
                 elements[i].Temp,

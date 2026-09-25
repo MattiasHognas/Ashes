@@ -407,6 +407,79 @@ public sealed partial class Lowering
                 && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
             || TryResolveTcoParameterRead(argument, fieldType, out _) is not null;
 
+    // A tuple beside an element of unresolved layout (a generic value) stays in the arena, where
+    // nothing releases what it holds. An arena tuple never holds the only reference to a
+    // reference-counted value: such an element is copied into the arena beside it, a fresh one is
+    // released after the copy, and none is retained for the tuple. Returns the elements copied.
+    private bool[] DemoteElementsBesideAbstractSibling(List<LoweredValue> elements, bool runtimeManaged)
+    {
+        bool[] demoted = new bool[elements.Count];
+        if (runtimeManaged
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_DEMOTE") is not null
+            || !elements.Exists(element => ContainsUnresolvedLayoutType(Prune(element.Type), [])))
+        {
+            return demoted;
+        }
+
+        for (int i = 0; i < elements.Count; i++)
+        {
+            TypeRef type = Prune(elements[i].Type);
+            if (CanArenaReset(type)
+                || type is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(type, [])
+                || !IsGeneralRcAdmissible(type)
+                || IsGeneralRcValueType(type))
+            {
+                continue;
+            }
+
+            int sourceTemp = NeutralizeAggregateDuplicate(elements[i].Temp);
+            int copiedTemp = EmitArenaCopyOfReferenceCounted(sourceTemp, type, IsNewlyProducedRcTemp(sourceTemp));
+            elements[i] = CreateLoweredValue(copiedTemp, type);
+            demoted[i] = true;
+        }
+
+        return demoted;
+    }
+
+    // The duplicate a pattern-owner read took for the aggregate is not needed once the aggregate
+    // holds a copy; left as a marker, it could still be upgraded to a retain nothing releases.
+    // Returns the value the element was read as.
+    private int NeutralizeAggregateDuplicate(int elementTemp)
+    {
+        int index = _inst.FindLastIndex(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == elementTemp);
+        if (index < 0 || _inst[index] is not IrInst.RcDup { RuntimeManaged: false } marker)
+        {
+            return elementTemp;
+        }
+
+        _inst[index] = new IrInst.Borrow(marker.Target, marker.SourceTemp) { Location = marker.Location };
+        return marker.SourceTemp;
+    }
+
+    // An arena copy of a value that may be reference-counted, releasing the original when the
+    // caller owned it; a value already outside the reference-counted heap is used as it is.
+    private int EmitArenaCopyOfReferenceCounted(int sourceTemp, TypeRef type, bool releasesSource)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, sourceTemp));
+        string doneLabel = NewLabel("rc_arena_demote_done");
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, doneLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitDeepCopy(sourceTemp, type)));
+        if (releasesSource)
+        {
+            EmitRuntimeManagedChildDrop(sourceTemp, type);
+        }
+
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
     // Whether a tuple is a reference-counted one: it was requested, or it holds a reference-counted
     // element; and every element is manageable, one of the contract's types included, and those are
     // made the tuple's own.

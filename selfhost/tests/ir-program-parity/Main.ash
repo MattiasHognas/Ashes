@@ -309,7 +309,8 @@ let fixtures =
         "closure_environment_normalizes_record_of_list",
         "fresh_argument_released_behind_unproven_result",
         "tco_state_record_and_inline_list_beside_recursive_list",
-        "record_update_fresh_call_field_owned_by_slot"
+        "record_update_fresh_call_field_owned_by_slot",
+        "generic_tuple_copies_reference_counted_element_into_arena"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

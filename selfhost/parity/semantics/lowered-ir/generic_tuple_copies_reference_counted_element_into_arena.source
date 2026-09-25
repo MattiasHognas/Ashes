@@ -1,0 +1,29 @@
+// A generic helper pairs its generic parameter with a reference-counted value, and returns that
+// pair beside a reference-counted state. Neither tuple can go onto the reference-counted heap
+// beside a generic value, so each holds an arena copy of its reference-counted element instead of
+// a reference nothing would release, and a fresh element is released after its copy.
+type Sem =
+    | SemVariable(Int)
+    | SemName(Str)
+
+type Supply =
+    | nextId: Int
+
+let fresh (supply: Supply) =
+    match supply with
+        | Supply { nextId = nextId } -> (SemVariable(nextId), Supply(nextId = nextId + 1))
+
+let pairFresh variableId supply =
+    match fresh(supply) with
+        | (freshVariable, nextSupply) -> ((variableId, freshVariable), nextSupply)
+
+let tagged variableId count = ((variableId, count), Supply(nextId = count))
+
+let measure (n: Int) =
+    match pairFresh(n)(Supply(nextId = n)) with
+        | ((variable, SemVariable(id)), Supply { nextId = next }) ->
+            match tagged(n)(n + 1) with
+                | ((_other, count), Supply { nextId = last }) -> variable + id + next + count + last
+        | _ -> 0
+
+Ashes.IO.print(measure(3) + measure(4))

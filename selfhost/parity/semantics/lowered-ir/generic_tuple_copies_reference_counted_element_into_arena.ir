@@ -1,0 +1,408 @@
+IR (lowered)
+============
+
+function __deepcopy_1  [AdtDeepCopier]
+  locals=2 temps=8
+    LoadLocal             Target=0 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadEnv               Target=1 Index=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    GetAdtTag             Target=2 Ptr=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_1_default   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  __deepcopy_1_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Return                Source=3   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  __deepcopy_1_c1:
+    AllocAdt              Target=5 Tag=1 FieldCount=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    CopyOutArena          DestTemp=7 SrcTemp=6 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=7   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Return                Source=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  __deepcopy_1_default:
+    Return                Source=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+
+function __deepcopy_2  [AdtDeepCopier]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadEnv               Target=1 Index=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadConstInt          Target=2 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_2_default   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  __deepcopy_2_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=1 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Return                Source=3   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  __deepcopy_2_default:
+    Return                Source=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+
+function __rcdrop_3  [RuntimeManagedAdtDropper]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_6   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    GetAdtTag             Target=2 Ptr=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_6   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  rcdrop_ctor_7:
+    Jump                  Target=rcdrop_shared_6   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  rcdrop_ctor_8:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_shared_6   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  rcdrop_shared_6:
+    RcDrop                SourceTemp=0 TypeName=Sem RuntimeManaged=true
+    LoadConstInt          Target=4 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Return                Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+
+function lambda_0  [SourceFunction from fresh]
+  locals=9 temps=31
+    LoadLocal             Target=0 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    CmpIntNe              Target=2 Left=0 Right=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_2   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    StoreLocal            Slot=5 Source=3   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    LoadLocal             Target=4 Slot=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:54)
+    AllocAdt              Target=5 Tag=0 FieldCount=1 RuntimeManaged=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:42)
+    SetAdtField           Ptr=5 FieldIndex=0 Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:42)
+    LoadLocal             Target=6 Slot=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:79)
+    LoadConstInt          Target=7 Value=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:88)
+    AddInt                Target=8 Left=6 Right=7   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:79)
+    AllocAdt              Target=9 Tag=0 FieldCount=1 RuntimeManaged=true Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:63)
+    SetAdtField           Ptr=9 FieldIndex=0 Source=8 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:63)
+    Alloc                 Target=10 SizeBytes=16 RuntimeManaged=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:41)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:41)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=9   (generic_tuple_copies_reference_counted_element_into_arena.ash:14:41)
+    StoreLocal            Slot=2 Source=10   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_end_0   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+  match_arm_cleanup_2:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=7
+    Jump                  Target=match_none_1   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+  match_none_1:
+    LoadConstInt          Target=11 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    StoreLocal            Slot=2 Source=11   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+  match_end_0:
+    LoadLocal             Target=12 Slot=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:13:5)
+    LoadArgumentOwnership Target=13   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadConstInt          Target=14 Value=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    ShrInt                Target=15 Left=13 Right=14   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    JumpIfFalse           CondTemp=15 Target=rc_result_owned_3   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Alloc                 Target=16 SizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadMemOffset         Target=17 BasePtr=12 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Alloc                 Target=18 SizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    MakeClosure           Target=19 FuncLabel=__deepcopy_1 EnvPtrTemp=18 EnvSizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=19   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    CallClosure           Target=20 ClosureTemp=19 ArgTemp=17   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=20   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadMemOffset         Target=21 BasePtr=12 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Alloc                 Target=22 SizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    MakeClosure           Target=23 FuncLabel=__deepcopy_2 EnvPtrTemp=22 EnvSizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=23   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    CallClosure           Target=24 ClosureTemp=23 ArgTemp=21   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=24   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    RcIsUnique            Target=25 SourceTemp=12
+    JumpIfFalse           CondTemp=25 Target=rc_drop_tuple_shared_5   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadMemOffset         Target=26 BasePtr=12 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadConstInt          Target=27 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    CallKnown             Target=28 FuncLabel=__rcdrop_3 EnvTemp=27 ArgTemp=26   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadMemOffset         Target=29 BasePtr=12 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    RcDrop                SourceTemp=29 TypeName=Supply RuntimeManaged=true
+  rc_drop_tuple_shared_5:
+    RcDrop                SourceTemp=12 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=8 Source=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Jump                  Target=rc_result_done_4   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  rc_result_owned_3:
+    StoreLocal            Slot=8 Source=12   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+  rc_result_done_4:
+    LoadLocal             Target=30 Slot=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Return                Source=30   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+
+function lambda_5  [ClosureHelper from pairFresh]
+  locals=15 temps=33
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:11)
+    Borrow                Target=1 SourceTemp=0
+    LoadLocal             Target=2 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:17)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadMemOffset         Target=4 BasePtr=3 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    StoreLocal            Slot=8 Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    LoadMemOffset         Target=5 BasePtr=3 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    StoreLocal            Slot=9 Source=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    StoreLocal            Slot=10 Source=3   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    LoadEnv               Target=6 Index=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:44)
+    LoadLocal             Target=7 Slot=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:56)
+    Borrow                Target=8 SourceTemp=7
+    StoreLocal            Slot=11 Source=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    IsReferenceCounted    Target=10 SourceTemp=8
+    JumpIfFalse           CondTemp=10 Target=rc_arena_demote_done_12   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    Alloc                 Target=11 SizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    MakeClosure           Target=12 FuncLabel=__deepcopy_1 EnvPtrTemp=11 EnvSizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=12   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    CallClosure           Target=13 ClosureTemp=12 ArgTemp=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    StoreLocal            Slot=11 Source=13   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+  rc_arena_demote_done_12:
+    LoadLocal             Target=14 Slot=11   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    Alloc                 Target=9 SizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=6   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=14   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:43)
+    LoadLocal             Target=15 Slot=9   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:72)
+    Borrow                Target=16 SourceTemp=15
+    StoreLocal            Slot=12 Source=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    IsReferenceCounted    Target=18 SourceTemp=16
+    JumpIfFalse           CondTemp=18 Target=rc_arena_demote_done_13   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    Alloc                 Target=19 SizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    MakeClosure           Target=20 FuncLabel=__deepcopy_2 EnvPtrTemp=19 EnvSizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=20   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    CallClosure           Target=21 ClosureTemp=20 ArgTemp=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    StoreLocal            Slot=12 Source=21   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+  rc_arena_demote_done_13:
+    LoadLocal             Target=22 Slot=12   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    Alloc                 Target=17 SizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=9   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=22   (generic_tuple_copies_reference_counted_element_into_arena.ash:18:42)
+    StoreLocal            Slot=5 Source=17   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    RcDrop                SourceTemp=5 TypeName=Supply OwnerSlot=9
+    RcDrop                SourceTemp=4 TypeName=Sem OwnerSlot=8
+    LoadLocal             Target=25 Slot=10   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    RcIsUnique            Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=rc_drop_tuple_shared_14   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    LoadMemOffset         Target=27 BasePtr=25 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    LoadConstInt          Target=28 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    CallKnown             Target=29 FuncLabel=__rcdrop_3 EnvTemp=28 ArgTemp=27   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    LoadMemOffset         Target=30 BasePtr=25 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    RcDrop                SourceTemp=30 TypeName=Supply RuntimeManaged=true
+  rc_drop_tuple_shared_14:
+    RcDrop                SourceTemp=25 TypeName=Tuple RuntimeManaged=true
+    Jump                  Target=match_end_9   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+  match_arm_cleanup_11:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=14
+    Jump                  Target=match_none_10   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+  match_none_10:
+    LoadConstInt          Target=31 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    StoreLocal            Slot=5 Source=31   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+  match_end_9:
+    LoadLocal             Target=32 Slot=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:17:5)
+    Return                Source=32   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+
+function lambda_4  [SourceFunction from pairFresh]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    LoadEnv               Target=1 Index=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    Borrow                Target=2 SourceTemp=1
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    LoadLocal             Target=3 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    MakeClosure           Target=4 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    Return                Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+
+function lambda_7  [ClosureHelper from tagged]
+  locals=3 temps=11
+    LoadEnv               Target=0 Index=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:33)
+    LoadLocal             Target=1 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:45)
+    Alloc                 Target=2 SizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:32)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:32)
+    StoreMemOffset        BasePtr=2 OffsetBytes=8 Source=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:32)
+    LoadLocal             Target=3 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:69)
+    AllocAdt              Target=4 Tag=0 FieldCount=1 RuntimeManaged=true Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:53)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=3 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:53)
+    StoreLocal            Slot=2 Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    IsReferenceCounted    Target=6 SourceTemp=4
+    JumpIfFalse           CondTemp=6 Target=rc_arena_demote_done_15   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    Alloc                 Target=7 SizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_2 EnvPtrTemp=7 EnvSizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    StoreLocal            Slot=2 Source=9   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    RcDrop                SourceTemp=4 TypeName=Supply RuntimeManaged=true
+  rc_arena_demote_done_15:
+    LoadLocal             Target=10 Slot=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    Alloc                 Target=5 SizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=10   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:31)
+    Return                Source=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+
+function lambda_6  [SourceFunction from tagged]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    LoadLocal             Target=1 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    MakeClosure           Target=2 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    Return                Source=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+
+function lambda_8  [SourceFunction from measure]
+  locals=28 temps=49
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:11)
+    Borrow                Target=1 SourceTemp=0
+    LoadLocal             Target=2 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:21)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:11)
+    LoadLocal             Target=4 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:40)
+    AllocAdt              Target=5 Tag=0 FieldCount=1 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:24)
+    SetAdtField           Ptr=5 FieldIndex=0 Source=4 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:24)
+    CallClosure           Target=6 ClosureTemp=3 ArgTemp=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:11)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadMemOffset         Target=7 BasePtr=6 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    LoadMemOffset         Target=8 BasePtr=7 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    StoreLocal            Slot=8 Source=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    LoadMemOffset         Target=9 BasePtr=7 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    LoadConstInt          Target=10 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    CmpIntNe              Target=11 Left=9 Right=10   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_19   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    GetAdtTag             Target=12 Ptr=9   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    LoadConstInt          Target=14 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    CmpIntEq              Target=13 Left=12 Right=14   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_19   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    GetAdtField           Target=15 Ptr=9 FieldIndex=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    StoreLocal            Slot=9 Source=15   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    LoadMemOffset         Target=16 BasePtr=6 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    LoadConstInt          Target=17 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    CmpIntNe              Target=18 Left=16 Right=17   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    JumpIfFalse           CondTemp=18 Target=match_arm_cleanup_19   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    GetAdtField           Target=19 Ptr=16 FieldIndex=0 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    StoreLocal            Slot=10 Source=19   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadEnv               Target=20 Index=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:19)
+    Borrow                Target=21 SourceTemp=20
+    LoadLocal             Target=22 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:26)
+    CallClosure           Target=23 ClosureTemp=21 ArgTemp=22   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:19)
+    LoadLocal             Target=24 Slot=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:29)
+    LoadConstInt          Target=25 Value=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:33)
+    AddInt                Target=26 Left=24 Right=25   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:29)
+    CallClosure           Target=27 ClosureTemp=23 ArgTemp=26   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:19)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadMemOffset         Target=28 BasePtr=27 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    LoadMemOffset         Target=29 BasePtr=28 OffsetBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    StoreLocal            Slot=17 Source=29   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    LoadMemOffset         Target=30 BasePtr=28 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    StoreLocal            Slot=18 Source=30   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    LoadMemOffset         Target=31 BasePtr=27 OffsetBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    LoadConstInt          Target=32 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    CmpIntNe              Target=33 Left=31 Right=32   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    JumpIfFalse           CondTemp=33 Target=match_arm_cleanup_22   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    GetAdtField           Target=34 Ptr=31 FieldIndex=0 Tagless=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    StoreLocal            Slot=19 Source=34   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    LoadLocal             Target=35 Slot=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:66)
+    LoadLocal             Target=36 Slot=9   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:77)
+    AddInt                Target=37 Left=35 Right=36   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:66)
+    LoadLocal             Target=38 Slot=10   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:82)
+    AddInt                Target=39 Left=37 Right=38   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:66)
+    LoadLocal             Target=40 Slot=18   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:89)
+    AddInt                Target=41 Left=39 Right=40   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:66)
+    LoadLocal             Target=42 Slot=19   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:97)
+    AddInt                Target=43 Left=41 Right=42   (generic_tuple_copies_reference_counted_element_into_arena.ash:26:66)
+    StoreLocal            Slot=14 Source=43   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    Jump                  Target=match_end_20   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+  match_arm_cleanup_22:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    Jump                  Target=match_none_21   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+  match_none_21:
+    LoadConstInt          Target=44 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    StoreLocal            Slot=14 Source=44   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+  match_end_20:
+    LoadLocal             Target=45 Slot=14   (generic_tuple_copies_reference_counted_element_into_arena.ash:25:13)
+    StoreLocal            Slot=5 Source=45   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=22
+    Jump                  Target=match_end_16   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+  match_arm_cleanup_19:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=23
+    Jump                  Target=match_next_18   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+  match_next_18:
+    SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
+    LoadConstInt          Target=46 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:27:16)
+    StoreLocal            Slot=5 Source=46   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=26
+    Jump                  Target=match_end_16   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+  match_arm_cleanup_23:
+    RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=27
+    Jump                  Target=match_none_17   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+  match_none_17:
+    LoadConstInt          Target=47 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    StoreLocal            Slot=5 Source=47   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+  match_end_16:
+    LoadLocal             Target=48 Slot=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:23:5)
+    Return                Source=48   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+
+function _start_main  [ProgramEntry]
+  locals=26 temps=32
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    StoreLocal            Slot=2 Source=1   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    AllocStack            Target=2 SizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    LoadLocal             Target=3 Slot=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    MakeClosureStack      Target=5 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    StoreLocal            Slot=5 Source=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=6 Value=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    MakeClosureStack      Target=7 FuncLabel=lambda_6 EnvPtrTemp=6 EnvSizeBytes=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    StoreLocal            Slot=8 Source=7   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    AllocStack            Target=8 SizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    LoadLocal             Target=9 Slot=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    Borrow                Target=10 SourceTemp=9
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=10   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    LoadLocal             Target=11 Slot=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    Borrow                Target=12 SourceTemp=11
+    StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=12   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    MakeClosureStack      Target=13 FuncLabel=lambda_8 EnvPtrTemp=8 EnvSizeBytes=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    StoreLocal            Slot=11 Source=13   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=14 Slot=11   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:16)
+    Borrow                Target=15 SourceTemp=14
+    LoadConstInt          Target=16 Value=3   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:24)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:16)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadLocal             Target=18 Slot=11   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:29)
+    Borrow                Target=19 SourceTemp=18
+    LoadConstInt          Target=20 Value=4   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:37)
+    CallClosure           Target=21 ClosureTemp=19 ArgTemp=20   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:29)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=17
+    AddInt                Target=22 Left=17 Right=21   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:16)
+    PrintInt              Source=22   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:1)
+    AllocAdt              Target=23 Tag=0 FieldCount=0   (generic_tuple_copies_reference_counted_element_into_arena.ash:29:1)
+    StoreLocal            Slot=18 Source=23   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    LoadLocal             Target=24 Slot=11   (generic_tuple_copies_reference_counted_element_into_arena.ash:22:1)
+    CleanupResource       SourceTemp=24 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=19
+    CopyOutArena          DestTemp=25 SrcTemp=23 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=19
+    StoreLocal            Slot=20 Source=25   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    LoadLocal             Target=26 Slot=8   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    CleanupResource       SourceTemp=26 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=21
+    LoadLocal             Target=27 Slot=20   (generic_tuple_copies_reference_counted_element_into_arena.ash:20:1)
+    StoreLocal            Slot=22 Source=27   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    LoadLocal             Target=28 Slot=5   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    CleanupResource       SourceTemp=28 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=23
+    LoadLocal             Target=29 Slot=22   (generic_tuple_copies_reference_counted_element_into_arena.ash:16:1)
+    StoreLocal            Slot=24 Source=29   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    LoadLocal             Target=30 Slot=2   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    CleanupResource       SourceTemp=30 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=25
+    LoadLocal             Target=31 Slot=24   (generic_tuple_copies_reference_counted_element_into_arena.ash:12:1)
+    Return                Source=31
+

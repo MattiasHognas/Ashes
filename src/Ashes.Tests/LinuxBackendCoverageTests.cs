@@ -2931,6 +2931,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_tuple_beside_reference_counted_element_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic helper pairing its generic parameter with a reference-counted value, and
+        // returning that pair's list beside a reference-counted state. Neither tuple can go onto
+        // the reference-counted heap beside a generic value, so each holds an arena copy of its
+        // reference-counted element; a reference it took instead was released by nothing.
+        int[] roundCounts = [4000, 16000, 64000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildGenericTupleBesideReferenceCountedElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 17 / 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic tuple beside a reference-counted element", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_fresh_operand_of_derived_equality_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10123,6 +10148,50 @@ public sealed class LinuxBackendCoverageTests
                     in repeat(times - 1)(total + stepped.nextTemp + countItems(stepped.stringLiterals)(0))
 
             Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private const string SubstitutionPreludeSource = """
+        type Sem =
+            | SemVariable(Int)
+            | SemName(Str)
+
+        type Supply =
+            | nextId: Int
+
+        let fresh (supply: Supply) =
+            match supply with
+                | Supply { nextId = nextId } -> (SemVariable(nextId), Supply(nextId = nextId + 1))
+
+        let recursive count (items: List((Int, Sem))) (total: Int) =
+            match items with
+                | [] -> total
+                | _ :: rest -> count(rest)(total + 1)
+
+        let quantified = [1, 2, 3, 4, 5, 6, 7, 8]
+
+        """;
+
+    private static string BuildGenericTupleBesideReferenceCountedElementProgram(int rounds)
+        => SubstitutionPreludeSource + $$"""
+            let step variableId supply substitution =
+                match fresh(supply) with
+                    | (freshVariable, nextSupply) -> ((variableId, freshVariable) :: substitution, nextSupply)
+
+            let recursive instantiateQuantifiers (quantified: List(Int)) (supply: Supply) (substitution: List((Int, Sem))) =
+                match quantified with
+                    | [] -> (substitution, supply)
+                    | variableId :: tail ->
+                        match step(variableId)(supply)(substitution) with
+                            | (nextSubstitution, nextSupply) -> instantiateQuantifiers(tail)(nextSupply)(nextSubstitution)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match instantiateQuantifiers(quantified)(Supply(nextId = n))([]) with
+                        | (substitution, Supply { nextId = next }) -> rounds(n - 1)(total + count(substitution)(0) + next % 2)
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildArenaRecordOfDestructuredTuplePartsProgram(int rounds)

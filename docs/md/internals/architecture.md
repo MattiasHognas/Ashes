@@ -1379,6 +1379,12 @@ requests an arena result, for a caller that could not own one. Once the result t
 contract type, the caller owns it after all, so the request is withdrawn: the callee hands over its
 reference-counted result instead of deep-copying it into the arena for the caller to normalize back.
 
+A tuple beside a value of unresolved layout (a generic function's parameter, say) cannot go onto the
+reference-counted heap, and nothing releases what an arena tuple holds. Such a tuple never holds the
+only reference to a reference-counted value: an element that may be reference-counted (other than
+one of the contract's types) is copied into the arena beside it, a fresh one is released after its
+copy, and no reference is taken for the tuple.
+
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:
 exactly those, read back from the instructions that built the cell, so a child the construction only
