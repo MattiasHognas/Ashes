@@ -3123,6 +3123,23 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Declared_capability_keeps_the_ownership_contract_until_a_handler_can_leave_a_post_pending()
+    {
+        // The contract is one calling convention for the whole program. A capability that is only
+        // provided leaves no handler post pending, so the program keeps it: its record results are
+        // normalized and released through the synthesized dropper. A `handle` anywhere switches it
+        // off for the whole program, since the functions it reaches keep their values in the arena.
+        static int GeneralDropperCalls(IrProgram ir) => ir.Functions
+            .Prepend(ir.EntryFunction)
+            .SelectMany(function => function.Instructions)
+            .Count(instruction => instruction is IrInst.CallKnown { FuncLabel: var label }
+                && label.StartsWith("__rcdrop_general_", StringComparison.Ordinal));
+
+        GeneralDropperCalls(LowerProgram(BuildProvidedCapabilityShapeLoopProgram(handled: false))).ShouldBeGreaterThan(0);
+        GeneralDropperCalls(LowerProgram(BuildProvidedCapabilityShapeLoopProgram(handled: true))).ShouldBe(0);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_scrutinee_loop_owned_results_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10080,6 +10097,44 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + Ashes.Collection.Map.size(dependentsOf(functions)(Ashes.Collection.Map.empty)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildProvidedCapabilityShapeLoopProgram(bool handled)
+        => $$"""
+            capability Clock =
+                | now : Unit -> Int
+
+            provide Clock =
+                | now =
+                    given (_) -> 1
+
+            capability Probe =
+                | get : Unit -> Int
+
+            type Shape =
+                | Fn(Shape, Shape)
+                | Named(Int, Str, List(Shape))
+                | Var(Int)
+
+            let recursive resultType (shape: Shape) =
+                match shape with
+                    | Fn(_parameter, result) -> resultType(result)
+                    | other -> other
+
+            let isFree (body: Shape) =
+                match resultType(body) with
+                    | Named(_id, _name, []) -> 100
+                    | _ -> 0
+
+            let recursive rounds (item: Shape) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(item)(n - 1)(total + isFree(item) + perform Clock.now(Unit))
+
+            let tick =
+                given (_) -> {{(handled ? "handle perform Probe.get(Unit) with\n            | Probe.get(_) -> resume(2)\n            | return(x) -> x" : "0")}}
+
+            Ashes.IO.print(rounds(Fn(Var(1), Named(0, "Maybe", [])))(10)(tick(Unit)))
             """;
 
     private static string BuildHandlerLoopLiteralStringArmProgram(int rounds)

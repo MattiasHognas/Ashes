@@ -1374,6 +1374,11 @@ owned slot and releases it after its last use, at a loop's back edge, or at the 
 record of the contract is released through one dropper synthesized per type (`__rcdrop_record_N`),
 so a loop releasing it at many back edges carries one call each rather than the whole release.
 
+The contract is one calling convention for the whole program. A function that may run while a
+one-shot handler's post is pending keeps its values in the arena the post captures, so a program
+in which any `handle` can leave a post pending keeps the contract off everywhere; declared or
+provided capabilities alone leave nothing pending and do not.
+
 A call emitted while its result type is still unresolved (a sibling of a recursive group, say)
 requests an arena result, for a caller that could not own one. Once the result turns out to be of a
 contract type, the caller owns it after all, so the request is withdrawn: the callee hands over its

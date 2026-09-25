@@ -104,9 +104,22 @@ public sealed partial class Lowering
         && CanTestRepresentation
         && AllowsOrdinaryRcPlacement
         && AllowsAsyncIndependentRcPlacement
-        && CapabilityGlobalCount == 0
+        && !ProgramMayRunUnderLiveHandlerPost
         && !_inCoroutineBody
         && !InReuseSpecializationBody;
+
+    // The contract is one calling convention for the whole program, and a function that may run
+    // while a one-shot handler's post is pending keeps its values in the arena the post captures
+    // (see AllowsOrdinaryRcPlacement): a program where any function may do so keeps the contract
+    // off everywhere. Declared capabilities alone (a `provide`, an operation no `handle` catches)
+    // leave nothing pending. The inferred-trait discovery pass runs before the handler analysis and
+    // keeps the conservative answer.
+    private bool ProgramMayRunUnderLiveHandlerPost =>
+        CapabilityGlobalCount > 0
+        && (_collectInferredTraitElaboration
+            || !_maAnalyzed
+            || _maEntryMayExecuteUnderLiveHandlerPost
+            || _maFunctionsMayExecuteUnderLiveHandlerPost.Count > 0);
 
     // A reuse specialization builds its result in the persistent region, and the loop calling it
     // keeps that parameter there: nothing in its body takes or hands over an owned value, or each
