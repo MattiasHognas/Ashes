@@ -119,6 +119,8 @@ export (
     type CoreLoweringError(..),
     type CoreLoweringResult(..),
     type CoreConstructorLayout(..),
+    type CoreBinding(..),
+    type CoreBindingLocation(..),
     value lowerCoreExpression,
     value lowerCoreExpressionWithLayouts,
     value lowerCoreExpressionWithContext,
@@ -5457,7 +5459,7 @@ let recursive countIndices (indices: List(Int)) =
         | _ :: rest -> 1 + countIndices(rest)
 
 // (survivors in capture order, old index -> new index for each survivor)
-let recursive pruneCaptureList captures usedIndices (index: Int) (nextIndex: Int) survivors remap =
+let recursive pruneCaptureList (captures: List(CoreBinding)) (usedIndices: List(Int)) (index: Int) (nextIndex: Int) (survivors: List(CoreBinding)) (remap: List((Int, Int))) =
     match captures with
         | [] -> (reverse(survivors), reverse(remap))
         | capture :: rest ->
@@ -5484,7 +5486,7 @@ let recursive renumberLoadEnv instructions remap acc =
 
 // (surviving captures, the body's instructions with LoadEnv indices renumbered), in the input order
 // of both lists; unchanged when every capture is read.
-let pruneDeadCaptures captures instructions =
+let pruneDeadCaptures (captures: List(CoreBinding)) (instructions: List(IrInstruction)) =
     (let usedIndices = collectLoadEnvIndices(instructions)([])
     in
         if countIndices(usedIndices) >= captureCount(captures)

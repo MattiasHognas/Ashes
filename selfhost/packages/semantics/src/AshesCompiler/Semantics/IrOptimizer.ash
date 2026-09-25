@@ -691,11 +691,11 @@ let floatEquals (left: Float) (right: Float) = left == right
 
 let boolEquals (left: Bool) (right: Bool) = left == right
 
-let recursive associationAgreesEverywhere equalValues key value snapshots =
+let recursive associationAgreesEverywhere equalValues (key: Int) value snapshots =
     match snapshots with
         | [] -> true
         | snapshot :: tail ->
-            match lookupAssociation(key)(snapshot) with
+            match lookupTempAssociation(key)(snapshot) with
                 | Some(other) ->
                     if equalValues(other)(value)
                     then associationAgreesEverywhere(equalValues)(key)(value)(tail)
@@ -779,7 +779,7 @@ let recursive switchTakenLabel tag cases defaultLabel =
 // a single-predecessor label and a fall-through-only label are the one-snapshot special case. A
 // predecessor not yet observed (a backward branch, whose source appears later) is unknowable here,
 // so a loop header conservatively clears every fact.
-let factsAtLabel name branchRefs (facts: FoldFacts) saved prevIsTerminator =
+let factsAtLabel (name: Str) (branchRefs: List((Str, Int))) (facts: FoldFacts) (saved: List((Str, List(FoldFacts)))) (prevIsTerminator: Bool) =
     (let branchCount =
         match lookupAssociation(name)(branchRefs) with
             | Some(count) -> count
