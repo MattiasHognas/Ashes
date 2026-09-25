@@ -2778,6 +2778,60 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Map_upsert_releases_the_closure_result_it_copies_into_the_persistent_region()
+    {
+        // Inside the map's reuse specialization, the onHit closure's result is normalized to an
+        // owned reference-counted value and then copied into the persistent region, where the
+        // rebuilt node keeps the copy. The owned original is released once copied, directly or,
+        // when makeNode is inlined, once the helper body is lowered; nothing released it before.
+        // (The specialization copies the missing value into the persistent region at every call,
+        // so this is checked on the lowered program, not by peak memory.)
+        IrProgram ir = LowerProgramWithImports(BuildMapUpsertClosureResultLoopProgram(40));
+        bool copiedResultReleased = ir.Functions.Any(function =>
+        {
+            List<IrInst> instructions = function.Instructions;
+            return instructions.Select((instruction, index) => (instruction, index)).Any(entry =>
+                entry.instruction is IrInst.CopyStringIntoOrFresh
+                && instructions.Skip(entry.index + 1)
+                    .TakeWhile(later => later is not (IrInst.Jump or IrInst.Label or IrInst.Return))
+                    .Any(later => later is IrInst.RcDrop { OwnerSlot: -1, TypeName: "String", RuntimeManaged: true }));
+        });
+        copiedResultReleased.ShouldBeTrue();
+
+        if (OperatingSystem.IsLinux())
+        {
+            ExecutionResult result = await CompileRunWithLinuxLlvmAsync(ir).ConfigureAwait(false);
+            result.Stdout.ShouldBe("44\n");
+        }
+    }
+
+    [Test]
+    public void Map_reuse_specialization_call_borrows_its_key_argument()
+    {
+        // A reuse specialization copies every argument but the accumulator into the persistent
+        // region, so its calls borrow them: the loop keeps its own reference to the key it matched
+        // out of the walked list, and no retain is taken for the call to consume.
+        IrProgram ir = LowerProgramWithImports(BuildMapInsertIfAbsentWalkProgram(3));
+        foreach (IrFunction function in ir.Functions.Prepend(ir.EntryFunction))
+        {
+            List<IrInst> instructions = function.Instructions;
+            HashSet<int> specializationClosures = [.. instructions
+                .OfType<IrInst.MakeClosure>()
+                .Where(closure => closure.FuncLabel.EndsWith("__reuse", StringComparison.Ordinal))
+                .Select(closure => closure.Target)];
+            for (int index = 1; index < instructions.Count; index++)
+            {
+                if (instructions[index] is IrInst.CallClosure call
+                    && specializationClosures.Contains(call.ClosureTemp))
+                {
+                    (instructions[index - 1] is IrInst.RcDup { SourceTemp: var retained } && retained == call.ArgTemp)
+                        .ShouldBeFalse($"{function.Label} retains the key it hands the specialization");
+                }
+            }
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_arena_record_of_destructured_tuple_parts_in_result_tuple_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9654,6 +9708,42 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.Map.size(dependentsOf(functions)(Ashes.Collection.Map.empty)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildMapUpsertClosureResultLoopProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.Map.MapTree
+
+            let recursive rounds (n: Int) (total: Int) (counts: MapTree(Str, Str)) =
+                if n == 0
+                then total + Ashes.Collection.Map.size(counts)
+                else
+                    counts
+                    |> Ashes.Collection.Map.upsertStr("k" + Ashes.Text.fromInt(n % 4))("0")(given (existing: Str) -> Ashes.Text.fromInt((Ashes.Text.byteLength(existing) + n) % 10))
+                    |> rounds(n - 1)(total + 1)
+
+            Ashes.IO.print(rounds({{rounds}})(0)(Ashes.Collection.Map.empty))
+            """;
+
+    private static string BuildMapInsertIfAbsentWalkProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.Map.MapTree
+
+            let recursive addDependents (function: Str) (dependencies: List(Str)) (dependents: MapTree(Str, List(Str))) =
+                match dependencies with
+                    | [] -> dependents
+                    | dependency :: rest ->
+                        (match Ashes.Collection.Map.getStr(dependency)(dependents) with
+                            | Some(_existing) -> dependents
+                            | None -> Ashes.Collection.Map.setStr(dependency)([function])(dependents))
+                        |> addDependents(function)(rest)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.Map.size(addDependents("f")(["k" + Ashes.Text.fromInt(n), "a", "b"])(Ashes.Collection.Map.empty)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

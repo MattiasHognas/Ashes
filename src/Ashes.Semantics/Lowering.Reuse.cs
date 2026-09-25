@@ -665,6 +665,7 @@ public sealed partial class Lowering
             }
         }
 
+        List<int> trackedSlots = TrackInlinedFreshArguments(paramNames, args, argSlots, argTemps, freshParams, body);
         var inlineScope = _scopes.Peek();
         for (int i = 0; i < paramNames.Count; i++)
         {
@@ -682,8 +683,121 @@ public sealed partial class Lowering
         foreach (var p in linearParams) _linearReuseNames.Remove(p);
         _inliningInProgress.Remove(fnName);
         _scopes.Pop();
-        ReleaseInlinedFreshArguments(fnName, args, argTemps, argTypes, result.Temp);
+        HashSet<int> released = ReleaseMaterializedInlinedArguments(trackedSlots, argTemps, argTypes);
+        ReleaseInlinedFreshArguments(fnName, args, argTemps, argTypes, result.Temp, released);
         return result.AsPair();
+    }
+
+    // An inlined helper's parameter bound to an owned reference-counted argument the enclosing
+    // specialization computed (a closure's result, say), with the parameter's reads so far and how
+    // many of them a constructor field copied into the persistent region, beside the number of
+    // times the helper body names it (a read inside a nested lambda is counted there alone).
+    private sealed class InlinedFreshArgument(int index, string name, int occurrences)
+    {
+        public int Index { get; } = index;
+        public string Name { get; } = name;
+        public int Occurrences { get; } = occurrences;
+        public int Reads { get; set; }
+        public int Materialized { get; set; }
+    }
+
+    private readonly Dictionary<int, InlinedFreshArgument> _inlinedFreshArgumentsBySlot = new();
+
+    private List<int> TrackInlinedFreshArguments(
+        IReadOnlyList<string> paramNames,
+        IReadOnlyList<Expr> args,
+        int[] argSlots,
+        int[] argTemps,
+        List<string> freshParams,
+        Expr body)
+    {
+        List<int> trackedSlots = [];
+        for (int i = 0; i < paramNames.Count; i++)
+        {
+            if (args[i] is Expr.Var
+                || !freshParams.Contains(paramNames[i], StringComparer.Ordinal)
+                || !IsNewlyProducedRcTemp(argTemps[i]))
+            {
+                continue;
+            }
+
+            _inlinedFreshArgumentsBySlot[argSlots[i]] = new InlinedFreshArgument(i, paramNames[i], CountNameOccurrences(body, paramNames[i]));
+            trackedSlots.Add(argSlots[i]);
+        }
+
+        return trackedSlots;
+    }
+
+    private void RecordInlinedFreshArgumentRead(Binding? binding, string name, bool materialized)
+    {
+        if (_inlinedFreshArgumentsBySlot.Count == 0
+            || binding is not Binding.Local local
+            || !_inlinedFreshArgumentsBySlot.TryGetValue(local.Slot, out InlinedFreshArgument? tracked)
+            || !string.Equals(tracked.Name, name, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (materialized)
+        {
+            tracked.Materialized++;
+        }
+        else
+        {
+            tracked.Reads++;
+        }
+    }
+
+    // Releases a tracked argument every mention of which the inlined body copied into a constructor
+    // field: nothing the body produced holds the argument itself. Returns the released indices.
+    private HashSet<int> ReleaseMaterializedInlinedArguments(List<int> trackedSlots, int[] argTemps, TypeRef[] argTypes)
+    {
+        HashSet<int> released = [];
+        foreach (int slot in trackedSlots)
+        {
+            InlinedFreshArgument tracked = _inlinedFreshArgumentsBySlot[slot];
+            _inlinedFreshArgumentsBySlot.Remove(slot);
+            if (tracked.Materialized == 0
+                || tracked.Materialized != tracked.Reads
+                || tracked.Materialized != tracked.Occurrences)
+            {
+                continue;
+            }
+
+            EmitRuntimeManagedChildDrop(argTemps[tracked.Index], Prune(argTypes[tracked.Index]));
+            MarkTempTransferred(argTemps[tracked.Index]);
+            released.Add(tracked.Index);
+        }
+
+        return released;
+    }
+
+    // Releases a materialized field's source the caller owns: a fresh reference-counted value read
+    // straight from its producer. A source read through an inlined helper's parameter is counted
+    // and released once the helper body is lowered.
+    private void ReleaseMaterializedFieldSource(Expr argExpr, TypeRef argType, int sourceTemp)
+    {
+        if (argExpr is Expr.Var variable)
+        {
+            RecordInlinedFreshArgumentRead(Lookup(variable.Name), variable.Name, materialized: true);
+            return;
+        }
+
+        if (!IsNewlyProducedRcTemp(sourceTemp))
+        {
+            return;
+        }
+
+        EmitRuntimeManagedChildDrop(sourceTemp, Prune(argType));
+        MarkTempTransferred(sourceTemp);
+    }
+
+    private void MarkTempTransferred(int temp)
+    {
+        if (_tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact))
+        {
+            _tempOwnershipFacts[temp] = fact with { Ownership = LoweredTempOwnershipKind.Transferred };
+        }
     }
 
     // A fresh reference-counted argument the inlined body read through its parameter slot is
@@ -695,12 +809,14 @@ public sealed partial class Lowering
         IReadOnlyList<Expr> args,
         int[] argTemps,
         TypeRef[] argTypes,
-        int resultTemp)
+        int resultTemp,
+        HashSet<int> released)
     {
         FunctionOwnershipSummary? summary = GetOwnershipSummaryForCallRoot(new Expr.Var(fnName));
         for (int i = 0; i < args.Count; i++)
         {
             if (args[i] is Expr.Var
+                || released.Contains(i)
                 || argTemps[i] == resultTemp
                 || !IsRuntimeManagedResultTemp(argTemps[i])
                 || IsBorrowedOwnershipTemp(argTemps[i])
@@ -1657,16 +1773,28 @@ public sealed partial class Lowering
 
         int closureTemp = LowerReuseSpecializationClosure(label);
 
-        // Apply the specialized closure to each (already-lowered) argument in turn.
+        return (ApplyReuseSpecializationClosure(closureTemp, prepared.AppliedTemps), prepared.ResultType);
+    }
+
+    // Applies the specialized closure to each (already-lowered) argument in turn. The
+    // specialization copies every argument but the accumulator into the persistent region rather
+    // than keeping it, so those calls borrow their argument.
+    private int ApplyReuseSpecializationClosure(int closureTemp, int[] appliedTemps)
+    {
         int current = closureTemp;
-        foreach (int argTemp in prepared.AppliedTemps)
+        for (int index = 0; index < appliedTemps.Length; index++)
         {
             int next = NewTemp();
-            Emit(new IrInst.CallClosure(next, current, argTemp));
+            Emit(new IrInst.CallClosure(next, current, appliedTemps[index]));
+            if (index < appliedTemps.Length - 1 && _inst[^1] is IrInst.CallClosure emitted)
+            {
+                _borrowedArgumentCalls.Add(emitted);
+            }
+
             current = next;
         }
 
-        return (current, prepared.ResultType);
+        return current;
     }
 
     private (int, TypeRef) LowerUnspecializedReuseCall(

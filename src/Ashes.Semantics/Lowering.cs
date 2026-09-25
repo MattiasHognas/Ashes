@@ -3105,6 +3105,7 @@ public sealed partial class Lowering
             _reuseBindingSeenBySlot[seenLocal.Slot]++;
         }
 
+        RecordInlinedFreshArgumentRead(b, v.Name, materialized: false);
         if (b is null)
         {
             return LowerVarUnbound(v, request);

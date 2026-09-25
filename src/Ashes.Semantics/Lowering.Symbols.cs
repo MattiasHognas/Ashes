@@ -2158,7 +2158,23 @@ public sealed partial class Lowering
     /// over-materializing an already-persistent value only costs a copy, never correctness.
     /// Returns the (possibly persisted) field temp to store into the cell.
     /// </summary>
+    /// <remarks>
+    /// The cell holds the copy, never the source: a source the caller owns (a closure's result
+    /// normalized to an owned reference-counted value, say) is released once it is copied, directly
+    /// or, for an inlined helper's parameter, once the helper body is lowered.
+    /// </remarks>
     private int MaterializeSpecializationField(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless, TypeRef resultType)
+    {
+        int materialized = MaterializeSpecializationFieldCopy(argExpr, argType, fieldTemp, ptrTemp, fieldIndex, reuseNode, consumedTokenTemp, tagless, resultType);
+        if (materialized != fieldTemp)
+        {
+            ReleaseMaterializedFieldSource(argExpr, argType, fieldTemp);
+        }
+
+        return materialized;
+    }
+
+    private int MaterializeSpecializationFieldCopy(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless, TypeRef resultType)
     {
         if (!_inSpecialization || _specFreshInputNames is null
             || (argExpr is Expr.Var fieldVar && !_specFreshInputNames.Contains(fieldVar.Name)))

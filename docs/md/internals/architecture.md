@@ -1475,6 +1475,14 @@ capacity checks. This is an Ashes-specific specialized region, not the lifetime
 model for ordinary collections. Dedicated 2K/10K/50K RSS slopes and the 1BRC
 profile guard both fresh-insert and overwrite paths against retained growth.
 
+A node keeps a copy of each value it stores, never the value itself, so a call
+into the specialization borrows every argument but the map, and an owned value
+a field was copied from (the result of an upsert's closure, say) is released
+once copied. Nothing reclaims the region: a map the specialization built stays
+there after its last use, as does each value a call site copies in for a
+generic function's quantified parameter, so a loop that builds a fresh map per
+round grows by that map every round.
+
 ### Cycles
 
 Reference counting does not collect cycles. RC admission is limited to acyclic
