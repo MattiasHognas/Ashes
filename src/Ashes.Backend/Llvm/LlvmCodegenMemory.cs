@@ -341,6 +341,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, initializeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, initializeBlock);
+        EmitLeakCheckCount(state, 1, name);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, name + "_base");
     }
 
@@ -469,6 +470,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle continueBlock)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        EmitLeakCheckCount(state, -1, "rc_drop");
         LlvmValueHandle allocationSize = LoadMemory(state, allocationBase,
             HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_drop_size");
         LlvmValueHandle shouldCache = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,

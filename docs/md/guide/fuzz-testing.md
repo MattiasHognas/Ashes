@@ -94,6 +94,22 @@ exceeds the output limit at 50,000 iterations and says nothing about retained me
 each case performs three native compilations and executions, but one case runs in every 50-case
 rotation of the `all` profile.
 
+The `leak-census` command checks for leaks exactly rather than by memory growth, and runs every
+case once:
+
+```sh
+dotnet run --project src/Ashes.Fuzzing -- leak-census --seeds 3 --templates scripts/selfhost-dev/reproducers
+```
+
+It forces each combination template of the profile (`memory-growth` by default) once per seed, adds
+every `.ash` file of the `--templates` directory that names its repeat count `ROUNDS`, builds each
+case with `ASHES_RC_LEAKCHECK=1` at one round of work and at two, and reports every case whose
+second round leaves reference-counted cells live that the first did not, with the number of cells a
+round leaks. The program reports its live cells at its end, and a value it keeps to its end is live
+in both runs, so the difference is exactly what one round leaked: a single leaked cell shows. A leaking
+case's source and a `report.tsv` of every case go to `<artifacts>/leak-census/`; the command exits 1
+when any case leaks or yields no count.
+
 List profiles, rules, combinations, and oracles with:
 
 ```sh

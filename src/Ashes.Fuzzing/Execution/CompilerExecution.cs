@@ -13,7 +13,8 @@ internal sealed class CompilerExecution
         CancellationToken cancellationToken,
         bool disableReuse = false,
         bool disableTraitSpecialization = false,
-        bool measurePeakRss = false)
+        bool measurePeakRss = false,
+        bool leakCheck = false)
     {
         string temporaryRoot = Directory.CreateTempSubdirectory("ashes-fuzz-").FullName;
         try
@@ -27,7 +28,11 @@ internal sealed class CompilerExecution
             IReadOnlyList<string> arguments = File.Exists(cliDll)
                 ? CompileArguments([cliDll, "compile"], optimization, effectiveTarget, sourcePath, executablePath, disableReuse, disableTraitSpecialization)
                 : CompileArguments(["run", "--project", Path.Combine(repositoryRoot, "src", "Ashes.Cli", "Ashes.Cli.csproj"), "--configuration", "Release", "--", "compile"], optimization, effectiveTarget, sourcePath, executablePath, disableReuse, disableTraitSpecialization);
-            ProcessResult compile = await ProcessTimeout.RunAsync("dotnet", arguments, repositoryRoot, compilerTimeout, maximumOutputBytes, cancellationToken).ConfigureAwait(false);
+            // A leak check builds the program with the runtime's live-cell count (ASHES_RC_LEAKCHECK).
+            Dictionary<string, string>? environment = leakCheck
+                ? new Dictionary<string, string>(StringComparer.Ordinal) { ["ASHES_RC_LEAKCHECK"] = "1" }
+                : null;
+            ProcessResult compile = await ProcessTimeout.RunAsync("dotnet", arguments, repositoryRoot, compilerTimeout, maximumOutputBytes, cancellationToken, environment: environment).ConfigureAwait(false);
             if (compile.ExitCode != 0 || compile.TimedOut || !File.Exists(executablePath) || !CanExecute(effectiveTarget))
             {
                 return (compile, null);

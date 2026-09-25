@@ -780,6 +780,7 @@ internal static partial class LlvmCodegen
         if (state.IsEntry)
         {
             EmitFlushStdout(state);
+            EmitLeakCheckReport(state);
             if (IsLinuxFlavor(state.Flavor))
             {
                 EmitExit(state, LlvmApi.ConstInt(state.I64, 0, 0));
