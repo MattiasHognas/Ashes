@@ -644,6 +644,12 @@ public sealed partial class Lowering
     // (LowerLambdaCoreNormalizeAlwaysReturnedParameter), so a read of it counts as a fresh owned
     // child of the aggregate storing it. Null while lowering a function without one.
     private (string Name, int Slot, TypeRef Type)? _normalizedAlwaysReturnedParameter;
+
+    // Whether a tuple of the function being lowered stored its entry-normalized parameter without a
+    // retain of its own, and the functions whose tuples did: their parameter is not released after
+    // the result.
+    private bool _normalizedParameterMovedIntoAggregate;
+    private readonly HashSet<string> _normalizedParameterMovedLabels = new(StringComparer.Ordinal);
     private Dictionary<int, int> _pendingRuntimeArgumentFlags = [];
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
@@ -7360,10 +7366,13 @@ public sealed partial class Lowering
         // unless the parameter itself went into it, which only a bare read of the parameter in a
         // position other than a call argument can do. A bare read the function returns is the one
         // exception: a reference-counted join with such an arm retained the parameter there (see
-        // NormalizeMixedJoinArms), so the release below hands that reference to the result.
+        // NormalizeMixedJoinArms), so the release below hands that reference to the result. A tuple
+        // element or record field reading the parameter retains it too, unless the aggregate took the
+        // owned parameter over as it is.
         if (IsRuntimeManagedResultTemp(bodyTemp))
         {
-            if (!ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0, returned: true))
+            bool aggregatesRetain = !_normalizedParameterMovedLabels.Contains(label);
+            if (!ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0, returned: true, aggregatesRetain))
             {
                 return bodyTemp;
             }
@@ -7394,7 +7403,7 @@ public sealed partial class Lowering
     // the target of a record update or a match, or an argument of a call (a callee borrows it or
     // takes its own reference). With `returned`, a bare read in the position the body returns is
     // allowed as well. A closure mentioning it at all, and anything unrecognized, fails.
-    private static bool ParameterReadOnlyThroughFieldsOrCalls(Expr expression, string name, int depth, bool returned = false)
+    private static bool ParameterReadOnlyThroughFieldsOrCalls(Expr expression, string name, int depth, bool returned = false, bool aggregatesRetain = false)
     {
         if (depth > 256)
         {
@@ -7412,24 +7421,30 @@ public sealed partial class Lowering
             case Expr.Call:
                 var arguments = new List<Expr>();
                 Expr root = CollectCallArgs(expression, arguments);
-                return ParameterReadOnlyThroughFieldsOrCalls(root, name, next)
+                return ParameterReadOnlyThroughFieldsOrCalls(root, name, next, aggregatesRetain: aggregatesRetain)
                     && arguments.TrueForAll(argument =>
-                        IsVariableNamed(argument, name) || ParameterReadOnlyThroughFieldsOrCalls(argument, name, next));
+                        IsVariableNamed(argument, name) || ParameterReadOnlyThroughFieldsOrCalls(argument, name, next, aggregatesRetain: aggregatesRetain));
             case Expr.RecordUpdate update:
-                return (IsVariableNamed(update.Target, name) || ParameterReadOnlyThroughFieldsOrCalls(update.Target, name, next))
-                    && update.Updates.All(field => ParameterReadOnlyThroughFieldsOrCalls(field.Value, name, next));
+                return (IsVariableNamed(update.Target, name) || ParameterReadOnlyThroughFieldsOrCalls(update.Target, name, next, aggregatesRetain: aggregatesRetain))
+                    && update.Updates.All(field => ParameterReadOnlyThroughFieldsOrCalls(field.Value, name, next, aggregatesRetain: aggregatesRetain));
             case Expr.Let let:
-                return ParameterReadOnlyThroughFieldsOrCalls(let.Value, name, next)
-                    && (string.Equals(let.Name, name, StringComparison.Ordinal) || ParameterReadOnlyThroughFieldsOrCalls(let.Body, name, next, returned));
+                return ParameterReadOnlyThroughFieldsOrCalls(let.Value, name, next, aggregatesRetain: aggregatesRetain)
+                    && (string.Equals(let.Name, name, StringComparison.Ordinal) || ParameterReadOnlyThroughFieldsOrCalls(let.Body, name, next, returned, aggregatesRetain));
             case Expr.If conditional:
-                return ParameterReadOnlyThroughFieldsOrCalls(conditional.Cond, name, next)
-                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Then, name, next, returned)
-                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Else, name, next, returned);
+                return ParameterReadOnlyThroughFieldsOrCalls(conditional.Cond, name, next, aggregatesRetain: aggregatesRetain)
+                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Then, name, next, returned, aggregatesRetain)
+                    && ParameterReadOnlyThroughFieldsOrCalls(conditional.Else, name, next, returned, aggregatesRetain);
             case Expr.Match match:
-                return (IsVariableNamed(match.Value, name) || ParameterReadOnlyThroughFieldsOrCalls(match.Value, name, next))
+                return (IsVariableNamed(match.Value, name) || ParameterReadOnlyThroughFieldsOrCalls(match.Value, name, next, aggregatesRetain: aggregatesRetain))
                     && match.Cases.All(matchCase => PatternBinds(matchCase.Pattern, name)
-                        || ((matchCase.Guard is null || ParameterReadOnlyThroughFieldsOrCalls(matchCase.Guard, name, next))
-                            && ParameterReadOnlyThroughFieldsOrCalls(matchCase.Body, name, next, returned)));
+                        || ((matchCase.Guard is null || ParameterReadOnlyThroughFieldsOrCalls(matchCase.Guard, name, next, aggregatesRetain: aggregatesRetain))
+                            && ParameterReadOnlyThroughFieldsOrCalls(matchCase.Body, name, next, returned, aggregatesRetain)));
+            case Expr.TupleLit tuple when aggregatesRetain:
+                return tuple.Elements.All(element =>
+                    IsVariableNamed(element, name) || ParameterReadOnlyThroughFieldsOrCalls(element, name, next, aggregatesRetain: aggregatesRetain));
+            case Expr.RecordLit record when aggregatesRetain:
+                return record.Fields.All(field =>
+                    IsVariableNamed(field.Value, name) || ParameterReadOnlyThroughFieldsOrCalls(field.Value, name, next, aggregatesRetain: aggregatesRetain));
             case Expr.Lambda lambda:
                 return string.Equals(lambda.ParamName, name, StringComparison.Ordinal)
                     || !ExprMentionsName(lambda.Body, name, 0);
@@ -7439,7 +7454,7 @@ public sealed partial class Lowering
                 or Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
                 or Expr.Equal or Expr.NotEqual or Expr.Cons
                 or Expr.TupleLit or Expr.ListLit or Expr.RecordLit:
-                return EnumerateChildren(expression).All(child => ParameterReadOnlyThroughFieldsOrCalls(child, name, next));
+                return EnumerateChildren(expression).All(child => ParameterReadOnlyThroughFieldsOrCalls(child, name, next, aggregatesRetain: aggregatesRetain));
             default:
                 return !ExprMentionsName(expression, name, 0);
         }
@@ -7527,7 +7542,15 @@ public sealed partial class Lowering
         _passthroughParameter = ResolvePassthroughParameter(lam, argSlot, paramTy);
         PredictRuntimeManagedResult(label, paramTy);
         BeginCurryStage(label, lam);
+        bool outerParameterMoved = _normalizedParameterMovedIntoAggregate;
+        _normalizedParameterMovedIntoAggregate = false;
         (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
+        if (_normalizedParameterMovedIntoAggregate)
+        {
+            _normalizedParameterMovedLabels.Add(label);
+        }
+
+        _normalizedParameterMovedIntoAggregate = outerParameterMoved;
         _normalizedAlwaysReturnedParameter = outerNormalizedParameter;
         _passthroughParameter = outerPassthroughParameter;
         return body;
@@ -15827,6 +15850,12 @@ public sealed partial class Lowering
         {
             MarkRuntimeManagedTemp(lowered.Temp, type: lowered.Type);
             lowered = CreateLoweredValue(lowered.Temp, lowered.Type);
+        }
+
+        // A reference-counted tuple stores such an element as it is, without a retain of its own.
+        if (IsNormalizedAlwaysReturnedParameterRead(element) && IsRuntimeManageableTupleElement(lowered))
+        {
+            _normalizedParameterMovedIntoAggregate = true;
         }
 
         return lowered;

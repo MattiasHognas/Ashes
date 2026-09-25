@@ -9189,8 +9189,9 @@ let isVariableNamed (name: Str) (expression: Expr) =
 
 // Stage 0's `ParameterReadOnlyThroughFieldsOrCalls`: every use of the parameter in the body reads
 // it without storing it, as a field read, the target of a record update or a match, or an argument
-// of a call (a callee borrows it or takes its own reference). A closure mentioning it at all, and
-// anything unrecognized, fails.
+// of a call (a callee borrows it or takes its own reference), or an element of a tuple or record
+// literal, which retains or copies it. A closure mentioning it at all, and anything unrecognized,
+// fails.
 let recursive parameterReadOnlyThroughFieldsOrCalls (name: Str) (depth: Int) (returned: Bool) (expression: Expr) =
     if depth > 256
     then false
@@ -9212,10 +9213,21 @@ let recursive parameterReadOnlyThroughFieldsOrCalls (name: Str) (depth: Int) (re
             | ExprIf(condition, thenBranch, elseBranch) -> parameterReadOnlyThroughFieldsOrCalls(name)(depth + 1)(false)(condition) && parameterReadOnlyThroughFieldsOrCalls(name)(depth + 1)(returned)(thenBranch) && parameterReadOnlyThroughFieldsOrCalls(name)(depth + 1)(returned)(elseBranch)
             | ExprMatch(value, cases, _position) -> (isVariableNamed(name)(value) || parameterReadOnlyThroughFieldsOrCalls(name)(depth + 1)(false)(value)) && casesReadParameterOnly(name)(depth + 1)(returned)(cases)
             | ExprLambda(parameter, body, _annotation) -> parameter == name || !exprReadsName(name)(body)
+            | ExprTuple(elements) -> elementsRetainParameter(name)(depth + 1)(elements)
+            | ExprRecord(_constructorName, fields, _isMultiline) ->
+                fields
+                |> map(given (field: (Str, Expr)) ->
+                    match field with
+                        | (_fieldName, value) -> value)
+                |> elementsRetainParameter(name)(depth + 1)
             | other ->
                 match combinedOperands(other) with
                     | Some(operands) -> operandsReadParameterOnly(name)(depth + 1)(operands)
                     | None -> !exprReadsName(name)(other)
+and elementsRetainParameter (name: Str) (depth: Int) (elements: List(Expr)) =
+    match elements with
+        | [] -> true
+        | element :: rest -> (isVariableNamed(name)(element) || parameterReadOnlyThroughFieldsOrCalls(name)(depth)(false)(element)) && elementsRetainParameter(name)(depth)(rest)
 and operandsReadParameterOnly (name: Str) (depth: Int) (operands: List(Expr)) =
     match operands with
         | [] -> true
@@ -9268,7 +9280,8 @@ let emitNormalizedParameterRelease (parameterType: SemanticType) (state: CoreLow
 // that is reference-counted already keeps nothing of the parameter alive unless the parameter
 // itself went into it, which only a bare read of it outside a call argument can do; a bare read
 // the function returns is the one exception, since a reference-counted join with such an arm
-// retained the parameter there, and the release hands that reference to the result.
+// retained the parameter there, and the release hands that reference to the result. A tuple or
+// record literal storing the parameter retains or copies it, so it is released after them too.
 let releaseNormalizedParameterBehindResult (label: Str) (parameter: Str) (body: Expr) (parameterType: SemanticType) (bodyType: SemanticType) (kept: (CoreLoweringState, Int)) =
     match kept with
         | (state, bodyTemp) ->

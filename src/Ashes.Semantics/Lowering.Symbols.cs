@@ -1825,6 +1825,13 @@ public sealed partial class Lowering
         }
 
         (int Temp, TypeRef Type) lowered = loweredValue.AsPair();
+        if (runtimeManagedParent && IsRuntimeManagedResultTemp(lowered.Temp) && IsNormalizedAlwaysReturnedParameterRead(argument))
+        {
+            // A reference-counted child may be stored as it is: the parent may take the owned
+            // parameter over.
+            _normalizedParameterMovedIntoAggregate = true;
+        }
+
         if (runtimeManagedParent
             && Prune(fieldType) is TypeRef.TStr
             && !IsRuntimeManagedResultTemp(lowered.Temp)
