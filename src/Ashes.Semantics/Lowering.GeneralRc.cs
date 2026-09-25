@@ -902,8 +902,10 @@ public sealed partial class Lowering
 
     // An earlier iteration's value is released once no successor can still name it: each successor
     // is inline, a plain read of an owned slot (a result holding its own references), a parameter
-    // normalized onto the reference-counted heap, or of a type that cannot hold its parts. A
-    // parameter handed on unchanged may be that very value, so it counts only by its type.
+    // normalized onto the reference-counted heap, a parameter only ever walked or handed on by every
+    // self call (it holds nothing newer than the loop's entry), or of a type that cannot hold its
+    // parts. A parameter handed on unchanged at this edge alone may be that very value, so it counts
+    // only by its type.
     private void EmitGeneralRcPredecessorDrops(PendingTcoReset info, List<GeneralRcOwnedSlot> predecessors, bool successorsNormalized)
     {
         int[] argumentSlots = _generalRcBackEdgeArgumentSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
@@ -913,6 +915,7 @@ public sealed partial class Lowering
             bool unreachable = Enumerable.Range(0, info.ArgTypes.Length).All(index =>
                 CanArenaReset(Prune(info.ArgTypes[index]))
                 || (index < argumentSlots.Length && argumentSlots[index] >= 0)
+                || SuccessorPredatesTheLoop(info, index)
                 || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
                 || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
             if (unreachable)
@@ -921,6 +924,15 @@ public sealed partial class Lowering
             }
         }
     }
+
+    // A successor that is the parameter's own consumed tail, where every self call passes that tail,
+    // or the parameter itself, where every self call hands it on unchanged: only parts of the value
+    // the loop was entered with, which no iteration's owned value can be.
+    private static bool SuccessorPredatesTheLoop(PendingTcoReset info, int index)
+        => Environment.GetEnvironmentVariable("GRC_NO_PREDECESSORENTRYPARTS") is null
+            && index < info.ParamSlots.Length
+            && info.Tco.ParamFacts.TryGetValue(info.ParamSlots[index], out TcoParamStaticFacts? facts)
+            && (facts.LoopInvariant || (facts.ConsumedListTail && info.ConsumedListTail[index]));
 
     // Whether every successor either owns its parts or is of a type that cannot hold any heap part
     // of an owned value of this type (a list of integer pairs never holds a record of strings): the

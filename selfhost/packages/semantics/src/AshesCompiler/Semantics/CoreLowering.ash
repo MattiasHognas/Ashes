@@ -7798,22 +7798,36 @@ let recursive argumentIsManagedAt (ordinal: Int) (arguments: List(TcoResetArgume
             then resetArgumentIsManaged(argument)
             else argumentIsManagedAt(ordinal)(rest)
 
-let recursive blockersAllManaged (blockers: List(Int)) (arguments: List(TcoResetArgument)) =
+// Stage 0's `SuccessorPredatesTheLoop`: a blocker every self call hands on unchanged, or whose own
+// consumed tail every self call passes, holds only parts of the value the loop was entered with,
+// which no iteration's owned value can be.
+let recursive argumentPredatesTheLoopAt (ordinal: Int) (arguments: List(TcoResetArgument)) =
+    match arguments with
+        | [] -> false
+        | argument :: rest ->
+            if argument.ordinal == ordinal
+            then
+                match argument.shape with
+                    | TcoPassThroughShape -> true
+                    | TcoConsumedTailShape -> true
+                    | _ -> false
+            else argumentPredatesTheLoopAt(ordinal)(rest)
+
+// Every blocker of a predecessor was normalized onto the reference-counted heap on this path, or
+// predates the loop.
+let recursive predecessorBlockersClear (blockers: List(Int)) (arguments: List(TcoResetArgument)) (normalized: Bool) =
     match blockers with
         | [] -> true
-        | ordinal :: rest -> argumentIsManagedAt(ordinal)(arguments) && blockersAllManaged(rest)(arguments)
+        | ordinal :: rest -> (argumentPredatesTheLoopAt(ordinal)(arguments) || normalized && argumentIsManagedAt(ordinal)(arguments)) && predecessorBlockersClear(rest)(arguments)(normalized)
 
 // Stage 0's `EmitGeneralRcPredecessorDrops`: an earlier iteration's value is released once no
 // successor can still name it, each successor that might (its blocker) having been normalized onto
-// the reference-counted heap on this path.
+// the reference-counted heap on this path or predating the loop.
 let recursive emitGeneralRcPredecessorDrops (drops: List((Int, SemanticType, List(Int)))) (arguments: List(TcoResetArgument)) (normalized: Bool) (state: CoreLoweringState) =
     match drops with
         | [] -> state
         | (slot, semanticType, blockers) :: rest ->
-            let releasable =
-                match blockers with
-                    | [] -> true
-                    | _ -> normalized && blockersAllManaged(blockers)(arguments)
+            let releasable = predecessorBlockersClear(blockers)(arguments)(normalized)
             in
                 if releasable
                 then

@@ -2753,6 +2753,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Map_threaded_through_walked_list_loop_releases_earlier_maps_at_the_back_edge()
+    {
+        // A loop threading a map through a helper's owned result while it walks a list of strings.
+        // The walked list's tail holds only parts of the list the loop was entered with, so each
+        // earlier iteration's map is released at the back edge rather than overwritten in its slot:
+        // one release there, beside the two at the loop's exit. (The map's own reuse specialization
+        // grows the arena per round, so this is checked on the lowered loop, not by peak memory.)
+        IrProgram ir = LowerProgramWithImports(BuildMapThreadedThroughWalkedListLoopProgram(3));
+        IrFunction loop = ir.Functions
+            .Where(function => function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: "dependentsOf" })
+            .Single(function => function.Instructions.Any(instruction =>
+                instruction is IrInst.Jump { Target: var target }
+                    && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
+        loop.Instructions.Count(instruction =>
+            instruction is IrInst.CallKnown { FuncLabel: var label }
+                && label.StartsWith("__rcdrop_", StringComparison.Ordinal)).ShouldBe(3);
+
+        if (OperatingSystem.IsLinux())
+        {
+            ExecutionResult result = await CompileRunWithLinuxLlvmAsync(ir).ConfigureAwait(false);
+            result.Stdout.ShouldBe("15\n");
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_record_update_successor_of_loop_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9554,6 +9579,36 @@ public sealed class LinuxBackendCoverageTests
             0
             |> rounds({{rounds}})
             |> Ashes.IO.print
+            """;
+
+    private static string BuildMapThreadedThroughWalkedListLoopProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.Map.MapTree
+
+            let recursive addDependents (function: Str) (dependencies: List(Str)) (dependents: MapTree(Str, Str)) =
+                match dependencies with
+                    | [] -> dependents
+                    | dependency :: rest ->
+                        dependents
+                        |> Ashes.Collection.Map.setStr(dependency)(function)
+                        |> addDependents(function)(rest)
+
+            let recursive dependentsOf (functions: List(Str)) (dependents: MapTree(Str, Str)) =
+                match functions with
+                    | [] -> dependents
+                    | key :: rest ->
+                        dependents
+                        |> addDependents(key)(["n1", "n2", "n3", "n4", "n5"])
+                        |> dependentsOf(rest)
+
+            let functions = ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10"]
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.Map.size(dependentsOf(functions)(Ashes.Collection.Map.empty)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildRecordUpdateSuccessorOfLoopParameterProgram(int rounds)
