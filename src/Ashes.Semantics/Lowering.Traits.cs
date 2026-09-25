@@ -832,7 +832,36 @@ public sealed partial class Lowering
         Emit(new IrInst.CallClosure(first, methodTemp, leftTemp));
         int result = NewTemp();
         Emit(new IrInst.CallClosure(result, first, rightTemp));
+        if (returnsBool)
+        {
+            ReleaseFreshComparisonOperand(leftTemp, operandType);
+            ReleaseFreshComparisonOperand(rightTemp, operandType);
+        }
         return (result, returnsBool ? new TypeRef.TBool() : operandType);
+    }
+
+    /// <summary>
+    /// Releases an operand of a trait-dispatched comparison (<c>==</c>, <c>!=</c>, <c>&lt;</c>, ...)
+    /// that no binding owns: a call result, say. The method borrows both operands and its result is
+    /// a scalar <c>Bool</c> that keeps nothing of them, so the caller's reference dies with the call.
+    /// A value read out of a binding is borrowed and left to its owner.
+    /// </summary>
+    private void ReleaseFreshComparisonOperand(int operandTemp, TypeRef operandType)
+    {
+        TypeRef pruned = Prune(operandType);
+        if (Environment.GetEnvironmentVariable("GRC_NO_COMPAREOPERAND") is not null
+            || !IsNewlyProducedRcTemp(operandTemp)
+            || CanArenaReset(pruned)
+            || pruned is not (TypeRef.TNamedType or TypeRef.TList or TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt))
+        {
+            return;
+        }
+
+        EmitRuntimeManagedChildDrop(operandTemp, pruned);
+        _tempOwnershipFacts[operandTemp] = _tempOwnershipFacts[operandTemp] with
+        {
+            Ownership = LoweredTempOwnershipKind.Transferred,
+        };
     }
 
     private (int, TypeRef)? RecordMappedUnaryTrait(

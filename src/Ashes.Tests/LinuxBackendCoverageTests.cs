@@ -2827,6 +2827,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_fresh_operand_of_derived_equality_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A call's owned reference-counted result compared with a derived `!=`: the `Eq` method
+        // borrows its operands and returns a Bool, so the caller releases the operand after the
+        // call. Without that release one enum cell is left behind per comparison.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildFreshOperandOfDerivedEqualityProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("derived equality on a fresh call result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_scrutinee_loop_owned_results_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -6984,6 +7008,28 @@ public sealed class LinuxBackendCoverageTests
         }
     }
 
+    // A standalone program whose types derive the standard traits, lowered as the CLI lowers it.
+    private static IrProgram LowerProgramWithStandardTraits(string source)
+    {
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>");
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(
+            diagnostics,
+            new HashSet<string>(["Ashes.Trait"], StringComparer.Ordinal),
+            parsed.ImportAliases,
+            layout.ConstructorModules);
+        lowering.SetSourceContext(layout);
+        IrProgram ir = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         var diagnostics = new Diagnostics();
@@ -9764,6 +9810,44 @@ public sealed class LinuxBackendCoverageTests
                         | (binding, _afterBinding) -> rounds(tokens)(n - 1)(total + measure(binding))
 
             Ashes.IO.print(rounds([Token(text = "f", kind = 0), Token(text = "Int", kind = 2), Token(text = "more", kind = 0)])({{rounds}})(0))
+            """;
+
+    private static string BuildFreshOperandOfDerivedEqualityProgram(int rounds)
+        => $$"""
+            type Kind =
+                | Ident
+                | If
+                | Keyword
+                deriving {Eq}
+
+            type Token =
+                | kind: Kind
+                | position: Int
+
+            type State =
+                | tokens: List(Token)
+                | index: Int
+
+            let current (state: State) =
+                match state.tokens with
+                    | token :: _ -> token
+                    | [] -> Token(kind = Ident, position = 0)
+
+            let currentKind (state: State) =
+                (let token = current(state)
+                in token.kind)
+
+            let recursive rounds (state: State) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    if currentKind(state) != If
+                    then rounds(state)(n - 1)(total + 2)
+                    else rounds(state)(n - 1)(total + 1)
+
+            let state = State(tokens = [Token(kind = Keyword, position = 1), Token(kind = If, position = 2)], index = 0)
+
+            Ashes.IO.print(rounds(state)({{rounds}})(0))
             """;
 
     private static string BuildTupleScrutineeLoopProgram(int rounds)

@@ -19767,14 +19767,27 @@ let lowerTraitMethodClosure (key: Str) (operandType: SemanticType) (expectedType
                             |> withStateActiveTraitMethods(stateActiveTraitMethods(state))
                             |> withStateActiveTypeParameters(stateActiveTypeParameters(state)))(error)
 
+// Stage 0's `ReleaseFreshComparisonOperand`: an operand of a trait-dispatched comparison that no
+// binding owns (a call result, say) is released after the call. The method borrows both operands
+// and its result keeps nothing of them, so the caller's reference dies with the call.
+let releaseFreshComparisonOperand (operandType: SemanticType) (temp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) ->
+            state
+            |> emitRuntimeChildDrop(temp)(operandType)
+            |> markRuntimeTemp(temp)(RuntimeTransferred)
+        | _ -> state
+
 // The two closure calls stage 0's `RecordMappedBinaryTrait` emits: the method applied to the left
-// operand, the partial application to the right.
-let emitTraitMethodCalls (closureTemp: Int) (leftTemp: Int) (rightTemp: Int) (state: CoreLoweringState) =
+// operand, the partial application to the right, then the release of a fresh operand.
+let emitTraitMethodCalls (closureTemp: Int) (leftTemp: Int) (rightTemp: Int) (operandType: SemanticType) (state: CoreLoweringState) =
     match reserveCoreTemps(2)(state) with
         | ReservedCoreTemps { state = callState, first = first } ->
             callState
             |> emit(CallClosure(first)(closureTemp)(leftTemp)(-1))
             |> emit(CallClosure(first + 1)(first)(rightTemp)(-1))
+            |> releaseFreshComparisonOperand(operandType)(leftTemp)
+            |> releaseFreshComparisonOperand(operandType)(rightTemp)
             |> success(first + 1)(SemBool)
 
 let emitBoolNegation (operand: Int) (state: CoreLoweringState) =
@@ -20219,9 +20232,9 @@ let recursive emitCoreTraitBinaryDispatch (traitName: Str) (methodName: Str) low
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 and emitCoreTraitPlanCalls (plan: TraitEvidencePlan) (methodName: Str) lower (binary: LoweredCoreBinary) =
     match binary with
-        | LoweredCoreBinary { state = state, leftTemp = leftTemp, rightTemp = rightTemp, error = None } ->
+        | LoweredCoreBinary { state = state, leftTemp = leftTemp, leftType = operandType, rightTemp = rightTemp, error = None } ->
             match buildTraitMethodClosure(plan)(methodName)(lower)(state) with
-                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCalls(closureTemp)(leftTemp)(rightTemp)(closureState)
+                | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } -> emitTraitMethodCalls(closureTemp)(leftTemp)(rightTemp)(operandType)(closureState)
                 | failed -> failed
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 
