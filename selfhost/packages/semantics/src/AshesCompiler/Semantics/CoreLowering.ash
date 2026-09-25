@@ -22650,14 +22650,77 @@ let recursive isOwnedSlotIn (slot: Int) (ownedSlots: List((Int, SemanticType))) 
         | (candidate, _semanticType) :: rest -> candidate == slot || isOwnedSlotIn(slot)(rest)
 
 // Stage 0's `OwnedSlotReadInto`: whether a successor argument is a plain read of an owned slot.
-let recursive readsOwnedSlot (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
+let recursive readsOwnedSlotDirectly (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> false
         | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
             if target == temp
             then isOwnedSlotIn(slot)(ownedSlots)
-            else readsOwnedSlot(temp)(ownedSlots)(rest)
-        | _ :: rest -> readsOwnedSlot(temp)(ownedSlots)(rest)
+            else readsOwnedSlotDirectly(temp)(ownedSlots)(rest)
+        | _ :: rest -> readsOwnedSlotDirectly(temp)(ownedSlots)(rest)
+
+let recursive slotStoreCount (slot: Int) (count: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> count
+        | IrInstruction { instruction = StoreLocal(stored, _source) } :: rest ->
+            if stored == slot
+            then slotStoreCount(slot)(count + 1)(rest)
+            else slotStoreCount(slot)(count)(rest)
+        | _ :: rest -> slotStoreCount(slot)(count)(rest)
+
+let recursive slotStoredTemp (slot: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreLocal(stored, source) } :: rest ->
+            if stored == slot
+            then Some((source, rest))
+            else slotStoredTemp(slot)(rest)
+        | _ :: rest -> slotStoredTemp(slot)(rest)
+
+// The temp a field read defining `temp` reads its field out of, or -1 when no field read defines it
+// (each temp is defined once).
+let recursive fieldReadBase (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = LoadMemOffset(target, base, _offset) } :: rest ->
+            if target == temp
+            then base
+            else fieldReadBase(temp)(rest)
+        | IrInstruction { instruction = GetAdtField(target, base, _index, _tagless) } :: rest ->
+            if target == temp
+            then base
+            else fieldReadBase(temp)(rest)
+        | _ :: rest -> fieldReadBase(temp)(rest)
+
+// Stage 0's `OwnedSlotPartBoundInto`: a binding stored once with a field read out of an owned
+// slot's value (a pattern binding of a call's owned result), a part of a value holding its own
+// references, which stays alive with it.
+let ownedSlotPartBound (slot: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
+    if slotStoreCount(slot)(0)(instructions) != 1
+    then false
+    else
+        match slotStoredTemp(slot)(instructions) with
+            | None -> false
+            | Some((partTemp, earlier)) ->
+                let baseTemp = fieldReadBase(partTemp)(earlier)
+                in baseTemp >= 0 && readsOwnedSlotDirectly(baseTemp)(ownedSlots)(earlier)
+
+// Stage 0's `OwnedSlotReadInto` with parts: whether a successor argument is a plain read of an
+// owned slot, or, through its borrow, of a part of an owned slot's value.
+let recursive readsOwnedSlotFrom (temp: Int) (ownedSlots: List((Int, SemanticType))) (all: List(IrInstruction)) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then isOwnedSlotIn(slot)(ownedSlots) || ownedSlotPartBound(slot)(ownedSlots)(all)
+            else readsOwnedSlotFrom(temp)(ownedSlots)(all)(rest)
+        | IrInstruction { instruction = Borrow(target, source) } :: rest ->
+            if target == temp
+            then readsOwnedSlotFrom(source)(ownedSlots)(all)(rest)
+            else readsOwnedSlotFrom(temp)(ownedSlots)(all)(rest)
+        | _ :: rest -> readsOwnedSlotFrom(temp)(ownedSlots)(all)(rest)
+
+let readsOwnedSlot (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) = readsOwnedSlotFrom(temp)(ownedSlots)(instructions)(instructions)
 
 // The ordinals of the successors that may still name an earlier iteration's value with these heap
 // parts: not inline, not a plain read of an owned slot (a result holding its own references), and

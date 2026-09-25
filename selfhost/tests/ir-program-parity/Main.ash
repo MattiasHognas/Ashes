@@ -312,7 +312,8 @@ let fixtures =
         "record_update_fresh_call_field_owned_by_slot",
         "generic_tuple_copies_reference_counted_element_into_arena",
         "arena_loop_parameter_copies_retained_successor",
-        "self_call_inside_constructor_owns_its_result"
+        "self_call_inside_constructor_owns_its_result",
+        "tco_predecessor_released_when_successors_are_its_parts"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because
