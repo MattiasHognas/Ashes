@@ -63,9 +63,9 @@ Function: scan
     state: consumed, move-safe yes
     result fresh: no
   perceus [lambda_7]
-    dup:                  21
-    drop:                 37
-    uniqueness checks:    10
+    dup:                  20
+    drop:                 33
+    uniqueness checks:    9
   perceus [lambda_6]
     dup:                  0
     drop:                 0
