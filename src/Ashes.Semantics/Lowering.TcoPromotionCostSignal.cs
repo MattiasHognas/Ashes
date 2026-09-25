@@ -480,7 +480,7 @@ public sealed partial class Lowering
             && candidateOrdinal < tco.ParamSlots.Count
             && !tco.ParamFacts[tco.ParamSlots[candidateOrdinal]].ConsumedListTail
             && parameterTypes[candidateOrdinal] is { } candidateType
-            && (Prune(candidateType) is TypeRef.TList { Element: var element } && IsHeapListAccumulatorElement(element)
+            && (Prune(candidateType) is TypeRef.TList { Element: var element } && IsUnblockedListAccumulatorElement(element)
                 || (tco.SelfCallParameterFlow is not null && IsGeneralRcValueType(Prune(candidateType))))
                 ? Prune(candidateType)
                 : null;
@@ -504,11 +504,14 @@ public sealed partial class Lowering
         return null;
     }
 
-    // A list whose cells the loop builds on the reference-counted heap whatever its placement: one of
-    // strings, or of any element that owns heap parts.
-    private bool IsHeapListAccumulatorElement(TypeRef element)
+    // A list accumulator a sibling blocks only when it may receive part of it. One of strings, or of
+    // any element that owns heap parts, has its cells built on the reference-counted heap whatever its
+    // placement. One of inline elements kept in the arena has the type of a list field of the contract
+    // values the iteration owns, so the back edge could release none of them.
+    private bool IsUnblockedListAccumulatorElement(TypeRef element)
         => Prune(element) is TypeRef.TStr
-            || (Environment.GetEnvironmentVariable("GRC_NO_HEAPLISTUNBLOCK") is null && !CanArenaReset(Prune(element)));
+            || (Environment.GetEnvironmentVariable("GRC_NO_HEAPLISTUNBLOCK") is null && !CanArenaReset(Prune(element)))
+            || (Environment.GetEnvironmentVariable("GRC_NO_INLINELISTUNBLOCK") is null && CanArenaReset(Prune(element)));
 
     // Whether a self-call may pass the accumulator, or a part of it, in the sibling's position: from
     // the body's parameter flow when it was followed, from the sibling's type otherwise.

@@ -2728,6 +2728,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_inline_list_beside_recursive_list_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop over a list of a recursive type, which cannot be placed on the reference-counted
+        // heap, threading a record state a helper returns owned and an Int list it conses onto. The
+        // Int list is placed beside the blocking sibling, so the back edge can release each
+        // iteration's owned states instead of keeping them for a successor that might hold them.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildInlineListBesideRecursiveListParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 25}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("inline list beside a recursive list parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_record_update_successor_of_loop_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9482,6 +9507,55 @@ public sealed class LinuxBackendCoverageTests
 
     // The state's instruction list has a self-recursive element, which makes the record one of the
     // general ownership contract's types, the ones whose constructor and update cells stay in the arena.
+    private static string BuildInlineListBesideRecursiveListParameterProgram(int rounds)
+        => $$"""
+            type Expr =
+                | ExprVar(Str)
+                | ExprAdd(Expr, Expr)
+                | ExprInt(Int)
+
+            type State =
+                | slot: Maybe(Int)
+                | count: Int
+                | items: List(Int)
+
+            type Lowered =
+                | state: State
+                | temp: Int
+                | error: Maybe(Str)
+
+            let recursive countInts (items: List(Int)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: rest -> countInts(rest)(total + 1)
+
+            let withSlot value (state: State) = state with slot = value
+
+            let lowerOne (argument: Expr) (state: State) =
+                match argument with
+                    | ExprInt(v) -> Lowered(state = (state with count = state.count + v, items = v :: state.items), temp = state.count, error = None)
+                    | _ -> Lowered(state = (state with items = 0 :: state.items), temp = state.count, error = None)
+
+            let recursive loop (arguments: List(Expr)) (ordinal: Int) (state: State) (temps: List(Int)) =
+                match arguments with
+                    | [] -> state.count + countInts(temps)(0) + countInts(state.items)(0)
+                    | argument :: rest ->
+                        match state
+                        |> withSlot(Some(ordinal))
+                        |> lowerOne(argument) with
+                            | Lowered { state = failedState, error = Some(_error) } -> failedState.count
+                            | Lowered { state = argumentState, temp = temp, error = None } -> loop(rest)(ordinal + 1)(argumentState)(temp :: temps)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + loop([ExprInt(1), ExprVar("a"), ExprInt(3), ExprInt(4), ExprInt(5), ExprVar("b")])(n % 7)(State(slot = None, count = 0, items = []))([]))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
     private static string BuildRecordUpdateSuccessorOfLoopParameterProgram(int rounds)
         => $$"""
             type State =
