@@ -434,6 +434,11 @@ type CorePendingCallCopyOut =
     | deferredResultTemp: Int
     | deferredReloadTemp: Int
     | deferredType: SemanticType
+    // Whether the call is a self call whose result the recursive binding hands over owned, and
+    // whether its type resolved to one of the contract's types, so the result slot is an owned
+    // slot of the function and the call's arena-result request is withdrawn.
+    | deferredSelfCall: Bool
+    | deferredOwned: Bool
 
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
@@ -8650,7 +8655,7 @@ let emitPlainCallCopyOut copyOut (resultTemp: Int) cursorSlot endSlot preRestore
 // Stage 0's `EmitDeferredCallResultCopyOut`: the copy-out block the call would have received had
 // its type been known, storing the copy back into the slot the result travels through; nothing
 // when the resolved type needs no copy-out.
-let resolveDeferredCallCopyOut (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
+let resolveDeferredCallCopyOutByKind (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
     match callCopyOutOf(pending.deferredType)(state) with
         | None -> (state, false)
         | Some(copyOut) ->
@@ -8661,6 +8666,55 @@ let resolveDeferredCallCopyOut (pending: CorePendingCallCopyOut) (state: CoreLow
                     |> emitPlainCallCopyOut(copyOut)(currentTemp)(pending.deferredCursorSlot)(pending.deferredEndSlot)(pending.deferredPreRestoreSlot) with
                         | (copied, copiedTemp) ->
                             (unlocatedInstruction(StoreLocal(pending.deferredResultSlot)(copiedTemp))(copied), true)
+
+// The request word's arena-result constant, rewritten to ask for nothing. `temp` is the word
+// the call passes; an `OrInt` joins the argument ownership flag to the request constant.
+let recursive withdrawArenaResultRequest (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = OrInt(target, _flag, request) } as instruction) :: rest ->
+            if target == temp
+            then instruction :: withdrawArenaResultRequest(request)(rest)
+            else instruction :: withdrawArenaResultRequest(temp)(rest)
+        | (IrInstruction { instruction = LoadConstInt(target, value) } as instruction) :: rest ->
+            if target == temp
+            then
+                if value == 2
+                then (instruction with instruction = LoadConstInt(target)(0)) :: rest
+                else instruction :: rest
+            else instruction :: withdrawArenaResultRequest(temp)(rest)
+        | instruction :: rest -> instruction :: withdrawArenaResultRequest(temp)(rest)
+
+let recursive cancelRequestOfCall (resultTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = CallClosure(target, _closure, _argument, word) } as instruction) :: rest ->
+            if target == resultTemp
+            then
+                if word < 0
+                then instructions
+                else instruction :: withdrawArenaResultRequest(word)(rest)
+            else instruction :: cancelRequestOfCall(resultTemp)(rest)
+        | instruction :: rest -> instruction :: cancelRequestOfCall(resultTemp)(rest)
+
+// Stage 0's `CancelArenaResultRequest`: a call whose result type was unresolved when it was
+// emitted requested an arena result, for a caller that cannot own it. A result of the contract's
+// types is owned by the caller, so the request word is rewritten to ask for nothing: the callee
+// then hands over its reference-counted result instead of deep-copying it into the arena.
+let cancelArenaResultRequest (resultTemp: Int) (state: CoreLoweringState) = state with reversedInstructions = cancelRequestOfCall(resultTemp)(state.reversedInstructions)
+
+// A deferred self call whose result turned out to be of the contract's types takes stage 0's
+// `LowerGeneralRcCallResult` block: the result slot is an owned slot of the function, the window
+// is reset and reclaimed around it, and the arena-result request is withdrawn. A self call's
+// result is handed over owned, so no normalization follows.
+let resolveDeferredCallCopyOut (pending: CorePendingCallCopyOut) (state: CoreLoweringState) =
+    if pending.deferredOwned
+    then
+        (state
+        |> cancelArenaResultRequest(pending.deferredResultTemp)
+        |> unlocatedInstruction(RestoreArenaState(pending.deferredCursorSlot)(pending.deferredEndSlot)(pending.deferredPreRestoreSlot)(false))
+        |> unlocatedInstruction(ReclaimArenaChunks(pending.deferredEndSlot)(pending.deferredPreRestoreSlot)(false)), true)
+    else resolveDeferredCallCopyOutByKind(pending)(state)
 
 // The store a deferred result travelled through, the instruction just re-emitted, when its block
 // resolved to nothing: removed, so the reload's temp reads the result itself.
@@ -9276,6 +9330,40 @@ let recursive bindSelfCallResults (pairs: List((SemanticType, SemanticType))) (s
 // self calls that took a fresh result type (`deferSelfCallResultType`): each meets the binding's
 // own once the body is done, so a deferred copy-out resolves against the type the body settled
 // on. Applied right after the spine closes, before any ownership step reads the body's type.
+let recursive markOwnedDeferredSelfCalls (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> []
+        | copyOut :: rest ->
+            (if copyOut.deferredSelfCall && isGeneralRcValueType(copyOut.deferredType)(state)
+            then copyOut with deferredOwned = true
+            else copyOut) :: markOwnedDeferredSelfCalls(rest)(state)
+
+let recursive registerOwnedDeferredSlots (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> state
+        | copyOut :: rest ->
+            (if copyOut.deferredOwned
+            then registerGeneralRcOwnedSlot(copyOut.deferredResultSlot)(copyOut.deferredType)(state)
+            else state) |> registerOwnedDeferredSlots(rest)
+
+// Stage 0 pins a self call's result type at the call from its discovery pass, and keeps a result
+// of the contract's types in an owned slot the function releases (`LowerGeneralRcCallResult`).
+// This lowering learns that type only once the recursive binding's result is unified at the
+// body's end: each deferred self call whose result is then of the contract's types registers its
+// result slot as an owned slot there, before the function's result releases its owned slots, and
+// its deferred block becomes the owned-result block. A loop's owned slots are released at its
+// back edges as well, which are already lowered, so a loop keeps the deferred copy-out.
+let adoptDeferredSelfCallResults (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(_frame) -> state
+        | None ->
+            let marked =
+                markOwnedDeferredSelfCalls(statePendingCallCopyOuts(state))(state)
+            in
+                state
+                |> withStatePendingCallCopyOuts(marked)
+                |> registerOwnedDeferredSlots(reverse(marked))
+
 let unifySelfCallResults (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
@@ -9480,6 +9568,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None } ->
             match bodyState
+            |> adoptDeferredSelfCallResults
             |> adoptNormalizedParameterResult(label)(loweredTemp)
             |> reserveTcoExitTransferSlot(label)(loweredTemp)(bodyType)
             |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType)
@@ -13922,7 +14011,7 @@ let closedCallStage (stage: CoreCallStage) (normalized: Bool) (deepCopied: Bool)
 // between the store and the reload is emitted by `resolvePendingTcoResets` once the body is
 // lowered and the type known; a block that resolves to nothing removes the slot round trip but
 // keeps the numbering. The reload temp is what the rest of the body reads.
-let deferCallCopyOut cursorSlot endSlot preRestoreSlot (resultTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let deferCallCopyOut (selfCall: Bool) cursorSlot endSlot preRestoreSlot (resultTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     if containsUnresolvedLayout(semanticType)(state)
     then
         match freshLocal(state) with
@@ -13939,7 +14028,9 @@ let deferCallCopyOut cursorSlot endSlot preRestoreSlot (resultTemp: Int) (semant
                                 deferredResultSlot = resultSlot,
                                 deferredResultTemp = resultTemp,
                                 deferredReloadTemp = reloadTemp,
-                                deferredType = semanticType
+                                deferredType = semanticType,
+                                deferredSelfCall = selfCall,
+                                deferredOwned = false
                             )
                         in
                             (stored
@@ -14115,7 +14206,7 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                                                     |> success(resultTemp)(semanticType)
                                                     |> closedCallStage(stage)(true)(true)
                                         | _ ->
-                                            match deferCallCopyOut(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(allocated) with
+                                            match deferCallCopyOut(context.selfCallee && stateSpecializingReuseLabel(allocated) == None)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(allocated) with
                                                 | (deferred, resultTemp) ->
                                                     deferred
                                                     |> success(resultTemp)(semanticType)
@@ -17324,6 +17415,7 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (boundBody, None) ->
                     match boundBody
+                    |> adoptDeferredSelfCallResults
                     |> adoptNormalizedParameterResult(label)(loweredTemp)
                     |> reserveTcoExitTransferSlot(label)(loweredTemp)(bodyType)
                     |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType) with
