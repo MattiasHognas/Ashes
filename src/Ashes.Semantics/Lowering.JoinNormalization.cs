@@ -341,8 +341,14 @@ public sealed partial class Lowering
             int ownedSlot = NewLocal();
             Emit(new IrInst.StoreLocal(ownedSlot, argumentTemps[i]));
             RegisterGeneralRcOwnedSlot(ownedSlot, fieldType);
+            _ownedSlotConstructorArguments.Add(arguments[i]);
         }
     }
+
+    // The constructor arguments whose fresh value went to an owned slot rather than to the arena cell
+    // storing it: the slot releases the value, so a release of the cell's children skips that field.
+    private readonly HashSet<Ashes.Frontend.Expr> _ownedSlotConstructorArguments =
+        new(ReferenceEqualityComparer.Instance);
 
     // A record update builds its cell in the arena, which never releases what it holds: a fresh
     // reference-counted value stored into an updated field goes to an owned slot, as a constructor's does.

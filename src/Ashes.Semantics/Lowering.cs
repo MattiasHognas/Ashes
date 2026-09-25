@@ -2381,6 +2381,11 @@ public sealed partial class Lowering
 
     private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType, Expr? sourceExpression = null)
     {
+        if (sourceExpression is not null && _ownedSlotConstructorArguments.Contains(sourceExpression))
+        {
+            return;
+        }
+
         if (sourceExpression is not null
             && IsFreshAggregateLiteral(sourceExpression)
             && TryEmitRuntimeManagedTcoLiteralChildrenRelease(childTemp, childType, sourceExpression))
