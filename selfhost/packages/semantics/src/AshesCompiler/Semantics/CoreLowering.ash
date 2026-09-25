@@ -4141,6 +4141,15 @@ let withRefreshedHeapLayoutFacts (state: CoreLoweringState) =
     |> withStateGeneralRcTypeFacts(Ashes.Collection.Map.empty)
     |> withStateContractRecordFacts(Ashes.Collection.Map.empty)
 
+// A type declaration adds constructor layouts, so the declared types' layout facts and the
+// contract's per-type answers read from them no longer hold; they are classified again once the
+// program's declarations are all registered.
+let withDroppedHeapLayoutFacts (state: CoreLoweringState) =
+    state
+    |> withStateHeapLayoutFactsByType(Ashes.Collection.Map.empty)
+    |> withStateGeneralRcTypeFacts(Ashes.Collection.Map.empty)
+    |> withStateContractRecordFacts(Ashes.Collection.Map.empty)
+
 let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
     (let resolved = resolveType(state)(semanticType)
     in
@@ -23986,7 +23995,7 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                                             |> append(existingLayouts)
                                                             |> constructorInferenceDefinitionsFromLayouts
                                                             |> prepareDropperTypes)
-                                                            |> withRefreshedHeapLayoutFacts
+                                                            |> withDroppedHeapLayoutFacts
                                                             |> Ok
 
 // The runtime capabilities the compiler provides itself; a user `capability` may not redeclare one.
@@ -24208,11 +24217,18 @@ let recursive registerDeclaredTypes (items: List(TopLevelItem)) (state: CoreLowe
                 | Ok(registered) -> registerDeclaredTypes(rest)(registered)
         | _ :: rest -> registerDeclaredTypes(rest)(state)
 
+// The declared types' layout facts are classified once every declaration is registered: each
+// declaration only drops the table, and a question asked meanwhile classifies its type live.
 let registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) =
-    state
+    match state
     |> withStateDeclaredTypeNames(declaredTypeNamesOf(items)(Ashes.Collection.Map.empty))
     |> withStateTypeAliases(typeAliasesOf(items)(Ashes.Collection.Map.empty))
-    |> registerDeclaredTypes(items)
+    |> registerDeclaredTypes(items) with
+        | Error(error) -> Error(error)
+        | Ok(registered) ->
+            registered
+            |> withRefreshedHeapLayoutFacts
+            |> Ok
 
 // Stage 0's `RegisterExternalFunctions`: every `external` declaration of the program, typed
 // against a resolution context that names the program's own types (under symbol id 0, the id
