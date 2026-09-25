@@ -396,18 +396,84 @@ public sealed partial class Lowering
             .Select(argument => IsStrictLoopParameterPart(argument, tco))
             .ToArray();
         _generalRcBackEdgeArgumentSlots[pendingId] = argumentTemps
-            .Select(temp => OwnedSlotReadInto(temp, loopSlots))
+            .Select(temp => OwnedSlotReadInto(temp, loopSlots, parts: false))
+            .ToArray();
+        _generalRcBackEdgeArgumentPartSlots[pendingId] = argumentTemps
+            .Select(temp => OwnedSlotReadInto(temp, loopSlots, parts: true))
             .ToArray();
     }
 
-    // Per back edge, the owned slot each successor argument is a plain read of, or -1.
+    // Per back edge, the owned slot each successor argument is a plain read of, or -1; and the owned
+    // slot each is a plain read of or a part of.
     private readonly Dictionary<int, int[]> _generalRcBackEdgeArgumentSlots = [];
+    private readonly Dictionary<int, int[]> _generalRcBackEdgeArgumentPartSlots = [];
 
-    private int OwnedSlotReadInto(int temp, List<GeneralRcOwnedSlot> ownedSlots)
+    private int OwnedSlotReadInto(int temp, List<GeneralRcOwnedSlot> ownedSlots, bool parts)
     {
         for (int i = _inst.Count - 1; i >= 0; i--)
         {
             if (_inst[i] is IrInst.LoadLocal load && load.Target == temp)
+            {
+                return ownedSlots.Any(owned => owned.Slot == load.Slot) ? load.Slot
+                    : parts ? OwnedSlotPartBoundInto(load.Slot, ownedSlots)
+                    : -1;
+            }
+
+            if (parts && _inst[i] is IrInst.Borrow borrow && borrow.Target == temp)
+            {
+                temp = borrow.SourceTemp;
+            }
+        }
+
+        return -1;
+    }
+
+    // A binding stored once with a field read out of an owned slot's value (a pattern binding of a
+    // call's owned result): a part of a value holding its own references, which stays alive with it.
+    private int OwnedSlotPartBoundInto(int slot, List<GeneralRcOwnedSlot> ownedSlots)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_OWNEDSLOTPART") is not null)
+        {
+            return -1;
+        }
+
+        int storeIndex = -1;
+        for (int i = 0; i < _inst.Count; i++)
+        {
+            if (_inst[i] is IrInst.StoreLocal store && store.Slot == slot)
+            {
+                if (storeIndex >= 0)
+                {
+                    return -1;
+                }
+
+                storeIndex = i;
+            }
+        }
+
+        if (storeIndex < 0 || _inst[storeIndex] is not IrInst.StoreLocal { Source: int partTemp })
+        {
+            return -1;
+        }
+
+        int baseTemp = -1;
+        for (int i = storeIndex - 1; i >= 0; i--)
+        {
+            if (StateMachineTransform.GetDefinedTemps(_inst[i]).Contains(partTemp))
+            {
+                baseTemp = _inst[i] switch
+                {
+                    IrInst.LoadMemOffset read => read.BasePtr,
+                    IrInst.GetAdtField field => field.Ptr,
+                    _ => -1,
+                };
+                break;
+            }
+        }
+
+        for (int i = storeIndex - 1; i >= 0 && baseTemp >= 0; i--)
+        {
+            if (_inst[i] is IrInst.LoadLocal load && load.Target == baseTemp)
             {
                 return ownedSlots.Any(owned => owned.Slot == load.Slot) ? load.Slot : -1;
             }
@@ -920,7 +986,7 @@ public sealed partial class Lowering
     // only by its type.
     private void EmitGeneralRcPredecessorDrops(PendingTcoReset info, List<GeneralRcOwnedSlot> predecessors, bool successorsNormalized)
     {
-        int[] argumentSlots = _generalRcBackEdgeArgumentSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
+        int[] argumentSlots = _generalRcBackEdgeArgumentPartSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
         foreach (GeneralRcOwnedSlot predecessor in predecessors)
         {
             List<TypeRef> parts = HeapPartTypes(predecessor.Type);

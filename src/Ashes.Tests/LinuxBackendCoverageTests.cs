@@ -3156,6 +3156,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_loop_matching_parts_of_a_helper_pair_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist loop threads the parts of a helper's owned pair result as its successors. The
+        // pair an earlier iteration left in its owned slot was kept, because the successors were
+        // pattern bindings rather than plain reads of the owned slot; they are parts of the newer
+        // pair, which holds its own references, so the earlier pair is released.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopMatchingPartsOfHelperPairProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 12}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop matching the parts of a helper pair", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_recursive_map_bound_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10454,6 +10479,43 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + weigh(pass(build(8)([]))(emptyState)([]))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildLoopMatchingPartsOfHelperPairProgram(int rounds)
+        => $$"""
+            type Seen =
+                | Leaf
+                | Node(Seen, Str, Seen)
+
+            let recursive insert (key: Str) (seen: Seen) =
+                match seen with
+                    | Leaf -> Node(Leaf, key, Leaf)
+                    | Node(left, current, right) -> Node(insert(key)(left), current, right)
+
+            let recursive countSeen (seen: Seen) =
+                match seen with
+                    | Leaf -> 0
+                    | Node(left, _current, right) -> countSeen(left) + 1 + countSeen(right)
+
+            let recursive countItems (values: List(Str)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _ :: rest -> countItems(rest)(total + 1)
+
+            let enqueue (key: Str) (back: List(Str)) (seen: Seen) = (key :: back, insert(key)(seen))
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (seen: Seen) =
+                match front with
+                    | [] -> countSeen(seen) + countItems(back)(0)
+                    | key :: rest ->
+                        match enqueue(key + "x")(back)(seen) with
+                            | (nextBack, nextSeen) -> solve(rest)(nextBack)(nextSeen)
+
+            let recursive rounds (keys: List(Str)) (n: Int) (total: Int) =
+                if n == 0 then total
+                else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf))
+
+            Ashes.IO.print(rounds(["a", "b", "c", "d", "e", "f"])({{rounds}})(0))
             """;
 
     private static string BuildRecordUpdateHandedToHelperProgram(int rounds)
