@@ -10,7 +10,13 @@ internal sealed record GeneratedProgramPrelude(
 
 internal static class ProgramPreludeGenerator
 {
-    internal static GeneratedProgramPrelude Generate(int caseIndex, bool generateTraits = false)
+    /// <summary>
+    /// The declarations a case's expression may use. With <paramref name="stableOnly"/>, only the
+    /// stable generation types: a case whose template declares its own program gets none of the
+    /// case-varying declarations, which change how the compiler treats that program (a capability
+    /// provider anywhere in a program hides several classes of reference-count leak).
+    /// </summary>
+    internal static GeneratedProgramPrelude Generate(int caseIndex, bool generateTraits = false, bool stableOnly = false)
     {
         List<TopLevelItem> items = [];
         GenerationContext context = GenerationContext.Empty;
@@ -18,6 +24,10 @@ internal static class ProgramPreludeGenerator
         List<string> trace = [];
 
         AddStableGenerationTypes(items, ref context);
+        if (stableOnly)
+        {
+            return new GeneratedProgramPrelude(items, context, features, new GenerationTrace(trace));
+        }
         if (caseIndex % 4 == 0)
         {
             AddEvolvedTypes(caseIndex, items, ref context, features, trace);

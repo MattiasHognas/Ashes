@@ -110,7 +110,8 @@ public sealed class CoverageExpansionTests
                 new HashSet<string>(StringComparer.Ordinal) { template.Id },
                 ["parse", "semantic"],
                 [compatibleType],
-                0,
+                // A declaring template applies only where a case forces it and adds its declarations.
+                template is IDeclaringCombinationTemplate ? 1 : 0,
                 ContextFlags: GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed,
                 ResourceTypes: GenerationContext.Empty.ResourceTypes,
                 GenerateTraits: template.Id.StartsWith("trait.", StringComparison.Ordinal));
@@ -159,13 +160,13 @@ public sealed class CoverageExpansionTests
         foreach (string profileId in new[] { "compile", "differential", "memory-growth", "cross-target" })
         {
             FuzzProfile profile = fixture.Profiles.Get(profileId);
-            string[] enabled = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
+            string[] enabled = fixture.Generator.RotationOrder(profile);
             for (int caseIndex = 0; caseIndex < enabled.Length; caseIndex++)
             {
                 ICombinationTemplate template = fixture.Combinations.Get(enabled[caseIndex]);
                 profile.Types.Any(type => template.CanApply(
                     type,
-                    GenerationContext.Empty,
+                    TestFixture.ContextFor(template),
                     GenerationBudget.Create(120))).ShouldBeTrue();
 
                 GeneratedFuzzCase generated = fixture.Generator.Generate(910000, caseIndex, profile, 120);

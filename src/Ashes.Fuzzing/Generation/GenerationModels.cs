@@ -203,4 +203,12 @@ internal sealed record GeneratedFuzzCase(
 {
     internal IReadOnlySet<string> ExpectedDiagnosticCodes { get; init; } =
         new SortedSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The node budget the case was generated from, before a forced template's declarations widened
+    /// <see cref="Budget"/>; zero when the generator did not record it. A replay regenerates from it.
+    /// </summary>
+    internal int RequestedNodes { get; init; }
+
+    internal int ReplayNodes => RequestedNodes > 0 ? RequestedNodes : Budget.RemainingNodes;
 }

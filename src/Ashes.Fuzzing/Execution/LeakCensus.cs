@@ -64,7 +64,7 @@ internal static class LeakCensus
     private static IEnumerable<LeakCensusCase> CombinationCases(FuzzConfiguration configuration, FuzzProfile profile, ProgramGenerator generator)
     {
         int templateCount = profile.EnabledCombinations.Count;
-        string[] templateIds = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
+        string[] templateIds = generator.RotationOrder(profile);
         for (int seedIndex = 0; seedIndex < configuration.SeedCount; seedIndex++)
         {
             ulong seed = configuration.Seed + (ulong)seedIndex;

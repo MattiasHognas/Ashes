@@ -7,7 +7,7 @@ namespace Ashes.Fuzzing.Persistence;
 internal static class FuzzReplayCommand
 {
     internal static IReadOnlyList<string> Arguments(GeneratedFuzzCase testCase, FuzzConfiguration configuration) =>
-        Arguments(testCase.MasterSeed, testCase.CaseIndex, testCase.Profile, testCase.Budget.RemainingNodes, configuration);
+        Arguments(testCase.MasterSeed, testCase.CaseIndex, testCase.Profile, testCase.ReplayNodes, configuration);
 
     internal static IReadOnlyList<string> Arguments(
         ulong masterSeed,
@@ -29,7 +29,7 @@ internal static class FuzzReplayCommand
     ];
 
     internal static string Format(GeneratedFuzzCase testCase, FuzzConfiguration configuration)
-        => Format(testCase.MasterSeed, testCase.CaseIndex, testCase.Profile, testCase.Budget.RemainingNodes, configuration);
+        => Format(testCase.MasterSeed, testCase.CaseIndex, testCase.Profile, testCase.ReplayNodes, configuration);
 
     internal static string Format(
         ulong masterSeed,

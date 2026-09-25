@@ -19,6 +19,9 @@ internal sealed class ProgramGenerator
         _combinations = combinations;
     }
 
+    /// <summary>The profile's templates in the order its cases force them; see <see cref="CombinationRegistry.RotationOrder"/>.</summary>
+    internal string[] RotationOrder(FuzzProfile profile) => _combinations.RotationOrder(profile.EnabledCombinations);
+
     internal GeneratedFuzzCase Generate(ulong masterSeed, int caseIndex, FuzzProfile profile, int maximumNodes)
     {
         if (profile.GenerateInvalidSemantics)
@@ -39,7 +42,7 @@ internal sealed class ProgramGenerator
         }
         string[] enabledRuleIds = profile.EnabledRules.Order(StringComparer.Ordinal).ToArray();
         string preferredRule = enabledRuleIds[caseIndex % enabledRuleIds.Length];
-        string[] enabledCombinationIds = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
+        string[] enabledCombinationIds = RotationOrder(profile);
         string? preferredCombination = enabledCombinationIds.Length == 0 ? null : enabledCombinationIds[caseIndex % enabledCombinationIds.Length];
         bool forcePreferredCombination = preferredCombination is not null && profile.MinimumFeatureCount > 0;
         GenerationCoverageGuidance coverage = new(enabledRuleIds, enabledCombinationIds);
@@ -54,7 +57,8 @@ internal sealed class ProgramGenerator
             preferredRule,
             forcePreferredCombination);
         FuzzRandom random = new(caseSeed);
-        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex, profile.GenerateTraits);
+        GeneratedDeclarations? declarations = DeclareForcedTemplate(preferredCombination, forcePreferredCombination, caseSeed);
+        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex, profile.GenerateTraits, stableOnly: declarations is not null);
         GenerationContext context = prelude.Context
             .WithFlags(profile.ContextFlags | GenerationFlags.TailPosition)
             .WithResourceTypes(profile.EffectiveResourceTypes)
@@ -71,6 +75,15 @@ internal sealed class ProgramGenerator
             // BuildFeatureDeclarations can add one capability declaration after expression generation.
             RemainingDeclarations = Math.Max(budget.RemainingDeclarations, preludeUsage.Declarations + 1),
         };
+        if (declarations is not null)
+        {
+            context = context.WithBinding(declarations.Entry);
+            budget = WidenForDeclarations(budget, declarations.Items);
+        }
+        IReadOnlyList<TopLevelItem> declaredItems = declarations?.Items ?? [];
+        GenerationTrace preludeTrace = declarations is null
+            ? prelude.Trace
+            : new GenerationTrace([.. prelude.Trace.Entries, .. declarations.Trace.Entries]);
         int preludeNodes = AstCoverageMetrics.Measure(measuredPrelude).Nodes - 1;
         int availableExpressionNodes = Math.Max(2, maximumNodes - preludeNodes - 2);
         GenerationBudget selectionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
@@ -94,9 +107,9 @@ internal sealed class ProgramGenerator
         }
         generated = ConstrainRootType(generated, type);
         generated.Features.UnionWith(prelude.Features);
-        generated = generated with { Trace = GenerationTrace.Merge("program", prelude.Trace, generated.Trace) };
+        generated = generated with { Trace = GenerationTrace.Merge("program", preludeTrace, generated.Trace) };
 
-        List<TopLevelItem> items = [.. prelude.Items, .. BuildFeatureDeclarations(generated.Features)];
+        List<TopLevelItem> items = [.. prelude.Items, .. declaredItems, .. BuildFeatureDeclarations(generated.Features)];
         FrontendProgram program = new(items, generated.Value);
         string source = AshesFormatter.Format(program);
         AstCoverageMetrics metrics = AstCoverageMetrics.Measure(program);
@@ -109,9 +122,9 @@ internal sealed class ProgramGenerator
             generated.Features.UnionWith(prelude.Features);
             generated = generated with
             {
-                Trace = GenerationTrace.Merge("program", prelude.Trace, new GenerationTrace([fallbackReason]), generated.Trace),
+                Trace = GenerationTrace.Merge("program", preludeTrace, new GenerationTrace([fallbackReason]), generated.Trace),
             };
-            program = new FrontendProgram([.. prelude.Items, .. BuildFeatureDeclarations(generated.Features)], generated.Value);
+            program = new FrontendProgram([.. prelude.Items, .. declaredItems, .. BuildFeatureDeclarations(generated.Features)], generated.Value);
             source = AshesFormatter.Format(program);
             metrics = AstCoverageMetrics.Measure(program);
             budgetErrors = GenerationBudgetValidator.Validate(program, generated.Trace, source.Length, budget);
@@ -121,7 +134,39 @@ internal sealed class ProgramGenerator
             throw new ArgumentException(
                 $"Generation budget {maximumNodes} is too small for the minimum valid '{type}' program in profile '{profile.Id}': {string.Join(" ", budgetErrors)}");
         }
-        return new GeneratedFuzzCase(masterSeed, caseSeed, caseIndex, profile.Id, type, program, source, generated.Features, generated.Trace, metrics.Nodes, budget);
+        return new GeneratedFuzzCase(masterSeed, caseSeed, caseIndex, profile.Id, type, program, source, generated.Features, generated.Trace, metrics.Nodes, budget)
+        {
+            RequestedNodes = maximumNodes,
+        };
+    }
+
+    // The declarations draw from their own stream, derived from the case seed, so adding them leaves
+    // the expression's random choices as they would otherwise be.
+    private GeneratedDeclarations? DeclareForcedTemplate(string? preferredCombination, bool forcePreferredCombination, ulong caseSeed) =>
+        forcePreferredCombination && preferredCombination is not null &&
+        _combinations.Get(preferredCombination) is IDeclaringCombinationTemplate declaring
+            ? declaring.Declare(new FuzzRandom(caseSeed ^ 0xD1B54A32D192ED03UL))
+            : null;
+
+    // A forced template's declarations are scaffolding its expression calls, so they widen the budget
+    // by exactly their own size: the expression keeps the budget it would have had without them.
+    private static GenerationBudget WidenForDeclarations(GenerationBudget budget, IReadOnlyList<TopLevelItem> declarations)
+    {
+        FrontendProgram measured = new(declarations, new Expr.IntLit(0));
+        int sourceLength = AshesFormatter.Format(measured).Length;
+        GenerationBudgetUsage usage = GenerationBudgetValidator.Measure(measured, GenerationTrace.Empty, sourceLength);
+        return budget with
+        {
+            RemainingNodes = budget.RemainingNodes + usage.Nodes - 1,
+            RemainingDepth = Math.Max(budget.RemainingDepth, usage.Depth),
+            RemainingDeclarations = budget.RemainingDeclarations + usage.Declarations,
+            RemainingFunctions = budget.RemainingFunctions + usage.Functions,
+            RemainingAdts = budget.RemainingAdts + usage.Adts,
+            MaximumMatchCases = Math.Max(budget.MaximumMatchCases, usage.MaximumMatchCases),
+            MaximumCollectionLength = Math.Max(budget.MaximumCollectionLength, usage.MaximumCollectionLength),
+            RemainingRecursion = Math.Max(budget.RemainingRecursion, usage.RecursionComplexity),
+            MaximumSourceLength = budget.MaximumSourceLength + sourceLength,
+        };
     }
 
     private static GenerationBudget EnsureMinimumFunctionBudget(

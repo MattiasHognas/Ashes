@@ -12,6 +12,22 @@ internal interface ICombinationTemplate
     GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random);
 }
 
+/// <summary>
+/// Top-level declarations a template's expression calls: the items, the entry function the expression
+/// applies, and the trace of the choices that shaped them.
+/// </summary>
+internal sealed record GeneratedDeclarations(IReadOnlyList<TopLevelItem> Items, GeneratedBinding Entry, GenerationTrace Trace);
+
+/// <summary>
+/// A combination template whose expression calls types and functions an expression cannot declare.
+/// A case that forces the template adds its declarations to the program prelude, and the template
+/// applies only in a context that holds its entry binding, so it is never chosen without them.
+/// </summary>
+internal interface IDeclaringCombinationTemplate : ICombinationTemplate
+{
+    GeneratedDeclarations Declare(FuzzRandom random);
+}
+
 internal sealed class CombinationRegistry
 {
     private readonly SortedDictionary<string, ICombinationTemplate> _templates = new(StringComparer.Ordinal);
@@ -75,8 +91,28 @@ internal sealed class CombinationRegistry
         registry.Register(new TraitConstrainedClosureTemplate());
         registry.Register(new TraitDerivedOperatorSharingTemplate());
         registry.Register(new RuneRoundTripTemplate());
+        LeakCombinationTemplates.RegisterAll(registry);
         return registry;
     }
+
+    /// <summary>
+    /// The order in which a profile's cases force its templates, case <c>i</c> forcing the
+    /// <c>i</c>-th: ordinal, with declaring templates after the others, so that adding a declaring
+    /// template leaves the case that forces every other template as it was.
+    /// </summary>
+    internal string[] RotationOrder(IEnumerable<string> enabled) => enabled
+        .OrderBy(id => Get(id) is IDeclaringCombinationTemplate ? 1 : 0)
+        .ThenBy(id => id, StringComparer.Ordinal)
+        .ToArray();
+
+    /// <summary>
+    /// The context in which a template's applicability is judged outside a generated case: a declaring
+    /// template's entry binding is added, as a case that forces the template would add it.
+    /// </summary>
+    internal static GenerationContext ApplicabilityContext(ICombinationTemplate template, GenerationContext context) =>
+        template is IDeclaringCombinationTemplate declaring
+            ? context.WithBinding(declaring.Declare(new FuzzRandom(1)).Entry)
+            : context;
 }
 
 internal sealed class CombinationGenerator

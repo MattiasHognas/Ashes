@@ -110,6 +110,32 @@ in both runs, so the difference is exactly what one round leaked: a single leake
 case's source and a `report.tsv` of every case go to `<artifacts>/leak-census/`; the command exits 1
 when any case leaks or yields no count.
 
+The `leak.*` templates give the census the shapes that leak. Each generates a parametric program of
+one class of reference-count leak found in the self-hosted compiler: a record whose list field grows
+in the record-update successor of a loop, a map threaded through `upsertStr` while a list is walked,
+a loop over a recursive ADT whose fallback arm returns its parameter whole, a helper returning a
+tuple with a `None` element, substitution walks returning a list and a supply record (through a
+nested `let recursive` helper or through pair-returning helpers), an exit arm whose record holds the
+loop's parameter, a list accumulator matched out of a helper's record result, a variant accumulator
+rebuilt by a helper, a worklist solver, an unannotated generic pruning helper returning a pair, a
+let-bound tuple destructured into a result tuple, an optimizer pass matching a helper's pair of state
+and rewritten record, a list parameter returned inside a tuple, a nested group record replaced by a
+helper, a lowering-state pipeline, and two walks that leak one cell a round. Names, list lengths,
+element values and types, updated fields, and the variant of each class vary with the seed, and every
+choice is recorded in the case's trace.
+
+A leak template's program needs types and top-level functions that an expression cannot declare,
+so it is an `IDeclaringCombinationTemplate`: a case that forces it adds its declarations, which end
+in an entry function `Int -> Int`, and the template's expression applies that function, so the work
+runs each time the census evaluates the case's value. The declarations widen the case's budget by
+their own size, the case records the node budget it was requested with for replay, and its prelude
+holds only the stable generation types, because a case-varying declaration such as a capability
+provider changes whether several of these classes leak. Declaring templates come last in a
+profile's rotation, so adding one leaves the case that forces every other template unchanged. They
+run in the native observable profiles (`memory-growth`, `compile`, `differential`, `cross-target`)
+and in `all`, not in the in-process profiles, whose cases keep the whole program within their node
+limit.
+
 List profiles, rules, combinations, and oracles with:
 
 ```sh
@@ -223,7 +249,9 @@ The extension points are intentionally local:
    startup rejects a rule that cannot generate an advertised type.
 4. To add a combination, implement `ICombinationTemplate` with generic type preconditions and
    truthful advertised features,
-   then register it in `CombinationRegistry`.
+   then register it in `CombinationRegistry`. A template that needs top-level declarations
+   implements `IDeclaringCombinationTemplate` and applies only where its entry binding is in scope;
+   a leak class derives from `LeakCombinationTemplate` and writes its program as Ashes source.
 5. To add an oracle, implement `IFuzzOracle` and register it in `FuzzOracleRegistry`; use in-process
    stable APIs for cheap checks and `CompilerExecution` for isolation or native behavior.
 6. To add a shrink rule, add a type-compatible candidate to `FuzzShrinker` and a focused test; every

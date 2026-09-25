@@ -7,7 +7,7 @@ internal sealed class AstInvariantValidator
     internal IReadOnlyList<string> ValidateScope(Ashes.Frontend.Program program)
     {
         List<string> errors = [];
-        HashSet<string> topLevel = new(StringComparer.Ordinal) { "Ok", "Error", "Unit", "resume", "async" };
+        HashSet<string> topLevel = new(StringComparer.Ordinal) { "Ok", "Error", "Some", "None", "Unit", "resume", "async" };
         foreach (TopLevelItem.Trait trait in program.Items.OfType<TopLevelItem.Trait>())
         {
             foreach (TraitMethodDecl method in trait.Decl.Methods)
