@@ -23090,6 +23090,19 @@ let helperResultFresh (reach: ResultReachState) =
         | ResultReachState { counts = [], isPoisoned = false } -> true
         | _ -> false
 
+// Stage 0's `InlinesHelperCallHere` for a helper an inlined body calls: that call is spliced in
+// turn only when the splice's own conditions hold here. One declined is lowered as an ordinary
+// reference, which the caller's scope may not reach.
+let nestedHelperInlinedHere (name: Str) (parameters: List(Str)) (body: Expr) (state: CoreLoweringState) =
+    if inlineHelperTriggered(state) && calleeBindsFunction(name)(state)
+    then
+        if inlineHelperNeedsFreshResult(state)
+        then
+            match calleeReachSummary(name)(parameters)(body)(state) with
+                | (_summaryParameters, _summaryBody, reach) -> helperResultFresh(reach)
+        else true
+    else false
+
 // Stage 0's `InlinedBodyReferencesResolveHere`: an inlined body lowers in the caller's scope, so
 // every name it reads past its parameters must resolve there, lexically, as a constructor, or
 // by being an inlinable helper whose own references resolve in turn. A helper already accepted
@@ -23116,7 +23129,7 @@ and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLo
                 then
                     match lookupLetLambdaNamed(name)(state) with
                         | Some((parameters, body)) ->
-                            inlinedReferencesResolveHere(collectFree(body)(parameters)([]))(name :: visited)(state)
+                            nestedHelperInlinedHere(name)(parameters)(body)(state) && inlinedReferencesResolveHere(collectFree(body)(parameters)([]))(name :: visited)(state)
                         | None -> false
                 else false
 

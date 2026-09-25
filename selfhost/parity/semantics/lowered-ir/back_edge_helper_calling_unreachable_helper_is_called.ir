@@ -1,0 +1,233 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from fresh]
+  locals=3 temps=12
+    LoadLocal             Target=0 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:28)
+    LoadLocal             Target=1 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:36)
+    LoadConstInt          Target=2 Value=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:45)
+    AddInt                Target=3 Left=1 Right=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:36)
+    Alloc                 Target=4 SizeBytes=16 RuntimeManaged=true   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:27)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:27)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=3   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:27)
+    LoadArgumentOwnership Target=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    LoadConstInt          Target=6 Value=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    ShrInt                Target=7 Left=5 Right=6   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    Alloc                 Target=8 SizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    LoadMemOffset         Target=9 BasePtr=4 OffsetBytes=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    LoadMemOffset         Target=10 BasePtr=4 OffsetBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=10   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    RcDrop                SourceTemp=4 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=2 Source=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    Jump                  Target=rc_result_done_1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+  rc_result_owned_0:
+    StoreLocal            Slot=2 Source=4   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+  rc_result_done_1:
+    LoadLocal             Target=11 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    Return                Source=11   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+
+function lambda_2  [ClosureHelper from pairFresh]
+  locals=13 temps=14
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:11)
+    Borrow                Target=1 SourceTemp=0
+    LoadLocal             Target=2 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:17)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadMemOffset         Target=4 BasePtr=3 OffsetBytes=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    StoreLocal            Slot=8 Source=4   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    LoadMemOffset         Target=5 BasePtr=3 OffsetBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    StoreLocal            Slot=9 Source=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    StoreLocal            Slot=10 Source=3   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    LoadEnv               Target=6 Index=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:44)
+    LoadLocal             Target=7 Slot=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:56)
+    Alloc                 Target=8 SizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:43)
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=6   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:43)
+    StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=7   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:43)
+    LoadLocal             Target=9 Slot=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:72)
+    Alloc                 Target=10 SizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:42)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:42)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:8:42)
+    StoreLocal            Slot=5 Source=10   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    LoadLocal             Target=11 Slot=10   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    RcDrop                SourceTemp=11 TypeName=Tuple RuntimeManaged=true
+    Jump                  Target=match_end_3   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+  match_arm_cleanup_5:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=12
+    Jump                  Target=match_none_4   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+  match_none_4:
+    LoadConstInt          Target=12 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    StoreLocal            Slot=5 Source=12   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+  match_end_3:
+    LoadLocal             Target=13 Slot=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:7:5)
+    Return                Source=13   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+
+function lambda_1  [SourceFunction from pairFresh]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    LoadEnv               Target=1 Index=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    Borrow                Target=2 SourceTemp=1
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    LoadLocal             Target=3 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    MakeClosure           Target=4 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    Return                Source=4   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+
+function lambda_3  [SourceFunction from measure]
+  locals=13 temps=17
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:11)
+    Borrow                Target=1 SourceTemp=0
+    LoadLocal             Target=2 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:21)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:11)
+    LoadLocal             Target=4 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:24)
+    CallClosure           Target=5 ClosureTemp=3 ArgTemp=4   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:11)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadMemOffset         Target=6 BasePtr=5 OffsetBytes=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    LoadMemOffset         Target=7 BasePtr=6 OffsetBytes=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    StoreLocal            Slot=8 Source=7   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    LoadMemOffset         Target=8 BasePtr=6 OffsetBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    StoreLocal            Slot=9 Source=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    LoadMemOffset         Target=9 BasePtr=5 OffsetBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    StoreLocal            Slot=10 Source=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    LoadLocal             Target=10 Slot=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:12:37)
+    LoadLocal             Target=11 Slot=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:12:48)
+    AddInt                Target=12 Left=10 Right=11   (back_edge_helper_calling_unreachable_helper_is_called.ash:12:37)
+    LoadLocal             Target=13 Slot=10   (back_edge_helper_calling_unreachable_helper_is_called.ash:12:53)
+    AddInt                Target=14 Left=12 Right=13   (back_edge_helper_calling_unreachable_helper_is_called.ash:12:37)
+    StoreLocal            Slot=5 Source=14   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=11
+    Jump                  Target=match_end_7   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=12
+    Jump                  Target=match_none_8   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+  match_none_8:
+    LoadConstInt          Target=15 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    StoreLocal            Slot=5 Source=15   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+  match_end_7:
+    LoadLocal             Target=16 Slot=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:11:5)
+    Return                Source=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+
+function lambda_5  [ClosureHelper from rounds]
+  locals=14 temps=24
+    LoadEnv               Target=0 Index=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    StoreLocal            Slot=2 Source=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    StoreLocal            Slot=5 Source=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+  lambda_5_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    LoadLocal             Target=2 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:8)
+    LoadConstInt          Target=3 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:8)
+    JumpIfFalse           CondTemp=4 Target=else_10   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:5)
+    LoadLocal             Target=5 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:16:10)
+    StoreLocal            Slot=9 Source=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:5)
+    Jump                  Target=endif_11   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:5)
+  else_10:
+    LoadLocal             Target=6 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:17)
+    LoadConstInt          Target=7 Value=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:21)
+    SubInt                Target=8 Left=6 Right=7   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:17)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadEnv               Target=9 Index=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    Borrow                Target=10 SourceTemp=9
+    LoadLocal             Target=11 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:32)
+    LoadMemOffset         Target=12 BasePtr=10 OffsetBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    LoadConstInt          Target=13 Value=62   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    ShrInt                Target=14 Left=12 Right=13   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    LoadConstInt          Target=15 Value=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    LoadConstInt          Target=16 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    CallClosure           Target=17 ClosureTemp=10 ArgTemp=11 RuntimeManagedArgumentFlagTemp=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    LoadLocal             Target=18 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:37)
+    AddInt                Target=19 Left=17 Right=18   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:24)
+    LoadLocal             Target=20 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:10)
+    LoadLocal             Target=21 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:10)
+    StoreLocal            Slot=2 Source=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:10)
+    StoreLocal            Slot=1 Source=19   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:10)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=13
+    RestoreStackPointer   Slot=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:10)
+    Jump                  Target=lambda_5_body   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:10)
+    LoadConstInt          Target=22 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:17:10)
+    StoreLocal            Slot=9 Source=22   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:5)
+  endif_11:
+    LoadLocal             Target=23 Slot=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:15:5)
+    Return                Source=23   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+
+function lambda_4  [SourceFunction from rounds]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    LoadLocal             Target=1 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    LoadEnv               Target=4 Index=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    MakeClosure           Target=6 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    Return                Source=6   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+
+function _start_main  [ProgramEntry]
+  locals=19 temps=26
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    StoreLocal            Slot=2 Source=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    AllocStack            Target=2 SizeBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    LoadLocal             Target=3 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    MakeClosureStack      Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    StoreLocal            Slot=5 Source=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    AllocStack            Target=6 SizeBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+    LoadLocal             Target=7 Slot=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+    Borrow                Target=8 SourceTemp=7
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+    MakeClosureStack      Target=9 FuncLabel=lambda_3 EnvPtrTemp=6 EnvSizeBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+    StoreLocal            Slot=8 Source=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+    Alloc                 Target=10 SizeBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    LoadLocal             Target=11 Slot=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    Borrow                Target=12 SourceTemp=11
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=12   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    MakeClosure           Target=13 FuncLabel=lambda_4 EnvPtrTemp=10 EnvSizeBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    StoreLocal            Slot=9 Source=13   (back_edge_helper_calling_unreachable_helper_is_called.ash:14:1)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=14 Slot=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:20:4)
+    LoadConstInt          Target=15 Value=10   (back_edge_helper_calling_unreachable_helper_is_called.ash:20:11)
+    CallClosure           Target=16 ClosureTemp=14 ArgTemp=15   (back_edge_helper_calling_unreachable_helper_is_called.ash:19:1)
+    LoadConstInt          Target=17 Value=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:19:1)
+    CallClosure           Target=18 ClosureTemp=16 ArgTemp=17   (back_edge_helper_calling_unreachable_helper_is_called.ash:19:1)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    PrintInt              Source=18   (back_edge_helper_calling_unreachable_helper_is_called.ash:19:1)
+    AllocAdt              Target=19 Tag=0 FieldCount=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:19:1)
+    StoreLocal            Slot=13 Source=19   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+    LoadLocal             Target=20 Slot=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:10:1)
+    CleanupResource       SourceTemp=20 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=14
+    CopyOutArena          DestTemp=21 SrcTemp=19 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=14
+    StoreLocal            Slot=15 Source=21   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    LoadLocal             Target=22 Slot=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    CleanupResource       SourceTemp=22 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=16
+    LoadLocal             Target=23 Slot=15   (back_edge_helper_calling_unreachable_helper_is_called.ash:6:1)
+    StoreLocal            Slot=17 Source=23   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    LoadLocal             Target=24 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    CleanupResource       SourceTemp=24 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=18
+    LoadLocal             Target=25 Slot=17   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    Return                Source=25
+

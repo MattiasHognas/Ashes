@@ -10960,6 +10960,7 @@ public sealed partial class Lowering
             // scope; non-recursive lets cannot form a cycle, so revisiting it is a shared sibling, not
             // a loop.
             if (_inlinableFunctions.TryGetValue(reference, out var nested)
+                && InlinesHelperCallHere(new Expr.Var(reference))
                 && (!visited.Add(reference)
                     || InlinedBodyReferencesResolveHere(reference, nested.Params, nested.Body, visited)))
             {
@@ -10984,16 +10985,23 @@ public sealed partial class Lowering
     // (Ashes.Collection.Map.makeNode → Ashes_Map_makeNode) — the latter matters inside a specialization
     // generated FOR a user function, whose body keeps its QualifiedVar nodes but lowers in an
     // isolated scope where only inline/by-label resolution works.
+    // Whether a saturated call rooted here is inlined rather than called: a live reuse token or a
+    // specialization inlines every helper, a tail self-call argument only one whose result is fresh.
+    // The resolution check asks the same of each helper a body calls, since a nested call this
+    // declines is lowered as an ordinary reference that the isolated body may not reach.
+    private bool InlinesHelperCallHere(Expr rootExpr)
+        => _reuseTokens.Count > 0
+            || _inSpecialization
+            || _loweringTcoBackEdgeArguments
+                && ResolveSpecializableCalleeName(rootExpr) is not null
+                && GetOwnershipSummaryForCallRoot(rootExpr) is { ResultFresh: true };
+
     private (int, TypeRef)? LowerCallTryReuseInlineForm(
         Expr rootExpr,
         List<Expr> collectedArgs,
         LoweredValueRequest request)
     {
-        if ((_reuseTokens.Count > 0
-                || _inSpecialization
-                || _loweringTcoBackEdgeArguments
-                    && ResolveSpecializableCalleeName(rootExpr) is not null
-                    && GetOwnershipSummaryForCallRoot(rootExpr) is { ResultFresh: true })
+        if (InlinesHelperCallHere(rootExpr)
             && ResolveSpecializableCalleeName(rootExpr) is { } inlineName
             && (rootExpr is not Expr.Var vRoot || !_shadowedInlinables.ContainsKey(vRoot.Name))
             && !_inliningInProgress.Contains(inlineName)

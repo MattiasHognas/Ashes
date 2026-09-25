@@ -314,7 +314,8 @@ let fixtures =
         "arena_loop_parameter_copies_retained_successor",
         "self_call_inside_constructor_owns_its_result",
         "tco_predecessor_released_when_successors_are_its_parts",
-        "tco_record_blocked_by_sibling_keeps_field_retain_pending"
+        "tco_record_blocked_by_sibling_keeps_field_retain_pending",
+        "back_edge_helper_calling_unreachable_helper_is_called"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because
