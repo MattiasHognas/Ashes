@@ -509,11 +509,19 @@ public sealed partial class Lowering
     // read out of that parameter stored into the rebuilt cell, and is retained like one: the
     // back edge copies the successor's children and releases the successor's references to
     // them, then releases the old parameter's own children, so a borrowed field would be freed
-    // twice.
+    // twice. An update handed to a call instead is an arena aggregate built as a call argument: its
+    // retains are released after the call once the call's result holds its own references.
     private int RetainUnchangedRecordUpdateField(Binding.Local? targetParameter, int loadedTemp, TypeRef fieldType)
-        => targetParameter is null || CanArenaReset(Prune(fieldType))
-            ? loadedTemp
-            : DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
+    {
+        if (targetParameter is null || CanArenaReset(Prune(fieldType)))
+        {
+            return loadedTemp;
+        }
+
+        int retainedTemp = DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
+        _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType);
+        return retainedTemp;
+    }
 
     private void FinalizeTcoParameterAggregateRetains(TcoContext? tco)
     {

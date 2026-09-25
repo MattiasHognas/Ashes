@@ -3132,6 +3132,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_update_of_loop_state_handed_to_helper_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An arena record update of a loop parameter retains the fields it keeps. Handed to a
+        // helper rather than to the back edge, it is a call argument whose retains are released
+        // once the helper's result holds its own references; they were never released.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordUpdateHandedToHelperProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 20}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update of loop state handed to a helper", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_recursive_map_bound_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10428,6 +10452,35 @@ public sealed class LinuxBackendCoverageTests
             let recursive rounds (n: Int) (total: Int) =
                 if n == 0 then total
                 else rounds(n - 1)(total + weigh(pass(build(8)([]))(emptyState)([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordUpdateHandedToHelperProgram(int rounds)
+        => $$"""
+            type Inner =
+                | span: Maybe(Int)
+                | names: List(Str)
+
+            type State =
+                | inner: Inner
+                | count: Int
+                | items: List(Str)
+
+            let withSpan (value: Maybe(Int)) (state: State) =
+                let group = state.inner
+                in state with inner = (group with span = value)
+
+            let recursive walk (n: Int) (state: State) =
+                if n == 0 then state.count
+                else
+                    (state with count = state.count + 1)
+                    |> withSpan(Some(n))
+                    |> walk(n - 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0 then total
+                else rounds(n - 1)(total + walk(20)(State(inner = Inner(span = None, names = ["a"]), count = 0, items = ["b"])))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
