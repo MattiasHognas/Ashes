@@ -7081,7 +7081,8 @@ let closureDropperOrigin (label: Str) (key: Str) =
 // the closure's own environment in slot 0 and the environment to release in slot 1) that
 // releases every owned capture, synthesized once per capture layout and taking a lambda id like
 // any lifted function; its body is built on a scratch frame that borrows the state's label
-// counter and the closure's location.
+// counter and the closure's location. A capture's release may synthesize the structural dropper
+// of its type: that function and the program state caching its label are kept with the result.
 let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: CoreLoweringState) =
     (let key =
         owned
@@ -7109,8 +7110,8 @@ let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: Cor
                                                     match resultState
                                                     |> emit(LoadConstInt(resultTemp)(0))
                                                     |> emit(Return(resultTemp)) with
-                                                        | CoreLoweringState { reversedInstructions = instructions, nextTemp = tempCount, nextLocal = localCount, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = CoreProgramState { closureDropperLabels = labels } } ->
-                                                            (withStateClosureDropperLabels(labels)((state with functions = IrFunction(
+                                                        | CoreLoweringState { reversedInstructions = instructions, nextTemp = tempCount, nextLocal = localCount, functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = programState } ->
+                                                            ((state with functions = IrFunction(
                                                                 label = label,
                                                                 instructions = reverse(instructions),
                                                                 localCount = localCount,
@@ -7123,7 +7124,7 @@ let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: Cor
                                                                 |> closureDropperOrigin(label)
                                                                 |> Some,
                                                                 lifetimesPlaced = false
-                                                            ) :: state.functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)), label))
+                                                            ) :: functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = programState), label))
 
 // Stage 0's `CanRuntimeNormalizeClosureCapture`: a scalar, a string, bytes or big integer, a list
 // over scalars, and a named type that is not a resource and that the record or owned-child layout

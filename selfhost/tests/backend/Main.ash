@@ -3614,6 +3614,11 @@ let testRunSharedLetInSelfCallOperandReleasedOnce shipped unit =
 let testRunSharedOrdComparedLetInSelfCallOperandReleasedOnce shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/ord_compared_let_in_self_call_operand_released_once.ash"))("selfhostBackendRunSharedOrdComparedLetInSelfCallOperandReleasedOnce")("selfhost_backend_shared_ord_compared_let_in_self_call_operand_released_once_e2e")("1000")
 
+// A closure dropper releasing a captured record may be the first to synthesize the record's
+// structural dropper; the program defines that dropper, or code generation fails on its label.
+let testRunSharedCurriedLoopCapturingRecordWithOwnedChild shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/curried_loop_capturing_record_with_owned_child.ash"))("selfhostBackendRunSharedCurriedLoopCapturingRecordWithOwnedChild")("selfhost_backend_shared_curried_loop_capturing_record_with_owned_child_e2e")("1000")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5529,6 +5534,7 @@ let run shipped =
     |> testRunSharedCurriedSevenParameterLoopWithFunctionArgument(shipped)
     |> testRunSharedLetInSelfCallOperandReleasedOnce(shipped)
     |> testRunSharedOrdComparedLetInSelfCallOperandReleasedOnce(shipped)
+    |> testRunSharedCurriedLoopCapturingRecordWithOwnedChild(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
