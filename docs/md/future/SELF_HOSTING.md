@@ -526,6 +526,32 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    would do. Two follow-ups would win it back: build a fresh contract record result on the
    reference-counted heap in place, and let a back edge take over an owned slot its successor reads
    instead of retaining the value and releasing the slot.
+
+   **The leak after #1139, named and ranked.** A reachability census of the probe at 60 seconds found
+   306.5 MB of the reference-counted heap (63%) leaked for certain. Each root class was named by the
+   record type its field count and first words fit, then by a watchpoint on one cell in a small input:
+
+   | Root class | Claim | What it is |
+   |---|---|---|
+   | 200 bytes (11,641) | 71 MB | `CoreLoweringState`: one per top-level item (the item loop keeps its state in the arena beside an unplaceable pending list) and one to three per compiled function, each holding that function's instructions |
+   | 32 bytes, pointer first | 54 MB | mostly the `(SemVariable, TypeVariableSupply)` pairs of `freshTypeVariable`, dropped by an unannotated quantifier loop |
+   | 32 bytes, integer first | 52 MB | a long tail of small cells and strings, no single source |
+   | 136 bytes (23,874) | 26 MB | `HeapLayoutFacts`: the facts table was rebuilt for every type declaration, quadratic in time and in what it left behind |
+   | 64 bytes | 21 MB | persistent-map nodes of loops that thread a map while walking a list: each earlier map was overwritten in its slot, not released |
+   | 24 bytes | 15 MB | fresh `TokenKind` cells compared with a derived `!=` and never released |
+   | 48 bytes | 15 MB | the parser's header tuples, retained for a borrowed alias and never released |
+
+   Fixed so far, each with a reproducer that leaks on `main` and a test: the facts table built once,
+   the quantifier loop annotated, an inline-element list no longer demoted beside a sibling that
+   cannot hold it (the per-argument states of the tail self-call loop), an earlier iteration's value
+   released when the other successors only walk the loop's entry values (mirrored in stage 1), a
+   fresh comparison operand released after the call (mirrored), no borrowed-owner retain for an arena
+   binding copied into an aggregate, a record-update successor releasing what its construction
+   retained, and capture pruning and the constant folder's joins annotated. The probe went from
+   658 MB and 75 seconds to 526 MB and about 55 seconds, and the census from 63% leaked to 55%. On the
+   way the census found #1139 freeing a record literal successor's fresh field twice, and stage 1's
+   linker placing an AVX-512 constant section at 32-byte rather than 64-byte alignment, which made
+   stage 1's output of a loop with a seven-value closure fault on this host; both are fixed.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
