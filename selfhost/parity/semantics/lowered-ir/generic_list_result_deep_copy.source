@@ -5,7 +5,9 @@ type Item =
 let recursive mapAll f xs =
     match xs with
         | [] -> []
-        | x :: rest -> f(x) :: mapAll(f)(rest)
+        | x :: rest ->
+            let mapped = mapAll(f)(rest)
+            in f(x) :: mapped
 
 let toItem (n: Int) = Item(name = Ashes.Text.fromInt(n), flag = true)
 

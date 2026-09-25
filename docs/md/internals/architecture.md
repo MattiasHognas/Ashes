@@ -1362,6 +1362,34 @@ untagged spine and single-constructor record heads inside the same arena call
 window. The enclosing escape boundary still performs normal whole-graph RC
 normalization; the local reused result is never mislabeled as already RC-owned.
 
+### Borrowed parameters, owned results
+
+A value whose type reaches a contract type follows one ownership contract across calls: a function
+borrows its parameters and hands its result over owned. The contract types are the named types with
+a heap child that only a synthesized normalizer (`__rcnorm_N`) copies, and the single-constructor
+records with no fixed copy-out that the entry normalization re-establishes. A function of such a
+result type retains or normalizes its result at its return; a caller keeps each call result in an
+owned slot and releases it after its last use, at a loop's back edge, or at the function's exit. A
+record of the contract is released through one dropper synthesized per type (`__rcdrop_record_N`),
+so a loop releasing it at many back edges carries one call each rather than the whole release.
+
+A call emitted while its result type is still unresolved (a sibling of a recursive group, say)
+requests an arena result, for a caller that could not own one. Once the result turns out to be of a
+contract type, the caller owns it after all, so the request is withdrawn: the callee hands over its
+reference-counted result instead of deep-copying it into the arena for the caller to normalize back.
+
+A record successor written at the self-call (a record literal or a constructor application) holds
+the references its construction retained, so the back edge's copy releases them from the dying cell;
+any other successor, a call's result say, is borrowed by the copy, and its owner releases it.
+
+A back edge releases the owned slots its iteration may have stored. A slot stored inside another arm
+of a `match` or `if` that is still open at the back edge is skipped, since one iteration never runs
+both arms; a value an earlier iteration left there is released at that arm's own back edge or at the
+loop's exit. A join takes its ownership from the arms that reach it: when every one of them hands
+over a value it just produced (a loop exit building its result while the other arms jump back), the
+join's value is fresh and the function's return takes it over rather than retaining it again, and a
+`let` passing a join's value on keeps that fact.
+
 ### Scoped arenas
 
 Region allocation remains an optimization for values proven not to escape.

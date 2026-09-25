@@ -152,13 +152,52 @@ function lambda_3  [SourceFunction from firstName]
     MakeClosure           Target=6 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true   (fresh_argument_released_behind_unproven_result.ash:12:1)
     Return                Source=6   (fresh_argument_released_behind_unproven_result.ash:12:1)
 
-function __deepcopy_6  [AdtDeepCopier]
+function __rcnorm_6  [RuntimeManagedAdtNormalizer]
+  locals=5 temps=15
+    LoadLocal             Target=0 Slot=1   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_19   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Jump                  Target=rc_representation_done_20   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_copy_19:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_21   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Jump                  Target=rc_representation_done_22   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_copy_21:
+    CopyOutArena          DestTemp=7 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=7   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_done_22:
+    LoadLocal             Target=8 Slot=3   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    GetAdtField           Target=9 Ptr=0 FieldIndex=1 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    IsReferenceCounted    Target=10 SourceTemp=9
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_23   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=11   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Jump                  Target=rc_representation_done_24   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_copy_23:
+    CopyOutList           DestTemp=12 SrcTemp=9 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreLocal            Slot=4 Source=12   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_done_24:
+    LoadLocal             Target=13 Slot=4   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    SetAdtField           Ptr=3 FieldIndex=1 Source=13 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreLocal            Slot=2 Source=3   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_done_20:
+    LoadLocal             Target=14 Slot=2   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Return                Source=14   (fresh_argument_released_behind_unproven_result.ash:17:1)
+
+function __deepcopy_7  [AdtDeepCopier]
   locals=2 temps=8
     LoadLocal             Target=0 Slot=1   (fresh_argument_released_behind_unproven_result.ash:17:1)
     LoadEnv               Target=1 Index=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
     LoadConstInt          Target=2 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_6_default   (fresh_argument_released_behind_unproven_result.ash:17:1)
-  __deepcopy_6_c0:
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_7_default   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  __deepcopy_7_c0:
     AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
     LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
     CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
@@ -167,11 +206,40 @@ function __deepcopy_6  [AdtDeepCopier]
     CopyOutList           DestTemp=7 SrcTemp=6 HeadCopy=Inline Purpose=IndependentClone   (fresh_argument_released_behind_unproven_result.ash:17:1)
     StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=7   (fresh_argument_released_behind_unproven_result.ash:17:1)
     Return                Source=3   (fresh_argument_released_behind_unproven_result.ash:17:1)
-  __deepcopy_6_default:
+  __deepcopy_7_default:
     Return                Source=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
 
+function __rcdrop_record_8  [RuntimeManagedAdtDropper]
+  locals=3 temps=10
+    LoadLocal             Target=0 Slot=1   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_27   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreLocal            Slot=2 Source=3   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rcdrop_list_28:
+    LoadLocal             Target=4 Slot=2   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    LoadConstInt          Target=5 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    CmpIntNe              Target=6 Left=4 Right=5   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_30   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcIsUnique            Target=7 SourceTemp=4
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_29   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Jump                  Target=rcdrop_list_28   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rcdrop_list_shared_29:
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_30   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rcdrop_list_end_30:
+  rc_drop_shared_27:
+    RcDrop                SourceTemp=0 TypeName=Fact RuntimeManaged=true
+    LoadConstInt          Target=9 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Return                Source=9   (fresh_argument_released_behind_unproven_result.ash:17:1)
+
 function lambda_5  [SourceFunction from mk]
-  locals=4 temps=27
+  locals=5 temps=29
     LoadConstStr          Target=0 StrLabel=str_0   (fresh_argument_released_behind_unproven_result.ash:17:34)
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_behind_unproven_result.ash:17:59)
     TextFromInt           Target=2 ValueTemp=1   (fresh_argument_released_behind_unproven_result.ash:17:40)
@@ -190,47 +258,45 @@ function lambda_5  [SourceFunction from mk]
     AllocAdt              Target=11 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:22)
     SetAdtField           Ptr=11 FieldIndex=0 Source=3 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:22)
     SetAdtField           Ptr=11 FieldIndex=1 Source=10 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:22)
-    LoadArgumentOwnership Target=12   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    LoadConstInt          Target=13 Value=1   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    ShrInt                Target=14 Left=12 Right=13   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    JumpIfFalse           CondTemp=14 Target=rc_result_owned_15   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    Alloc                 Target=15 SizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    MakeClosure           Target=16 FuncLabel=__deepcopy_6 EnvPtrTemp=15 EnvSizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=16   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    CallClosure           Target=17 ClosureTemp=16 ArgTemp=11   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    RcIsUnique            Target=18 SourceTemp=11
-    JumpIfFalse           CondTemp=18 Target=rc_drop_shared_17   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    GetAdtField           Target=19 Ptr=11 FieldIndex=0 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    RcDrop                SourceTemp=19 TypeName=String RuntimeManaged=true
-    GetAdtField           Target=20 Ptr=11 FieldIndex=1 Tagless=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    StoreLocal            Slot=3 Source=20   (fresh_argument_released_behind_unproven_result.ash:17:1)
-  rcdrop_list_18:
-    LoadLocal             Target=21 Slot=3   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    LoadConstInt          Target=22 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    CmpIntNe              Target=23 Left=21 Right=22   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    JumpIfFalse           CondTemp=23 Target=rcdrop_list_end_20   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    RcIsUnique            Target=24 SourceTemp=21
-    JumpIfFalse           CondTemp=24 Target=rcdrop_list_shared_19   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    LoadMemOffset         Target=25 BasePtr=21 OffsetBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    RcDrop                SourceTemp=21 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=3 Source=25   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    Jump                  Target=rcdrop_list_18   (fresh_argument_released_behind_unproven_result.ash:17:1)
-  rcdrop_list_shared_19:
-    RcDrop                SourceTemp=21 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_20   (fresh_argument_released_behind_unproven_result.ash:17:1)
-  rcdrop_list_end_20:
-  rc_drop_shared_17:
-    RcDrop                SourceTemp=11 TypeName=Fact RuntimeManaged=true
-    StoreLocal            Slot=2 Source=17   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    Jump                  Target=rc_result_done_16   (fresh_argument_released_behind_unproven_result.ash:17:1)
-  rc_result_owned_15:
     StoreLocal            Slot=2 Source=11   (fresh_argument_released_behind_unproven_result.ash:17:1)
-  rc_result_done_16:
-    LoadLocal             Target=26 Slot=2   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    Return                Source=26   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=general_rc_result_arena_copy_15   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Jump                  Target=general_rc_result_already_owned_16   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  general_rc_result_arena_copy_15:
+    IsReferenceCounted    Target=13 SourceTemp=11
+    JumpIfFalse           CondTemp=13 Target=rc_representation_copy_17   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    RcDup                 Target=14 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=14   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Jump                  Target=rc_representation_done_18   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_copy_17:
+    LoadConstInt          Target=16 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    CallKnown             Target=17 FuncLabel=__rcnorm_6 EnvTemp=16 ArgTemp=11   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreLocal            Slot=3 Source=17   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_representation_done_18:
+    LoadLocal             Target=18 Slot=3   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreLocal            Slot=2 Source=18   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  general_rc_result_already_owned_16:
+    LoadLocal             Target=19 Slot=2   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    LoadArgumentOwnership Target=20   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    LoadConstInt          Target=21 Value=1   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    ShrInt                Target=22 Left=20 Right=21   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    JumpIfFalse           CondTemp=22 Target=rc_result_owned_25   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Alloc                 Target=23 SizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    MakeClosure           Target=24 FuncLabel=__deepcopy_7 EnvPtrTemp=23 EnvSizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=24   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    CallClosure           Target=25 ClosureTemp=24 ArgTemp=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    LoadConstInt          Target=26 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    CallKnown             Target=27 FuncLabel=__rcdrop_record_8 EnvTemp=26 ArgTemp=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreLocal            Slot=4 Source=25   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Jump                  Target=rc_result_done_26   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_result_owned_25:
+    StoreLocal            Slot=4 Source=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
+  rc_result_done_26:
+    LoadLocal             Target=28 Slot=4   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Return                Source=28   (fresh_argument_released_behind_unproven_result.ash:17:1)
 
-function lambda_7  [SourceFunction from label]
-  locals=12 temps=26
+function lambda_9  [SourceFunction from label]
+  locals=14 temps=40
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (fresh_argument_released_behind_unproven_result.ash:19:25)
     Borrow                Target=1 SourceTemp=0
@@ -242,42 +308,66 @@ function lambda_7  [SourceFunction from label]
     LoadConstInt          Target=6 Value=1   (fresh_argument_released_behind_unproven_result.ash:19:56)
     AddInt                Target=7 Left=5 Right=6   (fresh_argument_released_behind_unproven_result.ash:19:49)
     CallClosure           Target=8 ClosureTemp=4 ArgTemp=7   (fresh_argument_released_behind_unproven_result.ash:19:46)
+    StoreLocal            Slot=7 Source=8   (fresh_argument_released_behind_unproven_result.ash:19:46)
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
-    Alloc                 Target=9 SizeBytes=16   (fresh_argument_released_behind_unproven_result.ash:19:35)
-    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=8   (fresh_argument_released_behind_unproven_result.ash:19:35)
-    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=2   (fresh_argument_released_behind_unproven_result.ash:19:35)
-    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
-    LoadEnv               Target=10 Index=1   (fresh_argument_released_behind_unproven_result.ash:19:36)
-    Borrow                Target=11 SourceTemp=10
-    LoadLocal             Target=12 Slot=1   (fresh_argument_released_behind_unproven_result.ash:19:39)
-    CallClosure           Target=13 ClosureTemp=11 ArgTemp=12   (fresh_argument_released_behind_unproven_result.ash:19:36)
-    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
-    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
-    Alloc                 Target=14 SizeBytes=16   (fresh_argument_released_behind_unproven_result.ash:19:35)
-    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=13   (fresh_argument_released_behind_unproven_result.ash:19:35)
-    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=9   (fresh_argument_released_behind_unproven_result.ash:19:35)
-    CallClosure           Target=15 ClosureTemp=1 ArgTemp=14   (fresh_argument_released_behind_unproven_result.ash:19:25)
-    LoadConstStr          Target=16 StrLabel=str_1   (fresh_argument_released_behind_unproven_result.ash:19:61)
-    LoadMemOffset         Target=17 BasePtr=15 OffsetBytes=16   (fresh_argument_released_behind_unproven_result.ash:19:25)
-    LoadConstInt          Target=18 Value=63   (fresh_argument_released_behind_unproven_result.ash:19:25)
-    ShrInt                Target=19 Left=17 Right=18   (fresh_argument_released_behind_unproven_result.ash:19:25)
-    CallClosure           Target=20 ClosureTemp=15 ArgTemp=16   (fresh_argument_released_behind_unproven_result.ash:19:25)
-    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=10
-    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=10
-    LoadArgumentOwnership Target=21   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    LoadConstInt          Target=22 Value=1   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    ShrInt                Target=23 Left=21 Right=22   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    JumpIfFalse           CondTemp=23 Target=rc_result_owned_21   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    CopyOutArena          DestTemp=24 SrcTemp=20 Purpose=ArenaResultBoundary
-    RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=11 Source=24   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    Jump                  Target=rc_result_done_22   (fresh_argument_released_behind_unproven_result.ash:19:1)
-  rc_result_owned_21:
-    StoreLocal            Slot=11 Source=20   (fresh_argument_released_behind_unproven_result.ash:19:1)
-  rc_result_done_22:
-    LoadLocal             Target=25 Slot=11   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    Return                Source=25   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    LoadLocal             Target=9 Slot=7   (fresh_argument_released_behind_unproven_result.ash:19:46)
+    Alloc                 Target=10 SizeBytes=16   (fresh_argument_released_behind_unproven_result.ash:19:35)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=9   (fresh_argument_released_behind_unproven_result.ash:19:35)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=2   (fresh_argument_released_behind_unproven_result.ash:19:35)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadEnv               Target=11 Index=1   (fresh_argument_released_behind_unproven_result.ash:19:36)
+    Borrow                Target=12 SourceTemp=11
+    LoadLocal             Target=13 Slot=1   (fresh_argument_released_behind_unproven_result.ash:19:39)
+    CallClosure           Target=14 ClosureTemp=12 ArgTemp=13   (fresh_argument_released_behind_unproven_result.ash:19:36)
+    StoreLocal            Slot=11 Source=14   (fresh_argument_released_behind_unproven_result.ash:19:36)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
+    LoadLocal             Target=15 Slot=11   (fresh_argument_released_behind_unproven_result.ash:19:36)
+    Alloc                 Target=16 SizeBytes=16   (fresh_argument_released_behind_unproven_result.ash:19:35)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=15   (fresh_argument_released_behind_unproven_result.ash:19:35)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=10   (fresh_argument_released_behind_unproven_result.ash:19:35)
+    CallClosure           Target=17 ClosureTemp=1 ArgTemp=16   (fresh_argument_released_behind_unproven_result.ash:19:25)
+    LoadConstStr          Target=18 StrLabel=str_1   (fresh_argument_released_behind_unproven_result.ash:19:61)
+    LoadMemOffset         Target=19 BasePtr=17 OffsetBytes=16   (fresh_argument_released_behind_unproven_result.ash:19:25)
+    LoadConstInt          Target=20 Value=63   (fresh_argument_released_behind_unproven_result.ash:19:25)
+    ShrInt                Target=21 Left=19 Right=20   (fresh_argument_released_behind_unproven_result.ash:19:25)
+    CallClosure           Target=22 ClosureTemp=17 ArgTemp=18   (fresh_argument_released_behind_unproven_result.ash:19:25)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=12
+    LoadLocal             Target=23 Slot=7   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    LoadConstInt          Target=24 Value=0   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    CmpIntNe              Target=25 Left=23 Right=24   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    JumpIfFalse           CondTemp=25 Target=general_rc_owned_absent_31   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    IsReferenceCounted    Target=26 SourceTemp=23
+    JumpIfFalse           CondTemp=26 Target=general_rc_owned_absent_31   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    LoadConstInt          Target=27 Value=0   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    CallKnown             Target=28 FuncLabel=__rcdrop_record_8 EnvTemp=27 ArgTemp=23   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    StoreLocal            Slot=7 Source=24   (fresh_argument_released_behind_unproven_result.ash:19:1)
+  general_rc_owned_absent_31:
+    LoadLocal             Target=29 Slot=11   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    LoadConstInt          Target=30 Value=0   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    CmpIntNe              Target=31 Left=29 Right=30   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    JumpIfFalse           CondTemp=31 Target=general_rc_owned_absent_32   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    IsReferenceCounted    Target=32 SourceTemp=29
+    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_32   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    LoadConstInt          Target=33 Value=0   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    CallKnown             Target=34 FuncLabel=__rcdrop_record_8 EnvTemp=33 ArgTemp=29   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    StoreLocal            Slot=11 Source=30   (fresh_argument_released_behind_unproven_result.ash:19:1)
+  general_rc_owned_absent_32:
+    LoadArgumentOwnership Target=35   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    LoadConstInt          Target=36 Value=1   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    ShrInt                Target=37 Left=35 Right=36   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    JumpIfFalse           CondTemp=37 Target=rc_result_owned_33   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    CopyOutArena          DestTemp=38 SrcTemp=22 Purpose=ArenaResultBoundary
+    RcDrop                SourceTemp=22 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=13 Source=38   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    Jump                  Target=rc_result_done_34   (fresh_argument_released_behind_unproven_result.ash:19:1)
+  rc_result_owned_33:
+    StoreLocal            Slot=13 Source=22   (fresh_argument_released_behind_unproven_result.ash:19:1)
+  rc_result_done_34:
+    LoadLocal             Target=39 Slot=13   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    Return                Source=39   (fresh_argument_released_behind_unproven_result.ash:19:1)
 
 function _start_main  [ProgramEntry]
   locals=28 temps=37
@@ -301,7 +391,7 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=8 Source=9   (fresh_argument_released_behind_unproven_result.ash:12:1)
     SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
     LoadConstInt          Target=10 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    MakeClosureStack      Target=11 FuncLabel=lambda_5 EnvPtrTemp=10 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    MakeClosureStack      Target=11 FuncLabel=lambda_5 EnvPtrTemp=10 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (fresh_argument_released_behind_unproven_result.ash:17:1)
     StoreLocal            Slot=11 Source=11   (fresh_argument_released_behind_unproven_result.ash:17:1)
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     AllocStack            Target=12 SizeBytes=16   (fresh_argument_released_behind_unproven_result.ash:19:1)
@@ -311,7 +401,7 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=15 Slot=11   (fresh_argument_released_behind_unproven_result.ash:19:1)
     Borrow                Target=16 SourceTemp=15
     StoreMemOffset        BasePtr=12 OffsetBytes=8 Source=16   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    MakeClosureStack      Target=17 FuncLabel=lambda_7 EnvPtrTemp=12 EnvSizeBytes=16 ReturnsRuntimeManaged=true   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    MakeClosureStack      Target=17 FuncLabel=lambda_9 EnvPtrTemp=12 EnvSizeBytes=16 ReturnsRuntimeManaged=true   (fresh_argument_released_behind_unproven_result.ash:19:1)
     StoreLocal            Slot=14 Source=17   (fresh_argument_released_behind_unproven_result.ash:19:1)
     SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
     LoadLocal             Target=18 Slot=14   (fresh_argument_released_behind_unproven_result.ash:21:38)

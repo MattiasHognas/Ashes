@@ -1,17 +1,17 @@
 RC report
 =========
 
-Function: collect [lambda_2]
+Function: __rcnorm_3
   Operations
-    dup:                  13
-    drop:                 9
-    uniqueness checks:    4
-    allocations:          5
+    dup:                  2
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               8
+    copies:               2
 
-Function: __rc_cdrop_3
+Function: __rcdrop_record_4
   Operations
     dup:                  0
     drop:                 2
@@ -21,15 +21,45 @@ Function: __rc_cdrop_3
     reuse tokens:         0
     copies:               0
 
+Function: __deepcopy_6
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_list_5
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: collect [lambda_2]
+  Operations
+    dup:                  14
+    drop:                 5
+    uniqueness checks:    2
+    allocations:          7
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
 Function: collect [lambda_2$env_normalize]
   Operations
-    dup:                  2
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
     allocations:          0
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               0
 
 Function: collect [lambda_1]
   Operations
@@ -51,17 +81,17 @@ Function: collect
     reuse tokens:         0
     copies:               0
 
-Function: total [lambda_6]
+Function: total [lambda_10]
   Operations
-    dup:                  5
-    drop:                 14
-    uniqueness checks:    6
+    dup:                  4
+    drop:                 8
+    uniqueness checks:    3
     allocations:          3
     reused allocations:   0
     reuse tokens:         0
-    copies:               2
+    copies:               0
 
-Function: total [lambda_5]
+Function: total [lambda_9]
   Operations
     dup:                  0
     drop:                 0
@@ -81,7 +111,7 @@ Function: total
     reuse tokens:         0
     copies:               0
 
-Function: firstLabels [lambda_8]
+Function: firstLabels [lambda_12]
   Operations
     dup:                  0
     drop:                 2
@@ -101,45 +131,15 @@ Function: firstLabels
     reuse tokens:         0
     copies:               0
 
-Function: __rcdrop_structural_11
-  Operations
-    dup:                  0
-    drop:                 2
-    uniqueness checks:    1
-    allocations:          0
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
-Function: __deepcopy_13
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          1
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               1
-
-Function: __deepcopy_list_12
-  Operations
-    dup:                  0
-    drop:                 0
-    uniqueness checks:    0
-    allocations:          2
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
-Function: reversed [lambda_10]
+Function: reversed [lambda_14]
   Operations
     dup:                  12
-    drop:                 22
-    uniqueness checks:    10
-    allocations:          5
+    drop:                 11
+    uniqueness checks:    5
+    allocations:          6
     reused allocations:   0
     reuse tokens:         0
-    copies:               8
+    copies:               0
 
 Function: reversed
   Operations
@@ -151,21 +151,21 @@ Function: reversed
     reuse tokens:         0
     copies:               0
 
-Function: reversed [lambda_10__scalarenv0]
+Function: reversed [lambda_14__scalarenv0]
   Operations
     dup:                  12
-    drop:                 22
-    uniqueness checks:    10
-    allocations:          5
+    drop:                 11
+    uniqueness checks:    5
+    allocations:          6
     reused allocations:   0
     reuse tokens:         0
-    copies:               8
+    copies:               0
 
 Function: _start_main
   Operations
-    dup:                  1
-    drop:                 7
-    uniqueness checks:    2
+    dup:                  0
+    drop:                 3
+    uniqueness checks:    0
     allocations:          2
     reused allocations:   0
     reuse tokens:         0

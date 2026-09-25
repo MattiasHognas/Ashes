@@ -1001,9 +1001,15 @@ public sealed class ArenaDeallocationTests
 
         instructions.Any(instruction => instruction is IrInst.Label label
             && label.Name.Contains("rc_normalize_list", StringComparison.Ordinal)).ShouldBeTrue();
-        instructions.Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
-                "The final accumulator must bypass its conditional exit-drop path when it transfers to the caller.");
+        // A list of records the ownership contract covers is returned owned: the exit retains the
+        // final accumulator for the caller, and the loop's exit then releases its own reference.
+        int exitRetain = instructions.FindIndex(instruction => instruction is IrInst.Label label
+            && label.Name.StartsWith("endif", StringComparison.Ordinal));
+        exitRetain.ShouldBeGreaterThan(0);
+        instructions.Skip(exitRetain).Any(instruction => instruction is IrInst.RcDup { RuntimeManaged: true }).ShouldBeTrue(
+            "The returned accumulator holds a reference of its own.");
+        ReleaseIr.Releases(ir, instructions.Skip(exitRetain), "List").ShouldBeTrue(
+            "The loop's exit releases its reference to the accumulator.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }
@@ -1359,11 +1365,8 @@ public sealed class ArenaDeallocationTests
             RuntimeManaged: true,
         }).ShouldBeTrue(
             "The transferred tail receives one reference before the old list owner is released.");
-        instructions.Any(instruction => instruction is IrInst.RcDrop
-        {
-            TypeName: "Item",
-            RuntimeManaged: true,
-        }).ShouldBeTrue("Releasing the consumed list parent must recursively release its record head.");
+        ReleaseIr.Releases(ir, instructions, "Item").ShouldBeTrue(
+            "Releasing the consumed list parent must recursively release its record head.");
         instructions.Any(instruction => instruction is IrInst.CopyOutTcoListCell
             or IrInst.CopyOutList { RuntimeManaged: false }).ShouldBeFalse();
     }

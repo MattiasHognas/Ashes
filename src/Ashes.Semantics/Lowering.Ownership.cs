@@ -1339,6 +1339,11 @@ public sealed partial class Lowering
             return;
         }
 
+        if (TryEmitContractRecordDropCall(valueTemp, named))
+        {
+            return;
+        }
+
         ConstructorSymbol constructor = named.Symbol.Constructors[0];
         List<OrdinaryHeapLayoutChild> childFields =
             GetOwnedOrdinaryHeapChildren(named, constructor);
@@ -4445,13 +4450,15 @@ public sealed partial class Lowering
     // self-recursive type, a coroutine body) the backing is kept instead of released, because a
     // view left pointing into freed memory is read as whatever the allocator puts there next. The
     // backing then lives as long as the program: a leak is the safe side of a result this pass
-    // cannot copy.
+    // cannot copy. A reference-counted value of the contract's types never holds a view: its string
+    // and bytes children were retained or copied onto the reference-counted heap when it was built.
     private int MaterializeScopeResultViews(TypeRef? resultType, int resultTemp)
     {
         if (resultType is null
             || resultTemp < 0
             || !ScopeReleasesViewedValue()
-            || !TypeCarriesTextBytes(resultType, []))
+            || !TypeCarriesTextBytes(resultType, [])
+            || (IsGeneralRcValueType(resultType) && IsRuntimeManagedResultTemp(resultTemp)))
         {
             return resultTemp;
         }

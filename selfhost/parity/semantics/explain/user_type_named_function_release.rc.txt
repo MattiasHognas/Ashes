@@ -1,9 +1,19 @@
 RC report
 =========
 
-Function: makeFunction
+Function: __rcnorm_1
   Operations
-    dup:                  1
+    dup:                  4
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               5
+
+Function: __deepcopy_3
+  Operations
+    dup:                  0
     drop:                 0
     uniqueness checks:    0
     allocations:          2
@@ -11,17 +21,17 @@ Function: makeFunction
     reuse tokens:         0
     copies:               1
 
-Function: mark
+Function: __deepcopy_2
   Operations
-    dup:                  3
-    drop:                 1
+    dup:                  0
+    drop:                 0
     uniqueness checks:    0
-    allocations:          3
+    allocations:          2
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               1
 
-Function: __rcdrop_4
+Function: __rcdrop_5
   Operations
     dup:                  0
     drop:                 2
@@ -31,15 +41,55 @@ Function: __rcdrop_4
     reuse tokens:         0
     copies:               0
 
-Function: count [lambda_3]
+Function: __rcdrop_record_4
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: makeFunction
+  Operations
+    dup:                  2
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: __deepcopy_list_7
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: mark
   Operations
     dup:                  6
-    drop:                 12
-    uniqueness checks:    6
+    drop:                 7
+    uniqueness checks:    3
+    allocations:          5
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: count [lambda_9]
+  Operations
+    dup:                  3
+    drop:                 6
+    uniqueness checks:    3
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               5
+    copies:               0
 
 Function: count
   Operations
@@ -51,15 +101,15 @@ Function: count
     reuse tokens:         0
     copies:               0
 
-Function: count [lambda_3__scalarenv0]
+Function: count [lambda_9__scalarenv0]
   Operations
-    dup:                  6
-    drop:                 12
-    uniqueness checks:    6
+    dup:                  3
+    drop:                 6
+    uniqueness checks:    3
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               5
+    copies:               0
 
 Function: _start_main
   Operations

@@ -52,6 +52,7 @@ public sealed partial class Lowering
     private List<IrInst> _inst = new();
     private readonly List<IrFunction> _funcs = new();
     private readonly HashSet<IrInst.CallClosure> _borrowedArgumentCalls = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<IrInst.CallClosure> _arenaResultRequestingCalls = new(ReferenceEqualityComparer.Instance);
 
     private bool _hasDeferredTupleMaterializations;
     private readonly List<IrStringLiteral> _strings = new();
@@ -1790,6 +1791,13 @@ public sealed partial class Lowering
                 sourceTemp, argType, alreadyRuntimeManaged, aliasesPredecessor, consumedListTail, sourceExpression));
     }
 
+    // The dying arena successor OWNS the references its construction dup-transferred in, so they are
+    // released (see EmitRuntimeManagedTcoConstructorDeepCopy). An aggregate of the general contract
+    // only borrows them, unless the record is built at the self-call itself.
+    private bool SuccessorOwnsItsChildren(TypeRef.TNamedType named, Expr? sourceExpression)
+        => !NeedsRuntimeManagedAdtNormalizer(named)
+            && (!IsInlineCopiedContractRecord(named) || sourceExpression is Expr.RecordLit || (sourceExpression is not null && IsConstructorExpression(sourceExpression)));
+
     private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
         int sourceTemp,
         TypeRef argType,
@@ -1840,10 +1848,7 @@ public sealed partial class Lowering
         }
         else if (argType is TypeRef.TNamedType named && !CanCopyOutAdt(named, out _))
         {
-            // The dying arena successor OWNS the references its construction dup-transferred in, so
-            // they are released (see EmitRuntimeManagedTcoConstructorDeepCopy); an aggregate of the
-            // general contract only borrows them.
-            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named, releaseAdtSourceChildren: !NeedsRuntimeManagedAdtNormalizer(named), sourceExpression);
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named, releaseAdtSourceChildren: SuccessorOwnsItsChildren(named, sourceExpression), sourceExpression);
         }
         else
         {
@@ -2032,7 +2037,7 @@ public sealed partial class Lowering
                     RuntimeManaged: true,
                     IrInst.CopyOutPurpose.RcNormalization));
                 break;
-            case TypeRef.TNamedType named when CanRuntimeManageTcoAdt(named):
+            case TypeRef.TNamedType named when CanRuntimeManageTcoAdt(named) && (releaseAdtSourceChildren || !IsInlineCopiedContractRecord(named)):
                 return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named, releaseAdtSourceChildren, sourceExpression);
             case TypeRef.TFun:
                 // The environment normalizer copies each capture and attaches the new dropper.
@@ -6639,7 +6644,9 @@ public sealed partial class Lowering
         bool normalizeStaticStringBranches = ShouldNormalizeStaticStringIfBranches(iff, request);
 
         int slot = NewLocal();
+        EnterGeneralRcBranch(endLabel, 0);
         var (tTemp, thenType) = LowerIfBranchIntoSlot(iff.Then, iff.Else, request, null, normalizeStaticStringBranches, slot, out IrInst.StoreLocal thenStore);
+        LeaveGeneralRcBranch();
 
         Emit(new IrInst.Jump(endLabel));
         Emit(new IrInst.Label(elseLabel));
@@ -6648,7 +6655,9 @@ public sealed partial class Lowering
         _reuseTokens.AddRange(reuseTokensAtIf);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+        EnterGeneralRcBranch(endLabel, 1);
         var (eTemp, elseType) = LowerIfBranchIntoSlot(iff.Else, iff.Then, request, thenType, normalizeStaticStringBranches, slot, out IrInst.StoreLocal elseStore);
+        LeaveGeneralRcBranch();
 
         // if expression result: put into a temp (phi) by storing chosen into target
         int target = NewTemp();
@@ -14221,6 +14230,12 @@ public sealed partial class Lowering
         {
             _borrowedArgumentCalls.Add(callInstruction);
         }
+
+        // Emit may re-create the instruction with its source location, so the emitted one is kept.
+        if (requestsArenaResult && _inst[^1] is IrInst.CallClosure emittedCall)
+        {
+            _arenaResultRequestingCalls.Add(emittedCall);
+        }
     }
 
     // Restore arena after the call chain completes.
@@ -16161,7 +16176,12 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(resultSlot, spineTemp));
         Emit(new IrInst.Jump(doneLabel));
         Emit(new IrInst.Label(emptyLabel));
-        Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
+        // The contract takes a reference-counted result as owned, so a base-case value it did not
+        // produce (a borrowed parameter) holds its own reference here, as the last cell's tail does.
+        int emptyResultTemp = bodyRuntimeManaged || tco.ResultType is null || !IsGeneralRcValueType(Prune(tco.ResultType))
+            ? bodyTemp
+            : EmitRuntimeManagedTcoParamCopy(bodyTemp, Prune(tco.ResultType));
+        Emit(new IrInst.StoreLocal(resultSlot, emptyResultTemp));
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));

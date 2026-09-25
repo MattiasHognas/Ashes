@@ -6,23 +6,23 @@ Function: count
     functions: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_3]
-    dup:                  6
-    drop:                 12
-    uniqueness checks:    6
-  perceus [lambda_2]
+  perceus [lambda_9]
+    dup:                  3
+    drop:                 6
+    uniqueness checks:    3
+  perceus [lambda_8]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_3__scalarenv0]
-    dup:                  6
-    drop:                 12
-    uniqueness checks:    6
-  representation [lambda_3]
+  perceus [lambda_9__scalarenv0]
+    dup:                  3
+    drop:                 6
+    uniqueness checks:    3
+  representation [lambda_9]
     conservative unknown: 2
-    runtime rc:           22
+    runtime rc:           11
     copy value:           6
-  representation [lambda_2]
+  representation [lambda_8]
     conservative unknown: 1
     region:               3
 
@@ -31,24 +31,24 @@ Function: makeFunction
     name: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  1
+    dup:                  2
     drop:                 0
     uniqueness checks:    0
   representation [lambda_0]
-    conservative unknown: 1
-    region:               2
-    runtime rc:           3
+    conservative unknown: 5
+    region:               11
+    runtime rc:           20
 
 Function: mark
   ownership
     functions: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_1]
-    dup:                  3
-    drop:                 1
-    uniqueness checks:    0
-  representation [lambda_1]
-    conservative unknown: 7
-    region:               4
-    runtime rc:           7
+  perceus [lambda_6]
+    dup:                  6
+    drop:                 7
+    uniqueness checks:    3
+  representation [lambda_6]
+    conservative unknown: 14
+    region:               9
+    runtime rc:           15
 

@@ -7,7 +7,7 @@ Function: extend
     state: consumed, move-safe yes
     result fresh: no
   perceus [lambda_1]
-    dup:                  0
+    dup:                  1
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1$env_normalize]
@@ -18,9 +18,14 @@ Function: extend
     dup:                  0
     drop:                 0
     uniqueness checks:    0
+  perceus [lambda_1__scalarenv1]
+    dup:                  1
+    drop:                 0
+    uniqueness checks:    0
   representation [lambda_1]
-    conservative unknown: 15
-    region:               5
+    conservative unknown: 17
+    region:               10
+    runtime rc:           12
     copy value:           2
   representation [lambda_0]
     conservative unknown: 1
@@ -32,23 +37,23 @@ Function: joinAll
     items: consumed, move-safe yes
     acc: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_6]
+  perceus [lambda_9]
     dup:                  3
     drop:                 11
     uniqueness checks:    3
-  perceus [lambda_5]
+  perceus [lambda_8]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_6__scalarenv0]
+  perceus [lambda_9__scalarenv0]
     dup:                  3
     drop:                 11
     uniqueness checks:    3
-  representation [lambda_6]
+  representation [lambda_9]
     conservative unknown: 3
     region:               1
     runtime rc:           17
-  representation [lambda_5]
+  representation [lambda_8]
     conservative unknown: 1
     region:               3
 
@@ -57,20 +62,20 @@ Function: scan
     tokens: consumed, move-safe yes
     state: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_4]
-    dup:                  24
-    drop:                 62
-    uniqueness checks:    19
-  perceus [lambda_3]
+  perceus [lambda_7]
+    dup:                  20
+    drop:                 33
+    uniqueness checks:    9
+  perceus [lambda_6]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_4]
-    conservative unknown: 6
+  representation [lambda_7]
+    conservative unknown: 11
     region:               3
-    runtime rc:           47
+    runtime rc:           41
     copy value:           4
-  representation [lambda_3]
+  representation [lambda_6]
     conservative unknown: 2
     region:               3
 

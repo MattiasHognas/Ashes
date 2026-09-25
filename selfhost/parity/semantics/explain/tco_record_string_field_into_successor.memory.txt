@@ -8,20 +8,20 @@ Function: step
     result fresh: no
   perceus [lambda_1]
     dup:                  5
-    drop:                 7
-    uniqueness checks:    3
+    drop:                 1
+    uniqueness checks:    0
   perceus [lambda_0]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
   perceus [lambda_1__scalarenv0]
     dup:                  5
-    drop:                 7
-    uniqueness checks:    3
+    drop:                 1
+    uniqueness checks:    0
   representation [lambda_1]
-    conservative unknown: 2
+    conservative unknown: 4
     region:               5
-    runtime rc:           11
+    runtime rc:           17
     copy value:           9
   representation [lambda_0]
     region:               3

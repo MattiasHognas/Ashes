@@ -142,9 +142,10 @@ let testLambdaReturningRecordAllocatesRuntimeManaged unit =
             |> countContaining("FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true")
             |> test.assertEqual(1)))
 
-// The top-level `let` owning the record releases it at its scope exit through the record's
-// field walk: the string field is released under a uniqueness test, then the cell.
-let testOwnedRecordLetReleasesFieldsInline unit =
+// The record is a contract record, so the top-level `let` owning it is released by its owner on
+// each path out of the match that reads it, after the arm has taken the string field it needs,
+// and no field walk is emitted inline at the scope exit.
+let testOwnedRecordLetReleasedByItsOwner unit =
     recordSource
     |> loweredLines
     |> functionLines("ProgramEntry")
@@ -153,23 +154,15 @@ let testOwnedRecordLetReleasesFieldsInline unit =
         |> (given (_) ->
             lines
             |> countContaining("Target=rc_drop_shared_")
-            |> test.assertEqual(1))
+            |> test.assertEqual(0))
         |> (given (_) ->
             lines
-            |> countContaining("GetAdtField           Target=20 Ptr=18 FieldIndex=0 Tagless=true")
-            |> test.assertEqual(1))
+            |> countContaining("RcDrop                SourceTemp=6 TypeName=Label OwnerSlot=9")
+            |> test.assertEqual(2))
         |> (given (_) ->
             lines
-            |> lineAfter("GetAdtField           Target=20")
-            |> test.assertEqual("    RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true"))
-        |> (given (_) ->
-            lines
-            |> countContaining("RcDrop                SourceTemp=18 TypeName=Label RuntimeManaged=true")
-            |> test.assertEqual(1))
-        |> (given (_) ->
-            lines
-            |> countContaining("TypeName=Label OwnerSlot=")
-            |> test.assertEqual(0)))
+            |> lineAfter("GetAdtField           Target=11 Ptr=8 FieldIndex=0 Tagless=true")
+            |> test.assertEqual("    RcDrop                SourceTemp=6 TypeName=Label OwnerSlot=9")))
 
 let aggregateSource = "let label n = Ashes.Text.fromInt(n)\n\nlet pair n =\n    let first = label(n)\n    in\n        let second = label(7)\n        in (first, second)\n\nlet listed n =\n    let first = label(n)\n    in\n        let second = label(7)\n        in [first, second]\n\nlet prefixed n =\n    let first = label(n)\n    in\n        let rest = listed(7)\n        in first :: rest\n\nmatch prefixed(1) with\n    | first :: _ -> Ashes.IO.print(first)\n    | [] -> Ashes.IO.print(\"empty\")"
 
@@ -428,7 +421,7 @@ let runOwnedAggregateReleaseTests unit =
     Unit
     |> testOwnedListLetWalksSpineInline
     |> testLambdaReturningRecordAllocatesRuntimeManaged
-    |> testOwnedRecordLetReleasesFieldsInline
+    |> testOwnedRecordLetReleasedByItsOwner
     |> testEscapingTupleRetainsOwnedChildren
     |> testEscapingListLiteralRetainsOwnedChildren
     |> testEscapingConsRetainsHeadAndTail

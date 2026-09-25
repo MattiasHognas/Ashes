@@ -509,6 +509,12 @@ public sealed partial class Lowering
             LoweredTempOwnershipReason.FrameRestore,
             location: null);
         RefineTempOwnershipType(target, type);
+
+        // A join whose arms were normalized holds a reference of its own; so does its reload.
+        if (IsNormalizedJoinTemp(source))
+        {
+            RecordNormalizedJoinTemp(target);
+        }
     }
 
     private void MarkFrameOwnedResourceTemp(int temp, TypeRef type)

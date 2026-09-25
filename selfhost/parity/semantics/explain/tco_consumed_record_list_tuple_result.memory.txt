@@ -8,9 +8,9 @@ Function: total
     labels: consumed, move-safe yes
     result fresh: no
   perceus [lambda_2]
-    dup:                  5
-    drop:                 14
-    uniqueness checks:    6
+    dup:                  4
+    drop:                 8
+    uniqueness checks:    3
   perceus [lambda_1]
     dup:                  0
     drop:                 0
@@ -20,8 +20,9 @@ Function: total
     drop:                 0
     uniqueness checks:    0
   representation [lambda_2]
+    conservative unknown: 2
     region:               1
-    runtime rc:           21
+    runtime rc:           24
     copy value:           10
   representation [lambda_1]
     region:               2

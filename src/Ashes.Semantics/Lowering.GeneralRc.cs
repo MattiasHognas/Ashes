@@ -119,7 +119,40 @@ public sealed partial class Lowering
     // its successors' reach by their being the loop's own parameters.
     // Predecessor marks the slot holding what a call's owned slot held before this iteration stored
     // it again: an earlier iteration's value, left to a successor, that the loop still owns.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false);
+    // Branches names the match arms and if branches the slot was stored inside, outermost first.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null);
+
+    // One arm of a match or branch of an if, by the join it belongs to.
+    private readonly record struct GeneralRcBranch(string Join, int Arm);
+
+    // The arms and branches being lowered, outermost first.
+    private readonly List<GeneralRcBranch> _generalRcBranches = [];
+
+    private void EnterGeneralRcBranch(string join, int arm) => _generalRcBranches.Add(new GeneralRcBranch(join, arm));
+
+    private void LeaveGeneralRcBranch() => _generalRcBranches.RemoveAt(_generalRcBranches.Count - 1);
+
+    // Whether a slot stored inside these branches can hold this iteration's value where the current
+    // branches are: not when the two sit in different arms of the same join, which one iteration
+    // never both runs. A value an earlier iteration left there is released at its own arm's back
+    // edge or at the loop's exit.
+    private bool SharesIterationWith(GeneralRcBranch[]? branches)
+    {
+        if (branches is null)
+        {
+            return true;
+        }
+
+        for (int i = 0; i < branches.Length && i < _generalRcBranches.Count; i++)
+        {
+            if (branches[i] != _generalRcBranches[i])
+            {
+                return !string.Equals(branches[i].Join, _generalRcBranches[i].Join, StringComparison.Ordinal);
+            }
+        }
+
+        return true;
+    }
 
     // Registers the owned slot just stored, marking it this iteration's when it sits in a loop.
     private void RegisterGeneralRcOwnedSlot(int slot, TypeRef type)
@@ -134,7 +167,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(freshSlot, oneTemp));
         }
 
-        _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(slot, type, loop, freshSlot));
+        _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(slot, type, loop, freshSlot, Branches: [.. _generalRcBranches]));
     }
 
     // Inside a loop, moves what the owned slot about to be stored still holds into a slot of its own:
@@ -159,7 +192,7 @@ public sealed partial class Lowering
     {
         if (predecessorSlot >= 0)
         {
-            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true));
+            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches]));
         }
     }
 
@@ -353,7 +386,7 @@ public sealed partial class Lowering
     private void RecordGeneralRcBackEdgeSlots(int pendingId, TcoContext tco, IReadOnlyList<Expr> arguments, IReadOnlyList<int> argumentTemps)
     {
         List<GeneralRcOwnedSlot> loopSlots = _generalRcOwnedSlots
-            .Where(owned => ReferenceEquals(owned.Loop, tco))
+            .Where(owned => ReferenceEquals(owned.Loop, tco) && SharesIterationWith(owned.Branches))
             .ToList();
         _generalRcBackEdgeSlots[pendingId] = loopSlots;
         _generalRcBackEdgeParameterParts[pendingId] = arguments
@@ -515,13 +548,70 @@ public sealed partial class Lowering
             && ReachesGeneralRcNamedType(pruned, new HashSet<string>(StringComparer.Ordinal));
     }
 
+    // A record the contract admits although its copy could be written inline: it is copied by the
+    // synthesized normalizer all the same, one call per site instead of its whole graph.
+    private bool IsInlineCopiedContractRecord(TypeRef.TNamedType named)
+        => GeneralRcEnabled
+            && !NeedsRuntimeManagedAdtNormalizer(named)
+            && IsNormalizableUncoveredRecord(named)
+            && IsGeneralRcNamedType(named);
+
+    private readonly Dictionary<string, string> _contractRecordDropperLabels = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _contractRecordDroppersInProgress = new(StringComparer.Ordinal);
+
+    // A loop threading such a record releases it at every back edge and exit, so its release is
+    // one call to a dropper synthesized once per type, whose body is the release written inline.
+    private bool TryEmitContractRecordDropCall(int valueTemp, TypeRef.TNamedType named)
+    {
+        string key = Pretty(named);
+        if (!IsInlineCopiedContractRecord(named) || _contractRecordDroppersInProgress.Contains(key))
+        {
+            return false;
+        }
+
+        if (!_contractRecordDropperLabels.TryGetValue(key, out string? label))
+        {
+            label = $"__rcdrop_record_{_nextLambdaId++}";
+            _contractRecordDropperLabels[key] = label;
+            _contractRecordDroppersInProgress.Add(key);
+            SynthesizedBodyState saved = BeginSynthesizedBody();
+            NewLocal(); // slot 0: env (implicit)
+            int argSlot = NewLocal(); // slot 1: value (implicit)
+            int argTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(argTemp, argSlot));
+            EmitRuntimeManagedAdtDrop(argTemp, named);
+            int returnTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(returnTemp, 0));
+            Emit(new IrInst.Return(returnTemp));
+            AddFunction(
+                new IrFunction(
+                    Label: label,
+                    Instructions: new List<IrInst>(_inst),
+                    LocalCount: _nextLocalSlot,
+                    TempCount: _nextTempSlot,
+                    HasEnvAndArgParams: true),
+                new IrFunctionOrigin(
+                    label,
+                    IrFunctionOriginKind.RuntimeManagedAdtDropper,
+                    CompilerOwner: new CompilerFunctionOwner(CompilerFunctionOwnerKind.Type, key),
+                    StableDiscriminator: key));
+            RestoreEnclosingBodyState(saved);
+            _contractRecordDroppersInProgress.Remove(key);
+        }
+
+        int envTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(envTemp, 0));
+        Emit(new IrInst.CallKnown(NewTemp(), label, envTemp, valueTemp));
+        return true;
+    }
+
     /// <summary>
-    /// A named type the contract governs: one only the normalization helper expresses, that owns
-    /// a heap child, and that the recursive and owned-child reference-counted paths do not already
-    /// manage on their own terms.
+    /// A named type the contract governs: one only the normalization helper expresses, or a record
+    /// the entry normalization re-establishes, that owns a heap child, and that the recursive and
+    /// owned-child reference-counted paths do not already manage on their own terms.
     /// </summary>
     private bool IsGeneralRcNamedType(TypeRef.TNamedType named) =>
-        NeedsRuntimeManagedAdtNormalizer(named)
+        (NeedsRuntimeManagedAdtNormalizer(named) || IsNormalizableUncoveredRecord(named))
         && !CanRuntimeManageRecursiveCopyAdt(named)
         && !CanRuntimeManageOwnedChildAdt(named)
         && named.Symbol.Constructors.Any(constructor =>
@@ -540,6 +630,39 @@ public sealed partial class Lowering
         _ => false,
     };
 
+    // A call whose result type was unresolved when it was emitted requests an arena result, for a
+    // caller that cannot own it. A result of the contract's types is owned by the caller once the
+    // call is lowered, so the request word is rewritten to ask for nothing: the callee then hands
+    // over its reference-counted result instead of deep-copying it into the arena.
+    private void CancelArenaResultRequest(int resultTemp)
+    {
+        int callIndex = _inst.Count - 1;
+        while (callIndex >= 0 && callIndex >= _inst.Count - 64 && !(_inst[callIndex] is IrInst.CallClosure { } candidate && candidate.Target == resultTemp))
+        {
+            callIndex--;
+        }
+
+        if (callIndex < 0 || _inst[callIndex] is not IrInst.CallClosure call || call.Target != resultTemp || !_arenaResultRequestingCalls.Contains(call))
+        {
+            return;
+        }
+
+        int requestTemp = call.RuntimeManagedArgumentFlagTemp;
+        for (int i = callIndex - 1; i >= 0 && i >= callIndex - 64; i--)
+        {
+            switch (_inst[i])
+            {
+                case IrInst.OrInt word when word.Target == requestTemp:
+                    requestTemp = word.Right;
+                    break;
+                case IrInst.LoadConstInt request when request.Target == requestTemp:
+                    _inst[i] = request with { Value = 0 };
+                    _arenaResultRequestingCalls.Remove(call);
+                    return;
+            }
+        }
+    }
+
     /// <summary>
     /// A call result of such a type, owned by the caller once the call's window is reset: taken
     /// over as it is from a callee known to return it owned (<paramref name="calleeReturnsOwned"/>),
@@ -554,6 +677,7 @@ public sealed partial class Lowering
         TypeRef callResultType,
         bool calleeReturnsOwned)
     {
+        CancelArenaResultRequest(currentTemp);
         int ownedFlagTemp = calleeReturnsOwned ? -1 : TryEmitClosureReturnsGeneralRcOwnedFlag(currentTemp);
         int callPreRestoreEndSlot = NewLocal();
         int ownedSlot = NewLocal();
@@ -1048,7 +1172,7 @@ public sealed partial class Lowering
     {
         if (releaseSourceChildren
             || valueType is not TypeRef.TNamedType named
-            || !NeedsRuntimeManagedAdtNormalizer(named))
+            || !(NeedsRuntimeManagedAdtNormalizer(named) || IsInlineCopiedContractRecord(named)))
         {
             throw new InvalidOperationException($"Unsupported runtime-managed TCO aggregate: {Pretty(valueType)}.");
         }

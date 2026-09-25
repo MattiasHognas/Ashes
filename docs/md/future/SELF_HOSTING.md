@@ -475,6 +475,38 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    class, about 12,000 leaked lowering-state records (76 MB), is not that one: folding the one such
    update the census pointed at into a single helper changed neither the probe nor the leaked-state
    count of a four-function program, so where those records come from is still open.
+
+   **Class C, closed for records.** Stage 1 threads most of its state through single-constructor
+   records a recursive group passes between siblings (`ParserState`, `ResultReachState`, `Token`),
+   and those records were not contract types: the normalizer could copy them inline, so they never
+   got an owned slot, a dropper or an owned-result bit, and every sibling result was the C shape.
+   Such a record (one constructor, a heap child, not recursive) is now a contract type, copied by its
+   normalization helper and released by a per-type dropper (`__rcdrop_record_N`); the rules are in
+   [architecture.md](../internals/architecture.md#borrowed-parameters-owned-results). Admitting all
+   134 of them at once first made the probe worse (1741 MB against 902 MB), for two reasons found on
+   the real parser run in a loop. A group sibling's result type is unresolved where the call is
+   emitted, so the call asked for an arena result: the callee deep-copied its `(X, ParserState)`
+   pair, token list included, and the caller copied it back, once per call. The request is now
+   withdrawn once the result turns out to be a contract type. And a `let` whose body is a normalized
+   join lost that fact on the reload after its window, so the function retained its result a second
+   time and every consumed pair leaked. Making the records contract types also multiplied the
+   back-edge drops in stage 1's large folds (every owned slot at every arm's back edge, 38,900 IR
+   instructions for `foldLoop`); a back edge now skips the slots of a sibling arm of a join it is
+   inside, which one iteration never both runs, and the stage-0 compile of stage 1 is back to 66 s.
+   Stage 1 mirrors all of it, and the whole-program parity suite passes. The mirror's first version
+   handed the drop synthesis its contract question as a closure stored in the lowering state, which
+   took every state record out of the contract (a record holding a closure is not admissible) and
+   sent the probe to 3.4 GB; the answers are now a table of type names filled once when the program's
+   lowering starts. The module probe peaks at 658 MB in 74.7 s, against 902 MB in 77.5 s on `main`.
+
+   One `challenges/` program pays for it: `n-body` runs 4 to 5% slower (2.46 s against 2.57 s, best of
+   three), with the same output and memory. Its `System` holds five `Body` cells, so it is a contract
+   record now: `advance` copies its fresh result onto the reference-counted heap through the
+   normalization helper, where the loop used to copy the arena successor inline at its back edge, and
+   the loop retains that result for its parameter and releases the call's owned slot, where one move
+   would do. Two follow-ups would win it back: build a fresh contract record result on the
+   reference-counted heap in place, and let a back edge take over an owned slot its successor reads
+   instead of retaining the value and releasing the slot.
 F. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB, and it did so before the ownership contract landed, so the
    cause is older than step C. It is a plain program with a fixed input, which makes it bisectable

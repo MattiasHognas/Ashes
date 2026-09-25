@@ -1,13 +1,40 @@
 IR (lowered)
 ============
 
-function __deepcopy_1  [AdtDeepCopier]
+function __rcnorm_1  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=10
+    LoadLocal             Target=0 Slot=1   (unannotated_parameter_record.ash:5:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_8   (unannotated_parameter_record.ash:5:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (unannotated_parameter_record.ash:5:1)
+    Jump                  Target=rc_representation_done_9   (unannotated_parameter_record.ash:5:1)
+  rc_representation_copy_8:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (unannotated_parameter_record.ash:5:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_10   (unannotated_parameter_record.ash:5:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (unannotated_parameter_record.ash:5:1)
+    Jump                  Target=rc_representation_done_11   (unannotated_parameter_record.ash:5:1)
+  rc_representation_copy_10:
+    CopyOutArena          DestTemp=7 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=7   (unannotated_parameter_record.ash:5:1)
+  rc_representation_done_11:
+    LoadLocal             Target=8 Slot=3   (unannotated_parameter_record.ash:5:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (unannotated_parameter_record.ash:5:1)
+    StoreLocal            Slot=2 Source=3   (unannotated_parameter_record.ash:5:1)
+  rc_representation_done_9:
+    LoadLocal             Target=9 Slot=2   (unannotated_parameter_record.ash:5:1)
+    Return                Source=9   (unannotated_parameter_record.ash:5:1)
+
+function __deepcopy_2  [AdtDeepCopier]
   locals=2 temps=7
     LoadLocal             Target=0 Slot=1   (unannotated_parameter_record.ash:5:1)
     LoadEnv               Target=1 Index=0   (unannotated_parameter_record.ash:5:1)
     LoadConstInt          Target=2 Value=0   (unannotated_parameter_record.ash:5:1)
-    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_1_default   (unannotated_parameter_record.ash:5:1)
-  __deepcopy_1_c0:
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_2_default   (unannotated_parameter_record.ash:5:1)
+  __deepcopy_2_c0:
     AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (unannotated_parameter_record.ash:5:1)
     LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (unannotated_parameter_record.ash:5:1)
     CopyOutArena          DestTemp=5 SrcTemp=4 Purpose=IndependentClone
@@ -15,11 +42,23 @@ function __deepcopy_1  [AdtDeepCopier]
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (unannotated_parameter_record.ash:5:1)
     StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6   (unannotated_parameter_record.ash:5:1)
     Return                Source=3   (unannotated_parameter_record.ash:5:1)
-  __deepcopy_1_default:
+  __deepcopy_2_default:
     Return                Source=0   (unannotated_parameter_record.ash:5:1)
 
+function __rcdrop_record_3  [RuntimeManagedAdtDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (unannotated_parameter_record.ash:5:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_14   (unannotated_parameter_record.ash:5:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (unannotated_parameter_record.ash:5:1)
+    RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
+  rc_drop_shared_14:
+    RcDrop                SourceTemp=0 TypeName=Item RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (unannotated_parameter_record.ash:5:1)
+    Return                Source=3   (unannotated_parameter_record.ash:5:1)
+
 function lambda_0  [SourceFunction from toEntry]
-  locals=5 temps=21
+  locals=7 temps=29
     LoadLocal             Target=3 Slot=1   (unannotated_parameter_record.ash:5:1)
     LoadArgumentOwnership Target=4   (unannotated_parameter_record.ash:5:1)
     LoadConstInt          Target=5 Value=1   (unannotated_parameter_record.ash:5:1)
@@ -47,35 +86,50 @@ function lambda_0  [SourceFunction from toEntry]
     AllocAdt              Target=2 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (unannotated_parameter_record.ash:5:17)
     SetAdtField           Ptr=2 FieldIndex=0 Source=0 Tagless=true   (unannotated_parameter_record.ash:5:17)
     SetAdtField           Ptr=2 FieldIndex=1 Source=1 Tagless=true   (unannotated_parameter_record.ash:5:17)
-    LoadArgumentOwnership Target=12   (unannotated_parameter_record.ash:5:1)
-    LoadConstInt          Target=13 Value=1   (unannotated_parameter_record.ash:5:1)
-    ShrInt                Target=14 Left=12 Right=13   (unannotated_parameter_record.ash:5:1)
-    JumpIfFalse           CondTemp=14 Target=rc_result_owned_4   (unannotated_parameter_record.ash:5:1)
-    Alloc                 Target=15 SizeBytes=8   (unannotated_parameter_record.ash:5:1)
-    MakeClosure           Target=16 FuncLabel=__deepcopy_1 EnvPtrTemp=15 EnvSizeBytes=8   (unannotated_parameter_record.ash:5:1)
-    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=16   (unannotated_parameter_record.ash:5:1)
-    CallClosure           Target=17 ClosureTemp=16 ArgTemp=2   (unannotated_parameter_record.ash:5:1)
-    RcIsUnique            Target=18 SourceTemp=2
-    JumpIfFalse           CondTemp=18 Target=rc_drop_shared_6   (unannotated_parameter_record.ash:5:1)
-    GetAdtField           Target=19 Ptr=2 FieldIndex=0 Tagless=true   (unannotated_parameter_record.ash:5:1)
-    RcDrop                SourceTemp=19 TypeName=String RuntimeManaged=true
-  rc_drop_shared_6:
-    RcDrop                SourceTemp=2 TypeName=Item RuntimeManaged=true
-    StoreLocal            Slot=4 Source=17   (unannotated_parameter_record.ash:5:1)
-    Jump                  Target=rc_result_done_5   (unannotated_parameter_record.ash:5:1)
-  rc_result_owned_4:
     StoreLocal            Slot=4 Source=2   (unannotated_parameter_record.ash:5:1)
-  rc_result_done_5:
-    LoadLocal             Target=20 Slot=4   (unannotated_parameter_record.ash:5:1)
-    Return                Source=20   (unannotated_parameter_record.ash:5:1)
+    IsReferenceCounted    Target=12 SourceTemp=2
+    JumpIfFalse           CondTemp=12 Target=general_rc_result_arena_copy_4   (unannotated_parameter_record.ash:5:1)
+    Jump                  Target=general_rc_result_already_owned_5   (unannotated_parameter_record.ash:5:1)
+  general_rc_result_arena_copy_4:
+    IsReferenceCounted    Target=13 SourceTemp=2
+    JumpIfFalse           CondTemp=13 Target=rc_representation_copy_6   (unannotated_parameter_record.ash:5:1)
+    RcDup                 Target=14 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=14   (unannotated_parameter_record.ash:5:1)
+    Jump                  Target=rc_representation_done_7   (unannotated_parameter_record.ash:5:1)
+  rc_representation_copy_6:
+    LoadConstInt          Target=16 Value=0   (unannotated_parameter_record.ash:5:1)
+    CallKnown             Target=17 FuncLabel=__rcnorm_1 EnvTemp=16 ArgTemp=2   (unannotated_parameter_record.ash:5:1)
+    StoreLocal            Slot=5 Source=17   (unannotated_parameter_record.ash:5:1)
+  rc_representation_done_7:
+    LoadLocal             Target=18 Slot=5   (unannotated_parameter_record.ash:5:1)
+    StoreLocal            Slot=4 Source=18   (unannotated_parameter_record.ash:5:1)
+  general_rc_result_already_owned_5:
+    LoadLocal             Target=19 Slot=4   (unannotated_parameter_record.ash:5:1)
+    LoadArgumentOwnership Target=20   (unannotated_parameter_record.ash:5:1)
+    LoadConstInt          Target=21 Value=1   (unannotated_parameter_record.ash:5:1)
+    ShrInt                Target=22 Left=20 Right=21   (unannotated_parameter_record.ash:5:1)
+    JumpIfFalse           CondTemp=22 Target=rc_result_owned_12   (unannotated_parameter_record.ash:5:1)
+    Alloc                 Target=23 SizeBytes=8   (unannotated_parameter_record.ash:5:1)
+    MakeClosure           Target=24 FuncLabel=__deepcopy_2 EnvPtrTemp=23 EnvSizeBytes=8   (unannotated_parameter_record.ash:5:1)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=24   (unannotated_parameter_record.ash:5:1)
+    CallClosure           Target=25 ClosureTemp=24 ArgTemp=19   (unannotated_parameter_record.ash:5:1)
+    LoadConstInt          Target=26 Value=0   (unannotated_parameter_record.ash:5:1)
+    CallKnown             Target=27 FuncLabel=__rcdrop_record_3 EnvTemp=26 ArgTemp=19   (unannotated_parameter_record.ash:5:1)
+    StoreLocal            Slot=6 Source=25   (unannotated_parameter_record.ash:5:1)
+    Jump                  Target=rc_result_done_13   (unannotated_parameter_record.ash:5:1)
+  rc_result_owned_12:
+    StoreLocal            Slot=6 Source=19   (unannotated_parameter_record.ash:5:1)
+  rc_result_done_13:
+    LoadLocal             Target=28 Slot=6   (unannotated_parameter_record.ash:5:1)
+    Return                Source=28   (unannotated_parameter_record.ash:5:1)
 
-function lambda_2  [SourceFunction from describe]
+function lambda_4  [SourceFunction from describe]
   locals=9 temps=15
     LoadLocal             Target=0 Slot=1   (unannotated_parameter_record.ash:8:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (unannotated_parameter_record.ash:8:5)
     CmpIntNe              Target=2 Left=0 Right=1   (unannotated_parameter_record.ash:8:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_9   (unannotated_parameter_record.ash:8:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_17   (unannotated_parameter_record.ash:8:5)
     GetAdtField           Target=3 Ptr=0 FieldIndex=0 Tagless=true   (unannotated_parameter_record.ash:8:5)
     StoreLocal            Slot=5 Source=3   (unannotated_parameter_record.ash:8:5)
     LoadLocal             Target=4 Slot=5   (unannotated_parameter_record.ash:9:35)
@@ -86,39 +140,39 @@ function lambda_2  [SourceFunction from describe]
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
     RcDrop                SourceTemp=3 TypeName=String OwnerSlot=5
     StoreLocal            Slot=2 Source=7   (unannotated_parameter_record.ash:8:5)
-    Jump                  Target=match_end_7   (unannotated_parameter_record.ash:8:5)
-  match_arm_cleanup_9:
+    Jump                  Target=match_end_15   (unannotated_parameter_record.ash:8:5)
+  match_arm_cleanup_17:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=7
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=7
-    Jump                  Target=match_none_8   (unannotated_parameter_record.ash:8:5)
-  match_none_8:
+    Jump                  Target=match_none_16   (unannotated_parameter_record.ash:8:5)
+  match_none_16:
     LoadConstInt          Target=8 Value=0   (unannotated_parameter_record.ash:8:5)
     StoreLocal            Slot=2 Source=8   (unannotated_parameter_record.ash:8:5)
-  match_end_7:
+  match_end_15:
     LoadLocal             Target=9 Slot=2   (unannotated_parameter_record.ash:8:5)
     LoadArgumentOwnership Target=10   (unannotated_parameter_record.ash:7:1)
     LoadConstInt          Target=11 Value=1   (unannotated_parameter_record.ash:7:1)
     ShrInt                Target=12 Left=10 Right=11   (unannotated_parameter_record.ash:7:1)
-    JumpIfFalse           CondTemp=12 Target=rc_result_owned_10   (unannotated_parameter_record.ash:7:1)
+    JumpIfFalse           CondTemp=12 Target=rc_result_owned_18   (unannotated_parameter_record.ash:7:1)
     CopyOutArena          DestTemp=13 SrcTemp=9 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
     StoreLocal            Slot=8 Source=13   (unannotated_parameter_record.ash:7:1)
-    Jump                  Target=rc_result_done_11   (unannotated_parameter_record.ash:7:1)
-  rc_result_owned_10:
+    Jump                  Target=rc_result_done_19   (unannotated_parameter_record.ash:7:1)
+  rc_result_owned_18:
     StoreLocal            Slot=8 Source=9   (unannotated_parameter_record.ash:7:1)
-  rc_result_done_11:
+  rc_result_done_19:
     LoadLocal             Target=14 Slot=8   (unannotated_parameter_record.ash:7:1)
     Return                Source=14   (unannotated_parameter_record.ash:7:1)
 
 function _start_main  [ProgramEntry]
-  locals=17 temps=28
+  locals=17 temps=20
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (unannotated_parameter_record.ash:5:1)
-    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (unannotated_parameter_record.ash:5:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (unannotated_parameter_record.ash:5:1)
     StoreLocal            Slot=2 Source=1   (unannotated_parameter_record.ash:5:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=2 Value=0   (unannotated_parameter_record.ash:7:1)
-    MakeClosureStack      Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (unannotated_parameter_record.ash:7:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (unannotated_parameter_record.ash:7:1)
     StoreLocal            Slot=5 Source=3   (unannotated_parameter_record.ash:7:1)
     SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
     LoadLocal             Target=4 Slot=5   (unannotated_parameter_record.ash:11:16)
@@ -128,45 +182,30 @@ function _start_main  [ProgramEntry]
     Borrow                Target=7 SourceTemp=6
     LoadConstStr          Target=8 StrLabel=str_0   (unannotated_parameter_record.ash:11:33)
     CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (unannotated_parameter_record.ash:11:25)
+    StoreLocal            Slot=11 Source=9   (unannotated_parameter_record.ash:11:25)
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
-    LoadMemOffset         Target=10 BasePtr=5 OffsetBytes=16   (unannotated_parameter_record.ash:11:16)
-    LoadConstInt          Target=11 Value=62   (unannotated_parameter_record.ash:11:16)
-    ShrInt                Target=12 Left=10 Right=11   (unannotated_parameter_record.ash:11:16)
-    LoadConstInt          Target=13 Value=1   (unannotated_parameter_record.ash:11:16)
-    AndInt                Target=14 Left=12 Right=13   (unannotated_parameter_record.ash:11:16)
-    StoreLocal            Slot=11 Source=9   (unannotated_parameter_record.ash:11:16)
-    JumpIfFalse           CondTemp=14 Target=rc_call_argument_not_retained_12   (unannotated_parameter_record.ash:11:16)
-    RcDup                 Target=15 SourceTemp=9 RuntimeManaged=true
-    StoreLocal            Slot=11 Source=15   (unannotated_parameter_record.ash:11:16)
-  rc_call_argument_not_retained_12:
-    LoadLocal             Target=16 Slot=11   (unannotated_parameter_record.ash:11:16)
-    LoadMemOffset         Target=17 BasePtr=5 OffsetBytes=16   (unannotated_parameter_record.ash:11:16)
-    LoadConstInt          Target=18 Value=63   (unannotated_parameter_record.ash:11:16)
-    ShrInt                Target=19 Left=17 Right=18   (unannotated_parameter_record.ash:11:16)
-    CallClosure           Target=20 ClosureTemp=5 ArgTemp=16 RuntimeManagedArgumentFlagTemp=14   (unannotated_parameter_record.ash:11:16)
+    LoadLocal             Target=10 Slot=11   (unannotated_parameter_record.ash:11:25)
+    LoadMemOffset         Target=11 BasePtr=5 OffsetBytes=16   (unannotated_parameter_record.ash:11:16)
+    LoadConstInt          Target=12 Value=63   (unannotated_parameter_record.ash:11:16)
+    ShrInt                Target=13 Left=11 Right=12   (unannotated_parameter_record.ash:11:16)
+    CallClosure           Target=14 ClosureTemp=5 ArgTemp=10   (unannotated_parameter_record.ash:11:16)
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=12
-    RcIsUnique            Target=21 SourceTemp=9
-    JumpIfFalse           CondTemp=21 Target=rc_drop_shared_13   (unannotated_parameter_record.ash:11:16)
-    GetAdtField           Target=22 Ptr=9 FieldIndex=0 Tagless=true   (unannotated_parameter_record.ash:11:16)
-    RcDrop                SourceTemp=22 TypeName=String RuntimeManaged=true
-  rc_drop_shared_13:
-    RcDrop                SourceTemp=9 TypeName=Item RuntimeManaged=true
-    PrintStr              Source=20   (unannotated_parameter_record.ash:11:1)
-    RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true
-    AllocAdt              Target=23 Tag=0 FieldCount=0   (unannotated_parameter_record.ash:11:1)
-    StoreLocal            Slot=13 Source=23   (unannotated_parameter_record.ash:7:1)
-    LoadLocal             Target=24 Slot=5   (unannotated_parameter_record.ash:7:1)
-    CleanupResource       SourceTemp=24 TypeName=Function
+    PrintStr              Source=14   (unannotated_parameter_record.ash:11:1)
+    RcDrop                SourceTemp=14 TypeName=String RuntimeManaged=true
+    AllocAdt              Target=15 Tag=0 FieldCount=0   (unannotated_parameter_record.ash:11:1)
+    StoreLocal            Slot=13 Source=15   (unannotated_parameter_record.ash:7:1)
+    LoadLocal             Target=16 Slot=5   (unannotated_parameter_record.ash:7:1)
+    CleanupResource       SourceTemp=16 TypeName=Function
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=14
-    CopyOutArena          DestTemp=25 SrcTemp=23 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    CopyOutArena          DestTemp=17 SrcTemp=15 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=14
-    StoreLocal            Slot=15 Source=25   (unannotated_parameter_record.ash:5:1)
-    LoadLocal             Target=26 Slot=2   (unannotated_parameter_record.ash:5:1)
-    CleanupResource       SourceTemp=26 TypeName=Function
+    StoreLocal            Slot=15 Source=17   (unannotated_parameter_record.ash:5:1)
+    LoadLocal             Target=18 Slot=2   (unannotated_parameter_record.ash:5:1)
+    CleanupResource       SourceTemp=18 TypeName=Function
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=16
-    LoadLocal             Target=27 Slot=15   (unannotated_parameter_record.ash:5:1)
-    Return                Source=27
+    LoadLocal             Target=19 Slot=15   (unannotated_parameter_record.ash:5:1)
+    Return                Source=19
 

@@ -105,6 +105,20 @@ public sealed partial class Lowering
         return reaching.Count > 0 && reaching.All(arm => IsReferenceCountedJoinArm(arm) || arm.JoinsRuntimeManaged);
     }
 
+    // A join some arms of which never reach it, every one of the rest handing over a value it just
+    // produced (a loop's exit building its result): the join's value is fresh and its own.
+    private bool ReachingArmsAllNewlyProduced(IReadOnlyList<JoinArm> arms)
+    {
+        if (!GeneralRcEnabled || !arms.Any(IsOwnershipNeutralArm))
+        {
+            return false;
+        }
+
+        List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
+        return reaching.Count > 0
+            && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && IsNewlyProducedRcTemp(store.Source));
+    }
+
     // An arm that hands the join a reference-counted value: one it owns, or one a loop parameter owns.
     private bool IsReferenceCountedJoinArm(JoinArm arm) => IsOwnedValueArm(arm) || BorrowsLoopParameter(arm);
 
@@ -445,7 +459,7 @@ public sealed partial class Lowering
         RecordNeutralJoin(resultTemp, arms);
         if (ReachingArmsAllReferenceCounted(arms))
         {
-            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: true, allBranchesNewlyProduced: false);
+            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: true, allBranchesNewlyProduced: ReachingArmsAllNewlyProduced(arms));
             return;
         }
 

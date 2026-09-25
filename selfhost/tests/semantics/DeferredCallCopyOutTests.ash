@@ -19,8 +19,9 @@ export (
 
 // A non-tail cons producer over a self-referential ADT: the element type's layout is unresolved
 // at the self call, so its result copy-out is deferred, and the loop frame splices its entry
-// normalization in ahead of the body afterwards.
-let recursiveAdtProducerSource = "type Pattern =\n    | PatternVar(Str)\n    | PatternConstructor(Str, List(Pattern))\n\nlet recursive variablePatterns names =\n    match names with\n        | [] -> []\n        | name :: tail -> PatternVar(name) :: variablePatterns(tail)\n\nlet recursive countPatterns patterns =\n    match patterns with\n        | [] -> 0\n        | _head :: tail -> 1 + countPatterns(tail)\n\nAshes.IO.print(Ashes.Text.fromInt(countPatterns(variablePatterns([\"a\", \"b\", \"c\"]))))\n"
+// normalization in ahead of the body afterwards. The recursive call is bound before the cons, so
+// the producer is not lowered as tail-modulo-constructor and keeps its self call.
+let recursiveAdtProducerSource = "type Pattern =\n    | PatternVar(Str)\n    | PatternConstructor(Str, List(Pattern))\n\nlet recursive variablePatterns names =\n    match names with\n        | [] -> []\n        | name :: tail ->\n            let rest = variablePatterns(tail)\n            in PatternVar(name) :: rest\n\nlet recursive countPatterns patterns =\n    match patterns with\n        | [] -> 0\n        | _head :: tail -> 1 + countPatterns(tail)\n\nAshes.IO.print(Ashes.Text.fromInt(countPatterns(variablePatterns([\"a\", \"b\", \"c\"]))))\n"
 
 let parsedProgram (source: Str) =
     match parseProgram(source) with
