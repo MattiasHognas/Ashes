@@ -12980,7 +12980,7 @@ public sealed partial class Lowering
         EndCallArgumentRetains(previousRetainCollection);
         if (argumentRequest.TransfersRuntimeManagedChildren)
         {
-            RetainBorrowedRuntimeOwnersOfAlias(collectedArgs[i]);
+            RetainBorrowedRuntimeOwnersOfAlias(collectedArgs[i], argTemp);
         }
 
         var calleeName = TryGetCalleeDisplayName(rootExpr);

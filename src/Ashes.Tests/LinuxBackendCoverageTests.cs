@@ -2802,6 +2802,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_arena_record_of_destructured_tuple_parts_in_result_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An arena record built from the parts of a destructured reference-counted tuple and
+        // returned inside a reference-counted tuple. The result tuple stores a copy of the record
+        // that holds its own reference to every part it shares, so the destructured tuple needs no
+        // extra reference: one taken for it has no release, and leaked the tuple every round.
+        int[] roundCounts = [4000, 16000, 64000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaRecordOfDestructuredTuplePartsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena record of destructured tuple parts in a result tuple", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_scrutinee_loop_owned_results_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -9677,6 +9702,68 @@ public sealed class LinuxBackendCoverageTests
                     in repeat(times - 1)(total + stepped.nextTemp + countItems(stepped.stringLiterals)(0))
 
             Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildArenaRecordOfDestructuredTuplePartsProgram(int rounds)
+        => $$"""
+            type Token =
+                | text: Str
+                | kind: Int
+
+            type alias State = (List(Token), List(Str))
+
+            type TypeExpr =
+                | TypeName(Str)
+                | TypeApp(Str, List(TypeExpr))
+
+            type Binding =
+                | name: Str
+                | annotation: Maybe(TypeExpr)
+                | requirements: List(TypeExpr)
+
+            let advance (state: State) =
+                match state with
+                    | (token :: rest, notes) -> (token, (rest, notes))
+                    | ([], _notes) -> (Token(text = "", kind = 0), state)
+
+            let kindOf (state: State) =
+                match state with
+                    | (token :: _, _notes) -> token.kind
+                    | ([], _notes) -> 0
+
+            let parseBinding (state: State) =
+                match advance(state) with
+                    | (name, afterName) ->
+                        let header =
+                            if kindOf(afterName) == 2
+                            then
+                                match advance(afterName) with
+                                    | (typeToken, afterType) -> (Some(TypeName(typeToken.text)), [TypeApp(typeToken.text)([])], afterType)
+                            else (None, [], afterName)
+                        in
+                            match header with
+                                | (annotation, requirements, afterHeader) ->
+                                    let binding = Binding(name = name.text, annotation = annotation, requirements = requirements)
+                                    in (binding, afterHeader)
+
+            let recursive count (items: List(TypeExpr)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: rest -> count(rest)(total + 1)
+
+            let measure (binding: Binding) =
+                match binding.annotation with
+                    | Some(TypeName(text)) -> Ashes.Text.byteLength(binding.name + text) + count(binding.requirements)(0)
+                    | _ -> 0
+
+            let recursive rounds (tokens: List(Token)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match parseBinding((tokens, [])) with
+                        | (binding, _afterBinding) -> rounds(tokens)(n - 1)(total + measure(binding))
+
+            Ashes.IO.print(rounds([Token(text = "f", kind = 0), Token(text = "Int", kind = 2), Token(text = "more", kind = 0)])({{rounds}})(0))
             """;
 
     private static string BuildTupleScrutineeLoopProgram(int rounds)

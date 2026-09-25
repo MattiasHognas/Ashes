@@ -247,7 +247,7 @@ public sealed partial class Lowering
             || LookupOwnedValue(ownerName) is not
             { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
         {
-            RetainBorrowedRuntimeOwnersOfAlias(argument);
+            RetainBorrowedRuntimeOwnersOfAlias(argument, argumentTemp);
             return argumentTemp;
         }
 
@@ -350,8 +350,13 @@ public sealed partial class Lowering
 
     // A transferred read of an arena binding that borrows runtime-managed owners retains each
     // owner still live in this frame: the aggregate carries their children out of the scopes
-    // that release them, as the literal's own transfer would have retained them.
-    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument)
+    // that release them, as the literal's own transfer would have retained them. A binding
+    // already copied onto the reference-counted heap before it is stored (a reference-counted
+    // tuple normalizes an arena element) holds its own reference to every child it shares, so
+    // nothing is retained for it: an owner reference taken there has no release anywhere. The
+    // owner's graph is shared with the copy either way, so its release no longer assumes it
+    // is unique.
+    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument, int storedTemp)
     {
         if (argument is not Expr.Var variable
             || LookupOwnedValue(variable.Name) is not
@@ -360,9 +365,16 @@ public sealed partial class Lowering
             return;
         }
 
+        bool storesOwnedCopy = IsOwnedRuntimeManagedTemp(storedTemp);
         foreach (OwnershipInfo owner in borrowed)
         {
             if (owner.IsDropped || !owner.RuntimeManaged || owner.FrameDepth != _lambdaDepth)
+            {
+                continue;
+            }
+
+            owner.RuntimeDeepUnique = false;
+            if (storesOwnedCopy)
             {
                 continue;
             }
@@ -379,10 +391,15 @@ public sealed partial class Lowering
                 Emit(new IrInst.RcDup(duplicatedTemp, ownerTemp, RuntimeManaged: true));
                 MarkRuntimeManagedTemp(duplicatedTemp);
             }
-
-            owner.RuntimeDeepUnique = false;
         }
     }
+
+    // A reference-counted value the lowering produced or took a reference to, rather than a
+    // borrowed read of a slot someone else releases.
+    private bool IsOwnedRuntimeManagedTemp(int temp)
+        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Representation == LoweredTempRepresentation.RuntimeRc
+            && fact.Ownership is LoweredTempOwnershipKind.NewlyProduced or LoweredTempOwnershipKind.Transferred;
 
     /// <summary>
     /// Retains a child that an aggregate stores and will own or carry out of the scopes that own it:
