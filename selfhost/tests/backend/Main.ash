@@ -3597,6 +3597,12 @@ let testRunSharedTcoRuntimeManagedFindRecordHeadPlateau shipped unit =
 let testRunSharedTcoArenaVariantAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_arena_variant_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoArenaVariantAccumulatorPlateau")("selfhost_backend_shared_tco_arena_variant_accumulator_plateau_e2e")("500499")
 
+// A curried seven-parameter loop whose closure environment an AVX-512 host builds from a 64-byte
+// vector constant, loaded with an aligned instruction: the linker places each read-only section at
+// its declared alignment, or the program faults on its first iteration.
+let testRunSharedCurriedSevenParameterLoopWithFunctionArgument shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/curried_seven_parameter_loop_with_function_argument.ash"))("selfhostBackendRunSharedCurriedSevenParameterLoop")("selfhost_backend_shared_curried_seven_parameter_loop_e2e")("5000")
+
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
 
@@ -5509,6 +5515,7 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedFindStringHeadPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedFindRecordHeadPlateau(shipped)
     |> testRunSharedTcoArenaVariantAccumulatorPlateau(shipped)
+    |> testRunSharedCurriedSevenParameterLoopWithFunctionArgument(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
