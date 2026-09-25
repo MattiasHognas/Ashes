@@ -206,7 +206,7 @@ public sealed partial class Lowering
                 info.ParamPlacements[i]?.Representation == TcoPlacementRepresentation.RuntimeRc
                 && Prune(info.ArgTypes[i]) is not TypeRef.TFun)
             || Enumerable.Range(0, info.ArgTypes.Length).All(i => TcoBackEdgeArgPlainResetSafe(info, i))
-            || TcoBackEdgeAllArgsCopyable(info))
+            || (TcoBackEdgeAllArgsCopyable(info) && !TcoBackEdgeCompactionCopiesRuntimeManagedList(info)))
         {
             return false;
         }
@@ -237,6 +237,18 @@ public sealed partial class Lowering
 
         return true;
     }
+
+    // A list parameter on the reference-counted heap whose successor the two-pass copy-out would
+    // compact beside an arena sibling's. An arena cell built for such a parameter borrows its
+    // children (BackEdgeCopiesListSuccessor), and the compaction copies the cell only after the
+    // iteration's owners are released, so the successor takes its references here instead, with
+    // the reset given up.
+    private bool TcoBackEdgeCompactionCopiesRuntimeManagedList(PendingTcoReset info)
+        => Enumerable.Range(0, info.ArgTypes.Length).Any(i =>
+            info.ParamPlacements[i]?.Representation == TcoPlacementRepresentation.RuntimeRc
+            && !info.PassThrough[i]
+            && Prune(info.ArgTypes[i]) is TypeRef.TList
+            && TcoBackEdgeArgCopyOutKind(info, i, out _, out _) != CopyOutKind.None);
 
     // A list literal's head retained for the list that owns or carries it; an arena list's retain is
     // recorded for the call it is an argument of.

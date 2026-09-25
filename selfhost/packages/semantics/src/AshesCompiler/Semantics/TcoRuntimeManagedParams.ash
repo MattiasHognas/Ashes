@@ -408,15 +408,35 @@ let shapeStructuralArgument (argument: Expr) (shadowed: List(Str)) (tailOwners: 
                     | None -> argument
         | _ -> argument
 
-// Per parameter position, whether every self-call so far passed an accumulator edge and whether
-// any of them was a choice, stage 0's `ChoiceAccumulatorEdges` and `AnyChoiceEdge`.
-let recursive shapeObserveChoices (arguments: List(Expr)) (index: Int) (names: List(Str)) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (choices: List((Bool, Bool))) =
+// A site that hands the parameter at `index` on as it is or conses onto it a head that reads no
+// loop parameter, stage 0's `HandedOnOrGrownEdges`; a fresh list or a same-named rebinding is
+// neither.
+let shapeIsGrownCons (structural: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(structural) with
+        | ExprCons(head, tail) ->
+            match shapeUnspan(tail) with
+                | ExprVar(tailName) -> shapeResolveParameter(tailName)(shadowed)(parameters) == Some(index) && !shapeReadsLoopParameter(head)(shadowed)(parameters)
+                | _ -> false
+        | _ -> false
+
+let shapeIsHandedOnOrGrown (argument: Expr) (structural: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(argument) with
+        | ExprVar(name) ->
+            if shapeResolveParameter(name)(shadowed)(parameters) == Some(index)
+            then true
+            else shapeIsGrownCons(structural)(index)(shadowed)(parameters)
+        | _ -> shapeIsGrownCons(structural)(index)(shadowed)(parameters)
+
+// Per parameter position, whether every self-call so far passed an accumulator edge, whether any
+// of them was a choice, and whether every one handed the parameter on or consed onto it, stage 0's
+// `ChoiceAccumulatorEdges`, `AnyChoiceEdge` and `HandedOnOrGrownEdges`.
+let recursive shapeObserveChoices (arguments: List(Expr)) (index: Int) (names: List(Str)) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (choices: List((Bool, Bool, Bool))) =
     match (arguments, names, choices) with
-        | (argument :: restArguments, name :: restNames, (everyEdge, anyChoice) :: restChoices) ->
+        | (argument :: restArguments, name :: restNames, (everyEdge, anyChoice, everyHandedOnOrGrown) :: restChoices) ->
             (let structural = shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters)
             in
                 let choiceEdge = shapeIsChoiceEdge(structural)(index)(name)(shadowed)(parameters)
-                in (everyEdge && (choiceEdge || shapeIsAccumulatorArm(structural)(index)(name)(shadowed)(parameters)), anyChoice || choiceEdge)) :: shapeObserveChoices(restArguments)(index + 1)(restNames)(shadowed)(tailOwners)(letValues)(parameters)(restChoices)
+                in (everyEdge && (choiceEdge || shapeIsAccumulatorArm(structural)(index)(name)(shadowed)(parameters)), anyChoice || choiceEdge, everyHandedOnOrGrown && shapeIsHandedOnOrGrown(argument)(structural)(index)(shadowed)(parameters))) :: shapeObserveChoices(restArguments)(index + 1)(restNames)(shadowed)(tailOwners)(letValues)(parameters)(restChoices)
         | _ -> choices
 
 let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =
@@ -446,7 +466,7 @@ let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: 
 
 type ShapeWalk =
     | observed: List(Maybe(TcoArgumentShape))
-    | choices: List((Bool, Bool))
+    | choices: List((Bool, Bool, Bool))
     | walks: List((Bool, Bool, Bool))
     | sawSelfCall: Bool
 
@@ -494,7 +514,7 @@ let recursive shapeInitial (count: Int) =
 let recursive shapeInitialChoices (count: Int) =
     if count == 0
     then []
-    else (true, false) :: shapeInitialChoices(count - 1)
+    else (true, false, true) :: shapeInitialChoices(count - 1)
 
 let recursive shapeInitialWalks (count: Int) =
     if count == 0
@@ -502,14 +522,27 @@ let recursive shapeInitialWalks (count: Int) =
     else (true, false, false) :: shapeInitialWalks(count - 1)
 
 // A position no single shape describes is a choice accumulator when every self-call passed an
-// accumulator edge there and one of them chose between two, stage 0's `ChoiceAccumulatorRebuild`;
-// and a walked-or-refilled list when every self-call passed the parameter's consumed tail, the
-// parameter itself, or a call's result, both a consumed tail and a call's result among them,
-// stage 0's `WalkedOrRefilled`.
-let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool))) (walks: List((Bool, Bool, Bool))) =
+// accumulator edge there (the parameter, a cons onto it, or a choice between those), stage 0's
+// `ChoiceAccumulatorRebuild`: one self-call chooses between two, or every one hands the parameter
+// on or conses onto it, some doing each; and a walked-or-refilled list when every self-call passed
+// the parameter's consumed tail, the parameter itself, or a call's result, both a consumed tail
+// and a call's result among them, stage 0's `WalkedOrRefilled`.
+let shapeResolveWalk (walk: (Bool, Bool, Bool)) =
+    match walk with
+        | (true, true, true) -> TcoWalkedOrRefilledShape
+        | _ -> TcoOtherShape
+
+let shapeResolveOther (choice: (Bool, Bool, Bool)) (walk: (Bool, Bool, Bool)) =
+    match choice with
+        | (true, anyChoice, everyHandedOnOrGrown) ->
+            if anyChoice || everyHandedOnOrGrown
+            then TcoChoiceAccumulatorShape
+            else shapeResolveWalk(walk)
+        | _ -> shapeResolveWalk(walk)
+
+let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool, Bool))) (walks: List((Bool, Bool, Bool))) =
     match (observed, choices, walks) with
-        | (Some(TcoOtherShape) :: rest, (true, true) :: restChoices, _walk :: restWalks) -> TcoChoiceAccumulatorShape :: shapeResolveObserved(rest)(restChoices)(restWalks)
-        | (Some(TcoOtherShape) :: rest, _choice :: restChoices, (true, true, true) :: restWalks) -> TcoWalkedOrRefilledShape :: shapeResolveObserved(rest)(restChoices)(restWalks)
+        | (Some(TcoOtherShape) :: rest, choice :: restChoices, walk :: restWalks) -> shapeResolveOther(choice)(walk) :: shapeResolveObserved(rest)(restChoices)(restWalks)
         | (Some(shape) :: rest, _choice :: restChoices, _walk :: restWalks) -> shape :: shapeResolveObserved(rest)(restChoices)(restWalks)
         | (None :: rest, _choice :: restChoices, _walk :: restWalks) -> TcoOtherShape :: shapeResolveObserved(rest)(restChoices)(restWalks)
         | _ -> []

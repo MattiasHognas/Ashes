@@ -1195,6 +1195,7 @@ public sealed partial class Lowering
         public required bool?[] WalkOrRefillEdges { get; init; }
         public required bool[] AnyWalkEdge { get; init; }
         public required bool[] AnyRefillEdge { get; init; }
+        public required bool?[] HandedOnOrGrownEdges { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
 
@@ -1212,6 +1213,7 @@ public sealed partial class Lowering
                 WalkOrRefillEdges = new bool?[count],
                 AnyWalkEdge = new bool[count],
                 AnyRefillEdge = new bool[count],
+                HandedOnOrGrownEdges = new bool?[count],
                 SelfName = selfName,
             };
     }
@@ -1281,7 +1283,9 @@ public sealed partial class Lowering
                         ? TcoParamReuseAffinity.SelfAppendOnly
                         : TcoParamReuseAffinity.GeneralOrUnknown,
                     state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i],
-                    state.ChoiceAccumulatorEdges[i] == true && state.AnyChoiceEdge[i],
+                    state.ChoiceAccumulatorEdges[i] == true
+                        && (state.AnyChoiceEdge[i]
+                            || (shape == TcoSelfCallArgumentShape.Mixed && state.HandedOnOrGrownEdges[i] == true)),
                     state.WalkOrRefillEdges[i] == true && state.AnyWalkEdge[i] && state.AnyRefillEdge[i]));
             }
         }
@@ -2522,12 +2526,9 @@ public sealed partial class Lowering
             state.ArenaSelfContainedListRebuild[i] =
                 (state.ArenaSelfContainedListRebuild[i] ?? true)
                 && arenaSelfContainedListRebuild;
-            state.FreshClosureRebuild[i] =
-                (state.FreshClosureRebuild[i] ?? true)
-                && freshClosureRebuild;
+            state.FreshClosureRebuild[i] = (state.FreshClosureRebuild[i] ?? true) && freshClosureRebuild;
             state.BytesProvenanceSafeListRebuild[i] =
-                (state.BytesProvenanceSafeListRebuild[i] ?? true)
-                && bytesProvenanceSafeListRebuild;
+                (state.BytesProvenanceSafeListRebuild[i] ?? true) && bytesProvenanceSafeListRebuild;
             // An accumulator's edge hands the parameter on, conses onto it, or replaces it with a
             // call's result; a consumed tail or any other expression is not one.
             bool accumulatorEdge = local is TcoSelfCallArgumentShape.UnchangedPassthrough or TcoSelfCallArgumentShape.GrownCons
@@ -2539,8 +2540,23 @@ public sealed partial class Lowering
             state.ChoiceAccumulatorEdges[i] = (state.ChoiceAccumulatorEdges[i] ?? true)
                 && (choiceEdge || IsAccumulatorEdgeArm(structural, paramNames[i], i, parameterScope));
             state.AnyChoiceEdge[i] |= choiceEdge;
+            state.HandedOnOrGrownEdges[i] = (state.HandedOnOrGrownEdges[i] ?? true)
+                && IsHandedOnOrGrownEdge(local, structural, parameterScope);
             RecordWalkOrRefillEdge(state, i, local, structural);
         }
+    }
+
+    // A site that hands the parameter on as it is or conses onto it a head reading no loop
+    // parameter; a fresh list or a same-named rebinding is neither.
+    private static bool IsHandedOnOrGrownEdge(
+        TcoSelfCallArgumentShape local,
+        Expr structural,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        return local == TcoSelfCallArgumentShape.UnchangedPassthrough
+            || (local == TcoSelfCallArgumentShape.GrownCons
+                && structural is Expr.Cons grown
+                && !ReadsLoopParameter(grown.Head, parameterScope));
     }
 
     // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,

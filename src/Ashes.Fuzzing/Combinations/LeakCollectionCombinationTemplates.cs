@@ -124,6 +124,60 @@ internal sealed class LoopParameterReturnedWholeTemplate() : LeakCombinationTemp
 }
 
 /// <summary>
+/// A tail-recursive walk whose list accumulator is handed on in one arm and grown in another by a
+/// cons of a name matched out of a call's owned result (<c>name :: seen</c>), beside a count.
+/// </summary>
+internal sealed class AccumulatorConsesCallResultPartTemplate() : LeakCombinationTemplate(
+    "leak.accumulator-conses-call-result-part", "accumulatorConsesPart", GeneratedFeature.Adt, GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string type = names.Of("PartType");
+        string function = names.Of("PartFn");
+        string named = names.Of("PartNamed");
+        string leaf = names.Of("PartVar");
+        string result = names.Of("resultType");
+        string seen = names.Of("seenName");
+        string free = names.Of("countFree");
+        bool counted = names.Coin("counted");
+        string countParameter = counted ? " (count: Int)" : "";
+        string handOn = counted ? "(count)" : "";
+        string grow = counted ? "(count + 1)" : "";
+        string exit = counted ? "count" : "Ashes.Collection.List.length(seen)";
+        string start = counted ? "([])(0)" : "([])";
+        return $$"""
+            type {{type}} =
+                | {{function}}({{type}}, {{type}})
+                | {{named}}(Int, Str, List({{type}}))
+                | {{leaf}}(Int)
+
+            let recursive {{result}} (t: {{type}}) =
+                match t with
+                    | {{function}}(_parameter, result) -> {{result}}(result)
+                    | other -> other
+
+            let recursive {{seen}} (name: Str) (names: List(Str)) =
+                match names with
+                    | [] -> false
+                    | candidate :: rest -> candidate == name || {{seen}}(name)(rest)
+
+            let recursive {{free}} (items: List({{type}})) (seen: List(Str)){{countParameter}} =
+                match items with
+                    | [] -> {{exit}}
+                    | body :: rest ->
+                        match {{result}}(body) with
+                            | {{named}}(_id, name, []) ->
+                                if {{seen}}(name)(seen)
+                                then {{free}}(rest)(seen){{handOn}}
+                                else {{free}}(rest)(name :: seen){{grow}}
+                            | _ -> {{free}}(rest)(seen){{handOn}}
+
+            let {{names.Entry}} (seed: Int) = {{free}}([{{named}}(seed, {{names.Word()}}, []), {{function}}({{leaf}}(seed), {{named}}(0, {{names.Word()}}, [])), {{named}}(0, {{names.Word()}}, [{{leaf}}(1)])]){{start}} + seed
+            """;
+    }
+}
+
+/// <summary>
 /// An accumulator of a variant type (a list-bearing constructor or an empty one) threaded through a
 /// helper that rebuilds it at each step of a walk.
 /// </summary>

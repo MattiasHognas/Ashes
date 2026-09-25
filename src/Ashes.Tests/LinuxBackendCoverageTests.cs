@@ -3148,6 +3148,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_accumulator_consing_a_part_of_a_call_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `name :: seen` in one arm, `seen` handed on in the other: the name is matched out of a
+        // call's owned result. The accumulator is placed on the reference-counted heap, so its cons
+        // retains the name and the back edge releases the call's result; kept in the arena it named
+        // the result without a reference, and every result it borrowed from was left behind.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildSeenNameAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("accumulator consing a part of a call result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Loop_exit_arm_returning_head_of_unresolved_type_retains_it_before_its_owner_release()
     {
         // `| last :: [] -> last` in a generic walk whose element type the `[] -> ""` arm fixes only
@@ -10178,6 +10203,44 @@ public sealed class LinuxBackendCoverageTests
             0
             |> pass(build({{count}})([]))
             |> Ashes.IO.print
+            """;
+
+    private static string BuildSeenNameAccumulatorProgram(int rounds)
+        => $$"""
+            type T =
+                | Fn(T, T)
+                | Named(Int, Str, List(T))
+                | Var(Int)
+
+            let recursive resultType (t: T) =
+                match t with
+                    | Fn(_parameter, result) -> resultType(result)
+                    | other -> other
+
+            let recursive seenName (name: Str) (names: List(Str)) =
+                match names with
+                    | [] -> false
+                    | candidate :: rest -> candidate == name || seenName(name)(rest)
+
+            let recursive freeTypes (items: List(T)) (seen: List(Str)) (count: Int) =
+                match items with
+                    | [] -> count
+                    | body :: rest ->
+                        match resultType(body) with
+                            | Named(_id, name, []) ->
+                                if seenName(name)(seen)
+                                then freeTypes(rest)(seen)(count)
+                                else freeTypes(rest)(name :: seen)(count + 1)
+                            | _ -> freeTypes(rest)(seen)(count)
+
+            let items = [Fn(Var(1), Named(0, "Maybe", [Var(1)])), Named(0, "Int", []), Fn(Var(2), Named(0, "Int", [])), Named(0, "List", [Var(3)])]
+
+            let recursive repeat (times: Int) (total: Int) =
+                if times == 0
+                then total
+                else repeat(times - 1)(total + freeTypes(items)([])(0))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
             """;
 
     private static string BuildLastOfUnresolvedHeadProgram(int rounds)
