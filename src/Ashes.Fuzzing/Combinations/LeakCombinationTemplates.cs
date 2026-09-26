@@ -22,6 +22,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new HelperReturnsListAndStateTemplate());
         registry.Register(new ExitArmRecordHoldsLoopParameterTemplate());
         registry.Register(new AccumulatorFromCallResultPartTemplate());
+        registry.Register(new LoopRecordCellHoldingParameterFieldTemplate());
         registry.Register(new VariantAccumulatorThroughHelperTemplate());
         registry.Register(new WorklistSolveRecordsTemplate());
         registry.Register(new GenericPairPruningTemplate());
@@ -374,6 +375,47 @@ internal sealed class ExitArmRecordHoldsLoopParameterTemplate() : LeakCombinatio
                 """,
         };
         return types + "\n\n" + program;
+    }
+}
+
+/// <summary>
+/// A loop consing a record that holds a field read of its reference-counted state parameter onto a
+/// list accumulator, beside the state it updates.
+/// </summary>
+internal sealed class LoopRecordCellHoldingParameterFieldTemplate() : LeakCombinationTemplate(
+    "leak.loop-record-cell-holding-parameter-field", "loopRecordCellField", GeneratedFeature.Record, GeneratedFeature.TailCall, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string close = names.Of("LeakCell");
+        string state = names.Of("LeakCellState");
+        string count = names.Of("countCells");
+        string lower = names.Of("collectCells");
+        string bindings = names.Pick("bindings", "names", "scope");
+        string update = names.Coin("counter-update")
+            ? $"(state with counter = state.counter + {LeakNames.Text(names.Between(1, 5))})"
+            : "(state)";
+        return $$"""
+            type {{close}} =
+                | cellTag: Int
+                | cellBindings: List(Str)
+
+            type {{state}} =
+                | {{bindings}}: List(Str)
+                | counter: Int
+
+            let recursive {{count}} (items: List({{close}})) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: rest -> {{count}}(rest)(total + 1)
+
+            let recursive {{lower}} (items: List(Int)) (pending: List({{close}})) (state: {{state}}) =
+                match items with
+                    | [] -> state.counter + {{count}}(pending)(0)
+                    | value :: rest -> {{lower}}(rest)({{close}}(cellTag = value, cellBindings = state.{{bindings}}) :: pending){{update}}
+
+            let {{names.Entry}} (seed: Int) = {{lower}}({{names.Ints(names.Between(2, 5), 1, 9)}})([])({{state}}({{bindings}} = {{names.Words(names.Between(1, 3))}}, counter = seed))
+            """;
     }
 }
 

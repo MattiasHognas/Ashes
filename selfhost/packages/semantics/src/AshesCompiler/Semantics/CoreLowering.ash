@@ -19416,10 +19416,15 @@ let emitPendingConstructorFieldRetain (temp: Int) (slot: Int) (state: CoreLoweri
 // Stage 0's `RetainRuntimeManagedTcoConstructorArguments` for one argument: a parameter read
 // stored into the cell keeps a second reference to a value the parameter's own release walks at
 // the back edge; a slot admitted by now retains outright, any other through the pending skeleton.
+// A child the cell already made its own (retained or copied for a runtime cell) holds that
+// reference.
 let retainConstructorLoopParameterArgument (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match constructorArgumentParameterSlot(argument)(semanticType)(state) with
-        | None -> (state, temp)
-        | Some(slot) ->
+    match (state
+    |> statePatternOwnerCopyTemps
+    |> containsInt(temp), constructorArgumentParameterSlot(argument)(semanticType)(state)) with
+        | (true, _slot) -> (state, temp)
+        | (false, None) -> (state, temp)
+        | (false, Some(slot)) ->
             if tcoSlotAdmittedNow(slot)(state)
             then
                 match freshTemp(state) with

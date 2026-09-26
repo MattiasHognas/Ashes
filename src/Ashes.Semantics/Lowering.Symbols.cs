@@ -1544,7 +1544,11 @@ public sealed partial class Lowering
         {
             // A parameter, or a heap-typed field read out of one (`pair.current`): the cell keeps
             // a second reference to a child the parameter's own release walks at the back edge.
-            if (TryResolveTcoParameterRead(arguments[index], argumentTypes[index], out _) is not { } local)
+            // A child the constructor already made its own (retained or copied for a
+            // reference-counted parent) holds that reference.
+            if ((_patternOwnerNormalizedTemps.Contains(argumentTemps[index])
+                    && Environment.GetEnvironmentVariable("GRC_NO_OWNEDCHILDRETAIN") is null)
+                || TryResolveTcoParameterRead(arguments[index], argumentTypes[index], out _) is not { } local)
             {
                 continue;
             }
