@@ -14061,6 +14061,7 @@ public sealed partial class Lowering
                     LowerCallDropHandedOverArgumentResultCannotHold(
                         temp, valueType, argument.AdoptionFlagTemp, resultType,
                         calleeCompiledResultVerifiedRuntimeManaged, resultDeepCopied, resultCopiedWithElements);
+                    HandOverArgumentKeptByArenaResultToOwnedSlot(temp, valueType, argument.AdoptionFlagTemp, resultType, calleeCompiledResultVerifiedRuntimeManaged);
                 }
 
                 continue;
@@ -14083,6 +14084,36 @@ public sealed partial class Lowering
                     resultType);
             }
         }
+    }
+
+    // A reference handed over for the callee's result to keep, where the result is an arena value
+    // that may hold the argument and that the caller does not copy at the call: the arena result
+    // never releases what it holds, so the reference goes to an owned slot instead, released once
+    // the function's result or the loop's successors hold references of their own (a successor
+    // copied at the back edge, a result normalized at the return). A callee that adopted the
+    // reference consumed it, so the slot is left empty.
+    private void HandOverArgumentKeptByArenaResultToOwnedSlot(int temp, TypeRef valueType, int adoptionFlagTemp, TypeRef resultType, bool resultVerifiedRuntimeManaged)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_HANDEDSLOT") is not null
+            || resultVerifiedRuntimeManaged
+            || valueType is TypeRef.TFun
+            || ContainsUnresolvedLayoutType(valueType, [])
+            || ContainsUnresolvedLayoutType(Prune(resultType), [])
+            || !CallResultMayContainArgumentType(resultType, valueType, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, temp));
+        string keptLabel = NewLabel("rc_handed_over_kept");
+        Emit(new IrInst.JumpIfFalse(adoptionFlagTemp, keptLabel));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
+        Emit(new IrInst.Label(keptLabel));
+        RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
     }
 
     // A reference handed over for the callee's result to keep is not in a result whose type has no

@@ -2826,6 +2826,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_variant_accumulator_grown_through_helper_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop growing a variant accumulator through a helper that conses onto the list it holds.
+        // The accumulator is handed over for the helper's result to keep, and that result stays in
+        // the arena as the loop's successor, so the handed-over reference goes to an owned slot the
+        // back edge releases once the successor holds references of its own.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildVariantAccumulatorGrownThroughHelperProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 8}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("variant accumulator grown through a helper", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_inline_list_beside_recursive_list_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10281,6 +10306,40 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildVariantAccumulatorGrownThroughHelperProgram(int rounds)
+        => $$"""
+            type Names =
+                | Names(List(Str), Int)
+                | NoNames
+
+            let add (name: Str) (acc: Names) =
+                match acc with
+                    | Names(names, count) -> Names(name :: names, count + 1)
+                    | NoNames -> Names([name], 1)
+
+            let size (acc: Names) =
+                match acc with
+                    | Names(_names, count) -> count
+                    | NoNames -> 0
+
+            let recursive walk (items: List(Str)) (acc: Names) =
+                match items with
+                    | [] -> size(acc)
+                    | item :: rest ->
+                        acc
+                        |> add(item)
+                        |> walk(rest)
+
+            let items = ["a", "b", "c", "d", "e", "f", "g", "h"]
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk(items)(NoNames))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildRecordUpdateFreshCallResultFieldProgram(int rounds)

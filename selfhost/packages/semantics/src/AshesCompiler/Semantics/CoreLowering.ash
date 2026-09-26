@@ -13863,6 +13863,30 @@ let emitHandedOverArgumentResultCannotHold (policy: CoreConsumedReleasePolicy) (
                                     |> emitConsumedValueDrop(unconditional)(temp)(valueType)(resultMayHoldAnyPart(policy.resultType)(heapPartTypesInto([valueType])([])([])(state))(state))
                                     |> emit(Label(adoptedLabel))
 
+// Stage 0's `HandOverArgumentKeptByArenaResultToOwnedSlot`: a reference handed over for the
+// callee's result to keep, where the result is an arena value that may hold the argument and that
+// the caller does not copy at the call, goes to an owned slot the function releases once its
+// result or the loop's successors hold references of their own; a callee that adopted the
+// reference consumed it, so the slot is left empty.
+let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
+    match valueType with
+        | SemFunction(_parameter, _result, _row) -> state
+        | _ ->
+            if policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || containsUnresolvedLayout(policy.resultType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
+            then state
+            else
+                match freshLocal(state) with
+                    | FreshLocal { state = slotted, local = ownedSlot } ->
+                        match freshLabel("rc_handed_over_kept")(emit(StoreLocal(ownedSlot)(temp))(slotted)) with
+                            | FreshLabel { state = labelled, label = keptLabel } ->
+                                match freshTemp(emit(JumpIfFalse(adoptionFlagTemp)(keptLabel))(labelled)) with
+                                    | FreshTemp { state = allocated, temp = zeroTemp } ->
+                                        allocated
+                                        |> emit(LoadConstInt(zeroTemp)(0))
+                                        |> emit(StoreLocal(ownedSlot)(zeroTemp))
+                                        |> emit(Label(keptLabel))
+                                        |> registerGeneralRcOwnedSlot(ownedSlot)(valueType)
+
 let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, adoptionFlagTemp = adoptionFlagTemp } when adoptionFlagTemp >= 0 ->
@@ -13873,7 +13897,10 @@ let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: Core
                         emitHandedOverArgumentRelease(temp)(valueType)(adoptionFlagTemp)(
                             handedOverArgumentResultFlag(policy.resultType)(valueType)(policy.resultCopyFlagTemp)(state)
                         )(policy.normalizedOwnedResultTemp)(state)
-                    else emitHandedOverArgumentResultCannotHold(policy)(temp)(valueType)(adoptionFlagTemp)(state)
+                    else
+                        state
+                        |> emitHandedOverArgumentResultCannotHold(policy)(temp)(valueType)(adoptionFlagTemp)
+                        |> handOverArgumentKeptByArenaResult(policy)(temp)(valueType)(adoptionFlagTemp)
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
                 | SemFunction(_parameter, _result, _row) ->
