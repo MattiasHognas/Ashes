@@ -10,12 +10,36 @@ namespace Ashes.Fuzzing.Execution;
 internal sealed record LeakCensusCase(string Name, Func<int, string> SourceForRounds);
 
 /// <summary>
-/// The outcome of one case: the reference-counted cells still live when the program ended after one
-/// round of work and after two, or why there is no count.
+/// One compiler's measurement of a case: the reference-counted cells still live when the program
+/// ended after one round of work and after two, or why there is no count.
 /// </summary>
-internal sealed record LeakCensusResult(string Name, long? LiveAfterOne, long? LiveAfterTwo, string? Failure)
+internal sealed record LeakMeasurement(long? LiveAfterOne, long? LiveAfterTwo, string? Failure)
 {
     internal bool Leaks => LiveAfterOne is long one && LiveAfterTwo is long two && two != one;
+
+    internal long CellsPerRound => (LiveAfterTwo ?? 0) - (LiveAfterOne ?? 0);
+
+    /// <summary>The column's cell: <c>ok</c>, <c>LEAK n</c>, or <c>SKIP reason</c>.</summary>
+    internal string Cell => Failure is not null
+        ? "SKIP " + Failure
+        : Leaks
+            ? "LEAK " + CellsPerRound.ToString(CultureInfo.InvariantCulture)
+            : "ok";
+
+    internal static LeakMeasurement Skipped(string reason) => new(null, null, reason);
+}
+
+/// <summary>
+/// The outcome of one case: stage 0's measurement, and stage 1's when a self-hosted compiler was
+/// given.
+/// </summary>
+internal sealed record LeakCensusResult(string Name, LeakMeasurement Stage0, LeakMeasurement? Stage1 = null)
+{
+    internal bool Leaks => Stage0.Leaks || Stage1?.Leaks == true;
+
+    internal bool Failed => Stage0.Failure is not null || Stage1?.Failure is not null;
+
+    internal IEnumerable<LeakMeasurement> Measurements => Stage1 is null ? [Stage0] : [Stage0, Stage1];
 }
 
 /// <summary>
@@ -24,6 +48,7 @@ internal sealed record LeakCensusResult(string Name, long? LiveAfterOne, long? L
 /// per seed, and every <c>ROUNDS</c> template of a directory. A program built with
 /// <c>ASHES_RC_LEAKCHECK=1</c> reports its live reference-counted cells at its end; a value the program
 /// keeps to its end counts as live in both runs, so the difference is exactly what one round leaked.
+/// With a self-hosted compiler (<c>--stage1</c>) every case is measured by both compilers.
 /// </summary>
 internal static class LeakCensus
 {
@@ -46,7 +71,7 @@ internal static class LeakCensus
             LeakCensusResult result = await MeasureAsync(testCase, configuration, compiler, repositoryRoot, cancellationToken).ConfigureAwait(false);
             results.Add(result);
             Console.WriteLine(Describe(result));
-            if (result.Leaks || result.Failure is not null)
+            if (result.Leaks || result.Failed)
             {
                 await File.WriteAllTextAsync(Path.Combine(reportDirectory, SafeFileName(testCase.Name) + ".ash"), testCase.SourceForRounds(2), cancellationToken).ConfigureAwait(false);
             }
@@ -54,7 +79,7 @@ internal static class LeakCensus
 
         await File.WriteAllLinesAsync(Path.Combine(reportDirectory, "report.tsv"), results.Select(ReportLine), cancellationToken).ConfigureAwait(false);
         int leaking = results.Count(result => result.Leaks);
-        int failed = results.Count(result => result.Failure is not null);
+        int failed = results.Count(result => result.Failed);
         Console.WriteLine($"leak census: {results.Count} case(s), {leaking} leaking, {failed} without a count; report in {reportDirectory}");
         return leaking == 0 && failed == 0 ? 0 : 1;
     }
@@ -116,6 +141,21 @@ internal static class LeakCensus
         string repositoryRoot,
         CancellationToken cancellationToken)
     {
+        LeakMeasurement stage0 = await MeasureWithAsync(testCase, configuration, compiler, repositoryRoot, null, cancellationToken).ConfigureAwait(false);
+        LeakMeasurement? stage1 = configuration.Stage1Compiler is null
+            ? null
+            : await MeasureWithAsync(testCase, configuration, compiler, repositoryRoot, configuration.Stage1Compiler, cancellationToken).ConfigureAwait(false);
+        return new LeakCensusResult(testCase.Name, stage0, stage1);
+    }
+
+    private static async Task<LeakMeasurement> MeasureWithAsync(
+        LeakCensusCase testCase,
+        FuzzConfiguration configuration,
+        CompilerExecution compiler,
+        string repositoryRoot,
+        string? stage1Compiler,
+        CancellationToken cancellationToken)
+    {
         long?[] live = new long?[2];
         for (int rounds = 1; rounds <= 2; rounds++)
         {
@@ -126,29 +166,29 @@ internal static class LeakCensus
             }
             catch (InvalidOperationException exception)
             {
-                return new LeakCensusResult(testCase.Name, null, null, "generation: " + exception.Message);
+                return LeakMeasurement.Skipped("generation: " + exception.Message);
             }
 
             (ProcessResult compile, ProcessResult? run) = await compiler.CompileAndRunAsync(
                 source, repositoryRoot, configuration.Target, "-O2", configuration.CompilerTimeout, configuration.ProgramTimeout,
-                configuration.MaximumOutputBytes, cancellationToken, leakCheck: true).ConfigureAwait(false);
+                configuration.MaximumOutputBytes, cancellationToken, leakCheck: true, stage1Compiler: stage1Compiler).ConfigureAwait(false);
             if (run is null)
             {
-                return new LeakCensusResult(testCase.Name, null, null, $"compile exit {compile.ExitCode}: {FirstLine(compile.StandardError + compile.StandardOutput)}");
+                return LeakMeasurement.Skipped($"compile exit {compile.ExitCode}: {FirstLine(compile.StandardError + compile.StandardOutput)}");
             }
             if (run.ExitCode != 0 || run.TimedOut)
             {
-                return new LeakCensusResult(testCase.Name, null, null, run.TimedOut ? "program timed out" : $"program exit {run.ExitCode}");
+                return LeakMeasurement.Skipped(run.TimedOut ? "program timed out" : $"program exit {run.ExitCode}");
             }
 
             live[rounds - 1] = ParseLiveCells(run.StandardError);
             if (live[rounds - 1] is null)
             {
-                return new LeakCensusResult(testCase.Name, null, null, "program reported no live-cell count");
+                return LeakMeasurement.Skipped("program reported no live-cell count");
             }
         }
 
-        return new LeakCensusResult(testCase.Name, live[0], live[1], null);
+        return new LeakMeasurement(live[0], live[1], null);
     }
 
     internal static long? ParseLiveCells(string standardError)
@@ -159,16 +199,40 @@ internal static class LeakCensus
             : null;
     }
 
-    private static string Describe(LeakCensusResult result)
-        => result.Failure is not null
-            ? $"SKIP  {result.Name}: {result.Failure}"
-            : result.Leaks
-                ? $"LEAK  {result.Name}: {result.LiveAfterTwo - result.LiveAfterOne} cell(s) per round (live {result.LiveAfterOne} -> {result.LiveAfterTwo})"
-                : $"ok    {result.Name}";
+    /// <summary>
+    /// The console line of a result: the stage-0 verdict alone, as before, or one cell per compiler
+    /// when stage 1 measured the case too.
+    /// </summary>
+    internal static string Describe(LeakCensusResult result)
+    {
+        string status = result.Leaks ? "LEAK " : result.Failed ? "SKIP " : "ok   ";
+        if (result.Stage1 is LeakMeasurement stage1)
+        {
+            return $"{status} {result.Name}: stage0 {result.Stage0.Cell}; stage1 {stage1.Cell}";
+        }
 
-    private static string ReportLine(LeakCensusResult result)
-        => string.Join('\t', result.Name, result.LiveAfterOne?.ToString(CultureInfo.InvariantCulture) ?? "-",
-            result.LiveAfterTwo?.ToString(CultureInfo.InvariantCulture) ?? "-", result.Leaks ? "leak" : result.Failure is null ? "ok" : "skip", result.Failure ?? "");
+        LeakMeasurement stage0 = result.Stage0;
+        return stage0.Failure is not null
+            ? $"SKIP  {result.Name}: {stage0.Failure}"
+            : stage0.Leaks
+                ? $"LEAK  {result.Name}: {stage0.CellsPerRound} cell(s) per round (live {stage0.LiveAfterOne} -> {stage0.LiveAfterTwo})"
+                : $"ok    {result.Name}";
+    }
+
+    /// <summary>
+    /// The report row: name, live after one and two rounds, verdict and reason for stage 0, then
+    /// the same four columns for stage 1 when it measured the case.
+    /// </summary>
+    internal static string ReportLine(LeakCensusResult result)
+        => string.Join('\t', [result.Name, .. result.Measurements.SelectMany(ReportColumns)]);
+
+    private static IEnumerable<string> ReportColumns(LeakMeasurement measurement)
+    {
+        yield return measurement.LiveAfterOne?.ToString(CultureInfo.InvariantCulture) ?? "-";
+        yield return measurement.LiveAfterTwo?.ToString(CultureInfo.InvariantCulture) ?? "-";
+        yield return measurement.Leaks ? "leak" : measurement.Failure is null ? "ok" : "skip";
+        yield return measurement.Failure ?? "";
+    }
 
     private static string FirstLine(string text)
         => text.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "";

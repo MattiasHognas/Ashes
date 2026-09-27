@@ -17,9 +17,12 @@ public sealed class LeakCensusTests
     [Test]
     public void OnlyAGrowingCountBetweenOneRoundAndTwoIsALeak()
     {
-        new LeakCensusResult("steady", 5, 5, null).Leaks.ShouldBeFalse();
-        new LeakCensusResult("growing", 5, 9, null).Leaks.ShouldBeTrue();
-        new LeakCensusResult("uncounted", null, null, "compile exit 1").Leaks.ShouldBeFalse();
+        new LeakMeasurement(5, 5, null).Leaks.ShouldBeFalse();
+        new LeakMeasurement(5, 9, null).Leaks.ShouldBeTrue();
+        LeakMeasurement.Skipped("compile exit 1").Leaks.ShouldBeFalse();
+        new LeakCensusResult("steady", new LeakMeasurement(5, 5, null)).Leaks.ShouldBeFalse();
+        new LeakCensusResult("stage 1 only", new LeakMeasurement(5, 5, null), new LeakMeasurement(5, 8, null)).Leaks.ShouldBeTrue();
+        new LeakCensusResult("stage 1 skipped", new LeakMeasurement(5, 5, null), LeakMeasurement.Skipped("program exit 139")).Failed.ShouldBeTrue();
     }
 
     [Test]
@@ -29,6 +32,36 @@ public sealed class LeakCensusTests
         configuration.Command.ShouldBe(FuzzCommandKind.LeakCensus);
         configuration.Profile.ShouldBe("memory-growth");
         configuration.TemplateDirectory.ShouldBe("somewhere");
+        configuration.Stage1Compiler.ShouldBeNull();
+    }
+
+    [Test]
+    public void LeakCensusCommandTakesASelfHostedCompiler()
+    {
+        FuzzConfiguration configuration = FuzzConfiguration.Parse(["leak-census", "--stage1", "artifacts/selfhost-dev/s1-tip"]);
+        configuration.Stage1Compiler.ShouldBe("artifacts/selfhost-dev/s1-tip");
+        Should.Throw<ArgumentException>(() => FuzzConfiguration.Parse(["leak-census", "--stage1"]));
+    }
+
+    [Test]
+    public void AResultWithOneCompilerIsReportedAsBefore()
+    {
+        LeakCensusResult leaking = new("leak.case@1:Int", new LeakMeasurement(4, 7, null));
+        LeakCensus.Describe(leaking).ShouldBe("LEAK  leak.case@1:Int: 3 cell(s) per round (live 4 -> 7)");
+        LeakCensus.ReportLine(leaking).ShouldBe("leak.case@1:Int\t4\t7\tleak\t");
+        LeakCensus.Describe(new LeakCensusResult("ok.case", new LeakMeasurement(2, 2, null))).ShouldBe("ok    ok.case");
+        LeakCensus.Describe(new LeakCensusResult("skip.case", LeakMeasurement.Skipped("compile exit 1: ASH014"))).ShouldBe("SKIP  skip.case: compile exit 1: ASH014");
+    }
+
+    [Test]
+    public void AResultWithBothCompilersHasOneCellPerStage()
+    {
+        LeakCensusResult result = new("leak.case@1:Int", new LeakMeasurement(2, 2, null), new LeakMeasurement(2, 5, null));
+        LeakCensus.Describe(result).ShouldBe("LEAK  leak.case@1:Int: stage0 ok; stage1 LEAK 3");
+        LeakCensus.ReportLine(result).ShouldBe("leak.case@1:Int\t2\t2\tok\t\t2\t5\tleak\t");
+        LeakCensusResult skipped = new("skip.case", new LeakMeasurement(1, 1, null), LeakMeasurement.Skipped("program exit 139"));
+        LeakCensus.Describe(skipped).ShouldBe("SKIP  skip.case: stage0 ok; stage1 SKIP program exit 139");
+        LeakCensus.Describe(new LeakCensusResult("ok.case", new LeakMeasurement(1, 1, null), new LeakMeasurement(3, 3, null))).ShouldBe("ok    ok.case: stage0 ok; stage1 ok");
     }
 
     [Test]

@@ -110,6 +110,14 @@ in both runs, so the difference is exactly what one round leaked: a single leake
 case's source and a `report.tsv` of every case go to `<artifacts>/leak-census/`; the command exits 1
 when any case leaks or yields no count.
 
+With `--stage1 <path>` naming a self-hosted compiler (`bash scripts/selfhost-dev/quickstage1.sh
+<tag>` builds one at `artifacts/selfhost-dev/s1-<tag>`), every case is also compiled by that
+compiler at one round and at two, under a 1 GB stack and with the same leak check, which stage 1's
+backend keeps in its region allocator. Each case then reports one cell per compiler, `ok`, `LEAK n`
+or `SKIP reason`, and `report.tsv` carries stage 1's four columns after stage 0's; a case leaking
+under either compiler fails the run. A class that leaks under stage 1 but not stage 0 is a stage-1
+placement rule still to be ported; the reverse is a stage-0 rule stage 1 does not need.
+
 The `leak.*` templates give the census the shapes that leak. Each generates a parametric program of
 one class of reference-count leak found in the self-hosted compiler: a record whose list field grows
 in the record-update successor of a loop, a map threaded through `upsertStr` while a list is walked,
