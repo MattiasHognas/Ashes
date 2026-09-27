@@ -1291,7 +1291,7 @@ program has to be recompiled with the variable set:
 |---|---|
 | `ASHES_RC_POISON=1` | Every freed RC payload is overwritten with `0xDD`, so a read after free fails visibly instead of reading stale data. |
 | `ASHES_RC_VERIFY=1` | Every lowered store into an RC cell checks that the stored value does not point at arena or stack memory, raising `SIGABRT` at the first violating store (linux-x64). |
-| `ASHES_RC_LEAKCHECK=1` | The program counts the RC cells it allocates and releases and, when it ends normally, writes `ashes-rc-live N` (the cells still live) to standard error (Linux). A value kept to the end counts as live, so a leak shows as the difference between one round of the same work and two. The count is not synchronized: only single-threaded programs report an exact figure. |
+| `ASHES_RC_LEAKCHECK=1` | The program counts the RC cells it allocates and releases and, when it ends normally, writes `ashes-rc-live N` (the cells still live) to standard error (Linux). A value kept to the end counts as live, so a leak shows as the difference between one round of the same work and two. The count is not synchronized: only single-threaded programs report an exact figure. The self-hosted compiler honours the same variable, counting in its region allocator (`__ashes_rc_alloc` up, `__ashes_rc_free` down), so a C string it builds for a system call counts as live where stage 0's arena copy does not. |
 
 Running the end-to-end suite with `ASHES_RC_POISON=1` set is the quickest way
 to surface a latent use-after-free.

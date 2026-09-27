@@ -112,6 +112,7 @@ import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Copy
 import AshesCompiler.Backend.IrCodegen.Rc
 import AshesCompiler.Backend.IrCodegen.RcRegion
+import AshesCompiler.Backend.IrCodegen.LeakCheck
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
@@ -126,6 +127,7 @@ import Ashes.Number.UInt
 export (
     value codegenEntryFunction,
     value codegenProgram,
+    value codegenProgramWith,
 )
 
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
@@ -147,7 +149,7 @@ type ExternalFunctions =
 
 // Every allocation goes through the reference-counted region's allocator, which keeps libc's
 // `malloc` and `free` for what the region does not hold.
-let declareExternalFunctions module_ context builder types =
+let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
     (let mallocType = functionType(types.ptrType)([types.i64])(1u32)(false)
     in
         let freeType =
@@ -158,7 +160,7 @@ let declareExternalFunctions module_ context builder types =
                 let memcpyType = functionType(types.ptrType)([types.ptrType, types.ptrType, types.i64])(3u32)(false)
                 in
                     let region =
-                        defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)
+                        defineRcRegionRuntime(module_)(context)(builder)(types.i64)(types.ptrType)(addFunction(module_)("malloc")(mallocType))(mallocType)(addFunction(module_)("free")(freeType))(freeType)(leakCheck)
                     in
                         ExternalFunctions(
                             mallocFn = region.allocFn,
@@ -1131,8 +1133,10 @@ let codegenInstructionKind cx builder kind state =
                                         | Return(source) ->
                                             if isEntry
                                             then
-                                                let _ = emitLinuxProcessExit(builder)(i64)
-                                                in (tempEnv, true)
+                                                let _ = emitLeakCheckReport(context)(function_)(builder)(i64)(i8)(externals.rcRegion)
+                                                in
+                                                    let _ = emitLinuxProcessExit(builder)(i64)
+                                                    in (tempEnv, true)
                                             else
                                                 let _ =
                                                     tempEnv
@@ -1910,7 +1914,7 @@ let recursive functionsUseProgramArgs functions =
 // `.text` offset `0`; its body is emitted LAST, after every lifted function, purely so the
 // lifted-function lookups it needs (`MakeClosure`/`CallKnown` naming a label) resolve the same
 // way a lifted body's own do.
-let codegenFunctions name context entryFunction functions stringLiterals capabilityHandlerGlobalCount =
+let codegenFunctions name context entryFunction functions stringLiterals capabilityHandlerGlobalCount (leakCheck: Bool) =
     (let module_ = createModule(name)(context)
     in
         let types = coreLlvmTypes(context)
@@ -1935,7 +1939,7 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                 in
                                     let builder = createBuilder(context)
                                     in
-                                        let externals = declareExternalFunctions(module_)(context)(builder)(types)
+                                        let externals = declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
                                         in
                                             let usesCopy = functionsUseCopyOut(entryFunction :: functions)
                                             in
@@ -1983,9 +1987,12 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                                             in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
-let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)
+let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)(false)
 
-// A whole lowered program: its entry function plus every lifted helper it contains.
-let codegenProgram name context program =
+// A whole lowered program: its entry function plus every lifted helper it contains. With
+// `leakCheck` the program counts its reference-counted cells and reports the live ones at its end.
+let codegenProgramWith (leakCheck: Bool) name context program =
     match program with
-        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } -> codegenFunctions(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)
+        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals, capabilityHandlerGlobals = capabilityHandlerGlobals } -> codegenFunctions(name)(context)(entryFunction)(functions)(stringLiterals)(capabilityHandlerGlobals)(leakCheck)
+
+let codegenProgram name context program = codegenProgramWith(false)(name)(context)(program)

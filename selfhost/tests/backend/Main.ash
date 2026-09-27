@@ -3242,6 +3242,61 @@ let testRunStaticExecutableForShippedListLengthModule shipped unit =
 let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
     assertProgramPrints(buildShippedListLengthSelectorModule(shipped))("selfhostBackendRunShippedListLengthSelector")("selfhost_backend_shipped_list_length_selector_e2e")("4")
 
+// `codegenShippedSource` with the leak check on: the program counts its reference-counted cells
+// and reports the live ones on standard error at its end.
+let codegenShippedSourceLeakChecked shipped source name context =
+    match stitchWithShippedModules(name)(name + ".ash")(source)(shipped) with
+        | Error(error) -> test.fail("shipped-module stitching failed: " + Ashes.Trait.Show.show(error))
+        | Ok(StitchedSyntaxProject { program = program }) ->
+            match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+                | CoreLoweringResult { program = Some(lowered), error = None } -> codegenProgramWith(true)(name)(context)(lowered)
+                | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("lowering produced no program")
+
+// A loop building and dropping one string per round; its live-cell report is the same at any
+// round count when nothing leaks.
+let leakCheckLoopSource rounds = "let recursive loop (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else loop(n - 1)(total + Ashes.Text.byteLength(\"a\" + Ashes.Text.fromInt(n)))\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+// Links and runs the module, and returns the live-cell count its `ashes-rc-live N` line on
+// standard error reports.
+let liveCellsReportedBy buildModule name executablePath =
+    match emitModule(buildModule)(name)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(name) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executablePath) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStderrLine(process) with
+                                                | None -> test.fail("expected the leak check's report on stderr, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual(0)(exitCode)
+                                                        in
+                                                            let _ =
+                                                                "ashes-rc-live "
+                                                                |> Ashes.Text.startsWith(line)
+                                                                |> test.assertEqual(true)
+                                                            in Ashes.Text.substring(line)(14)(Ashes.Text.length(line) - 14)
+
+let testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo shipped unit =
+    "selfhost_backend_leak_check_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> leakCheckLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendLeakCheckTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> leakCheckLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendLeakCheckOneRound")("selfhost_backend_leak_check_one_round_e2e"))
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -5576,6 +5631,7 @@ let run shipped =
     |> testRunStaticExecutableForRealIrPrintBoolFalseModule
     |> testRunStaticExecutableForShippedListLengthModule(shipped)
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
+    |> testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)
