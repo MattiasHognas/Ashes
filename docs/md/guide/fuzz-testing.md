@@ -108,7 +108,9 @@ second round leaves reference-counted cells live that the first did not, with th
 round leaks. The program reports its live cells at its end, and a value it keeps to its end is live
 in both runs, so the difference is exactly what one round leaked: a single leaked cell shows. A leaking
 case's source and a `report.tsv` of every case go to `<artifacts>/leak-census/`; the command exits 1
-when any case leaks or yields no count.
+when any case leaks or yields no count. `--only <id>[,<id>...]` keeps only the named combination
+templates, so one class is measured in seconds, under a placement switch (`GRC_NO_...=1`) to show what
+its rule fixes.
 
 With `--stage1 <path>` naming a self-hosted compiler (`bash scripts/selfhost-dev/quickstage1.sh
 <tag>` builds one at `artifacts/selfhost-dev/s1-<tag>`), every case is also compiled by that
@@ -135,7 +137,13 @@ choice is recorded in the case's trace.
 A leak template's program needs types and top-level functions that an expression cannot declare,
 so it is an `IDeclaringCombinationTemplate`: a case that forces it adds its declarations, which end
 in an entry function `Int -> Int`, and the template's expression applies that function, so the work
-runs each time the census evaluates the case's value. The declarations widen the case's budget by
+runs each time the census evaluates the case's value. A class that leaks only in the program's entry
+(a fresh argument of the trailing pipe, `0 |> pass(build(N)([]))`, which a function releases at its
+return but the entry must release at its end) cannot show inside that function, so a template may
+also give the census a trailing workload: an expression naming its rounds count `ROUNDS`, which the
+census runs as the program's trailing expression after the declarations, here with the rounds count
+as the built list's length. `leak.entry-trailing-pipe-fresh-argument` is that template; the other
+profiles still call its entry function. The declarations widen the case's budget by
 their own size, the case records the node budget it was requested with for replay, and its prelude
 holds only the stable generation types, because a case-varying declaration such as a capability
 provider changes whether several of these classes leak. Declaring templates come last in a

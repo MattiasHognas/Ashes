@@ -1,5 +1,6 @@
 using Ashes.Fuzzing.Configuration;
 using Ashes.Fuzzing.Execution;
+using Ashes.Fuzzing.Generation;
 using Shouldly;
 
 namespace Ashes.Fuzzing.Tests;
@@ -90,5 +91,56 @@ public sealed class LeakCensusTests
 
         live[0].ShouldNotBeNull();
         live[1].ShouldBe(live[0]);
+    }
+}
+
+public sealed class LeakCensusTrailingWorkloadTests
+{
+    [Test]
+    public void LeakCensusCommandKeepsOnlyTheNamedTemplates()
+    {
+        FuzzConfiguration.Parse(["leak-census"]).OnlyTemplates.ShouldBeNull();
+        IReadOnlySet<string>? only = FuzzConfiguration.Parse(["leak-census", "--only", "leak.entry-trailing-pipe-fresh-argument, leak.worklist-solve-records"]).OnlyTemplates;
+        only.ShouldNotBeNull();
+        only.ShouldBe(new HashSet<string>(StringComparer.Ordinal) { "leak.entry-trailing-pipe-fresh-argument", "leak.worklist-solve-records" });
+    }
+
+    [Test]
+    public void ATrailingPipeTemplateRunsItsRoundsInTheProgramEntry()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = fixture.Profiles.Get("memory-growth");
+        string[] rotation = fixture.Generator.RotationOrder(profile);
+        int caseIndex = Array.IndexOf(rotation, "leak.entry-trailing-pipe-fresh-argument");
+        caseIndex.ShouldBeGreaterThanOrEqualTo(0);
+        GeneratedFuzzCase generated = fixture.Generator.Generate(677349, caseIndex, profile, profile.EffectiveDefaults.MaximumNodes);
+        generated.TrailingWorkload.ShouldNotBeNull();
+        generated.TrailingWorkload.ShouldContain("ROUNDS");
+        string source = ObservableValueRenderer.RenderTrailingWorkload(generated, generated.TrailingWorkload, 2);
+        source.ShouldContain("(2)([])");
+        source.ShouldNotContain("ROUNDS");
+        source.TrimEnd().ShouldEndWith("|> Ashes.IO.print");
+        Ashes.Frontend.Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Ashes.Frontend.Parser(source, diagnostics).ParseProgram();
+        diagnostics.Errors.ShouldBeEmpty(source);
+        parsed.Items.Count.ShouldBe(generated.Program.Items.Count);
+        Should.Throw<InvalidOperationException>(() => ObservableValueRenderer.RenderTrailingWorkload(generated, "let x = ROUNDS", 1));
+    }
+
+    [Test]
+    public void EveryOtherLeakTemplateKeepsTheEntryFunctionPlacement()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = fixture.Profiles.Get("memory-growth");
+        string[] rotation = fixture.Generator.RotationOrder(profile);
+        for (int caseIndex = 0; caseIndex < rotation.Length; caseIndex++)
+        {
+            if (string.Equals(rotation[caseIndex], "leak.entry-trailing-pipe-fresh-argument", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            fixture.Generator.Generate(677349, caseIndex, profile, profile.EffectiveDefaults.MaximumNodes).TrailingWorkload.ShouldBeNull(rotation[caseIndex]);
+        }
     }
 }

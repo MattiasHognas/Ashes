@@ -211,4 +211,10 @@ internal sealed record GeneratedFuzzCase(
     internal int RequestedNodes { get; init; }
 
     internal int ReplayNodes => RequestedNodes > 0 ? RequestedNodes : Budget.RemainingNodes;
+
+    /// <summary>
+    /// The trailing expression a forced template asks the leak census to run in place of its
+    /// entry-function loop, naming its rounds count <c>ROUNDS</c>; null for every other case.
+    /// </summary>
+    internal string? TrailingWorkload { get; init; }
 }

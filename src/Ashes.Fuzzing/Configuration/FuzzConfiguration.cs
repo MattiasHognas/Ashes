@@ -27,7 +27,8 @@ internal sealed record FuzzConfiguration(
     string ArtifactRoot,
     IReadOnlySet<string> ExplicitOptions,
     string? TemplateDirectory = null,
-    string? Stage1Compiler = null)
+    string? Stage1Compiler = null,
+    IReadOnlySet<string>? OnlyTemplates = null)
 {
     internal static IReadOnlySet<string> SupportedTargets { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -76,6 +77,7 @@ internal sealed record FuzzConfiguration(
         string artifactRoot = Path.Combine("artifacts", "fuzz");
         string? templateDirectory = null;
         string? stage1Compiler = null;
+        HashSet<string>? onlyTemplates = null;
         var explicitOptions = new HashSet<string>(StringComparer.Ordinal);
 
         for (int i = 1; i < args.Count; i++)
@@ -108,6 +110,7 @@ internal sealed record FuzzConfiguration(
                 case "--artifacts": artifactRoot = Value(); break;
                 case "--templates": templateDirectory = Value(); break;
                 case "--stage1": stage1Compiler = Value(); break;
+                case "--only": onlyTemplates = new HashSet<string>(Value().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.Ordinal); break;
                 default: throw new ArgumentException($"Unknown option '{option}'.");
             }
         }
@@ -128,7 +131,7 @@ internal sealed record FuzzConfiguration(
         return new FuzzConfiguration(command, profile, cases, seed, seedCount, caseIndex, target, maximumNodes,
             TimeSpan.FromSeconds(compilerTimeoutSeconds), TimeSpan.FromSeconds(programTimeoutSeconds),
             TimeSpan.FromSeconds(campaignTimeoutSeconds),
-            maximumOutputBytes, maximumArtifactBytes, artifactRoot, explicitOptions, templateDirectory, stage1Compiler);
+            maximumOutputBytes, maximumArtifactBytes, artifactRoot, explicitOptions, templateDirectory, stage1Compiler, onlyTemplates);
     }
 
     internal FuzzConfiguration ApplyProfileDefaults(FuzzProfile profile)

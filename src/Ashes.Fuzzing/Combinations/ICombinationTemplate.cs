@@ -16,7 +16,7 @@ internal interface ICombinationTemplate
 /// Top-level declarations a template's expression calls: the items, the entry function the expression
 /// applies, and the trace of the choices that shaped them.
 /// </summary>
-internal sealed record GeneratedDeclarations(IReadOnlyList<TopLevelItem> Items, GeneratedBinding Entry, GenerationTrace Trace);
+internal sealed record GeneratedDeclarations(IReadOnlyList<TopLevelItem> Items, GeneratedBinding Entry, GenerationTrace Trace, string? TrailingWorkload = null);
 
 /// <summary>
 /// A combination template whose expression calls types and functions an expression cannot declare.

@@ -16,6 +16,28 @@ internal static class ObservableValueRenderer
         return AshesFormatter.Format(observable);
     }
 
+    /// <summary>
+    /// The case's declarations followed by its template's trailing expression with the rounds count
+    /// in place of <c>ROUNDS</c>: the work runs in the program's entry, not in a function.
+    /// </summary>
+    internal static string RenderTrailingWorkload(GeneratedFuzzCase testCase, string trailingWorkload, int rounds)
+    {
+        if (rounds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rounds));
+        }
+
+        string source = trailingWorkload.Replace("ROUNDS", rounds.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        if (diagnostics.Errors.Count != 0 || parsed.Items.Count != 0)
+        {
+            throw new InvalidOperationException($"The trailing workload is not one expression: {string.Join(" ", diagnostics.Errors)}{Environment.NewLine}{source}");
+        }
+
+        return AshesFormatter.Format(testCase.Program with { Body = parsed.Body });
+    }
+
     internal static string RenderMemoryWorkload(GeneratedFuzzCase testCase, int iterations)
     {
         if (iterations <= 0)

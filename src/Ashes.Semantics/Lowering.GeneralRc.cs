@@ -1214,6 +1214,7 @@ public sealed partial class Lowering
     {
         TypeRef pruned = Prune(resultType);
         if (GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_ENTRYRELEASE") is null
             && (CanArenaReset(pruned)
                 || pruned is TypeRef.TNamedType { Symbol.Constructors: { Count: > 0 } constructors } && constructors.All(constructor => constructor.Arity == 0)))
         {

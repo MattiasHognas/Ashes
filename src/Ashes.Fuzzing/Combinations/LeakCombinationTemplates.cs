@@ -32,6 +32,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new RecordUpdateSingleCellTemplate());
         registry.Register(new UnannotatedLoopStateInExitTupleTemplate());
         registry.Register(new NestedItemLoopPendingBlocksStateTemplate());
+        registry.Register(new EntryTrailingPipeFreshArgumentTemplate());
     }
 }
 
@@ -144,13 +145,20 @@ internal abstract class LeakCombinationTemplate : IDeclaringCombinationTemplate
         }
 
         GeneratedBinding entry = new(names.Entry, new AshesType.Function(AshesType.Int, AshesType.Int), IsFunction: true);
-        return new GeneratedDeclarations(parsed.Items, entry, new GenerationTrace([$"leak-declarations:{Id}", .. names.Choices]));
+        return new GeneratedDeclarations(parsed.Items, entry, new GenerationTrace([$"leak-declarations:{Id}", .. names.Choices]), TrailingWorkload(names));
     }
 
     /// <summary>
     /// The program's declarations, ending with <c>let {names.Entry} (seed: Int) = ...</c>.
     /// </summary>
     protected abstract string Declarations(LeakNames names);
+
+    /// <summary>
+    /// A trailing expression the leak census runs in place of its entry-function loop, naming the
+    /// rounds count <c>ROUNDS</c>, for a class that leaks only in the program's entry; null when the
+    /// entry-function loop is the placement.
+    /// </summary>
+    protected virtual string? TrailingWorkload(LeakNames names) => null;
 
     private GeneratedBinding? EntryIn(GenerationContext context) => context.Bindings.FirstOrDefault(binding =>
         binding.IsFunction &&

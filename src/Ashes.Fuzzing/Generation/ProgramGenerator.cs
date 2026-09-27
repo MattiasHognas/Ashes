@@ -137,6 +137,7 @@ internal sealed class ProgramGenerator
         return new GeneratedFuzzCase(masterSeed, caseSeed, caseIndex, profile.Id, type, program, source, generated.Features, generated.Trace, metrics.Nodes, budget)
         {
             RequestedNodes = maximumNodes,
+            TrailingWorkload = declarations?.TrailingWorkload,
         };
     }
 

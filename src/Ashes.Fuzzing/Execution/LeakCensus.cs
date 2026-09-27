@@ -95,7 +95,10 @@ internal static class LeakCensus
             ulong seed = configuration.Seed + (ulong)seedIndex;
             for (int index = 0; index < templateCount; index++)
             {
-                yield return GenerateCase(generator, profile, configuration.MaximumNodes, seed, index, templateIds[index]);
+                if (configuration.OnlyTemplates is null || configuration.OnlyTemplates.Contains(templateIds[index]))
+                {
+                    yield return GenerateCase(generator, profile, configuration.MaximumNodes, seed, index, templateIds[index]);
+                }
             }
         }
     }
@@ -107,7 +110,9 @@ internal static class LeakCensus
             GeneratedFuzzCase generated = generator.Generate(seed, index, profile, maximumNodes);
             return new LeakCensusCase(
                 $"{templateId}@{seed}:{generated.Type}",
-                rounds => ObservableValueRenderer.RenderMemoryWorkload(generated, rounds));
+                generated.TrailingWorkload is string trailing
+                    ? rounds => ObservableValueRenderer.RenderTrailingWorkload(generated, trailing, rounds)
+                    : rounds => ObservableValueRenderer.RenderMemoryWorkload(generated, rounds));
         }
         catch (InvalidOperationException exception)
         {
