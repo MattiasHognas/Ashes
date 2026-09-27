@@ -11531,7 +11531,7 @@ public sealed partial class Lowering
             {
                 request = request.WithCallerReportedExpectedType(expectedType);
             }
-            (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
+            (int Temp, TypeRef Type) lowered = LowerTcoArgumentForSlot(tco, index, argument, request);
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
             int borrowedTemp = lowered.Temp;
             lowered.Temp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, lowered.Temp, lowered.Type);
@@ -11541,6 +11541,24 @@ public sealed partial class Lowering
         finally
         {
             _affineAppendCtx = savedAffineCtx;
+        }
+    }
+
+    // The parameter slot a tail self-call argument being lowered becomes, for the arena cells it
+    // builds (see RetainRuntimeManagedTcoConstructorArguments).
+    private (TcoContext Loop, int Slot)? _tcoArgumentDestination;
+
+    private (int Temp, TypeRef Type) LowerTcoArgumentForSlot(TcoContext tco, int index, Expr argument, LoweredValueRequest request)
+    {
+        (TcoContext Loop, int Slot)? savedDestination = _tcoArgumentDestination;
+        _tcoArgumentDestination = index < tco.ParamSlots.Count ? (tco, tco.ParamSlots[index]) : null;
+        try
+        {
+            return LowerExpr(argument, request).AsPair();
+        }
+        finally
+        {
+            _tcoArgumentDestination = savedDestination;
         }
     }
 

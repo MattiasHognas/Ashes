@@ -1492,7 +1492,7 @@ public sealed partial class Lowering
         bool runtimeManagedCandidate,
         IReadOnlyDictionary<string, bool>? childBindings)
     {
-        RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps);
+        RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps, runtimeManagedCandidate);
         if (!runtimeManagedCandidate)
         {
             return;
@@ -1538,7 +1538,8 @@ public sealed partial class Lowering
     private void RetainRuntimeManagedTcoConstructorArguments(
         IReadOnlyList<Expr> arguments,
         IReadOnlyList<TypeRef> argumentTypes,
-        List<int> argumentTemps)
+        List<int> argumentTemps,
+        bool runtimeManagedCandidate)
     {
         for (int index = 0; index < arguments.Count; index++)
         {
@@ -1553,12 +1554,62 @@ public sealed partial class Lowering
                 continue;
             }
 
-            argumentTemps[index] = IsRuntimeManagedTcoParamSlot(local)
-                ? EmitRuntimeManagedConstructorFieldRetain(
+            if (!IsRuntimeManagedTcoParamSlot(local))
+            {
+                argumentTemps[index] = EmitPendingRuntimeManagedConstructorFieldRetain(argumentTemps[index], local.Slot);
+            }
+            else if (!runtimeManagedCandidate && TryGetArenaSuccessorDestination(out int destinationSlot))
+            {
+                argumentTemps[index] = EmitRetainOrArenaCopyForDestination(argumentTemps[index], argumentTypes[index], destinationSlot);
+            }
+            else
+            {
+                argumentTemps[index] = EmitRuntimeManagedConstructorFieldRetain(
                     argumentTemps[index],
-                    MayUseEmptyListRepresentation(argumentTypes[index]))
-                : EmitPendingRuntimeManagedConstructorFieldRetain(argumentTemps[index], local.Slot);
+                    MayUseEmptyListRepresentation(argumentTypes[index]));
+            }
         }
+    }
+
+    // The loop parameter an arena cell under construction becomes part of, when it is built inside
+    // a tail self-call argument whose parameter is not on the reference-counted heap yet.
+    private bool TryGetArenaSuccessorDestination(out int destinationSlot)
+    {
+        destinationSlot = -1;
+        if (Environment.GetEnvironmentVariable("GRC_NO_ARENACELLCOPY") is not null
+            || _tcoArgumentDestination is not { } destination
+            || !ReferenceEquals(destination.Loop, _tcoCtx)
+            || _tcoCtx.IsRuntimeManagedSlot(destination.Slot))
+        {
+            return false;
+        }
+
+        destinationSlot = destination.Slot;
+        return true;
+    }
+
+    // An arena cell holding a part of a reference-counted loop parameter keeps its own reference
+    // when its successor parameter ends up on the reference-counted heap, which takes that
+    // reference over. A parameter left in the arena releases nothing it holds, so the cell holds an
+    // arena copy of the part instead: an arena value never holds the only reference to a
+    // reference-counted one.
+    private int EmitRetainOrArenaCopyForDestination(int sourceTemp, TypeRef type, int destinationSlot)
+    {
+        int destinationFlagTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(destinationFlagTemp, 1));
+        _pendingRuntimeArgumentFlags[destinationFlagTemp] = destinationSlot;
+        int resultSlot = NewLocal();
+        string copyLabel = NewLabel("rc_arena_cell_part_copy");
+        string doneLabel = NewLabel("rc_arena_cell_part_done");
+        Emit(new IrInst.JumpIfFalse(destinationFlagTemp, copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitRuntimeManagedConstructorFieldRetain(sourceTemp, MayUseEmptyListRepresentation(type))));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitDeepCopy(sourceTemp, type)));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     private int EmitRuntimeManagedConstructorFieldRetain(int sourceTemp, bool mayBeEmpty)

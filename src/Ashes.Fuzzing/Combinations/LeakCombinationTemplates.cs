@@ -380,7 +380,8 @@ internal sealed class ExitArmRecordHoldsLoopParameterTemplate() : LeakCombinatio
 
 /// <summary>
 /// A loop consing a record that holds a field read of its reference-counted state parameter onto a
-/// list accumulator, beside the state it updates.
+/// list accumulator, beside the state it updates, with the list either on the reference-counted
+/// heap or kept in the arena by another arm that drops its newest cell.
 /// </summary>
 internal sealed class LoopRecordCellHoldingParameterFieldTemplate() : LeakCombinationTemplate(
     "leak.loop-record-cell-holding-parameter-field", "loopRecordCellField", GeneratedFeature.Record, GeneratedFeature.TailCall, GeneratedFeature.List)
@@ -395,6 +396,19 @@ internal sealed class LoopRecordCellHoldingParameterFieldTemplate() : LeakCombin
         string update = names.Coin("counter-update")
             ? $"(state with counter = state.counter + {LeakNames.Text(names.Between(1, 5))})"
             : "(state)";
+        string grow = $"{lower}(rest)({close}(cellTag = value, cellBindings = state.{bindings}) :: pending){update}";
+        // Dropping the newest cell in the other arm keeps the list in the arena, where its cells
+        // hold arena copies of the parameter's field.
+        string step = names.Coin("arena-list")
+            ? $$"""
+                if value % 2 == 0
+                            then {{grow}}
+                            else
+                                match pending with
+                                    | _ :: older -> {{lower}}(rest)(older)(state)
+                                    | [] -> {{lower}}(rest)([])(state)
+                """
+            : grow;
         return $$"""
             type {{close}} =
                 | cellTag: Int
@@ -412,7 +426,8 @@ internal sealed class LoopRecordCellHoldingParameterFieldTemplate() : LeakCombin
             let recursive {{lower}} (items: List(Int)) (pending: List({{close}})) (state: {{state}}) =
                 match items with
                     | [] -> state.counter + {{count}}(pending)(0)
-                    | value :: rest -> {{lower}}(rest)({{close}}(cellTag = value, cellBindings = state.{{bindings}}) :: pending){{update}}
+                    | value :: rest ->
+                        {{step}}
 
             let {{names.Entry}} (seed: Int) = {{lower}}({{names.Ints(names.Between(2, 5), 1, 9)}})([])({{state}}({{bindings}} = {{names.Words(names.Between(1, 3))}}, counter = seed))
             """;

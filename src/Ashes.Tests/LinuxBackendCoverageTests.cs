@@ -3094,6 +3094,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_arena_list_cell_with_parameter_field_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop conses a record holding a field read of its reference-counted state onto a list
+        // another arm shortens, so the list stays in the arena, which releases nothing it holds.
+        // The record holds an arena copy of the field; a retain taken for it leaked the field's
+        // list once per cell.
+        int[] roundCounts = [4000, 32000, 256000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaListCellWithParameterFieldProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena list cell holding a parameter field", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_loop_record_cell_with_parameter_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10974,6 +10999,40 @@ public sealed class LinuxBackendCoverageTests
         let quantified = [1, 2, 3, 4, 5, 6, 7, 8]
 
         """;
+
+    private static string BuildArenaListCellWithParameterFieldProgram(int rounds)
+        => $$"""
+            type Close =
+                | closeName: Int
+                | closeBindings: List(Str)
+
+            type State =
+                | names: List(Str)
+                | counter: Int
+
+            let recursive countCloses (items: List(Close)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: rest -> countCloses(rest)(total + 1)
+
+            let recursive lowerItems (items: List(Int)) (pending: List(Close)) (state: State) =
+                match items with
+                    | [] -> state.counter + countCloses(pending)(0)
+                    | value :: rest ->
+                        if value % 2 == 0
+                        then lowerItems(rest)(Close(closeName = value, closeBindings = state.names) :: pending)(state with counter = state.counter + 1)
+                        else
+                            match pending with
+                                | _ :: older -> lowerItems(rest)(older)(state)
+                                | [] -> lowerItems(rest)([])(state)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + lowerItems([2, 7, 4, 4])([])(State(names = ["a", "b"], counter = 0)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
 
     private static string BuildLoopRecordCellWithParameterFieldProgram(int rounds)
         => $$"""

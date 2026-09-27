@@ -19418,7 +19418,59 @@ let emitPendingConstructorFieldRetain (temp: Int) (slot: Int) (state: CoreLoweri
 // the back edge; a slot admitted by now retains outright, any other through the pending skeleton.
 // A child the cell already made its own (retained or copied for a runtime cell) holds that
 // reference.
-let retainConstructorLoopParameterArgument (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let emitLoopParameterFieldRetain (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = duplicate } ->
+            (emit(semanticType
+            |> resolveType(state)
+            |> mayBeEmptyList
+            |> RcDup(duplicate)(temp)(true))(allocated), duplicate)
+
+// Stage 0's `TryGetArenaSuccessorDestination`: the loop parameter an arena cell under construction
+// becomes part of, when it is built inside a tail self-call argument whose parameter is not on the
+// reference-counted heap yet.
+let arenaSuccessorDestination (runtimeManaged: Bool) (state: CoreLoweringState) =
+    match (runtimeManaged, stateBackEdgeArgumentSlot(state)) with
+        | (false, Some(slot)) ->
+            if tcoSlotAdmittedNow(slot)(state)
+            then None
+            else Some(slot)
+        | _ -> None
+
+// Stage 0's `EmitRetainOrArenaCopyForDestination`: an arena cell holding a part of a
+// reference-counted loop parameter keeps its own reference when its successor parameter ends up
+// on the reference-counted heap, which takes that reference over, and an arena copy of the part
+// when the parameter stays in the arena, where nothing releases what it holds.
+let emitRetainOrArenaCopyForDestination (temp: Int) (semanticType: SemanticType) (destinationSlot: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = flagState, temp = flagTemp } ->
+            match flagState
+            |> withStatePendingRuntimeArgumentFlags((flagTemp, destinationSlot) :: statePendingRuntimeArgumentFlags(flagState))
+            |> emit(LoadConstInt(flagTemp)(1))
+            |> freshLocal with
+                | FreshLocal { state = slotted, local = resultSlot } ->
+                    match freshLabel("rc_arena_cell_part_copy")(slotted) with
+                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                            match freshLabel("rc_arena_cell_part_done")(copyLabelled) with
+                                | FreshLabel { state = doneLabelled, label = doneLabel } ->
+                                    match doneLabelled
+                                    |> emit(JumpIfFalse(flagTemp)(copyLabel))
+                                    |> emitLoopParameterFieldRetain(temp)(semanticType) with
+                                        | (retained, duplicate) ->
+                                            match retained
+                                            |> emit(StoreLocal(resultSlot)(duplicate))
+                                            |> emit(Jump(doneLabel))
+                                            |> emit(Label(copyLabel))
+                                            |> emitLocatedDeepCopy(temp)(semanticType) with
+                                                | (copied, copyTemp) ->
+                                                    match copied
+                                                    |> emit(StoreLocal(resultSlot)(copyTemp))
+                                                    |> emit(Label(doneLabel))
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = loaded, temp = resultTemp } ->
+                                                            (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
+
+let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (state
     |> statePatternOwnerCopyTemps
     |> containsInt(temp), constructorArgumentParameterSlot(argument)(semanticType)(state)) with
@@ -19427,25 +19479,22 @@ let retainConstructorLoopParameterArgument (argument: Expr) (temp: Int) (semanti
         | (false, Some(slot)) ->
             if tcoSlotAdmittedNow(slot)(state)
             then
-                match freshTemp(state) with
-                    | FreshTemp { state = allocated, temp = duplicate } ->
-                        (emit(semanticType
-                        |> resolveType(state)
-                        |> mayBeEmptyList
-                        |> RcDup(duplicate)(temp)(true))(allocated), duplicate)
+                match arenaSuccessorDestination(runtimeManaged)(state) with
+                    | Some(destinationSlot) -> emitRetainOrArenaCopyForDestination(temp)(semanticType)(destinationSlot)(state)
+                    | None -> emitLoopParameterFieldRetain(temp)(semanticType)(state)
             else emitPendingConstructorFieldRetain(temp)(slot)(state)
 
-let recursive retainLoopParameterArguments (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+let recursive retainLoopParameterArguments (runtimeManaged: Bool) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (arguments, temps, semanticTypes) with
         | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
-            match retainConstructorLoopParameterArgument(argument)(temp)(semanticType)(state) with
-                | (marked, markedTemp) -> retainLoopParameterArguments(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
+            match retainConstructorLoopParameterArgument(runtimeManaged)(argument)(temp)(semanticType)(state) with
+                | (marked, markedTemp) -> retainLoopParameterArguments(runtimeManaged)(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
-let retainConstructorLoopParameterArguments arguments lowered =
+let retainConstructorLoopParameterArguments (runtimeManaged: Bool) arguments lowered =
     match lowered with
         | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
-            match retainLoopParameterArguments(arguments)(temps)(semanticTypes)(state)([]) with
+            match retainLoopParameterArguments(runtimeManaged)(arguments)(temps)(semanticTypes)(state)([]) with
                 | (marked, markedTemps) -> lowered with state = marked, temps = markedTemps
         | _ -> lowered
 
@@ -19595,7 +19644,7 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                                             | (typedState, None) ->
                                                 (lowered with state = typedState)
                                                 |> handConstructorFreshChildren(layout)(arguments)(resultType)(runtimeManaged)(stackAllocate)
-                                                |> retainConstructorLoopParameterArguments(arguments)
+                                                |> retainConstructorLoopParameterArguments(runtimeManaged)(arguments)
                                                 |> retainRuntimeCellChildren(runtimeManaged)(arguments)
                                                 |> finishConstructorAllocation(arguments)(stackAllocate)(layout)(resultType)(runtimeManaged)
 
