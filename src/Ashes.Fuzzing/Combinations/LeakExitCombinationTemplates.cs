@@ -164,3 +164,62 @@ internal sealed class BorrowedChildOfLiteralSuccessorTemplate() : LeakCombinatio
     }
 }
 
+/// <summary>
+/// A worklist over a tree of seen keys whose front queue is walked by its consumed tail and
+/// refilled from the reversed back queue, each step pairing the grown back queue with the grown
+/// tree: the front must live on the reference-counted heap for each step's earlier pair to be
+/// released.
+/// </summary>
+internal sealed class WorklistFrontWalkedAndRefilledTemplate() : LeakCombinationTemplate(
+    "leak.worklist-front-walked-and-refilled", "worklistFrontWalkedAndRefilled", GeneratedFeature.Adt, GeneratedFeature.Tuple, GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string seen = names.Of("LeakSeen");
+        string insert = names.Of("insert");
+        string countSeen = names.Of("countSeen");
+        string reverseAll = names.Of("reverseAll");
+        string enqueue = names.Of("enqueue");
+        string solve = names.Of("solve");
+        string keys = names.Words(names.Between(2, 4));
+        int fuel = names.Between(6, 14);
+        string refill = names.Coin("library-reverse") ? "Ashes.Collection.List.reverse(back)" : $"{reverseAll}(back)([])";
+        return $$"""
+            type {{seen}} =
+                | Leaf
+                | Node({{seen}}, Str, {{seen}})
+
+            let recursive {{insert}} (key: Str) (seen: {{seen}}) =
+                match seen with
+                    | Leaf -> Node(Leaf)(key)(Leaf)
+                    | Node(left, current, right) -> Node({{insert}}(key)(left))(current)(right)
+
+            let recursive {{countSeen}} (seen: {{seen}}) =
+                match seen with
+                    | Leaf -> 0
+                    | Node(left, _current, right) -> {{countSeen}}(left) + 1 + {{countSeen}}(right)
+
+            let recursive {{reverseAll}} (values: List(Str)) (acc: List(Str)) =
+                match values with
+                    | [] -> acc
+                    | value :: rest -> {{reverseAll}}(rest)(value :: acc)
+
+            let {{enqueue}} (key: Str) (back: List(Str)) (seen: {{seen}}) = (key :: back, {{insert}}(key)(seen))
+
+            let recursive {{solve}} (front: List(Str)) (back: List(Str)) (seen: {{seen}}) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> {{countSeen}}(seen)
+                            | _ -> {{solve}}({{refill}})([])(seen)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then {{countSeen}}(seen)
+                        else
+                            match {{enqueue}}(key + {{names.Word()}})(back)(seen) with
+                                | (nextBack, nextSeen) -> {{solve}}(rest)(nextBack)(nextSeen)(fuel - 1)
+
+            let {{names.Entry}} (seed: Int) = {{solve}}({{keys}})([])(Leaf)({{LeakNames.Text(fuel)}}) + seed
+            """;
+    }
+}

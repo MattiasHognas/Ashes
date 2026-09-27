@@ -35,6 +35,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new EntryTrailingPipeFreshArgumentTemplate());
         registry.Register(new LoopExitHeadUnderNestedPatternTemplate());
         registry.Register(new BorrowedChildOfLiteralSuccessorTemplate());
+        registry.Register(new WorklistFrontWalkedAndRefilledTemplate());
     }
 }
 
