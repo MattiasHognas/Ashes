@@ -13190,12 +13190,23 @@ public sealed partial class Lowering
         => GetCallCopyOutKind(resultType, out _, out _) switch
         {
             CopyOutKind.Shallow or CopyOutKind.List => true,
-            CopyOutKind.None => IsNormalizableUncoveredRecord(resultType)
-                && CalleeReturnsGeneralRcOwned(rootExpr, argumentCount, resultType)
-                && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
-                && !CompiledResultRuntimeManaged(rootExpr, argumentCount),
+            CopyOutKind.None => (IsNormalizableUncoveredRecord(resultType)
+                    && CalleeReturnsGeneralRcOwned(rootExpr, argumentCount, resultType)
+                    && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
+                    && !CompiledResultRuntimeManaged(rootExpr, argumentCount))
+                || IsSpecializedListResultOwnedAtRunTime(rootExpr, argumentCount, resultType),
             _ => false,
         };
+
+    // A list result of an element specialization with no fixed copy-out whose elements the generic
+    // list deep copy can rebuild (a list of an enum's nullary constructors): the specialization may
+    // build it on the reference-counted heap, and the returns bit says whether it did.
+    private bool IsSpecializedListResultOwnedAtRunTime(Expr rootExpr, int argumentCount, TypeRef resultType)
+        => IsQuantifiedListResultSpecializationRoot(rootExpr)
+            && Prune(resultType) is TypeRef.TList list
+            && !CanArenaReset(Prune(list.Element))
+            && CanEmitRuntimeManagedListElementDeepCopy(list.Element)
+            && !CompiledResultRuntimeManaged(rootExpr, argumentCount);
 
     private bool CompiledResultRuntimeManaged(Expr rootExpr, int argumentCount)
         => TryResolveKnownFunctionLabel(rootExpr, out string label)
@@ -13314,6 +13325,11 @@ public sealed partial class Lowering
     // read straight out of the arena.
     private bool IsCalleeResultListElementQuantifiedInScheme(Expr rootExpr, int argumentCount)
     {
+        if (IsQuantifiedListResultSpecializationRoot(rootExpr))
+        {
+            return true;
+        }
+
         Binding? binding = rootExpr switch
         {
             Expr.Var variable => Lookup(variable.Name),
@@ -14756,8 +14772,11 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(reclaimLabel));
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
 
+        // Owned on both paths: the reference-counted result taken over as it is, the arena one
+        // rebuilt with references of its own.
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 

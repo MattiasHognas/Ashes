@@ -3791,6 +3791,39 @@ public sealed class LinuxBackendCoverageTests
             .ShouldBeTrue("The caller must settle the reference handed to the specialized producer.");
     }
 
+    [Test]
+    public async Task Linux_backend_mapped_list_of_nullary_constructors_memory_should_plateau()
+    {
+        // `map(kindOf)(nums)` over an enum of nullary constructors specializes `map` for that element,
+        // whose cells are reference-counted, while the caller has no copy-out for such a list and
+        // used to hand the result back untouched: never released, one list per call. The caller now
+        // reads the result's ownership at run time and takes the list over.
+        IrProgram ir = LowerProgramWithImports(BuildMappedNullaryEnumListProgram(3));
+        ir.Functions.Any(function => function.Label.EndsWith("__element", StringComparison.Ordinal))
+            .ShouldBeTrue("map should specialize at the call fixing its element type.");
+        AllInstructions(ir).Any(instruction =>
+            instruction is IrInst.Label label
+            && label.Name.StartsWith("call_deep_copy_arena_result", StringComparison.Ordinal))
+            .ShouldBeTrue("The caller must take the specialized map's list over or copy it, by its returns bit.");
+
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildMappedNullaryEnumListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mapped list of nullary constructors", samples, maxRssKb: 16_000);
+    }
+
     /// <summary>
     /// Root-cause probe for the leak above: the ADT shell built at the TCO loop's exit arm must be
     /// runtime-managed (RC) whenever it stores runtime-managed children, exactly like the equivalent
@@ -10284,6 +10317,39 @@ public sealed class LinuxBackendCoverageTests
                 else repeat(times - 1)(total + freeTypes(items)([])(0))
 
             Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildMappedNullaryEnumListProgram(int rounds)
+        => $$"""
+            type Kind =
+                | Alpha
+                | Beta
+                | Gamma
+
+            let kindOf (n: Int) =
+                if n % 3 == 0
+                then Alpha
+                else
+                    if n % 3 == 1
+                    then Beta
+                    else Gamma
+
+            let recursive countAlpha (kinds: List(Kind)) (total: Int) =
+                match kinds with
+                    | [] -> total
+                    | Alpha :: rest -> countAlpha(rest)(total + 1)
+                    | _ :: rest -> countAlpha(rest)(total)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let kinds = Ashes.Collection.List.map(kindOf)([n, n + 1, n + 2])
+                    in rounds(n - 1)(total + countAlpha(kinds)(0))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
             """;
 
     private static string BuildLastOfUnresolvedHeadProgram(int rounds)
