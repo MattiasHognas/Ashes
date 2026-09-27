@@ -144,3 +144,29 @@ public sealed class LeakCensusTrailingWorkloadTests
         }
     }
 }
+
+public sealed class LeakCensusPoisonTests
+{
+    [Test]
+    public void LeakCensusCommandTakesThePoisonPass()
+    {
+        FuzzConfiguration.Parse(["leak-census"]).Poison.ShouldBeFalse();
+        FuzzConfiguration.Parse(["leak-census", "--poison", "--seeds", "2"]).Poison.ShouldBeTrue();
+    }
+
+    [Test]
+    public void APoisonedRunThatEndsAbnormallyIsAUseAfterFree()
+    {
+        LeakCensusResult clean = new("ok.case", new LeakMeasurement(1, 1, null), null, new PoisonVerdict(null));
+        clean.HasUseAfterFree.ShouldBeFalse();
+        LeakCensus.Describe(clean).ShouldBe("ok    ok.case; poison ok");
+        LeakCensus.ReportLine(clean).ShouldBe("ok.case\t1\t1\tok\t\tok\t");
+        LeakCensusResult crashed = new("uaf.case", new LeakMeasurement(1, 1, null), null, new PoisonVerdict("program exit 139"));
+        crashed.HasUseAfterFree.ShouldBeTrue();
+        LeakCensus.Describe(crashed).ShouldBe("UAF   uaf.case; poison UAF program exit 139");
+        LeakCensus.ReportLine(crashed).ShouldBe("uaf.case\t1\t1\tok\t\tuaf\tprogram exit 139");
+        LeakCensusResult both = new("both.case", new LeakMeasurement(1, 3, null), new LeakMeasurement(1, 1, null), new PoisonVerdict("program exit 134"));
+        LeakCensus.Describe(both).ShouldBe("UAF   both.case: stage0 LEAK 2; stage1 ok; poison UAF program exit 134");
+    }
+}
+

@@ -6868,7 +6868,9 @@ public sealed partial class Lowering
             return retainedTemp;
         }
 
-        if (result is Expr.Var deferred && DeferredProtectedPatternOwner(deferred) is { } deferredOwner)
+        if (result is Expr.Var deferred
+            && Environment.GetEnvironmentVariable("GRC_NO_DEFERREDPATTERNOWNER") is null
+            && DeferredProtectedPatternOwner(deferred) is { } deferredOwner)
         {
             return TransferDeferredPatternOwnerResult(branchTemp, deferredOwner);
         }

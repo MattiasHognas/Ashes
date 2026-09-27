@@ -33,6 +33,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new UnannotatedLoopStateInExitTupleTemplate());
         registry.Register(new NestedItemLoopPendingBlocksStateTemplate());
         registry.Register(new EntryTrailingPipeFreshArgumentTemplate());
+        registry.Register(new LoopExitHeadUnderNestedPatternTemplate());
+        registry.Register(new BorrowedChildOfLiteralSuccessorTemplate());
     }
 }
 

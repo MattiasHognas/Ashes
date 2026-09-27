@@ -120,6 +120,16 @@ or `SKIP reason`, and `report.tsv` carries stage 1's four columns after stage 0'
 under either compiler fails the run. A class that leaks under stage 1 but not stage 0 is a stage-1
 placement rule still to be ported; the reverse is a stage-0 rule stage 1 does not need.
 
+With `--poison`, every case is also built once by stage 0 at two rounds with `ASHES_RC_POISON=1`,
+which overwrites every freed cell, and run: a program that ends with a signal, a non-zero exit or a
+hang read freed memory, and the case reports `UAF` with the exit after its leak cells, fails the run
+like a leak, and has its source written beside the report. Two templates carry the use-after-free
+shapes the census knows: a generic walk whose exit arm returns a string bound under a nested pattern
+(`| last :: [] -> last` and three shapes like it) while the `[] -> ""` arm fixes the type only later,
+and a loop over a list shared by every round whose record literal successor holds a span matched out
+of that list. Neither leaks; both fail under `--poison` when their rule is switched off
+(`GRC_NO_DEFERREDPATTERNOWNER`, `GRC_NO_BORROWEDCHILDKEEP`).
+
 The `leak.*` templates give the census the shapes that leak. Each generates a parametric program of
 one class of reference-count leak found in the self-hosted compiler: a record whose list field grows
 in the record-update successor of a loop, a map threaded through `upsertStr` while a list is walked,

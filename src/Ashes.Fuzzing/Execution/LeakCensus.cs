@@ -30,14 +30,25 @@ internal sealed record LeakMeasurement(long? LiveAfterOne, long? LiveAfterTwo, s
 }
 
 /// <summary>
-/// The outcome of one case: stage 0's measurement, and stage 1's when a self-hosted compiler was
-/// given.
+/// The outcome of running the case's two-round program built with every freed block overwritten
+/// (<c>ASHES_RC_POISON=1</c>): a failure names how the program ended when a use after free showed.
 /// </summary>
-internal sealed record LeakCensusResult(string Name, LeakMeasurement Stage0, LeakMeasurement? Stage1 = null)
+internal sealed record PoisonVerdict(string? Failure)
+{
+    internal string Cell => Failure is null ? "ok" : "UAF " + Failure;
+}
+
+/// <summary>
+/// The outcome of one case: stage 0's measurement, stage 1's when a self-hosted compiler was
+/// given, and the poisoned run's verdict when asked for.
+/// </summary>
+internal sealed record LeakCensusResult(string Name, LeakMeasurement Stage0, LeakMeasurement? Stage1 = null, PoisonVerdict? Poison = null)
 {
     internal bool Leaks => Stage0.Leaks || Stage1?.Leaks == true;
 
     internal bool Failed => Stage0.Failure is not null || Stage1?.Failure is not null;
+
+    internal bool HasUseAfterFree => Poison?.Failure is not null;
 
     internal IEnumerable<LeakMeasurement> Measurements => Stage1 is null ? [Stage0] : [Stage0, Stage1];
 }
@@ -71,7 +82,7 @@ internal static class LeakCensus
             LeakCensusResult result = await MeasureAsync(testCase, configuration, compiler, repositoryRoot, cancellationToken).ConfigureAwait(false);
             results.Add(result);
             Console.WriteLine(Describe(result));
-            if (result.Leaks || result.Failed)
+            if (result.Leaks || result.Failed || result.HasUseAfterFree)
             {
                 await File.WriteAllTextAsync(Path.Combine(reportDirectory, SafeFileName(testCase.Name) + ".ash"), testCase.SourceForRounds(2), cancellationToken).ConfigureAwait(false);
             }
@@ -80,8 +91,10 @@ internal static class LeakCensus
         await File.WriteAllLinesAsync(Path.Combine(reportDirectory, "report.tsv"), results.Select(ReportLine), cancellationToken).ConfigureAwait(false);
         int leaking = results.Count(result => result.Leaks);
         int failed = results.Count(result => result.Failed);
-        Console.WriteLine($"leak census: {results.Count} case(s), {leaking} leaking, {failed} without a count; report in {reportDirectory}");
-        return leaking == 0 && failed == 0 ? 0 : 1;
+        int useAfterFree = results.Count(result => result.HasUseAfterFree);
+        string poisoned = configuration.Poison ? $", {useAfterFree} failing poisoned" : "";
+        Console.WriteLine($"leak census: {results.Count} case(s), {leaking} leaking, {failed} without a count{poisoned}; report in {reportDirectory}");
+        return leaking == 0 && failed == 0 && useAfterFree == 0 ? 0 : 1;
     }
 
     // Case i of a seed forces the profile's i-th combination template, so one pass over the
@@ -150,7 +163,30 @@ internal static class LeakCensus
         LeakMeasurement? stage1 = configuration.Stage1Compiler is null
             ? null
             : await MeasureWithAsync(testCase, configuration, compiler, repositoryRoot, configuration.Stage1Compiler, cancellationToken).ConfigureAwait(false);
-        return new LeakCensusResult(testCase.Name, stage0, stage1);
+        PoisonVerdict? poison = configuration.Poison && stage0.Failure?.StartsWith("generation:", StringComparison.Ordinal) != true
+            ? await RunPoisonedAsync(testCase, configuration, compiler, repositoryRoot, cancellationToken).ConfigureAwait(false)
+            : null;
+        return new LeakCensusResult(testCase.Name, stage0, stage1, poison);
+    }
+
+    // The two-round program, built by stage 0 with every freed block overwritten, must still end
+    // normally: a signal, a non-zero exit or a hang is a read of freed memory.
+    private static async Task<PoisonVerdict> RunPoisonedAsync(
+        LeakCensusCase testCase,
+        FuzzConfiguration configuration,
+        CompilerExecution compiler,
+        string repositoryRoot,
+        CancellationToken cancellationToken)
+    {
+        (ProcessResult compile, ProcessResult? run) = await compiler.CompileAndRunAsync(
+            testCase.SourceForRounds(2), repositoryRoot, configuration.Target, "-O2", configuration.CompilerTimeout, configuration.ProgramTimeout,
+            configuration.MaximumOutputBytes, cancellationToken, poison: true).ConfigureAwait(false);
+        if (run is null)
+        {
+            return new PoisonVerdict($"compile exit {compile.ExitCode}: {FirstLine(compile.StandardError + compile.StandardOutput)}");
+        }
+
+        return new PoisonVerdict(run.TimedOut ? "program timed out" : run.ExitCode == 0 ? null : $"program exit {run.ExitCode}");
     }
 
     private static async Task<LeakMeasurement> MeasureWithAsync(
@@ -210,26 +246,39 @@ internal static class LeakCensus
     /// </summary>
     internal static string Describe(LeakCensusResult result)
     {
-        string status = result.Leaks ? "LEAK " : result.Failed ? "SKIP " : "ok   ";
+        string status = result.HasUseAfterFree ? "UAF  " : result.Leaks ? "LEAK " : result.Failed ? "SKIP " : "ok   ";
+        string poison = result.Poison is PoisonVerdict verdict ? "; poison " + verdict.Cell : "";
         if (result.Stage1 is LeakMeasurement stage1)
         {
-            return $"{status} {result.Name}: stage0 {result.Stage0.Cell}; stage1 {stage1.Cell}";
+            return $"{status} {result.Name}: stage0 {result.Stage0.Cell}; stage1 {stage1.Cell}{poison}";
         }
 
         LeakMeasurement stage0 = result.Stage0;
         return stage0.Failure is not null
-            ? $"SKIP  {result.Name}: {stage0.Failure}"
+            ? $"SKIP  {result.Name}: {stage0.Failure}{poison}"
             : stage0.Leaks
-                ? $"LEAK  {result.Name}: {stage0.CellsPerRound} cell(s) per round (live {stage0.LiveAfterOne} -> {stage0.LiveAfterTwo})"
-                : $"ok    {result.Name}";
+                ? $"LEAK  {result.Name}: {stage0.CellsPerRound} cell(s) per round (live {stage0.LiveAfterOne} -> {stage0.LiveAfterTwo}){poison}"
+                : $"{status} {result.Name}{poison}";
     }
 
     /// <summary>
-    /// The report row: name, live after one and two rounds, verdict and reason for stage 0, then
-    /// the same four columns for stage 1 when it measured the case.
+    /// The report row: name, live after one and two rounds, verdict and reason for stage 0, the
+    /// same four columns for stage 1 when it measured the case, then the poisoned run's verdict
+    /// and reason when there was one.
     /// </summary>
     internal static string ReportLine(LeakCensusResult result)
-        => string.Join('\t', [result.Name, .. result.Measurements.SelectMany(ReportColumns)]);
+        => string.Join('\t', [result.Name, .. result.Measurements.SelectMany(ReportColumns), .. PoisonColumns(result.Poison)]);
+
+    private static IEnumerable<string> PoisonColumns(PoisonVerdict? verdict)
+    {
+        if (verdict is null)
+        {
+            yield break;
+        }
+
+        yield return verdict.Failure is null ? "ok" : "uaf";
+        yield return verdict.Failure ?? "";
+    }
 
     private static IEnumerable<string> ReportColumns(LeakMeasurement measurement)
     {

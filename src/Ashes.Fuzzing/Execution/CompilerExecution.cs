@@ -15,7 +15,8 @@ internal sealed class CompilerExecution
         bool disableTraitSpecialization = false,
         bool measurePeakRss = false,
         bool leakCheck = false,
-        string? stage1Compiler = null)
+        string? stage1Compiler = null,
+        bool poison = false)
     {
         string temporaryRoot = Directory.CreateTempSubdirectory("ashes-fuzz-").FullName;
         try
@@ -28,11 +29,16 @@ internal sealed class CompilerExecution
             (string fileName, IReadOnlyList<string> arguments) = stage1Compiler is null
                 ? Stage0Command(repositoryRoot, optimization, effectiveTarget, sourcePath, executablePath, disableReuse, disableTraitSpecialization)
                 : Stage1Command(stage1Compiler, sourcePath, executablePath, disableReuse);
-            // A leak check builds the program with the runtime's live-cell count (ASHES_RC_LEAKCHECK).
+            // A leak check builds the program with the runtime's live-cell count (ASHES_RC_LEAKCHECK);
+            // a poisoned build overwrites every freed block so a use after free fails (ASHES_RC_POISON).
             Dictionary<string, string> environment = new(StringComparer.Ordinal);
             if (leakCheck)
             {
                 environment["ASHES_RC_LEAKCHECK"] = "1";
+            }
+            if (poison)
+            {
+                environment["ASHES_RC_POISON"] = "1";
             }
             ProcessResult compile = await ProcessTimeout.RunAsync(fileName, arguments, repositoryRoot, compilerTimeout, maximumOutputBytes, cancellationToken, environment: environment).ConfigureAwait(false);
             if (compile.ExitCode != 0 || compile.TimedOut || !File.Exists(executablePath) || !CanExecute(effectiveTarget))
