@@ -3190,6 +3190,35 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_loop_result_tuple_holding_its_unannotated_state_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The same loop with unannotated parameters: the state's type is still unresolved when the
+        // base case's tuple is lowered, so the tuple stays in the arena and its retain of the
+        // parameter is a marker the loop's placement later makes real. That retain needs an owner
+        // that releases it once the loop's result holds its own reference.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            string source = BuildLoopResultTupleHoldingStateProgram(rounds).Replace(
+                "let recursive bindAll (pairs: List((Int, Int))) (state: State) =",
+                "let recursive bindAll pairs state =",
+                StringComparison.Ordinal);
+            IrProgram ir = LowerProgram(source);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 41}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop result tuple holding its unannotated state parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_accumulator_with_differing_self_call_shapes_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())

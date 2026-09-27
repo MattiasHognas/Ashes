@@ -29,6 +29,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new NestedGroupReplacedByHelperTemplate());
         registry.Register(new LoweringStatePipelineTemplate());
         registry.Register(new RecordUpdateSingleCellTemplate());
+        registry.Register(new UnannotatedLoopStateInExitTupleTemplate());
+        registry.Register(new NestedItemLoopPendingBlocksStateTemplate());
     }
 }
 
@@ -426,5 +428,151 @@ internal sealed class AccumulatorFromCallResultPartTemplate() : LeakCombinationT
         }
 
         return "[" + string.Join(", ", items.Select(LeakNames.Text)) + "]";
+    }
+}
+
+/// <summary>
+/// A loop whose parameters are unannotated returns its record state inside a tuple from its base
+/// case, lowered before any arm resolves the state's type: the tuple stays in the arena and the
+/// retain it takes of the parameter needs an owner that releases it.
+/// </summary>
+internal sealed class UnannotatedLoopStateInExitTupleTemplate() : LeakCombinationTemplate(
+    "leak.unannotated-loop-state-in-exit-tuple", "unannotatedExitTuple", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.TailCall, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string state = names.Of("LeakState");
+        string step = names.Of("stepState");
+        string walk = names.Of("walkItems");
+        string count = names.Of("countItems");
+        string list = names.Pick("substitution", "instructions", "labels");
+        string items = names.Ints(names.Between(2, 5), 1, 9);
+        int extra = names.Between(0, 9);
+        bool stateFirst = names.Coin("state-first");
+        string exitTuple = stateFirst ? $"(state, {LeakNames.Text(extra)})" : $"({LeakNames.Text(extra)}, state)";
+        string exitPattern = stateFirst ? "(state, extra)" : "(extra, state)";
+        string successor = names.Variant("successor", 3) switch
+        {
+            0 => $"{step}(value)(state)",
+            1 => $"(state |> {step}(value))",
+            _ => $"{step}(value)({step}(1)(state))",
+        };
+        return $$"""
+            type {{state}} =
+                | {{list}}: List(Int)
+                | counter: Int
+
+            let {{step}} (value: Int) (state: {{state}}) = state with {{list}} = value :: state.{{list}}
+
+            let recursive {{walk}} items state =
+                match items with
+                    | [] -> {{exitTuple}}
+                    | value :: rest -> {{walk}}(rest)({{successor}})
+
+            let recursive {{count}} (values: List(Int)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _ :: rest -> {{count}}(rest)(total + 1)
+
+            let {{names.Entry}} (seed: Int) =
+                match {{walk}}({{items}})({{state}}({{list}} = [seed], counter = seed)) with
+                    | {{exitPattern}} -> state.counter + extra + {{count}}(state.{{list}})(0)
+            """;
+    }
+}
+
+/// <summary>
+/// A loop over nested items whose record state is threaded through a helper, beside a pending
+/// list only the helper arms grow: an item wrapped in a span re-enters the loop with a state a
+/// call produced, and the pending list, which no placement admits, blocks the release of the
+/// state an earlier iteration left.
+/// </summary>
+internal sealed class NestedItemLoopPendingBlocksStateTemplate() : LeakCombinationTemplate(
+    "leak.nested-item-loop-pending-blocks-state", "nestedItemLoop", GeneratedFeature.Record, GeneratedFeature.RecordPattern, GeneratedFeature.Adt, GeneratedFeature.TailCall, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string item = names.Of("LeakItem");
+        string binding = names.Of("LeakBinding");
+        string state = names.Of("LeakState");
+        string close = names.Of("LeakClose");
+        string opened = names.Of("LeakOpened");
+        string withSpan = names.Of("withSpan");
+        string open = names.Of("openItem");
+        string openGroup = names.Of("openGroup");
+        string restore = names.Of("restoreBindings");
+        string countCloses = names.Of("countCloses");
+        string lower = names.Of("lowerItems");
+        string program = names.Of("program");
+        return $$"""
+            type {{item}} =
+                | At(Int, {{item}})
+                | Plain(Str)
+                | Grouped(Str)
+
+            type {{binding}} =
+                | name: Str
+                | slot: Int
+
+            type {{state}} =
+                | bindings: List({{binding}})
+                | labels: List(Str)
+                | counter: Int
+
+            type {{close}} =
+                | closeName: Maybe(Str)
+                | closeBindings: List({{binding}})
+
+            type {{opened}} =
+                | openedState: {{state}}
+                | openedPending: List({{close}})
+
+            let {{withSpan}} (span: Int) (state: {{state}}) = state with counter = state.counter + span
+
+            let {{open}} (name: Str) (pending: List({{close}})) (state: {{state}}) = {{opened}}(openedState = (state with bindings = {{binding}}(name = name, slot = state.counter) :: state.bindings), openedPending = {{close}}(closeName = Some(name), closeBindings = state.bindings) :: pending)
+
+            let {{openGroup}} (name: Str) (state: {{state}}) = state with labels = name :: state.labels
+
+            let {{restore}} (bindings: List({{binding}})) = {{close}}(closeName = None, closeBindings = bindings)
+
+            let recursive {{countCloses}} (closes: List({{close}})) (total: Int) =
+                match closes with
+                    | [] -> total
+                    | _ :: rest -> {{countCloses}}(rest)(total + 1)
+
+            let recursive {{lower}} (items: List({{item}})) (pending: List({{close}})) (state: {{state}}) =
+                match items with
+                    | [] -> state.counter + {{countCloses}}(pending)(0)
+                    | At(span, inner) :: rest ->
+                        state
+                        |> {{withSpan}}(span)
+                        |> {{lower}}(inner :: rest)(pending)
+                    | Plain(name) :: rest ->
+                        match {{open}}(name)(pending)(state) with
+                            | {{opened}} { openedState = opened, openedPending = nextPending } -> {{lower}}(rest)(nextPending)(opened)
+                    | Grouped(name) :: rest ->
+                        state
+                        |> {{openGroup}}(name)
+                        |> {{lower}}(rest)({{restore}}(state.bindings) :: pending)
+
+            let {{program}} = [{{Items(names)}}]
+
+            let {{names.Entry}} (seed: Int) = {{lower}}({{program}})([])({{state}}(bindings = [], labels = [], counter = seed))
+            """;
+    }
+
+    // Four to six items, each a plain or grouped one wrapped in one or two spans.
+    private static string Items(LeakNames names)
+    {
+        List<string> items = [];
+        int count = names.Between(4, 6);
+        for (int index = 0; index < count; index++)
+        {
+            string leaf = names.Coin("grouped") ? $"Grouped({names.Word()})" : $"Plain({names.Word()})";
+            string wrapped = $"At({LeakNames.Text(index + 1)})({leaf})";
+            items.Add(names.Coin("double-span") ? $"At({LeakNames.Text(index + 7)})({wrapped})" : wrapped);
+        }
+
+        return string.Join(", ", items);
     }
 }

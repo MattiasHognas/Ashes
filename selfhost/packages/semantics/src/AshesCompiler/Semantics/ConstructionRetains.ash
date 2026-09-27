@@ -77,6 +77,7 @@ let definesRead (temp: Int) (instruction: IrInstruction) =
         | IrInstruction { instruction = Borrow(target, _source) } -> target == temp
         | IrInstruction { instruction = LoadLocal(target, _slot) } -> target == temp
         | IrInstruction { instruction = GetAdtField(target, _pointer, _index, _tagless) } -> target == temp
+        | IrInstruction { instruction = CopyOutArena(target, _source, _sizeBytes, _runtimeManaged, _purpose, Some(_deferred)) } -> target == temp
         | _ -> false
 
 let recursive readDefinitionOf (temp: Int) (instructions: List(IrInstruction)) =
@@ -88,7 +89,9 @@ let recursive readDefinitionOf (temp: Int) (instructions: List(IrInstruction)) =
             else readDefinitionOf(temp)(rest)
 
 // Whether `temp` reads one of `slots` or a field, at any depth, of one: a value that loop
-// parameter keeps alive.
+// parameter keeps alive. A provisional copy of a tuple element whose type was unresolved when
+// the tuple was built (stage 0's deferred materialization, which this lowering does not emit)
+// is a plain read of its source.
 let recursive readsLoopParameter (temp: Int) (slots: List(Int)) (hops: Int) (instructions: List(IrInstruction)) =
     if hops >= 16
     then false
@@ -96,6 +99,7 @@ let recursive readsLoopParameter (temp: Int) (slots: List(Int)) (hops: Int) (ins
         match readDefinitionOf(temp)(instructions) with
             | Some(LoadLocal(_target, slot)) -> containsInt(slot)(slots)
             | Some(Borrow(_target, source)) -> readsLoopParameter(source)(slots)(hops + 1)(instructions)
+            | Some(CopyOutArena(_target, source, _sizeBytes, _runtimeManaged, _purpose, Some(_deferred))) -> readsLoopParameter(source)(slots)(hops + 1)(instructions)
             | Some(GetAdtField(_target, pointer, _index, _tagless)) -> readsLoopParameter(pointer)(slots)(hops + 1)(instructions)
             | _ -> false
 

@@ -310,7 +310,9 @@ public sealed partial class Lowering
 
     /// <summary>
     /// True when <paramref name="temp"/> reads one of <paramref name="parameterSlots"/> or a field,
-    /// at any depth, of one: a value that parameter keeps alive.
+    /// at any depth, of one: a value that parameter keeps alive. A provisional copy of a tuple
+    /// element whose type was unresolved when the tuple was built is a plain read once that type
+    /// turns out not to be a string (ResolveDeferredTupleMaterializations makes it one at the end).
     /// </summary>
     private bool ReadsLoopParameter(int temp, HashSet<int> parameterSlots)
     {
@@ -322,6 +324,9 @@ public sealed partial class Lowering
                 IrInst.Borrow borrow => borrow.Target == current,
                 IrInst.LoadLocal load => load.Target == current,
                 IrInst.GetAdtField field => field.Target == current,
+                IrInst.CopyOutArena { DeferredElementType: { } deferred } copy => copy.DestTemp == current
+                    && Prune(deferred) is not TypeRef.TStr
+                    && Environment.GetEnvironmentVariable("GRC_NO_DEFERREDCOPYREAD") is null,
                 _ => false,
             });
             switch (index >= 0 ? _inst[index] : null)
@@ -330,6 +335,9 @@ public sealed partial class Lowering
                     return parameterSlots.Contains(load.Slot);
                 case IrInst.Borrow borrow:
                     temp = borrow.SourceTemp;
+                    break;
+                case IrInst.CopyOutArena copy:
+                    temp = copy.SrcTemp;
                     break;
                 case IrInst.GetAdtField field:
                     temp = field.Ptr;
