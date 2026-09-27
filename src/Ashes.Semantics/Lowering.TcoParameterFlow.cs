@@ -378,8 +378,112 @@ public sealed partial class Lowering
             root = inner.Func;
         }
 
-        return SummaryFlowingArguments(root, arguments);
+        return ReuseSpecializationFlowingArguments(root, arguments) ?? SummaryFlowingArguments(root, arguments);
     }
+
+    // A call this loop body lowers through a reuse specialization, as the call lowering decides it,
+    // of one of the persistent collections' own operations rebuilding a named accumulator: an
+    // argument the specialization copies into its region when it stores it (a string, a tuple of
+    // scalars, a list of strings, a relocatable value of another type) holds nothing the result
+    // holds; the accumulator and any other argument flow. Only the collections' own operations
+    // store their inputs at constructor sites alone, where the specialization copies them; another
+    // specializable function may hand an input to a callee that keeps it.
+    private bool[]? ReuseSpecializationFlowingArguments(Expr root, IReadOnlyList<Expr> arguments)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_SPECIALIZEDCALLFLOW") is not null
+            || !_configuration.EnableReuse
+            || arguments.Count == 0
+            || !IsPersistentCollectionOperation(ResolveSpecializableCalleeName(root))
+            || QualifyReuseSpecializationCall(root, arguments) is not { Accepted: true, FunctionType: { } functionType }
+            || CannotAttemptHigherOrderReuse(arguments)
+            || NthCurriedArgType(functionType, arguments.Count - 1) is not TypeRef.TNamedType accumulator)
+        {
+            return null;
+        }
+
+        // The callee's scheme leaves the collection's element types as variables; the call's own
+        // instantiation is read off the accumulator argument's type, a loop parameter's binding.
+        Dictionary<int, TypeRef> instantiation = [];
+        if (arguments[^1] is Expr.Var accumulatorVariable && Lookup(accumulatorVariable.Name) is Binding.Local { T: var actual })
+        {
+            MatchTypeVariables(accumulator, Prune(actual), instantiation);
+        }
+
+        bool[] flowing = new bool[arguments.Count];
+        for (int position = 0; position < arguments.Count - 1; position++)
+        {
+            TypeRef? parameter = NthCurriedArgType(functionType, position);
+            flowing[position] = parameter is null
+                || !IsMaterializedSpecializationFieldType(SubstituteTypeVariables(parameter, instantiation), accumulator);
+        }
+
+        flowing[^1] = true;
+        return flowing;
+    }
+
+    // Binds each type variable of `pattern` to what stands at its position in `actual`.
+    private void MatchTypeVariables(TypeRef pattern, TypeRef actual, Dictionary<int, TypeRef> instantiation)
+    {
+        switch (Prune(pattern), Prune(actual))
+        {
+            case (TypeRef.TVar variable, TypeRef bound):
+                instantiation[variable.Id] = bound;
+                break;
+            case (TypeRef.TNamedType named, TypeRef.TNamedType actualNamed) when ReferenceEquals(named.Symbol, actualNamed.Symbol) && named.TypeArgs.Count == actualNamed.TypeArgs.Count:
+                for (int index = 0; index < named.TypeArgs.Count; index++)
+                {
+                    MatchTypeVariables(named.TypeArgs[index], actualNamed.TypeArgs[index], instantiation);
+                }
+
+                break;
+            case (TypeRef.TList list, TypeRef.TList actualList):
+                MatchTypeVariables(list.Element, actualList.Element, instantiation);
+                break;
+            case (TypeRef.TTuple tuple, TypeRef.TTuple actualTuple) when tuple.Elements.Count == actualTuple.Elements.Count:
+                for (int index = 0; index < tuple.Elements.Count; index++)
+                {
+                    MatchTypeVariables(tuple.Elements[index], actualTuple.Elements[index], instantiation);
+                }
+
+                break;
+            case (TypeRef.TFun function, TypeRef.TFun actualFunction):
+                MatchTypeVariables(function.Arg, actualFunction.Arg, instantiation);
+                MatchTypeVariables(function.Ret, actualFunction.Ret, instantiation);
+                break;
+        }
+    }
+
+    private TypeRef SubstituteTypeVariables(TypeRef type, Dictionary<int, TypeRef> instantiation)
+        => Prune(type) switch
+        {
+            TypeRef.TVar variable when instantiation.TryGetValue(variable.Id, out TypeRef? bound) => bound,
+            TypeRef.TNamedType named => named with { TypeArgs = named.TypeArgs.Select(argument => SubstituteTypeVariables(argument, instantiation)).ToList() },
+            TypeRef.TList list => list with { Element = SubstituteTypeVariables(list.Element, instantiation) },
+            TypeRef.TTuple tuple => tuple with { Elements = tuple.Elements.Select(element => SubstituteTypeVariables(element, instantiation)).ToList() },
+            TypeRef.TFun function => function with { Arg = SubstituteTypeVariables(function.Arg, instantiation), Ret = SubstituteTypeVariables(function.Ret, instantiation) },
+            TypeRef other => other,
+        };
+
+    // The standard library's map and hash map operations, the functions the in-place collection
+    // specialization keeps a persistent region for.
+    private static bool IsPersistentCollectionOperation(string? callee)
+        => callee is not null
+            && (callee.StartsWith("Ashes_Collection_Map_", StringComparison.Ordinal)
+                || callee.StartsWith("Ashes_Collection_HashMap_", StringComparison.Ordinal));
+
+    // The field types a specialization's constructor site relocates into its region rather than
+    // storing by reference (MaterializeSpecializationFieldCopy).
+    private bool IsMaterializedSpecializationFieldType(TypeRef? type, TypeRef.TNamedType accumulator)
+        => type is not null && Prune(type) switch
+        {
+            TypeRef.TStr or TypeRef.TBytes => true,
+            TypeRef.TTuple tuple => tuple.Elements.All(CanArenaReset),
+            TypeRef.TList list => Prune(list.Element) is TypeRef.TStr,
+            TypeRef.TNamedType named => !ReferenceEquals(named.Symbol, accumulator.Symbol)
+                && !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+                && IsToSpaceCopySafeType(named),
+            _ => false,
+        };
 
     // The arguments a callee's result may reach, by its ownership summary: the trait evidence a
     // call passes ahead of the source arguments is always followed.

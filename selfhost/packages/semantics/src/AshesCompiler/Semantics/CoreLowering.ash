@@ -24159,10 +24159,92 @@ let flowSummaryFlags (root: Expr) (arguments: List(Expr)) (state: CoreLoweringSt
                 | _ -> None
         | _ -> None
 
-// Stage 0's `FlowingCallArguments`: a call flows what its callee's summary admits.
+// Stage 0's `IsMaterializedSpecializationFieldType`: the field types a specialization's
+// constructor site relocates into its region rather than storing by reference.
+let materializedSpecializationFieldType (fieldType: SemanticType) (accumulatorType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(fieldType) with
+        | SemString -> true
+        | SemBytes -> true
+        | SemTuple(elements) -> allCopyTypeElements(elements)
+        | SemList(element) -> resolveType(state)(element) == SemString
+        | SemNamed(_symbolId, _typeName, _arguments) as named ->
+            !specializationFieldIsAccumulatorSelf(named)(resolveType(state)(accumulatorType)) && specializationFieldRelocatable(named)(state)
+        | _ -> false
+
+// Per argument of a call routed to a specialization rebuilding a named accumulator: an argument
+// the specialization copies when it stores it holds nothing the result holds; the accumulator,
+// the last, and any other argument flow (stage 0's `ReuseSpecializationFlowingArguments`).
+let recursive flowSpecializationFlags (functionType: SemanticType) (remaining: Int) (accumulatorType: SemanticType) (instantiation: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match functionType with
+        | SemFunction(argumentType, resultType, _effects) ->
+            if remaining <= 1
+            then [true]
+            else
+                (materializedSpecializationFieldType(applySubstitution(instantiation)(argumentType))(accumulatorType)(state) == false) :: flowSpecializationFlags(resultType)(remaining - 1)(accumulatorType)(instantiation)(state)
+        | _ -> []
+
+// Stage 0's `MatchTypeVariables`: binds each type variable of `pattern` to what stands at its
+// position in `actual`.
+let recursive matchTypeVariables (pattern: SemanticType) (actual: SemanticType) (instantiation: List((Int, SemanticType))) =
+    match (pattern, actual) with
+        | (SemVariable(variableId), bound) -> (variableId, bound) :: instantiation
+        | (SemNamed(symbolId, name, arguments), SemNamed(actualSymbolId, actualName, actualArguments)) ->
+            if symbolId == actualSymbolId && name == actualName && length(arguments) == length(actualArguments)
+            then matchTypeVariablesAll(arguments)(actualArguments)(instantiation)
+            else instantiation
+        | (SemList(element), SemList(actualElement)) -> matchTypeVariables(element)(actualElement)(instantiation)
+        | (SemTuple(elements), SemTuple(actualElements)) ->
+            if length(elements) == length(actualElements)
+            then matchTypeVariablesAll(elements)(actualElements)(instantiation)
+            else instantiation
+        | (SemFunction(argument, result, _effects), SemFunction(actualArgument, actualResult, _actualEffects)) ->
+            instantiation
+            |> matchTypeVariables(argument)(actualArgument)
+            |> matchTypeVariables(result)(actualResult)
+        | _ -> instantiation
+and matchTypeVariablesAll (patterns: List(SemanticType)) (actuals: List(SemanticType)) (instantiation: List((Int, SemanticType))) =
+    match (patterns, actuals) with
+        | (pattern :: restPatterns, actual :: restActuals) ->
+            instantiation
+            |> matchTypeVariables(pattern)(actual)
+            |> matchTypeVariablesAll(restPatterns)(restActuals)
+        | _ -> instantiation
+
+// The callee's scheme leaves the collection's element types as variables; the call's own
+// instantiation is read off the accumulator argument's type, a loop parameter's binding.
+let specializationCallInstantiation (accumulatorParameterType: SemanticType) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match lastArgument(arguments) with
+        | Some(accumulator) ->
+            match unspanArgument(accumulator) with
+                | ExprVar(name) ->
+                    match lookupBinding(name)(state.bindings) with
+                        | Some(CoreBinding { scheme = TypeScheme { body = actual } }) ->
+                            matchTypeVariables(resolveType(state)(accumulatorParameterType))(resolveType(state)(actual))([])
+                        | _ -> []
+                | _ -> []
+        | None -> []
+
+// Stage 0's `IsPersistentCollectionOperation`: the standard library's map and hash map
+// operations, the functions the in-place collection specialization keeps a persistent region
+// for; only they store their inputs at constructor sites alone, where the specialization copies
+// them.
+let persistentCollectionOperation (callee: Str) = Ashes.Text.startsWith(callee)("Ashes_Collection_Map_") || Ashes.Text.startsWith(callee)("Ashes_Collection_HashMap_")
+
+// Stage 0's `FlowingCallArguments`: a call routed to a reuse specialization of a persistent
+// collection's operation rebuilding a named accumulator flows the arguments the specialization
+// stores by reference; any other call flows what its callee's summary admits.
 let flowCallFlagsOf (call: Expr) (state: CoreLoweringState) =
     match collectCallSpine(call) with
-        | CoreCallSpine { root = root, arguments = arguments } -> flowSummaryFlags(root)(arguments)(state)
+        | CoreCallSpine { root = root, arguments = arguments } as spine ->
+            match reuseSpecializedCallOf(spine)(state) with
+                | Some((callee, _parameter, _parameters, _value, SemNamed(_symbolId, _typeName, _typeArguments) as accumulatorType, functionType, _callArguments)) ->
+                    if persistentCollectionOperation(callee)
+                    then
+                        state
+                        |> flowSpecializationFlags(resolveType(state)(functionType))(coreListLength(arguments))(accumulatorType)(specializationCallInstantiation(accumulatorType)(arguments)(state))
+                        |> Some
+                    else flowSummaryFlags(root)(arguments)(state)
+                | _ -> flowSummaryFlags(root)(arguments)(state)
 
 let recursive loopCallFlowOf (nodes: List(Expr)) (table: List((Str, Int, Str, List(Bool)))) (state: CoreLoweringState) =
     match nodes with

@@ -2850,6 +2850,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Worklist_front_beside_queued_map_of_its_keys_is_placed_on_the_reference_counted_heap()
+    {
+        // A worklist whose loop marks each key in a map beside the front queue. The map's update
+        // is routed to the collection's in-place specialization, which copies the key it stores,
+        // so the map receives nothing of the front, which is placed on the reference-counted heap
+        // and releases each refill. (The map's own region grows by a map per round by design, so
+        // this is checked on the placement, not by peak memory.)
+        (Lowering lowering, _) = LowerProgramWithImportsAndLowering(BuildWorklistFrontBesideQueuedMapProgram(3));
+        IReadOnlyList<TcoParamPlacementTrace> decisions = lowering.GetTcoPlacementDecisions("solve")
+            ?? throw new InvalidOperationException("No TCO placement snapshot for 'solve'.");
+        TcoParamPlacementTrace front = decisions.Single(trace => string.Equals(trace.Current.ParameterName, "front", StringComparison.Ordinal));
+        front.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+    }
+
+    [Test]
     public async Task Linux_backend_worklist_pair_released_past_unrelated_log_successor_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10627,6 +10642,37 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
+
+            Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistFrontBesideQueuedMapProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.Map.MapTree
+
+            let recursive reverseAll (values: List(Str)) (acc: List(Str)) =
+                match values with
+                    | [] -> acc
+                    | value :: rest -> reverseAll(rest)(value :: acc)
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> Ashes.Collection.Map.size(queued)
+                            | _ -> solve(reverseAll(back)([]))([])(queued)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then Ashes.Collection.Map.size(queued)
+                        else
+                            match Ashes.Collection.Map.getStr(key)(queued) with
+                                | Some(true) -> solve(rest)(back)(queued)(fuel - 1)
+                                | _ -> solve(rest)(key + "x" :: back)(Ashes.Collection.Map.setStr(key)(true)(queued))(fuel - 1)
+
+            let recursive rounds (keys: List(Str)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(keys)(n - 1)(total + solve(keys)([])(Ashes.Collection.Map.empty)(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
             """;
