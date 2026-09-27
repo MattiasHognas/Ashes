@@ -71,8 +71,11 @@ let recursive reachesAt (constructors: List(Str)) (callees: Str -> Maybe((List(S
         | ExprRecord(_name, fields, _multiline) -> anyFieldReaches(constructors)(callees)(fields)(variable)
         | ExprRecordUpdate(target, updates) -> reachesAt(constructors)(callees)(target)(variable) || anyFieldReaches(constructors)(callees)(updates)(variable)
         | ExprTuple(elements) -> anyReaches(constructors)(callees)(elements)(variable)
-        | ExprList(elements, _multiline) -> anyReaches(constructors)(callees)(elements)(variable)
-        | ExprCons(head, tail) -> reachesAt(constructors)(callees)(head)(variable) || reachesAt(constructors)(callees)(tail)(variable)
+        // A variable a list cell holds is not reached: the cell is built in the arena and keeps
+        // nothing of an owned entry copy alive (stage 0's `throughCells`, false for the entry
+        // normalization this walk serves).
+        | ExprList(_elements, _multiline) -> false
+        | ExprCons(_head, _tail) -> false
         | ExprCall(_callee, _argument, _sugar, _layout) ->
             callReaches(constructors)(callees)(callSpineOf(expression)([]))(variable)
         | _ -> false

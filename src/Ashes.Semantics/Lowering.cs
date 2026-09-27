@@ -7662,11 +7662,15 @@ public sealed partial class Lowering
     // result only as a capture of that stage's closure, whose environment normalizer copies or
     // retains it once the closure escapes. An owned entry copy would instead sit in an arena
     // closure environment that is never released.
+    // A parameter the result reaches only as a list cell's head or element is not normalized: the
+    // cell is built in the arena and keeps nothing of the owned copy alive, so the copy would be
+    // released by nothing (an owned copy stored into a record or tuple is taken over by the
+    // aggregate instead).
     private bool NormalizesAlwaysReturnedParameter(Expr.Lambda lambda, string label, TypeRef argumentType)
         => !_runtimeNormalizedFunctionArgumentLabels.Contains(label)
             && lambda.Body is not Expr.Lambda
             && IsRuntimeNormalizableParameterType(Prune(argumentType))
-            && ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName);
+            && ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName, throughCells: Environment.GetEnvironmentVariable("GRC_NO_CELLHEADPARAM") is not null);
 
     // A read of the string parameter the entry normalization owns: the read moves the owned copy
     // (or the adopted argument) into the aggregate storing it, so that aggregate can live on the
@@ -7782,7 +7786,8 @@ public sealed partial class Lowering
     private bool ResultAlwaysReachesVariable(
         Expr expression,
         string variableName,
-        int callDepth = 0)
+        int callDepth = 0,
+        bool throughCells = true)
     {
         if (callDepth > 32)
         {
@@ -7795,36 +7800,37 @@ public sealed partial class Lowering
                 return string.Equals(variable.Name, variableName, StringComparison.Ordinal);
             case Expr.Lambda nested:
                 return !string.Equals(nested.ParamName, variableName, StringComparison.Ordinal)
-                    && ResultAlwaysReachesVariable(nested.Body, variableName, callDepth);
+                    && ResultAlwaysReachesVariable(nested.Body, variableName, callDepth, throughCells);
             case Expr.Let let:
                 return !string.Equals(let.Name, variableName, StringComparison.Ordinal)
-                    && ResultAlwaysReachesVariable(let.Body, variableName, callDepth);
+                    && ResultAlwaysReachesVariable(let.Body, variableName, callDepth, throughCells);
             case Expr.If conditional:
-                return ResultAlwaysReachesVariable(conditional.Then, variableName, callDepth)
-                    && ResultAlwaysReachesVariable(conditional.Else, variableName, callDepth);
+                return ResultAlwaysReachesVariable(conditional.Then, variableName, callDepth, throughCells)
+                    && ResultAlwaysReachesVariable(conditional.Else, variableName, callDepth, throughCells);
             case Expr.Match match:
                 return match.Cases.Count > 0
                     && match.Cases.All(matchCase =>
                         !PatternBinds(matchCase.Pattern, variableName)
-                        && ResultAlwaysReachesVariable(matchCase.Body, variableName, callDepth));
+                        && ResultAlwaysReachesVariable(matchCase.Body, variableName, callDepth, throughCells));
             case Expr.RecordLit record:
                 return record.Fields.Any(field =>
-                    ResultAlwaysReachesVariable(field.Value, variableName, callDepth));
+                    ResultAlwaysReachesVariable(field.Value, variableName, callDepth, throughCells));
             // The rebuilt cell carries the target's unchanged fields and every updated value, so
             // the variable reaches the result through either.
             case Expr.RecordUpdate update:
-                return ResultAlwaysReachesVariable(update.Target, variableName, callDepth)
+                return ResultAlwaysReachesVariable(update.Target, variableName, callDepth, throughCells)
                     || update.Updates.Any(field =>
-                        ResultAlwaysReachesVariable(field.Value, variableName, callDepth));
+                        ResultAlwaysReachesVariable(field.Value, variableName, callDepth, throughCells));
             case Expr.TupleLit tuple:
                 return tuple.Elements.Any(element =>
-                    ResultAlwaysReachesVariable(element, variableName, callDepth));
+                    ResultAlwaysReachesVariable(element, variableName, callDepth, throughCells));
             case Expr.ListLit list:
-                return list.Elements.Any(element =>
-                    ResultAlwaysReachesVariable(element, variableName, callDepth));
+                return throughCells && list.Elements.Any(element =>
+                    ResultAlwaysReachesVariable(element, variableName, callDepth, throughCells));
             case Expr.Cons cons:
-                return ResultAlwaysReachesVariable(cons.Head, variableName, callDepth)
-                    || ResultAlwaysReachesVariable(cons.Tail, variableName, callDepth);
+                return throughCells
+                    && (ResultAlwaysReachesVariable(cons.Head, variableName, callDepth, throughCells)
+                        || ResultAlwaysReachesVariable(cons.Tail, variableName, callDepth, throughCells));
             case Expr.Call:
                 return CallResultAlwaysReachesVariable(
                     expression,

@@ -3513,6 +3513,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_closure_consing_its_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A closure applied in a pipe conses its parameter onto the producer's recursive tail: the
+        // parameter reaches the result only as a cell's head, so its entry takes no owned copy an
+        // arena cell would keep nothing of.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordSpineProgram(rounds, "make(block) |> (given (entry) -> entry :: step(rest))"));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("closure consing its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_accumulator_with_differing_self_call_shapes_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -11857,6 +11881,35 @@ public sealed class LinuxBackendCoverageTests
                         | (bound, _) -> repeat(times - 1)(total + bound.nextTemp + countItems(bound.stringLiterals)(0))
 
             Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    // A producer whose cons arm is `consArm`, over a record a helper returns.
+    private static string BuildRecordSpineProgram(int rounds, string consArm)
+        => $$"""
+            type Liveness =
+                | block: Int
+                | liveIn: Bool
+                | liveOut: Bool
+
+            let make (b: Int) = Liveness(block = b, liveIn = true, liveOut = false)
+
+            let recursive step (remaining: List(Int)) =
+                match remaining with
+                    | [] -> []
+                    | block :: rest ->
+                        {{consArm}}
+
+            let recursive countLive (items: List(Liveness)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | Liveness { liveIn = true } :: rest -> countLive(rest)(total + 1)
+                    | _ :: rest -> countLive(rest)(total)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0 then total
+                else rounds(n - 1)(total + countLive(step([0, 1, 2, 3, 4]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildRegionManagedTaskFrameProgram(int iterations)
