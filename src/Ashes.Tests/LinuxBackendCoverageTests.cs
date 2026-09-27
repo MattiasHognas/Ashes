@@ -3148,6 +3148,63 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Loop_exit_arm_returning_head_of_unresolved_type_retains_it_before_its_owner_release()
+    {
+        // `| last :: [] -> last` in a generic walk whose element type the `[] -> ""` arm fixes only
+        // later: the head's owner takes a protective reference once the type resolves to a string,
+        // and its release at the arm's exit cancels that reference. The arm retains the head too, so
+        // the value the function returns survives the exit's release of the list parameter.
+        IrProgram ir = LowerProgram(BuildLastOfUnresolvedHeadProgram(3));
+        IrFunction lastOf = ir.Functions.Single(function =>
+            function.Origin is { Source.SourceName: "lastOf" }
+            && function.Instructions.Any(instruction => instruction is IrInst.Jump { Target: var target }
+                && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
+        List<IrInst> instructions = lastOf.Instructions;
+        int maximumRetains = 0;
+        for (int index = 0; index < instructions.Count; index++)
+        {
+            if (instructions[index] is not IrInst.RcDrop { OwnerSlot: >= 0, RuntimeManaged: true, TypeName: "String" } drop)
+            {
+                continue;
+            }
+
+            int blockStart = index;
+            while (blockStart > 0 && instructions[blockStart - 1] is not IrInst.Label)
+            {
+                blockStart--;
+            }
+
+            HashSet<int> ownerReads = [];
+            int retains = 0;
+            for (int position = blockStart; position < index; position++)
+            {
+                switch (instructions[position])
+                {
+                    case IrInst.LoadLocal load when load.Slot == drop.OwnerSlot:
+                        ownerReads.Add(load.Target);
+                        break;
+                    case IrInst.Borrow borrow when ownerReads.Contains(borrow.SourceTemp):
+                        ownerReads.Add(borrow.Target);
+                        break;
+                    case IrInst.RcDup { RuntimeManaged: true } dup when ownerReads.Contains(dup.SourceTemp):
+                        retains++;
+                        break;
+                }
+            }
+
+            maximumRetains = Math.Max(maximumRetains, retains);
+        }
+
+        maximumRetains.ShouldBe(2);
+
+        if (OperatingSystem.IsLinux())
+        {
+            ExecutionResult result = await CompileRunWithLinuxLlvmAsync(ir).ConfigureAwait(false);
+            result.Stdout.ShouldBe("b3,b2,b1,\n");
+        }
+    }
+
+    [Test]
     public void Declared_capability_keeps_the_ownership_contract_until_a_handler_can_leave_a_post_pending()
     {
         // The contract is one calling convention for the whole program. A capability that is only
@@ -10121,6 +10178,26 @@ public sealed class LinuxBackendCoverageTests
             0
             |> pass(build({{count}})([]))
             |> Ashes.IO.print
+            """;
+
+    private static string BuildLastOfUnresolvedHeadProgram(int rounds)
+        => $$"""
+            let recursive lastOf list =
+                match list with
+                    | last :: [] -> last
+                    | _ :: rest -> lastOf(rest)
+                    | [] -> ""
+
+            let recursive rounds (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else
+                    let path = ["a", "b" + Ashes.Text.fromInt(n)]
+                    in
+                        let current = lastOf(path)
+                        in rounds(n - 1)(acc + current + ",")
+
+            Ashes.IO.print(rounds({{rounds}})(""))
             """;
 
     private static string BuildMapThreadedThroughWalkedListLoopProgram(int rounds)

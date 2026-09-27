@@ -208,8 +208,37 @@ public sealed partial class Lowering
 
     private bool IsRetainedPatternOwnerArm(JoinArm arm)
         => arm.Store is { } store
-            && _retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
-            && temps.Contains(store.Source);
+            && ((_retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
+                    && temps.Contains(store.Source))
+                || IsResolvedDeferredPatternOwnerArmTemp(store.Source));
+
+    // A branch returning a pattern binding lowered while the binding's type was still unresolved
+    // (a generic walk whose element type a later arm fixes) hands the join a reference or a copy of
+    // it (TransferDeferredPatternOwnerResult). Whether that is a reference of its own is read when
+    // the join is completed, after every arm has been lowered: it is one once the binding's type has
+    // resolved to a string, which its owner protects whatever the loop parameter's placement
+    // (FinalizePerceusPatternBindingOwners) and whose copy is the one the branch emits. The
+    // parameter's own placement is not read here, since it may still be revised before the owner is
+    // finalized.
+    private readonly Dictionary<List<IrInst>, Dictionary<int, OwnershipInfo>> _deferredPatternOwnerArmTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordDeferredPatternOwnerArmTemp(int temp, OwnershipInfo owner)
+    {
+        if (!_deferredPatternOwnerArmTempsByBody.TryGetValue(_inst, out Dictionary<int, OwnershipInfo>? temps))
+        {
+            temps = [];
+            _deferredPatternOwnerArmTempsByBody[_inst] = temps;
+        }
+
+        temps[temp] = owner;
+    }
+
+    private bool IsResolvedDeferredPatternOwnerArmTemp(int temp)
+        => _deferredPatternOwnerArmTempsByBody.TryGetValue(_inst, out Dictionary<int, OwnershipInfo>? temps)
+            && temps.TryGetValue(temp, out OwnershipInfo? owner)
+            && owner.Type is { } bindingType
+            && Prune(bindingType) is TypeRef.TStr;
 
     // Nil joins as a reference-counted list too, but it owns nothing and borrows from nothing. A
     // nested join normalized in place borrowed from a parameter before its arms were retained, and

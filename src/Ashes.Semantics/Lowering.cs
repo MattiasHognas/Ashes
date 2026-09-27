@@ -6783,6 +6783,67 @@ public sealed partial class Lowering
             && _tcoCtx is { } tco
             && tco.IsRuntimeManagedSlot(owner.PerceusRootParameterSlot);
 
+    // A pattern binding of a loop parameter whose type is still unresolved when the branch returning
+    // it is lowered (a generic walk whose element type a later arm fixes), when its owner requires a
+    // protective reference and belongs to the scope the branch closes, whose exit releases it right
+    // after the branch (`| last :: [] -> last`; a binding of an enclosing arm is handed to the result
+    // by that arm's own exit). Once the type resolves FinalizePerceusPatternBindingOwners places the
+    // owner's reference whenever the parameter is on the reference-counted heap or the binding is a
+    // string, with the owner's release cancelling it unless the branch returning the binding keeps
+    // a reference of its own (TransferDeferredPatternOwnerResult): the loop's exit then releases the
+    // parameter, and the value the function returns with it. Returns the owner.
+    private OwnershipInfo? DeferredProtectedPatternOwner(Expr.Var variable)
+    {
+        if (LookupOwnedValue(variable.Name) is not
+            { PerceusPatternOwner: true, IsDropped: false, PerceusRootParameterSlot: >= 0, Type: { } bindingType } owner
+            || _tcoCtx is not { } tco
+            || !AllowsParallelWorkerIndependentRcPlacement
+            || Prune(bindingType) is not TypeRef.TVar
+            || _ownershipScopes.Count == 0
+            || !_ownershipScopes.Peek().TryGetValue(variable.Name, out OwnershipInfo? scoped)
+            || !ReferenceEquals(scoped, owner))
+        {
+            return null;
+        }
+
+        bool protectedBinding = tco.PatternBindingOwnershipFacts.Any(fact =>
+            string.Equals(fact.BindingName, variable.Name, StringComparison.Ordinal) && fact.RequiresProtectiveDup);
+        return protectedBinding ? owner : null;
+    }
+
+    // An owned reference to the binding a branch returns under DeferredProtectedPatternOwner: a retain
+    // of a value inside the reference-counted region, a copy of one outside it (the parameter walked
+    // is an arena list, and a string of its the caller's arena reset after the call would reclaim
+    // under a result handed over as owned). The retain is the owner's marker, made a runtime retain
+    // with the owner's protective reference once the binding's type is known; the copy is a string
+    // copy that ResolveDeferredTupleMaterializations makes an alias when the type resolves to
+    // anything else. The join reads the result as a reference of its own once the type is a string.
+    private int TransferDeferredPatternOwnerResult(int branchTemp, OwnershipInfo owner)
+    {
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, branchTemp));
+        int resultSlot = NewLocal();
+        string copyLabel = NewLabel("deferred_owner_copy");
+        string doneLabel = NewLabel("deferred_owner_done");
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, copyLabel));
+        int retainedTemp = NewTemp();
+        Emit(new IrInst.RcDup(retainedTemp, branchTemp));
+        Emit(new IrInst.StoreLocal(resultSlot, retainedTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        int copiedTemp = NewTemp();
+        Emit(new IrInst.CopyOutArena(
+            copiedTemp, branchTemp, StaticSizeBytes: -1, RuntimeManaged: true,
+            IrInst.CopyOutPurpose.RcNormalization, DeferredElementType: owner.Type));
+        _hasDeferredTupleMaterializations = true;
+        Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        RecordDeferredPatternOwnerArmTemp(resultTemp, owner);
+        return resultTemp;
+    }
+
     // An if-branch that returns a Perceus pattern owner keeps a reference of its own. The owner's
     // release is emitted once after the whole if (the loop-continuing branch has already re-consed or
     // dropped it), so unlike a match arm, whose scope exit can transfer the owner into the result,
@@ -6805,6 +6866,11 @@ public sealed partial class Lowering
             }
 
             return retainedTemp;
+        }
+
+        if (result is Expr.Var deferred && DeferredProtectedPatternOwner(deferred) is { } deferredOwner)
+        {
+            return TransferDeferredPatternOwnerResult(branchTemp, deferredOwner);
         }
 
         // A loop exit returning a heap field of a loop parameter hands out a child the exit's
