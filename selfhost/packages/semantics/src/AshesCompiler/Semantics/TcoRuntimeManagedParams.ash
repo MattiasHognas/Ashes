@@ -38,6 +38,8 @@ export (
     value tcoSelfCallParameterFlow,
     value shapePatternNames,
     value flowSuccessorsNamingNoPartOf,
+    value flowCallKeyOf,
+    value flowNodes,
 )
 
 // The reference-ownership shape shared by every exact tail self-call argument at one parameter
@@ -757,15 +759,67 @@ and flowLambdaApplicationDerivations (root: Expr) (arguments: List(Expr)) (deriv
         | (ExprLambda(parameter, body, _annotation), argument :: rest) -> flowLambdaApplicationDerivations(body)(rest)((argument, [parameter]) :: derivations)
         | _ -> derivations
 
+// The name a call's callee root reads as: a bare or qualified name, or none for any other root.
+let flowCallRootName (root: Expr) =
+    match shapeUnspan(root) with
+        | ExprVar(name) -> Some(name)
+        | ExprQualifiedVar(qualifier, member) -> Some(qualifier + "." + member)
+        | _ -> None
+
+// The name a call's last argument, its accumulator when the callee is a reuse specialization
+// candidate, is keyed by: a bare name, the callee of a call, or none.
+let recursive flowCallAccumulatorKey (arguments: List(Expr)) =
+    match arguments with
+        | [] -> ""
+        | argument :: [] ->
+            match shapeUnspan(argument) with
+                | ExprVar(name) -> name
+                | ExprCall(_function, _argument, _sugar, _layout) as call ->
+                    match shapeCallSpine(call)([]) with
+                        | (root, _callArguments) ->
+                            match flowCallRootName(root) with
+                                | Some(callee) -> callee
+                                | None -> ""
+                | _ -> ""
+        | _argument :: rest -> flowCallAccumulatorKey(rest)
+
+// A call's key in the policy: the callee's name, the argument count and the accumulator's key,
+// the features the policy's verdict for a call is decided by (stage 0 keys the call itself).
+let flowCallKeyOf (call: Expr) =
+    match shapeCallSpine(call)([]) with
+        | (root, arguments) ->
+            match flowCallRootName(root) with
+                | Some(callee) -> Some((callee, length(arguments), flowCallAccumulatorKey(arguments)))
+                | None -> None
+
+// Stage 0's `FlowCallPolicy.FlowingArguments`: per argument, whether the call's result may hold
+// what it holds; None for a call the policy knows nothing about, whose every part flows.
+let recursive flowCallFlagsFor (callee: Str) (count: Int) (accumulator: Str) (policy: List((Str, Int, Str, List(Bool)))) =
+    match policy with
+        | [] -> None
+        | (candidate, candidateCount, candidateAccumulator, flags) :: rest ->
+            if candidate == callee && candidateCount == count && candidateAccumulator == accumulator
+            then Some(flags)
+            else flowCallFlagsFor(callee)(count)(accumulator)(rest)
+
+let flowCallFlags (call: Expr) (policy: List((Str, Int, Str, List(Bool)))) =
+    match policy with
+        | [] -> None
+        | _ ->
+            match flowCallKeyOf(call) with
+                | Some((callee, count, accumulator)) -> flowCallFlagsFor(callee)(count)(accumulator)(policy)
+                | None -> None
+
 // Stage 0's `FlowMentionsName`: whether a value computed by `expression` may hold `name`'s value or
 // a part of it. An operator's result holds nothing of its operands (a number, a truth value, a
-// fresh string), except that a string append grows a loop parameter on its left in place.
-let recursive flowReadsName (name: Str) (parameters: List(Str)) (depth: Int) (expression: Expr) =
+// fresh string), except that a string append grows a loop parameter on its left in place. A
+// call's result holds what its callee and the arguments the policy admits hold.
+let recursive flowReadsName (name: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (depth: Int) (expression: Expr) =
     if depth > 256
     then true
     else
         match expression with
-            | ExprAt(_span, inner) -> flowReadsName(name)(parameters)(depth)(inner)
+            | ExprAt(_span, inner) -> flowReadsName(name)(parameters)(policy)(depth)(inner)
             | ExprAdd(left, _right) ->
                 match shapeUnspan(left) with
                     | ExprVar(leftName) -> shapeContainsName(leftName)(parameters) && leftName == name
@@ -789,20 +843,30 @@ let recursive flowReadsName (name: Str) (parameters: List(Str)) (depth: Int) (ex
             | ExprLessOrEqual(_left, _right) -> false
             | ExprEqual(_left, _right) -> false
             | ExprNotEqual(_left, _right) -> false
-            | ExprCall(function, argument, _sugar, _layout) -> flowReadsName(name)(parameters)(depth + 1)(function) || flowReadsName(name)(parameters)(depth + 1)(argument)
-            | ExprCons(head, tail) -> flowReadsName(name)(parameters)(depth + 1)(head) || flowReadsName(name)(parameters)(depth + 1)(tail)
-            | ExprTuple(elements) -> flowListReadsName(name)(parameters)(depth + 1)(elements)
-            | ExprList(elements, _isMultiline) -> flowListReadsName(name)(parameters)(depth + 1)(elements)
+            | ExprCall(function, argument, _sugar, _layout) as call ->
+                match flowCallFlags(call)(policy) with
+                    | None -> flowReadsName(name)(parameters)(policy)(depth + 1)(function) || flowReadsName(name)(parameters)(policy)(depth + 1)(argument)
+                    | Some(flags) ->
+                        match shapeCallSpine(call)([]) with
+                            | (root, arguments) -> flowReadsName(name)(parameters)(policy)(depth + 1)(root) || flowFlaggedReadsName(name)(parameters)(policy)(depth + 1)(arguments)(flags)
+            | ExprCons(head, tail) -> flowReadsName(name)(parameters)(policy)(depth + 1)(head) || flowReadsName(name)(parameters)(policy)(depth + 1)(tail)
+            | ExprTuple(elements) -> flowListReadsName(name)(parameters)(policy)(depth + 1)(elements)
+            | ExprList(elements, _isMultiline) -> flowListReadsName(name)(parameters)(policy)(depth + 1)(elements)
             | _ -> exprReadsName(name)(expression)
-and flowListReadsName (name: Str) (parameters: List(Str)) (depth: Int) (expressions: List(Expr)) =
+and flowListReadsName (name: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (depth: Int) (expressions: List(Expr)) =
     match expressions with
         | [] -> false
-        | expression :: rest -> flowReadsName(name)(parameters)(depth)(expression) || flowListReadsName(name)(parameters)(depth)(rest)
+        | expression :: rest -> flowReadsName(name)(parameters)(policy)(depth)(expression) || flowListReadsName(name)(parameters)(policy)(depth)(rest)
+// The arguments the policy admits into a call's result, each read where its flag is set.
+and flowFlaggedReadsName (name: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (depth: Int) (arguments: List(Expr)) (flags: List(Bool)) =
+    match (arguments, flags) with
+        | (argument :: restArguments, flag :: restFlags) -> flag && flowReadsName(name)(parameters)(policy)(depth)(argument) || flowFlaggedReadsName(name)(parameters)(policy)(depth)(restArguments)(restFlags)
+        | _ -> false
 
-let recursive flowReadsAny (names: List(Str)) (parameters: List(Str)) (expression: Expr) =
+let recursive flowReadsAny (names: List(Str)) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (expression: Expr) =
     match names with
         | [] -> false
-        | name :: rest -> flowReadsName(name)(parameters)(0)(expression) || flowReadsAny(rest)(parameters)(expression)
+        | name :: rest -> flowReadsName(name)(parameters)(policy)(0)(expression) || flowReadsAny(rest)(parameters)(policy)(expression)
 
 let recursive flowAddNew (candidates: List(Str)) (names: List(Str)) =
     match candidates with
@@ -812,26 +876,26 @@ let recursive flowAddNew (candidates: List(Str)) (names: List(Str)) =
             then flowAddNew(rest)(names)
             else flowAddNew(rest)(candidate :: names)
 
-let recursive flowDerivePass (derivations: List((Expr, List(Str)))) (parameters: List(Str)) (names: List(Str)) =
+let recursive flowDerivePass (derivations: List((Expr, List(Str)))) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (names: List(Str)) =
     match derivations with
         | [] -> names
         | (value, binders) :: rest ->
-            flowDerivePass(rest)(parameters)(if flowReadsAny(names)(parameters)(value)
+            flowDerivePass(rest)(parameters)(policy)(if flowReadsAny(names)(parameters)(policy)(value)
             then flowAddNew(binders)(names)
             else names)
 
 // A parameter's name with every name derived from it, to a fixed point.
-let recursive flowDerivedNames (derivations: List((Expr, List(Str)))) (parameters: List(Str)) (names: List(Str)) =
-    (let next = flowDerivePass(derivations)(parameters)(names)
+let recursive flowDerivedNames (derivations: List((Expr, List(Str)))) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (names: List(Str)) =
+    (let next = flowDerivePass(derivations)(parameters)(policy)(names)
     in
         if length(next) == length(names)
         then names
-        else flowDerivedNames(derivations)(parameters)(next))
+        else flowDerivedNames(derivations)(parameters)(policy)(next))
 
-let recursive flowDerivedOf (derivations: List((Expr, List(Str)))) (allParameters: List(Str)) (parameters: List(Str)) =
+let recursive flowDerivedOf (derivations: List((Expr, List(Str)))) (allParameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (parameters: List(Str)) =
     match parameters with
         | [] -> []
-        | parameter :: rest -> flowDerivedNames(derivations)(allParameters)([parameter]) :: flowDerivedOf(derivations)(allParameters)(rest)
+        | parameter :: rest -> flowDerivedNames(derivations)(allParameters)(policy)([parameter]) :: flowDerivedOf(derivations)(allParameters)(policy)(rest)
 
 let recursive flowContainsInt (value: Int) (values: List(Int)) =
     match values with
@@ -840,23 +904,23 @@ let recursive flowContainsInt (value: Int) (values: List(Int)) =
 
 // Stage 0's `CollectDerivedNames`: the seed names with every name the body binds from a value
 // reading one of them, to a fixed point; None when the body holds a node the walk does not know.
-let flowDerivedFrom (body: Expr) (seeds: List(Str)) (parameters: List(Str)) =
+let flowDerivedFrom (body: Expr) (seeds: List(Str)) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) =
     match flowNodes([body])([]) with
         | None -> None
         | Some(nodes) ->
-            Some((nodes, flowDerivedNames(flowDerivations(nodes)([]))(parameters)(seeds)))
+            Some((nodes, flowDerivedNames(flowDerivations(nodes)([]))(parameters)(policy)(seeds)))
 
-let recursive flowPositionsReading (arguments: List(Expr)) (position: Int) (names: List(Str)) (parameters: List(Str)) (positions: List(Int)) =
+let recursive flowPositionsReading (arguments: List(Expr)) (position: Int) (names: List(Str)) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (positions: List(Int)) =
     match arguments with
         | [] -> positions
         | argument :: rest ->
-            flowPositionsReading(rest)(position + 1)(names)(parameters)(if !flowContainsInt(position)(positions) && flowReadsAny(names)(parameters)(argument)
+            flowPositionsReading(rest)(position + 1)(names)(parameters)(policy)(if !flowContainsInt(position)(positions) && flowReadsAny(names)(parameters)(policy)(argument)
             then position :: positions
             else positions)
 
 // Stage 0's `CollectSelfCallPositionsMentioning`: the parameter positions at which some full self
 // call among the nodes passes a value reading one of the names.
-let recursive flowSelfCallPositionsReading (self: Str) (parameters: List(Str)) (names: List(Str)) (nodes: List(Expr)) (positions: List(Int)) =
+let recursive flowSelfCallPositionsReading (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (names: List(Str)) (nodes: List(Expr)) (positions: List(Int)) =
     match nodes with
         | [] -> positions
         | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
@@ -865,11 +929,11 @@ let recursive flowSelfCallPositionsReading (self: Str) (parameters: List(Str)) (
                     if callee == self && length(arguments) == length(parameters)
                     then
                         positions
-                        |> flowPositionsReading(arguments)(0)(names)(parameters)
-                        |> flowSelfCallPositionsReading(self)(parameters)(names)(rest)
-                    else flowSelfCallPositionsReading(self)(parameters)(names)(rest)(positions)
-                | _ -> flowSelfCallPositionsReading(self)(parameters)(names)(rest)(positions)
-        | _node :: rest -> flowSelfCallPositionsReading(self)(parameters)(names)(rest)(positions)
+                        |> flowPositionsReading(arguments)(0)(names)(parameters)(policy)
+                        |> flowSelfCallPositionsReading(self)(parameters)(policy)(names)(rest)
+                    else flowSelfCallPositionsReading(self)(parameters)(policy)(names)(rest)(positions)
+                | _ -> flowSelfCallPositionsReading(self)(parameters)(policy)(names)(rest)(positions)
+        | _node :: rest -> flowSelfCallPositionsReading(self)(parameters)(policy)(names)(rest)(positions)
 
 let recursive flowAnyHolder (sources: List(Int)) (holders: List(Int)) =
     match sources with
@@ -908,45 +972,45 @@ and flowNameAt (position: Int) (parameters: List(Str)) =
             then [parameter]
             else flowNameAt(position - 1)(rest)
 
-let recursive flowPositionsReadingNone (arguments: List(Expr)) (position: Int) (names: List(Str)) (parameters: List(Str)) =
+let recursive flowPositionsReadingNone (arguments: List(Expr)) (position: Int) (names: List(Str)) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) =
     match arguments with
         | [] -> []
         | argument :: rest ->
-            if flowReadsAny(names)(parameters)(argument)
-            then flowPositionsReadingNone(rest)(position + 1)(names)(parameters)
-            else position :: flowPositionsReadingNone(rest)(position + 1)(names)(parameters)
+            if flowReadsAny(names)(parameters)(policy)(argument)
+            then flowPositionsReadingNone(rest)(position + 1)(names)(parameters)(policy)
+            else position :: flowPositionsReadingNone(rest)(position + 1)(names)(parameters)(policy)
 
 // Stage 0's `SuccessorsNamingNoPartOf`: the positions whose successor expression names nothing
 // that can hold a value bound to the binders or a part of it: none of the names derived from the
 // binders, and none of the parameters a self call may hand such a name, whole or through another
 // parameter; `cuts` marks the parameters normalized onto the reference-counted heap, which hold
 // references of their own. Nothing is claimed without binders or without the body's flow.
-let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (body: Expr) (flow: Maybe(List(List(Int)))) (binders: List(Str)) (cuts: List(Bool)) (arguments: List(Expr)) =
+let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) (flow: Maybe(List(List(Int)))) (binders: List(Str)) (cuts: List(Bool)) (arguments: List(Expr)) =
     match (binders, flow) with
         | ([], _) -> []
         | (_, None) -> []
         | (_, Some(sources)) ->
-            match flowDerivedFrom(body)(binders)(parameters) with
+            match flowDerivedFrom(body)(binders)(parameters)(policy) with
                 | None -> []
                 | Some((nodes, named)) ->
                     match []
-                    |> flowSelfCallPositionsReading(self)(parameters)(named)(nodes)
+                    |> flowSelfCallPositionsReading(self)(parameters)(policy)(named)(nodes)
                     |> flowHolderClosure(sources)(cuts) with
                         | holders ->
-                            flowPositionsReadingNone(arguments)(0)(flowParameterNamesAt(holders)(parameters)(named))(parameters)
+                            flowPositionsReadingNone(arguments)(0)(flowParameterNamesAt(holders)(parameters)(named))(parameters)(policy)
 
 // The source parameters an argument reads, by ordinal, added to the sources a position already has.
-let recursive flowArgumentSources (argument: Expr) (parameters: List(Str)) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =
+let recursive flowArgumentSources (argument: Expr) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =
     match derived with
         | [] -> sources
         | names :: rest ->
-            flowArgumentSources(argument)(parameters)(rest)(source + 1)(if !flowContainsInt(source)(sources) && flowReadsAny(names)(parameters)(argument)
+            flowArgumentSources(argument)(parameters)(policy)(rest)(source + 1)(if !flowContainsInt(source)(sources) && flowReadsAny(names)(parameters)(policy)(argument)
             then source :: sources
             else sources)
 
-let recursive flowRecordCall (arguments: List(Expr)) (parameters: List(Str)) (derived: List(List(Str))) (flow: List(List(Int))) =
+let recursive flowRecordCall (arguments: List(Expr)) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (derived: List(List(Str))) (flow: List(List(Int))) =
     match (arguments, flow) with
-        | (argument :: restArguments, sources :: restFlow) -> flowArgumentSources(argument)(parameters)(derived)(0)(sources) :: flowRecordCall(restArguments)(parameters)(derived)(restFlow)
+        | (argument :: restArguments, sources :: restFlow) -> flowArgumentSources(argument)(parameters)(policy)(derived)(0)(sources) :: flowRecordCall(restArguments)(parameters)(policy)(derived)(restFlow)
         | _ -> flow
 
 type FlowCount =
@@ -954,26 +1018,26 @@ type FlowCount =
     | recognizedCalls: Int
     | flow: List(List(Int))
 
-let flowCountCall (self: Str) (parameters: List(Str)) (derived: List(List(Str))) (call: Expr) (count: FlowCount) =
+let flowCountCall (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (derived: List(List(Str))) (call: Expr) (count: FlowCount) =
     match shapeCallSpine(call)([]) with
         | (ExprVar(callee), arguments) ->
             if callee == self && length(arguments) == length(parameters)
-            then count with recognizedCalls = count.recognizedCalls + 1, flow = flowRecordCall(arguments)(parameters)(derived)(count.flow)
+            then count with recognizedCalls = count.recognizedCalls + 1, flow = flowRecordCall(arguments)(parameters)(policy)(derived)(count.flow)
             else count
         | _ -> count
 
-let recursive flowCountNodes (self: Str) (parameters: List(Str)) (derived: List(List(Str))) (nodes: List(Expr)) (count: FlowCount) =
+let recursive flowCountNodes (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (derived: List(List(Str))) (nodes: List(Expr)) (count: FlowCount) =
     match nodes with
         | [] -> count
         | ExprVar(name) :: rest ->
-            flowCountNodes(self)(parameters)(derived)(rest)((if name == self
+            flowCountNodes(self)(parameters)(policy)(derived)(rest)((if name == self
             then count with selfReferences = count.selfReferences + 1
             else count))
         | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
             count
-            |> flowCountCall(self)(parameters)(derived)(call)
-            |> flowCountNodes(self)(parameters)(derived)(rest)
-        | _node :: rest -> flowCountNodes(self)(parameters)(derived)(rest)(count)
+            |> flowCountCall(self)(parameters)(policy)(derived)(call)
+            |> flowCountNodes(self)(parameters)(policy)(derived)(rest)
+        | _node :: rest -> flowCountNodes(self)(parameters)(policy)(derived)(rest)(count)
 
 let recursive flowEmpty (count: Int) =
     if count == 0
@@ -984,13 +1048,13 @@ let recursive flowEmpty (count: Int) =
 // parameters whose value, or a part of it, the position may receive. None when some reference to
 // the function is not a full self-call, or the body holds a node the walk does not know, so nothing
 // is claimed about the flow.
-let tcoSelfCallParameterFlow (self: Str) (parameters: List(Str)) (body: Expr) =
+let tcoSelfCallParameterFlow (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) =
     match flowNodes([body])([]) with
         | None -> None
         | Some(nodes) ->
             match FlowCount(selfReferences = 0, recognizedCalls = 0, flow = parameters
             |> length
-            |> flowEmpty) |> flowCountNodes(self)(parameters)(parameters |> flowDerivedOf(flowDerivations(nodes)([]))(parameters))(nodes) with
+            |> flowEmpty) |> flowCountNodes(self)(parameters)(policy)(parameters |> flowDerivedOf(flowDerivations(nodes)([]))(parameters)(policy))(nodes) with
                 | FlowCount { selfReferences = references, recognizedCalls = calls, flow = flow } ->
                     if references == calls
                     then Some(flow)

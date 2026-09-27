@@ -6410,8 +6410,8 @@ public sealed partial class Lowering
         if (hasTailSelfCalls || hasTmcConsSelfCalls)
         {
             _tcoCtx = CreateRecursiveTcoContext(letRecursive, tcoParamNames, paramCount);
-            _tcoCtx.SelfCallParameterFlow = CollectSelfCallParameterFlow(letRecursive.Name, tcoParamNames, innermostBody);
             _tcoCtx.Body = innermostBody;
+            RecomputeTcoParameterFlow(_tcoCtx, routed: false);
             _tcoCtx.TmcShapePresent = hasTmcConsSelfCalls;
         }
         else
@@ -9315,6 +9315,7 @@ public sealed partial class Lowering
             reuseParamNames,
             reuseEntryCopies,
             specElidedAccs);
+        RecomputeTcoParameterFlow(tco, routed: true);
         LowerLambdaCoreEmitTcoLoopEntry(label, tco);
 
         tco.InTailPosition = true;

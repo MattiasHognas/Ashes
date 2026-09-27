@@ -2826,6 +2826,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_worklist_front_refilled_behind_marking_helper_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist whose back queue takes each key marked by a helper. The helper's ownership
+        // summary says its result holds nothing of the key, so the back queue receives nothing of
+        // the front, which is placed on the reference-counted heap and releases each refill.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildWorklistFrontRefilledBehindMarkingHelperProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 10}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("worklist front refilled behind a marking helper", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_worklist_pair_released_past_unrelated_log_successor_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -7468,6 +7492,9 @@ public sealed class LinuxBackendCoverageTests
     }
 
     internal static IrProgram LowerProgramWithImports(string source)
+        => LowerProgramWithImportsAndLowering(source).Ir;
+
+    internal static (Lowering Lowering, IrProgram Ir) LowerProgramWithImportsAndLowering(string source)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
@@ -7477,9 +7504,10 @@ public sealed class LinuxBackendCoverageTests
         var program = new Parser(layout.Source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
 
-        var ir = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases).Lower(program);
+        var lowering = new Lowering(diagnostics, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
+        var ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
-        return ir;
+        return (lowering, ir);
     }
 
     private static async Task<string> ConnectSendReceiveWithRetryAsync(int port, string payload)
@@ -10547,6 +10575,52 @@ public sealed class LinuxBackendCoverageTests
                         then countSeen(seen)
                         else
                             match enqueue(key + "x")(back)(seen) with
+                                | (nextBack, nextSeen) -> solve(rest)(nextBack)(nextSeen)(fuel - 1)
+
+            let recursive rounds (keys: List(Str)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
+
+            Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistFrontRefilledBehindMarkingHelperProgram(int rounds)
+        => $$"""
+            type Seen =
+                | Leaf
+                | Node(Seen, Str, Seen)
+
+            let recursive insert (key: Str) (seen: Seen) =
+                match seen with
+                    | Leaf -> Node(Leaf, key, Leaf)
+                    | Node(left, current, right) -> Node(insert(key)(left), current, right)
+
+            let recursive countSeen (seen: Seen) =
+                match seen with
+                    | Leaf -> 0
+                    | Node(left, _current, right) -> countSeen(left) + 1 + countSeen(right)
+
+            let recursive reverseAll (values: List(Str)) (acc: List(Str)) =
+                match values with
+                    | [] -> acc
+                    | value :: rest -> reverseAll(rest)(value :: acc)
+
+            let mark (key: Str) = key + "x"
+
+            let enqueue (key: Str) (back: List(Str)) (seen: Seen) = (key :: back, insert(key)(seen))
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (seen: Seen) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> countSeen(seen)
+                            | _ -> solve(reverseAll(back)([]))([])(seen)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then countSeen(seen)
+                        else
+                            match enqueue(mark(key))(back)(seen) with
                                 | (nextBack, nextSeen) -> solve(rest)(nextBack)(nextSeen)(fuel - 1)
 
             let recursive rounds (keys: List(Str)) (n: Int) (total: Int) =

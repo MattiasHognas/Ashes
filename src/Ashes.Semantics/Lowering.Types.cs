@@ -236,6 +236,9 @@ public sealed partial class Lowering
         // The loop's body, the innermost lambda body of the recursive binding, read by the
         // back-edge rules that follow the names a self call passes.
         public Expr? Body { get; set; }
+
+        // The call policy the flow was computed under, for the rules that follow names later.
+        public FlowCallPolicy FlowPolicy { get; set; } = FlowCallPolicy.All;
         public Dictionary<int, TcoParamPlacementState> ParamPlacements { get; } = [];
 
         // Preserves the exact legacy enumeration order of the two now-collapsed per-slot membership

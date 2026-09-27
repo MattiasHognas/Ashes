@@ -332,6 +332,12 @@ type CoreTcoLoop =
     // The loop's body, the innermost lambda body of the binding, read by the back-edge rules that
     // follow the names a self call passes (stage 0's `TcoContext.Body`).
     | body: Expr
+    // The call policy the flow was computed under (stage 0's `TcoContext.FlowPolicy`), keyed by a
+    // call's callee name, argument count and accumulator key: every argument flows until the
+    // specialization scan has run, when the policy is due (`callFlowPending`) and the body's
+    // lowering computes it and the flow again.
+    | callFlow: List((Str, Int, Str, List(Bool)))
+    | callFlowPending: Bool
     | emitsLoop: Bool
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
@@ -11478,8 +11484,10 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
                             specializationAccumulators = collectSpecializableCallArgs(parameters)(singleParameterCandidateNames(candidates))(innermost)([]),
                             tmcShapePresent = hasTmcConsSelfCalls(innermost)(name)(arity),
-                            selfCallParameterFlow = tcoSelfCallParameterFlow(name)(parameters)(innermost),
+                            selfCallParameterFlow = tcoSelfCallParameterFlow(name)(parameters)([])(innermost),
                             body = innermost,
+                            callFlow = [],
+                            callFlowPending = false,
                             emitsLoop = emitsLoop
                         ))
                     else None)
@@ -11978,6 +11986,13 @@ let recursive scanSpecializationAccumulators (loop: CoreTcoLoop) (slots: List(In
 // is captured right before any loop-entry bracket is opened, so the runtime-managed parameter
 // entry normalization the whole body's resolved types decide (`finalizeTcoRuntimeManagedParams`)
 // can be spliced back in ahead of it.
+// The loop's call policy is due once the specialization scan has run: the body's lowering
+// computes it (stage 0's `RecomputeTcoParameterFlow` after `LowerLambdaCoreScanSpecializationReuse`).
+let markLoopCallFlowPending (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | Some(loop) -> withStateTcoLoop(Some((loop with callFlowPending = true)))(state)
+        | None -> state
+
 let enterTcoLoopBody (label: Str) (parameter: Str) (state: CoreLoweringState) =
     match stateTcoLoop(state) with
         | Some(CoreTcoLoop { pendingCurried = 0, emitsLoop = true, parameterNames = names } as loop) ->
@@ -11989,6 +12004,7 @@ let enterTcoLoopBody (label: Str) (parameter: Str) (state: CoreLoweringState) =
                     |> scanDirectReuseAccumulators(loop)(slots)(loop.matchedAccumulators)
                     |> scanSpecializationAccumulators(loop)(slots)(loop.specializationAccumulators)
                     |> emitTcoLoopEntry(label)(slots)(loop)(length(slotted.reversedInstructions))
+                    |> markLoopCallFlowPending
         | _ -> state
 
 // A lambda entered inside a loop function: the next curried parameter's lambda stays in the loop
@@ -22996,9 +23012,9 @@ let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) 
         | Some(loop) ->
             let binders = predecessorBindersOf(predecessorSlot)(state)
             in
-                (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.body)(loop.selfCallParameterFlow)(binders)(frame.parameterSlots
+                (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(frame.parameterSlots
                 |> length
-                |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.body)(loop.selfCallParameterFlow)(binders)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
+                |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
 
 let recursive predecessorDropsOf (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match predecessors with
@@ -24100,14 +24116,87 @@ let lowerCoreDispatch expression lowerCore state =
 // The context's request reaches the dispatch trimmed to what this expression kind forwards; an
 // expected type a kind does not forward is unified with its result afterwards. The result state
 // never carries a request.
+// The trait evidence a call passes ahead of its source arguments, stage 0's
+// `SummaryParameterIndex`, which the policy always follows.
+let recursive flowEvidenceArgumentCount (arguments: List(Expr)) =
+    match arguments with
+        | [] -> 0
+        | argument :: rest ->
+            match unspanArgument(argument) with
+                | ExprVar(name) ->
+                    if Ashes.Text.startsWith(name)("__trait_evidence_")
+                    then 1 + flowEvidenceArgumentCount(rest)
+                    else 0
+                | _ -> 0
+
+let recursive flowReachFlags (parameters: List(Str)) (counts: List(ParameterReachEntry)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest -> (reachCountOf(parameter)(counts) > 0) :: flowReachFlags(rest)(counts)
+
+let recursive flowTrueFlags (count: Int) =
+    if count == 0
+    then []
+    else true :: flowTrueFlags(count - 1)
+
+// Stage 0's `SummaryFlowingArguments`: the arguments a callee's result may reach, by the
+// program's result-reach summary of the callee, when it is unpoisoned and the call applies one
+// argument per parameter past the trait evidence.
+let flowSummaryFlags (root: Expr) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match unspanArgument(root) with
+        | ExprVar(callee) ->
+            match calleeSummaryOf(callee)(state) with
+                | Some(ReachSummary { function = ReachFunction { parameters = parameters }, reach = ResultReachState { counts = counts, isPoisoned = false } }) ->
+                    let evidence = flowEvidenceArgumentCount(arguments)
+                    in
+                        if coreListLength(arguments) - evidence == length(parameters)
+                        then
+                            counts
+                            |> flowReachFlags(parameters)
+                            |> append(flowTrueFlags(evidence))
+                            |> Some
+                        else None
+                | _ -> None
+        | _ -> None
+
+// Stage 0's `FlowingCallArguments`: a call flows what its callee's summary admits.
+let flowCallFlagsOf (call: Expr) (state: CoreLoweringState) =
+    match collectCallSpine(call) with
+        | CoreCallSpine { root = root, arguments = arguments } -> flowSummaryFlags(root)(arguments)(state)
+
+let recursive loopCallFlowOf (nodes: List(Expr)) (table: List((Str, Int, Str, List(Bool)))) (state: CoreLoweringState) =
+    match nodes with
+        | [] -> table
+        | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
+            match (flowCallKeyOf(call), flowCallFlagsOf(call)(state)) with
+                | (Some((callee, count, accumulator)), Some(flags)) -> loopCallFlowOf(rest)((callee, count, accumulator, flags) :: table)(state)
+                | _ -> loopCallFlowOf(rest)(table)(state)
+        | _node :: rest -> loopCallFlowOf(rest)(table)(state)
+
+// Stage 0's `CreateFlowCallPolicy` and `RecomputeTcoParameterFlow` once the specialization scan
+// has run: the loop's call policy over its body's calls, and its self-call parameter flow again
+// under that policy, which the placements after the body and the back-edge rules read.
+let resolveLoopCallFlow (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | Some(CoreTcoLoop { callFlowPending = true, body = body, selfName = selfName, parameterNames = parameters } as loop) ->
+            let table =
+                match flowNodes([body])([]) with
+                    | Some(nodes) -> loopCallFlowOf(nodes)([])(state)
+                    | None -> []
+            in withStateTcoLoop(Some((loop with callFlow = table, callFlowPending = false, selfCallParameterFlow = tcoSelfCallParameterFlow(selfName)(parameters)(table)(body))))(state)
+        | _ -> state
+
 let recursive lowerCore expression state =
-    match consumerRequestOf(state) with
+    match state
+    |> resolveLoopCallFlow
+    |> consumerRequestOf with
         | request ->
             match if isEmptyConsumerRequest(request)
             then request
             else dispatchRequest(expression)(request) with
                 | dispatched ->
                     state
+                    |> resolveLoopCallFlow
                     |> withConsumerRequest(dispatched)
                     |> lowerCoreDispatch(expression)(lowerCore)
                     |> withLoweredConsumerRequest(emptyConsumerRequest)

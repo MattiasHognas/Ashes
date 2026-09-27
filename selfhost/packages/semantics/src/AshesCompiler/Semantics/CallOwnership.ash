@@ -26,6 +26,7 @@ export (
     value calleeParameterBorrows,
     value calleeResultReachesArgument,
     value calleeResultReachesArgumentWhole,
+    value reachCountOf,
     value calleeResultCannotKeepArgumentWhole,
     value innermostStageLabel,
     value compiledResultRuntimeManaged,

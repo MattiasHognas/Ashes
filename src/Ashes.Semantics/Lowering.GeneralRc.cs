@@ -1083,8 +1083,9 @@ public sealed partial class Lowering
         }
 
         List<string> parameters = info.Tco.ParamNames;
-        HashSet<string> named = CollectDerivedNames(body, binders, parameters);
-        HashSet<int> holders = CollectSelfCallPositionsMentioning(info.Tco.SelfName, parameters, body, named);
+        FlowCallPolicy policy = info.Tco.FlowPolicy;
+        HashSet<string> named = CollectDerivedNames(body, binders, parameters, policy);
+        HashSet<int> holders = CollectSelfCallPositionsMentioning(info.Tco.SelfName, parameters, body, named, policy);
         bool changed = true;
         while (changed)
         {
@@ -1111,7 +1112,7 @@ public sealed partial class Lowering
         }
 
         return info.ArgExpressions
-            .Select(argument => !named.Any(name => FlowMentionsName(argument, name, parameters, 0)))
+            .Select(argument => !named.Any(name => FlowMentionsName(argument, name, parameters, policy, 0)))
             .ToArray();
     }
 
