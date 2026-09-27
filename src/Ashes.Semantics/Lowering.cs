@@ -16401,8 +16401,12 @@ public sealed partial class Lowering
         int headTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp);
         MarkResourceArgMoved(cons.Head);
         // A head copied out of its pattern owner leaves the owner's own reference behind: the cell
-        // owns the copy, and the owner still releases at its scope's exit.
-        if (!_patternOwnerNormalizedTemps.Contains(head.Temp))
+        // owns the copy, and the owner still releases at its scope's exit. So does a head retained
+        // out of an owned binding for the transfer into the cell (a let-bound call result): the
+        // cell holds the reference the retain took, and the binding's own is released with the
+        // iteration.
+        if (!_patternOwnerNormalizedTemps.Contains(head.Temp)
+            && !(IsOwnedRuntimeManagedTemp(head.Temp) && Environment.GetEnvironmentVariable("GRC_NO_TMCHEADRETAIN") is null))
         {
             MarkTmcSpineChildMoved(cons.Head);
         }

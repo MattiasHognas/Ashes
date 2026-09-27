@@ -3513,6 +3513,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_spine_cell_head_bound_by_let_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A record a helper returns is let-bound and consed onto the spine a producer builds in
+        // place: the cell retains the binding's value, so the binding's own reference is released
+        // with the iteration rather than counted as moved into the cell.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordSpineProgram(rounds, "let entry = make(block)\n                    in entry :: step(rest)"));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("spine cell head bound by let", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_closure_consing_its_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())

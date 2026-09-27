@@ -42,6 +42,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new WorklistFrontWalkedAndRefilledTemplate());
         registry.Register(new WorklistBackOnlyRefilledTemplate());
         registry.Register(new ChoiceAccumulatorBorrowedHeadTemplate());
+        registry.Register(new SpineHeadBoundByLetTemplate());
     }
 }
 
@@ -699,5 +700,49 @@ internal sealed class NestedItemLoopPendingBlocksStateTemplate() : LeakCombinati
         }
 
         return string.Join(", ", items);
+    }
+}
+
+/// <summary>
+/// A record a helper returns, bound by a let or passed through a closure, consed onto the list a
+/// recursive producer builds: the cell takes a reference of its own, and the binding's or the
+/// caller's reference is released behind it.
+/// </summary>
+internal sealed class SpineHeadBoundByLetTemplate() : LeakCombinationTemplate(
+    "leak.spine-head-bound-by-let", "spineHeadByLet", GeneratedFeature.Record, GeneratedFeature.RecordPattern, GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.Lambda)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string entry = names.Of("LeakEntry");
+        string make = names.Of("makeEntry");
+        string step = names.Of("stepEntries");
+        string count = names.Of("countEntries");
+        string items = names.Ints(names.Between(2, 5), 1, 9);
+        string head = names.Variant("head", 3) switch
+        {
+            0 => $"let entry = {make}(value)\n                        in entry :: {step}(rest)",
+            1 => $"let next = {step}(rest)\n                        in {make}(value) :: next",
+            _ => $"value\n                        |> {make}\n                        |> (given (entry) -> entry :: {step}(rest))",
+        };
+        return $$"""
+            type {{entry}} =
+                | slot: Int
+                | live: Bool
+
+            let {{make}} (value: Int) = {{entry}}(slot = value, live = value % 2 == 0)
+
+            let recursive {{step}} (remaining: List(Int)) =
+                match remaining with
+                    | [] -> []
+                    | value :: rest ->
+                        {{head}}
+
+            let recursive {{count}} (entries: List({{entry}})) (total: Int) =
+                match entries with
+                    | [] -> total
+                    | {{entry}} { slot = slot } :: rest -> {{count}}(rest)(total + slot)
+
+            let {{names.Entry}} (seed: Int) = {{count}}({{step}}({{items}}))(seed)
+            """;
     }
 }
