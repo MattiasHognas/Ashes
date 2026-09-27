@@ -71,10 +71,88 @@ public sealed partial class Lowering
                 case Expr.Let let when names.Any(name => FlowMentionsName(let.Value, name, parameters, 0)):
                     changed |= names.Add(let.Name);
                     break;
+                case Expr.LetResult letResult when names.Any(name => FlowMentionsName(letResult.Value, name, parameters, 0)):
+                    changed |= names.Add(letResult.Name);
+                    break;
+                case Expr.LetRecursive letRecursive when names.Any(name => FlowMentionsName(letRecursive.Value, name, parameters, 0)):
+                    changed |= names.Add(letRecursive.Name);
+                    break;
+                case Expr.Call call:
+                    changed |= AddLambdaApplicationBinders(call, names, parameters);
+                    break;
             }
         }
 
         return changed;
+    }
+
+    // A lambda applied where it is written binds each of its parameters to the argument at that
+    // position: a parameter whose argument reads one of the names is derived from it.
+    private static bool AddLambdaApplicationBinders(Expr.Call call, HashSet<string> names, List<string> parameters)
+    {
+        List<Expr> arguments = [];
+        Expr current = call;
+        while (current is Expr.Call inner)
+        {
+            arguments.Insert(0, inner.Arg);
+            current = inner.Func;
+        }
+
+        bool changed = false;
+        int position = 0;
+        while (current is Expr.Lambda lambda && position < arguments.Count)
+        {
+            if (names.Any(name => FlowMentionsName(arguments[position], name, parameters, 0)))
+            {
+                changed |= names.Add(lambda.ParamName);
+            }
+
+            current = lambda.Body;
+            position++;
+        }
+
+        return changed;
+    }
+
+    // The names bound, anywhere in the body, from a value that reads one of the seed names or a
+    // name derived from one, to a fixed point, the seeds included.
+    private static HashSet<string> CollectDerivedNames(Expr body, IEnumerable<string> seeds, List<string> parameters)
+    {
+        HashSet<string> names = new(seeds, StringComparer.Ordinal);
+        List<HashSet<string>> derived = [names];
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (Expr? node in EnumerateFlowNodes(body))
+            {
+                changed |= node is not null && AddDerivedBinders(node, derived, parameters);
+            }
+        }
+
+        return names;
+    }
+
+    // The parameter positions at which some full self call in the body passes a value reading one
+    // of the names.
+    private static HashSet<int> CollectSelfCallPositionsMentioning(string selfName, List<string> parameters, Expr body, HashSet<string> names)
+    {
+        HashSet<int> positions = [];
+        foreach (Expr? node in EnumerateFlowNodes(body))
+        {
+            if (node is not null && TryUnwindSelfCall(node, selfName, parameters.Count, out List<Expr> arguments))
+            {
+                for (int position = 0; position < arguments.Count; position++)
+                {
+                    if (names.Any(name => FlowMentionsName(arguments[position], name, parameters, 0)))
+                    {
+                        positions.Add(position);
+                    }
+                }
+            }
+        }
+
+        return positions;
     }
 
     private static void RecordSelfCallFlow(List<Expr> arguments, List<HashSet<string>> derived, List<string> parameters, Dictionary<int, HashSet<int>> flow)

@@ -329,6 +329,9 @@ type CoreTcoLoop =
     // position may receive; None when the body refers to the function other than by a full
     // self-call, or holds a node the walk does not follow (stage 0's `SelfCallParameterFlow`).
     | selfCallParameterFlow: Maybe(List(List(Int)))
+    // The loop's body, the innermost lambda body of the binding, read by the back-edge rules that
+    // follow the names a self call passes (stage 0's `TcoContext.Body`).
+    | body: Expr
     | emitsLoop: Bool
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
@@ -397,8 +400,10 @@ type CoreTcoReset =
     // The owned slots registered when the back edge was scheduled, stage 0's
     // `RecordGeneralRcBackEdgeSlots` (a slot another path stored reads empty here and is skipped):
     // the predecessor slots, each with the ordinals of the successors that may still name its value
-    // unless they are placed on the reference-counted heap.
-    | generalRcPredecessorDrops: List((Int, SemanticType, List(Int)))
+    // unless they are placed on the reference-counted heap, and the ordinals of the successors
+    // whose expression names nothing that can hold a part of it, on a path that did not normalize
+    // the successors and on one that did (stage 0's `SuccessorsNamingNoPartOf`).
+    | generalRcPredecessorDrops: List((Int, SemanticType, List(Int), List(Int), List(Int)))
     // The other owned slots, each with its fresh flag slot (-1 outside a loop) and the ordinals of
     // the successors whose type may hold a part of its value (stage 0's `NoSuccessorCanHoldPartOf`
     // type test); per successor, the owned slot it is a plain read of (-1 for none) and whether it
@@ -570,6 +575,11 @@ type CoreOwnerState =
     // predecessor slots): registered among the owned slots too, and released at a back edge by a rule
     // of their own.
     | generalRcPredecessorSlots: List((Maybe(IrFunctionOrigin), Int, SemanticType))
+    // The source names bound to an owned slot's value or to its parts (the let it is bound by, the
+    // pattern bindings of a match on it), stage 0's `GeneralRcOwnedSlot.Binders`; and each
+    // predecessor slot with the owned slot whose binders it shares.
+    | generalRcSlotBinders: List((Maybe(IrFunctionOrigin), Int, List(Str)))
+    | generalRcPredecessorOwners: List((Maybe(IrFunctionOrigin), Int, Int))
     // Each owned slot stored inside a loop with the flag slot saying this iteration stored it.
     | generalRcFreshSlots: List((Maybe(IrFunctionOrigin), Int, Int))
     // The match arms and if branches being lowered, innermost first, each by its join label and a
@@ -1346,6 +1356,22 @@ let withStateGeneralRcPredecessorSlots value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcPredecessorSlots = value))
 
+let stateGeneralRcSlotBinders (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.generalRcSlotBinders)
+
+let withStateGeneralRcSlotBinders value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcSlotBinders = value))
+
+let stateGeneralRcPredecessorOwners (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.generalRcPredecessorOwners)
+
+let withStateGeneralRcPredecessorOwners value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcPredecessorOwners = value))
+
 let stateGeneralRcFreshSlots (state: CoreLoweringState) =
     (let group = state.ownerState
     in group.generalRcFreshSlots)
@@ -1473,6 +1499,49 @@ let withStateTcoLoop value (state: CoreLoweringState) =
 let stateTcoLoopFrame (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.tcoLoopFrame)
+
+let recursive isOwnedSlotIn (slot: Int) (ownedSlots: List((Int, SemanticType))) =
+    match ownedSlots with
+        | [] -> false
+        | (candidate, _semanticType) :: rest -> candidate == slot || isOwnedSlotIn(slot)(rest)
+
+// Stage 0's `OwnedSlotReadInto`: the owned slot a successor argument is a plain read of, or -1.
+let recursive ownedSlotReadOf (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then
+                if isOwnedSlotIn(slot)(ownedSlots)
+                then slot
+                else -1
+            else ownedSlotReadOf(temp)(ownedSlots)(rest)
+        | _ :: rest -> ownedSlotReadOf(temp)(ownedSlots)(rest)
+
+// Stage 0's `NoteGeneralRcOwnedSlotBinders`: the names a `let` or a match's patterns bind from a
+// value just lowered, when that value is the read of an owned slot of the loop being lowered.
+let noteGeneralRcOwnedSlotBinders (valueTemp: Int) (names: List(Str)) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | None -> state
+        | Some(_frame) ->
+            match ownedSlotReadOf(valueTemp)(ownedSlotsOfActiveFunction(state))(state.reversedInstructions) with
+                | slot ->
+                    if slot < 0
+                    then state
+                    else withStateGeneralRcSlotBinders((stateActiveFunctionOrigin(state), slot, names) :: stateGeneralRcSlotBinders(state))(state)
+
+let noteLoweredValueBinders (names: List(Str)) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, error = None } -> lowered with state = noteGeneralRcOwnedSlotBinders(temp)(names)(state)
+        | _ -> lowered
+
+let recursive matchCaseBinders (cases: List((Pattern, Expr, Maybe(Expr)))) (names: List(Str)) =
+    match cases with
+        | [] -> names
+        | (pattern, _body, _guard) :: rest ->
+            names
+            |> shapePatternNames(pattern)
+            |> matchCaseBinders(rest)
 
 let withStateTcoLoopFrame value (state: CoreLoweringState) =
     (let group = state.tcoState
@@ -2121,6 +2190,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             ownerReleasePlans = [],
             generalRcOwnedSlots = [],
             generalRcPredecessorSlots = [],
+            generalRcSlotBinders = [],
+            generalRcPredecessorOwners = [],
             generalRcFreshSlots = [],
             generalRcBranches = [],
             generalRcSlotBranches = [],
@@ -4643,7 +4714,9 @@ let storeLetValueInSlot name value (tailForwarded: Bool) bodyRequest outerBindin
                     |> success(temp)(semanticType), local)
 
 let finishLetValueInSlot name value body requestBody bodyRequest lower outerBindings lowered =
-    match storeLetValueInSlot(name)(value)(isTailForwardedBindingResult(requestBody)(name))(bodyRequest)(outerBindings)(lowered) with
+    match lowered
+    |> noteLoweredValueBinders([name])
+    |> storeLetValueInSlot(name)(value)(isTailForwardedBindingResult(requestBody)(name))(bodyRequest)(outerBindings) with
         | (LoweredCoreValue { state = failedState, error = Some(error) }, slot) -> (failure(failedState)(error), slot)
         | (LoweredCoreValue { state = stored, error = None }, local) ->
             (stored
@@ -7625,15 +7698,41 @@ let saveGeneralRcOwnedPredecessor (ownedSlot: Int) (state: CoreLoweringState) =
                             |> emit(StoreLocal(predecessorSlot)(previousTemp)), predecessorSlot)
 
 // Stage 0's `RegisterGeneralRcOwnedPredecessor`: released at the function's exit like any owned
-// slot, and at a back edge by its own rule.
-let registerGeneralRcOwnedPredecessor (predecessorSlot: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+// slot, and at a back edge by its own rule. It shares the binders of the owned slot it succeeds.
+let registerGeneralRcOwnedPredecessor (predecessorSlot: Int) (ownedSlot: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     if predecessorSlot < 0
     then state
     else
         state
         |> withStateGeneralRcOwnedSlots((stateActiveFunctionOrigin(state), predecessorSlot, semanticType) :: stateGeneralRcOwnedSlots(state))
         |> withStateGeneralRcPredecessorSlots((stateActiveFunctionOrigin(state), predecessorSlot, semanticType) :: stateGeneralRcPredecessorSlots(state))
+        |> withStateGeneralRcPredecessorOwners((stateActiveFunctionOrigin(state), predecessorSlot, ownedSlot) :: stateGeneralRcPredecessorOwners(state))
         |> recordGeneralRcSlotBranches(predecessorSlot)
+
+let recursive predecessorOwnerOf (origin: Maybe(IrFunctionOrigin)) (predecessorSlot: Int) (owners: List((Maybe(IrFunctionOrigin), Int, Int))) =
+    match owners with
+        | [] -> -1
+        | (owner, candidate, ownedSlot) :: rest ->
+            if owner == origin && candidate == predecessorSlot
+            then ownedSlot
+            else predecessorOwnerOf(origin)(predecessorSlot)(rest)
+
+let recursive slotBindersOf (origin: Maybe(IrFunctionOrigin)) (slot: Int) (binders: List((Maybe(IrFunctionOrigin), Int, List(Str)))) (names: List(Str)) =
+    match binders with
+        | [] -> names
+        | (owner, candidate, bound) :: rest ->
+            if owner == origin && candidate == slot
+            then
+                names
+                |> append(bound)
+                |> slotBindersOf(origin)(slot)(rest)
+            else slotBindersOf(origin)(slot)(rest)(names)
+
+// The binders of the owned slot a predecessor slot succeeds.
+let predecessorBindersOf (predecessorSlot: Int) (state: CoreLoweringState) =
+    slotBindersOf(stateActiveFunctionOrigin(state))(state
+    |> stateGeneralRcPredecessorOwners
+    |> predecessorOwnerOf(stateActiveFunctionOrigin(state))(predecessorSlot))(stateGeneralRcSlotBinders(state))([])
 
 // The release of one owned value by its type, spliced in from the dropper synthesis.
 let emitOwnedValueChildDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -7966,19 +8065,23 @@ let recursive argumentPredatesTheLoopAt (ordinal: Int) (arguments: List(TcoReset
 
 // Every blocker of a predecessor was normalized onto the reference-counted heap on this path, or
 // predates the loop.
-let recursive predecessorBlockersClear (blockers: List(Int)) (arguments: List(TcoResetArgument)) (normalized: Bool) =
+let recursive predecessorBlockersClear (blockers: List(Int)) (arguments: List(TcoResetArgument)) (normalized: Bool) (unnamed: List(Int)) =
     match blockers with
         | [] -> true
-        | ordinal :: rest -> (argumentPredatesTheLoopAt(ordinal)(arguments) || normalized && argumentIsManagedAt(ordinal)(arguments)) && predecessorBlockersClear(rest)(arguments)(normalized)
+        | ordinal :: rest -> (argumentPredatesTheLoopAt(ordinal)(arguments) || normalized && argumentIsManagedAt(ordinal)(arguments) || containsInt(ordinal)(unnamed)) && predecessorBlockersClear(rest)(arguments)(normalized)(unnamed)
 
 // Stage 0's `EmitGeneralRcPredecessorDrops`: an earlier iteration's value is released once no
 // successor can still name it, each successor that might (its blocker) having been normalized onto
-// the reference-counted heap on this path or predating the loop.
-let recursive emitGeneralRcPredecessorDrops (drops: List((Int, SemanticType, List(Int)))) (arguments: List(TcoResetArgument)) (normalized: Bool) (state: CoreLoweringState) =
+// the reference-counted heap on this path, predating the loop, or naming nothing that can hold a
+// part of the value.
+let recursive emitGeneralRcPredecessorDrops (drops: List((Int, SemanticType, List(Int), List(Int), List(Int)))) (arguments: List(TcoResetArgument)) (normalized: Bool) (state: CoreLoweringState) =
     match drops with
         | [] -> state
-        | (slot, semanticType, blockers) :: rest ->
-            let releasable = predecessorBlockersClear(blockers)(arguments)(normalized)
+        | (slot, semanticType, blockers, unnamedPlain, unnamedNormalized) :: rest ->
+            let releasable =
+                predecessorBlockersClear(blockers)(arguments)(normalized)(if normalized
+                then unnamedNormalized
+                else unnamedPlain)
             in
                 if releasable
                 then
@@ -7987,10 +8090,10 @@ let recursive emitGeneralRcPredecessorDrops (drops: List((Int, SemanticType, Lis
                     |> emitGeneralRcPredecessorDrops(rest)(arguments)(normalized)
                 else emitGeneralRcPredecessorDrops(rest)(arguments)(normalized)(state)
 
-let recursive isPredecessorSlot (slot: Int) (drops: List((Int, SemanticType, List(Int)))) =
+let recursive isPredecessorSlot (slot: Int) (drops: List((Int, SemanticType, List(Int), List(Int), List(Int)))) =
     match drops with
         | [] -> false
-        | (candidate, _semanticType, _blockers) :: rest -> candidate == slot || isPredecessorSlot(slot)(rest)
+        | (candidate, _semanticType, _blockers, _unnamedPlain, _unnamedNormalized) :: rest -> candidate == slot || isPredecessorSlot(slot)(rest)
 
 let recursive flagAtOrdinal (ordinal: Int) (flags: List(Bool)) =
     match flags with
@@ -11376,6 +11479,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             specializationAccumulators = collectSpecializableCallArgs(parameters)(singleParameterCandidateNames(candidates))(innermost)([]),
                             tmcShapePresent = hasTmcConsSelfCalls(innermost)(name)(arity),
                             selfCallParameterFlow = tcoSelfCallParameterFlow(name)(parameters)(innermost),
+                            body = innermost,
                             emitsLoop = emitsLoop
                         ))
                     else None)
@@ -13877,9 +13981,13 @@ let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp:
             else
                 match freshLocal(state) with
                     | FreshLocal { state = slotted, local = ownedSlot } ->
-                        match freshLabel("rc_handed_over_kept")(emit(StoreLocal(ownedSlot)(temp))(slotted)) with
+                        match slotted
+                        |> emit(StoreLocal(ownedSlot)(temp))
+                        |> freshLabel("rc_handed_over_kept") with
                             | FreshLabel { state = labelled, label = keptLabel } ->
-                                match freshTemp(emit(JumpIfFalse(adoptionFlagTemp)(keptLabel))(labelled)) with
+                                match labelled
+                                |> emit(JumpIfFalse(adoptionFlagTemp)(keptLabel))
+                                |> freshTemp with
                                     | FreshTemp { state = allocated, temp = zeroTemp } ->
                                         allocated
                                         |> emit(LoadConstInt(zeroTemp)(0))
@@ -14291,7 +14399,7 @@ let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSl
                                         match owned
                                         |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
                                         |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
-                                        |> registerGeneralRcOwnedPredecessor(predecessorSlot)(semanticType)
+                                        |> registerGeneralRcOwnedPredecessor(predecessorSlot)(ownedSlot)(semanticType)
                                         |> freshTemp with
                                             | FreshTemp { state = loaded, temp = resultTemp } ->
                                                 loaded
@@ -17424,6 +17532,7 @@ let lowerMatch value cases lower state =
         else cleared)
     |> lower(value)
     |> recordBorrowedScrutinee(value)(cases)
+    |> noteLoweredValueBinders(matchCaseBinders(cases)([]))
     |> prepareMatchPlan
     |> withPlanArmRequest(withReconcilableFreshStringJoinRequest(ExprMatch(value)(cases)(None))(state
     |> consumerRequestOf
@@ -22782,11 +22891,6 @@ let recursive runtimeTempFlags (temps: List(Int)) (state: CoreLoweringState) =
         | [] -> []
         | temp :: rest -> isRuntimeTemp(temp)(state) :: runtimeTempFlags(rest)(state)
 
-let recursive isOwnedSlotIn (slot: Int) (ownedSlots: List((Int, SemanticType))) =
-    match ownedSlots with
-        | [] -> false
-        | (candidate, _semanticType) :: rest -> candidate == slot || isOwnedSlotIn(slot)(rest)
-
 // Stage 0's `OwnedSlotReadInto`: whether a successor argument is a plain read of an owned slot.
 let recursive readsOwnedSlotDirectly (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
     match instructions with
@@ -22873,11 +22977,36 @@ let recursive predecessorBlockers (ordinal: Int) (parts: List(SemanticType)) (ar
                 else ordinal :: rest
         | _ -> []
 
-let recursive predecessorDropsOf (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (state: CoreLoweringState) =
+// Per parameter position, whether the parameter is placed on the reference-counted heap.
+let recursive managedParameterFlags (slots: List(Int)) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | slot :: rest -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state) :: managedParameterFlags(rest)(frame)(loop)(state)
+
+let recursive unmanagedFlags (count: Int) =
+    if count == 0
+    then []
+    else false :: unmanagedFlags(count - 1)
+
+// The successors naming nothing that can hold a part of the predecessor slot's value, on a path
+// that did not normalize the successors and on one that did.
+let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | None -> ([], [])
+        | Some(loop) ->
+            let binders = predecessorBindersOf(predecessorSlot)(state)
+            in
+                (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.body)(loop.selfCallParameterFlow)(binders)(frame.parameterSlots
+                |> length
+                |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.body)(loop.selfCallParameterFlow)(binders)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
+
+let recursive predecessorDropsOf (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match predecessors with
         | [] -> []
         | (slot, semanticType) :: rest ->
-            (slot, semanticType, predecessorBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(temps)(ownedSlots)(state)) :: predecessorDropsOf(rest)(argumentTypes)(temps)(ownedSlots)(state)
+            match predecessorUnnamedSuccessors(slot)(arguments)(frame)(state) with
+                | (unnamedPlain, unnamedNormalized) ->
+                    (slot, semanticType, predecessorBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(temps)(ownedSlots)(state), unnamedPlain, unnamedNormalized) :: predecessorDropsOf(rest)(argumentTypes)(temps)(ownedSlots)(arguments)(frame)(state)
 
 // The ordinals of the successors whose type may hold one of these heap parts: neither inline nor of
 // a type that cannot hold any of them.
@@ -22897,7 +23026,7 @@ let recursive freshSlotOf (origin: Maybe(IrFunctionOrigin)) (slot: Int) (freshSl
             then freshSlot
             else freshSlotOf(origin)(slot)(rest)
 
-let recursive generalRcSlotFactsOf (slots: List((Int, SemanticType))) (predecessors: List((Int, SemanticType, List(Int)))) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+let recursive generalRcSlotFactsOf (slots: List((Int, SemanticType))) (predecessors: List((Int, SemanticType, List(Int), List(Int), List(Int)))) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
     match slots with
         | [] -> []
         | (slot, semanticType) :: rest ->
@@ -22907,19 +23036,6 @@ let recursive generalRcSlotFactsOf (slots: List((Int, SemanticType))) (predecess
                 (slot, semanticType, state
                 |> stateGeneralRcFreshSlots
                 |> freshSlotOf(stateActiveFunctionOrigin(state))(slot), typeBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(state)) :: generalRcSlotFactsOf(rest)(predecessors)(argumentTypes)(state)
-
-// Stage 0's `OwnedSlotReadInto`: the owned slot a successor argument is a plain read of, or -1.
-let recursive ownedSlotReadOf (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
-    match instructions with
-        | [] -> -1
-        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
-            if target == temp
-            then
-                if isOwnedSlotIn(slot)(ownedSlots)
-                then slot
-                else -1
-            else ownedSlotReadOf(temp)(ownedSlots)(rest)
-        | _ :: rest -> ownedSlotReadOf(temp)(ownedSlots)(rest)
 
 let recursive argumentOwnedSlotsOf (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (state: CoreLoweringState) =
     match temps with
@@ -22952,7 +23068,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
         slotsSharingIteration(ownedSlotsOfActiveFunction(state))(state)
     in
         let predecessorDrops =
-            predecessorDropsOf(slotsSharingIteration(ownedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcPredecessorSlots(state))([]))(state))(argumentTypes)(temps)(loopSlots)(state)
+            predecessorDropsOf(slotsSharingIteration(ownedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcPredecessorSlots(state))([]))(state))(argumentTypes)(temps)(loopSlots)(arguments)(frame)(state)
         in
             state
             |> stateRuntimeOwners

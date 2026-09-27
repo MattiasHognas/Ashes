@@ -70,6 +70,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("tco_record_blocked_by_sibling_keeps_field_retain_pending")]
     [Arguments("back_edge_helper_calling_unreachable_helper_is_called")]
     [Arguments("tco_worklist_front_walked_or_refilled")]
+    [Arguments("tco_pair_released_past_unnamed_successor")]
     [Arguments("aggregate_borrowing_owner_kept_by_callee")]
     [Arguments("reuse_path_rebuild_declines_copy")]
     [Arguments("rc_child_of_call_argument_kept_by_callee_result")]

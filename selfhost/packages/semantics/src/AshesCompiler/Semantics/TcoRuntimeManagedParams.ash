@@ -36,6 +36,8 @@ export (
     value isTcoListShape,
     value selfCallOrdinalPassing,
     value tcoSelfCallParameterFlow,
+    value shapePatternNames,
+    value flowSuccessorsNamingNoPartOf,
 )
 
 // The reference-ownership shape shared by every exact tail self-call argument at one parameter
@@ -706,7 +708,21 @@ let recursive flowDerivations (nodes: List(Expr)) (derivations: List((Expr, List
         | [] -> derivations
         | ExprMatch(value, cases, _position) :: rest -> flowDerivations(rest)((value, flowCaseBinders(cases)([])) :: derivations)
         | ExprLet(name, value, _body, _parameters, _annotation, _requirements) :: rest -> flowDerivations(rest)((value, [name]) :: derivations)
+        | ExprLetResult(name, value, _body) :: rest -> flowDerivations(rest)((value, [name]) :: derivations)
+        | ExprLetRecursive(name, value, _body, _parameters, _annotation, _requirements) :: rest -> flowDerivations(rest)((value, [name]) :: derivations)
+        | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
+            match shapeCallSpine(call)([]) with
+                | (root, arguments) ->
+                    derivations
+                    |> flowLambdaApplicationDerivations(root)(arguments)
+                    |> flowDerivations(rest)
         | _node :: rest -> flowDerivations(rest)(derivations)
+// Stage 0's `AddLambdaApplicationBinders`: a lambda applied where it is written binds each of its
+// parameters to the argument at that position.
+and flowLambdaApplicationDerivations (root: Expr) (arguments: List(Expr)) (derivations: List((Expr, List(Str)))) =
+    match (shapeUnspan(root), arguments) with
+        | (ExprLambda(parameter, body, _annotation), argument :: rest) -> flowLambdaApplicationDerivations(body)(rest)((argument, [parameter]) :: derivations)
+        | _ -> derivations
 
 // Stage 0's `FlowMentionsName`: whether a value computed by `expression` may hold `name`'s value or
 // a part of it. An operator's result holds nothing of its operands (a number, a truth value, a
@@ -788,6 +804,103 @@ let recursive flowContainsInt (value: Int) (values: List(Int)) =
     match values with
         | [] -> false
         | candidate :: rest -> candidate == value || flowContainsInt(value)(rest)
+
+// Stage 0's `CollectDerivedNames`: the seed names with every name the body binds from a value
+// reading one of them, to a fixed point; None when the body holds a node the walk does not know.
+let flowDerivedFrom (body: Expr) (seeds: List(Str)) (parameters: List(Str)) =
+    match flowNodes([body])([]) with
+        | None -> None
+        | Some(nodes) ->
+            Some((nodes, flowDerivedNames(flowDerivations(nodes)([]))(parameters)(seeds)))
+
+let recursive flowPositionsReading (arguments: List(Expr)) (position: Int) (names: List(Str)) (parameters: List(Str)) (positions: List(Int)) =
+    match arguments with
+        | [] -> positions
+        | argument :: rest ->
+            flowPositionsReading(rest)(position + 1)(names)(parameters)(if !flowContainsInt(position)(positions) && flowReadsAny(names)(parameters)(argument)
+            then position :: positions
+            else positions)
+
+// Stage 0's `CollectSelfCallPositionsMentioning`: the parameter positions at which some full self
+// call among the nodes passes a value reading one of the names.
+let recursive flowSelfCallPositionsReading (self: Str) (parameters: List(Str)) (names: List(Str)) (nodes: List(Expr)) (positions: List(Int)) =
+    match nodes with
+        | [] -> positions
+        | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
+            match shapeCallSpine(call)([]) with
+                | (ExprVar(callee), arguments) ->
+                    if callee == self && length(arguments) == length(parameters)
+                    then
+                        positions
+                        |> flowPositionsReading(arguments)(0)(names)(parameters)
+                        |> flowSelfCallPositionsReading(self)(parameters)(names)(rest)
+                    else flowSelfCallPositionsReading(self)(parameters)(names)(rest)(positions)
+                | _ -> flowSelfCallPositionsReading(self)(parameters)(names)(rest)(positions)
+        | _node :: rest -> flowSelfCallPositionsReading(self)(parameters)(names)(rest)(positions)
+
+let recursive flowAnyHolder (sources: List(Int)) (holders: List(Int)) =
+    match sources with
+        | [] -> false
+        | source :: rest -> flowContainsInt(source)(holders) || flowAnyHolder(rest)(holders)
+
+let recursive flowHolderPass (flow: List(List(Int))) (cuts: List(Bool)) (position: Int) (holders: List(Int)) =
+    match (flow, cuts) with
+        | (sources :: restFlow, cut :: restCuts) ->
+            flowHolderPass(restFlow)(restCuts)(position + 1)(if !cut && !flowContainsInt(position)(holders) && flowAnyHolder(sources)(holders)
+            then position :: holders
+            else holders)
+        | _ -> holders
+
+// The positions that may receive, whole or in part, what a holder position received, to a fixed
+// point, a cut position (one normalized onto the reference-counted heap) passing nothing on.
+let recursive flowHolderClosure (flow: List(List(Int))) (cuts: List(Bool)) (holders: List(Int)) =
+    (let next = flowHolderPass(flow)(cuts)(0)(holders)
+    in
+        if length(next) == length(holders)
+        then holders
+        else flowHolderClosure(flow)(cuts)(next))
+
+let recursive flowParameterNamesAt (positions: List(Int)) (parameters: List(Str)) (names: List(Str)) =
+    match positions with
+        | [] -> names
+        | position :: rest ->
+            names
+            |> flowAddNew(flowNameAt(position)(parameters))
+            |> flowParameterNamesAt(rest)(parameters)
+and flowNameAt (position: Int) (parameters: List(Str)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest ->
+            if position == 0
+            then [parameter]
+            else flowNameAt(position - 1)(rest)
+
+let recursive flowPositionsReadingNone (arguments: List(Expr)) (position: Int) (names: List(Str)) (parameters: List(Str)) =
+    match arguments with
+        | [] -> []
+        | argument :: rest ->
+            if flowReadsAny(names)(parameters)(argument)
+            then flowPositionsReadingNone(rest)(position + 1)(names)(parameters)
+            else position :: flowPositionsReadingNone(rest)(position + 1)(names)(parameters)
+
+// Stage 0's `SuccessorsNamingNoPartOf`: the positions whose successor expression names nothing
+// that can hold a value bound to the binders or a part of it: none of the names derived from the
+// binders, and none of the parameters a self call may hand such a name, whole or through another
+// parameter; `cuts` marks the parameters normalized onto the reference-counted heap, which hold
+// references of their own. Nothing is claimed without binders or without the body's flow.
+let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (body: Expr) (flow: Maybe(List(List(Int)))) (binders: List(Str)) (cuts: List(Bool)) (arguments: List(Expr)) =
+    match (binders, flow) with
+        | ([], _) -> []
+        | (_, None) -> []
+        | (_, Some(sources)) ->
+            match flowDerivedFrom(body)(binders)(parameters) with
+                | None -> []
+                | Some((nodes, named)) ->
+                    match []
+                    |> flowSelfCallPositionsReading(self)(parameters)(named)(nodes)
+                    |> flowHolderClosure(sources)(cuts) with
+                        | holders ->
+                            flowPositionsReadingNone(arguments)(0)(flowParameterNamesAt(holders)(parameters)(named))(parameters)
 
 // The source parameters an argument reads, by ordinal, added to the sources a position already has.
 let recursive flowArgumentSources (argument: Expr) (parameters: List(Str)) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =

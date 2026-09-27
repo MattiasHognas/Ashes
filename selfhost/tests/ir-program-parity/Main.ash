@@ -240,6 +240,9 @@ let recursive printEach (lines: List(Str)) =
 // tco_worklist_front_walked_or_refilled walks a front queue by its consumed tail and refills it
 // with the reversed back queue: the front is placed on the reference-counted heap, the refill taken
 // at the back edge and the walked tail retained as the pattern-bound successor.
+// tco_pair_released_past_unnamed_successor threads a helper's pair as a worklist's back queue and
+// tree beside a log of fresh strings: the log's type could hold a part of an earlier pair, but its
+// successor names nothing bound from the pair, so the earlier pair is released at the back edge.
 let fixtures =
     [
         "simple_arith",
@@ -319,7 +322,8 @@ let fixtures =
         "tco_predecessor_released_when_successors_are_its_parts",
         "tco_record_blocked_by_sibling_keeps_field_retain_pending",
         "back_edge_helper_calling_unreachable_helper_is_called",
-        "tco_worklist_front_walked_or_refilled"
+        "tco_worklist_front_walked_or_refilled",
+        "tco_pair_released_past_unnamed_successor"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

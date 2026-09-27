@@ -232,6 +232,10 @@ public sealed partial class Lowering
         // For each parameter ordinal, the parameters a self-call may pass there whole or in part;
         // null when the body's flow was not followed.
         public Dictionary<int, HashSet<int>>? SelfCallParameterFlow { get; set; }
+
+        // The loop's body, the innermost lambda body of the recursive binding, read by the
+        // back-edge rules that follow the names a self call passes.
+        public Expr? Body { get; set; }
         public Dictionary<int, TcoParamPlacementState> ParamPlacements { get; } = [];
 
         // Preserves the exact legacy enumeration order of the two now-collapsed per-slot membership

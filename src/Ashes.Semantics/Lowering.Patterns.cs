@@ -19,6 +19,7 @@ public sealed partial class Lowering
                 : LowerExpr(match.Value).AsPair();
 
         RecordBorrowedScrutinee(match, valueTemp, valueType);
+        NoteMatchScrutineeBinders(match, valueTemp);
         MarkDestructuredResourceScrutineeMoved(match.Value);
         var resultType = NewTypeVar();
         var resultSlot = NewLocal();

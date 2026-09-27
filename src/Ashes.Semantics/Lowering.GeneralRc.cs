@@ -133,7 +133,9 @@ public sealed partial class Lowering
     // Predecessor marks the slot holding what a call's owned slot held before this iteration stored
     // it again: an earlier iteration's value, left to a successor, that the loop still owns.
     // Branches names the match arms and if branches the slot was stored inside, outermost first.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null);
+    // Binders are the source names bound to the value or to its parts (the let it is bound by, the
+    // pattern bindings of a match on it), shared between the slot and its predecessor slot.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);
@@ -168,7 +170,7 @@ public sealed partial class Lowering
     }
 
     // Registers the owned slot just stored, marking it this iteration's when it sits in a loop.
-    private void RegisterGeneralRcOwnedSlot(int slot, TypeRef type)
+    private GeneralRcOwnedSlot RegisterGeneralRcOwnedSlot(int slot, TypeRef type)
     {
         TcoContext? loop = _tcoCtx ?? _generalRcBackEdgeLoop;
         int freshSlot = -1;
@@ -180,7 +182,52 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(freshSlot, oneTemp));
         }
 
-        _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(slot, type, loop, freshSlot, Branches: [.. _generalRcBranches]));
+        var owned = new GeneralRcOwnedSlot(slot, type, loop, freshSlot, Branches: [.. _generalRcBranches], Binders: new HashSet<string>(StringComparer.Ordinal));
+        _generalRcOwnedSlots.Add(owned);
+        return owned;
+    }
+
+    // Records the names a `let` or a match's patterns bind from a value just lowered, when that
+    // value is the read of an owned slot of the loop being lowered: the names through which the
+    // slot's value, or a part of it, can reach a successor.
+    private void NoteGeneralRcOwnedSlotBinders(int valueTemp, IEnumerable<string> names)
+    {
+        TcoContext? loop = _tcoCtx ?? _generalRcBackEdgeLoop;
+        if (loop is null)
+        {
+            return;
+        }
+
+        List<GeneralRcOwnedSlot> loopSlots = _generalRcOwnedSlots
+            .Where(owned => !owned.Predecessor && ReferenceEquals(owned.Loop, loop))
+            .ToList();
+        int slot = OwnedSlotReadInto(valueTemp, loopSlots, parts: false);
+        if (slot < 0)
+        {
+            return;
+        }
+
+        for (int i = loopSlots.Count - 1; i >= 0; i--)
+        {
+            if (loopSlots[i].Slot == slot)
+            {
+                loopSlots[i].Binders?.UnionWith(names);
+                return;
+            }
+        }
+    }
+
+    // The names every arm of a match binds from its value, noted as binders of the owned slot the
+    // value reads.
+    private void NoteMatchScrutineeBinders(Expr.Match match, int valueTemp)
+    {
+        HashSet<string> binders = new(StringComparer.Ordinal);
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            CollectPatternBinders(matchCase.Pattern, binders);
+        }
+
+        NoteGeneralRcOwnedSlotBinders(valueTemp, binders);
     }
 
     // Inside a loop, moves what the owned slot about to be stored still holds into a slot of its own:
@@ -201,11 +248,11 @@ public sealed partial class Lowering
         return predecessorSlot;
     }
 
-    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type)
+    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type, HashSet<string>? binders = null)
     {
         if (predecessorSlot >= 0)
         {
-            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches]));
+            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches], Binders: binders));
         }
     }
 
@@ -780,8 +827,8 @@ public sealed partial class Lowering
         }
 
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
-        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
-        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType));
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
+        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders);
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
         return resultTemp;
@@ -994,7 +1041,8 @@ public sealed partial class Lowering
     // An earlier iteration's value is released once no successor can still name it: each successor
     // is inline, a plain read of an owned slot (a result holding its own references), a parameter
     // normalized onto the reference-counted heap, a parameter only ever walked or handed on by every
-    // self call (it holds nothing newer than the loop's entry), or of a type that cannot hold its
+    // self call (it holds nothing newer than the loop's entry), an expression naming neither the
+    // value's binders nor a parameter that may hold a part of it, or of a type that cannot hold its
     // parts. A parameter handed on unchanged at this edge alone may be that very value, so it counts
     // only by its type.
     private void EmitGeneralRcPredecessorDrops(PendingTcoReset info, List<GeneralRcOwnedSlot> predecessors, bool successorsNormalized)
@@ -1003,17 +1051,68 @@ public sealed partial class Lowering
         foreach (GeneralRcOwnedSlot predecessor in predecessors)
         {
             List<TypeRef> parts = HeapPartTypes(predecessor.Type);
+            bool[] unnamed = SuccessorsNamingNoPartOf(info, predecessor, successorsNormalized);
             bool unreachable = Enumerable.Range(0, info.ArgTypes.Length).All(index =>
                 CanArenaReset(Prune(info.ArgTypes[index]))
                 || (index < argumentSlots.Length && argumentSlots[index] >= 0)
                 || SuccessorPredatesTheLoop(info, index)
                 || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
+                || (index < unnamed.Length && unnamed[index])
                 || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
             if (unreachable)
             {
                 EmitGeneralRcOwnedSlotDrops([predecessor]);
             }
         }
+    }
+
+    // Per successor, whether its expression names nothing that can hold the predecessor's value or
+    // a part of it: none of the names bound from the value (its binders and the names derived from
+    // them), and none of the parameters a self call may hand such a name, or a part of one, whole
+    // or through another parameter. A parameter normalized onto the reference-counted heap on this
+    // path holds references of its own, so nothing reaches a successor through it. Claimed only
+    // when the value was bound to names and the body's parameter flow was followed.
+    private bool[] SuccessorsNamingNoPartOf(PendingTcoReset info, GeneralRcOwnedSlot predecessor, bool successorsNormalized)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_PREDECESSORNAMES") is not null
+            || predecessor.Binders is not { Count: > 0 } binders
+            || info.Tco.SelfCallParameterFlow is not { } flow
+            || info.Tco.Body is not { } body)
+        {
+            return [];
+        }
+
+        List<string> parameters = info.Tco.ParamNames;
+        HashSet<string> named = CollectDerivedNames(body, binders, parameters);
+        HashSet<int> holders = CollectSelfCallPositionsMentioning(info.Tco.SelfName, parameters, body, named);
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach ((int position, HashSet<int> sources) in flow)
+            {
+                bool normalized = successorsNormalized
+                    && position < info.ParamPlacements.Length
+                    && info.ParamPlacements[position]?.Representation == TcoPlacementRepresentation.RuntimeRc;
+                if (!normalized && !holders.Contains(position) && sources.Any(holders.Contains))
+                {
+                    holders.Add(position);
+                    changed = true;
+                }
+            }
+        }
+
+        foreach (int holder in holders)
+        {
+            if (holder < parameters.Count)
+            {
+                named.Add(parameters[holder]);
+            }
+        }
+
+        return info.ArgExpressions
+            .Select(argument => !named.Any(name => FlowMentionsName(argument, name, parameters, 0)))
+            .ToArray();
     }
 
     // A successor that is the parameter's own consumed tail, where every self call passes that tail,

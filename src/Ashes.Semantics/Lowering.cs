@@ -3676,11 +3676,7 @@ public sealed partial class Lowering
             out IReadOnlyList<TraitConstraint> writtenRequirements);
         IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
             out bool needsLateTraitTypeHint);
-
-        int slot = NewLocal();
-        Emit(new IrInst.StoreLocal(slot, value.valueTemp));
-        RecordLocalBytesProvenance(slot, value.valueTemp);
-        RecordLocalDebugInfo(slot, let.Name, value.valueType);
+        int slot = StoreSequentialLetValue(let, value.valueTemp, value.valueType);
         if (affineArm is not null)
         {
             RecordAffineAppendLetResultSlot(slot, value.valueTemp);
@@ -3710,6 +3706,18 @@ public sealed partial class Lowering
             shadowed,
             RemoveCoroutineHelperMarker: false,
             SuppressArenaReclaim: affineArm is not null);
+    }
+
+    // Stores the bound value in the binding's slot, noting the name as a binder of the owned slot
+    // the value reads, if any.
+    private int StoreSequentialLetValue(Expr.Let let, int valueTemp, TypeRef valueType)
+    {
+        NoteGeneralRcOwnedSlotBinders(valueTemp, [let.Name]);
+        int slot = NewLocal();
+        Emit(new IrInst.StoreLocal(slot, valueTemp));
+        RecordLocalBytesProvenance(slot, valueTemp);
+        RecordLocalDebugInfo(slot, let.Name, valueType);
+        return slot;
     }
 
     private TypeScheme FinalizeLetTraitScheme(
@@ -6403,6 +6411,7 @@ public sealed partial class Lowering
         {
             _tcoCtx = CreateRecursiveTcoContext(letRecursive, tcoParamNames, paramCount);
             _tcoCtx.SelfCallParameterFlow = CollectSelfCallParameterFlow(letRecursive.Name, tcoParamNames, innermostBody);
+            _tcoCtx.Body = innermostBody;
             _tcoCtx.TmcShapePresent = hasTmcConsSelfCalls;
         }
         else

@@ -2826,6 +2826,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_worklist_pair_released_past_unrelated_log_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist threading a helper's pair as its back queue and tree, beside a log of fresh
+        // strings the loop conses onto. The log's type could hold a part of an earlier pair, but its
+        // successor names neither the pair's bindings nor a parameter that received them, so each
+        // earlier pair is released at the back edge instead of being kept for the log's sake.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildWorklistPairPastUnrelatedLogSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 20}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("worklist pair released past an unrelated log successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_variant_accumulator_grown_through_helper_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10388,6 +10413,56 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
+
+            Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistPairPastUnrelatedLogSuccessorProgram(int rounds)
+        => $$"""
+            type Seen =
+                | Leaf
+                | Node(Seen, Str, Seen)
+
+            let recursive insert (key: Str) (seen: Seen) =
+                match seen with
+                    | Leaf -> Node(Leaf, key, Leaf)
+                    | Node(left, current, right) -> Node(insert(key)(left), current, right)
+
+            let recursive countSeen : Seen -> Int =
+                given (seen: Seen) ->
+                    match seen with
+                        | Leaf -> 0
+                        | Node(left, _current, right) -> countSeen(left) + 1 + countSeen(right)
+
+            let recursive reverseAll (values: List(Str)) (acc: List(Str)) =
+                match values with
+                    | [] -> acc
+                    | value :: rest -> reverseAll(rest)(value :: acc)
+
+            let recursive countAll (values: List(Str)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let enqueue (key: Str) (back: List(Str)) (seen: Seen) = (key :: back, insert(key)(seen))
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (seen: Seen) (visited: List(Str)) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> countSeen(seen) + countAll(visited)(0)
+                            | _ -> solve(reverseAll(back)([]))([])(seen)(visited)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then countSeen(seen) + countAll(visited)(0)
+                        else
+                            match enqueue(key + "x")(back)(seen) with
+                                | (nextBack, nextSeen) -> solve(rest)(nextBack)(nextSeen)((key + "!") :: visited)(fuel - 1)
+
+            let recursive rounds (keys: List(Str)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)([])(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
             """;
