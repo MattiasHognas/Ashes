@@ -3537,6 +3537,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_self_call_tail_under_owned_record_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A non-tail self call's result, let-bound and consed under a record a helper returns owned:
+        // the call asks for an arena result, so the reference-counted cell copies an arena tail onto
+        // the reference-counted heap instead of pointing into memory its scope reclaims.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordSpineProgram(rounds, "let tail = step(rest)\n                    in make(block) :: tail"));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("self call tail under owned record head", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_closure_consing_its_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())

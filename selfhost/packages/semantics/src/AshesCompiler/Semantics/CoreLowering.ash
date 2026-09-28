@@ -18878,6 +18878,19 @@ let prepareRuntimeRcListTail (request: ConsumerRequest) (tailExpression: Expr) (
                 | _ -> (state, tailTemp)
         | _ -> (state, tailTemp)
 
+// Stage 0's `IsUnplacedLetBoundTail`: a recursive producer's result read from the let it was bound
+// to, with no owner here that the reference-counted cell could retain (a self call's result of the
+// binding's own, still unresolved type asks for an arena copy), takes a reference of its own when
+// the list is in the reference-counted region and a copy onto it when the list is in the arena,
+// which the enclosing scope reclaims under the cell.
+let referenceOrCopyUnplacedLetTail (applies: Bool) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
+    match (applies && canTestRepresentation && isRuntimeTemp(tailTemp)(state) == false, unspanArgument(tailExpression), argumentCopyPlanOf(tailType)(state)) with
+        | (true, ExprVar(_name), Some(plan)) ->
+            emitReferenceOrCopy(tailTemp)(state
+            |> entryCopyPlanOf(tailType)(plan)
+            |> emitArgumentCopyByCopy(tailTemp))(state)
+        | _ -> (state, tailTemp)
+
 // The tail of an escaping arena cell carries a runtime-managed owner out of the scope that owns
 // it exactly like an escaping tuple element, and is retained. A recursive producer result stored
 // in a runtime cell also needs its own reference when an existing local owns the tail.
@@ -18895,7 +18908,10 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
                             match retainAggregateChildTemp(tailExpression)(preparedTemp)(tailType)(preparedState) with
                                 | (retained, retainedTemp) ->
                                     retained
-                                    |> success(retainedTemp)(tailType)
+                                    |> referenceOrCopyUnplacedLetTail(managed && retainedTemp == preparedTemp)(tailExpression)(preparedTemp)(tailType)
+                                    |> (given (owned: (CoreLoweringState, Int)) ->
+                                        match owned with
+                                            | (ownedState, ownedTemp) -> success(ownedTemp)(tailType)(ownedState))
                                     |> retainLoopParameterChild(tailExpression)(preparedTemp)
                         else tail with state = preparedState, temp = preparedTemp
         | _ -> tail

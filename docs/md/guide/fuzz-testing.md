@@ -157,7 +157,7 @@ see says why.
 | Fix | Template | With the rule off |
 |---|---|---|
 | A spine cell's head retained out of a let binding leaves the binding its own reference | `leak.spine-head-bound-by-let` | `GRC_NO_TMCHEADRETAIN`: 5, 5 and 2 cells per round |
-| A call of the binding's own self reference never asks for an arena result | `leak.self-call-tail-under-owned-head` | `GRC_NO_SELFCALLOWNED`: segfault on every seed, plain and poisoned (`UAF`, exit 139) |
+| A reference-counted cell takes a reference to a recursive producer's let-bound result, or a copy of an arena one | `leak.self-call-tail-under-owned-head` | `GRC_NO_LETCALLTAIL`: segfault on every seed poisoned (`UAF`, exit 139), plain on one (the other two leak 1 cell per round) |
 | A parameter reaching the result only as a list cell's head is not normalized at entry | `leak.closure-conses-its-parameter` | `GRC_NO_CELLHEADPARAM`: 3, 4 and 5 cells per round |
 | 59fa6dd1 A loop releases an earlier iteration's result when no successor names it or a part of it | `leak.worklist-solve-records` (still open: 6, 14 and 22 cells per round with every rule on) | `GRC_NO_PREDECESSORNAMES`: 46, 75 and 154 cells per round |
 | dd18b233 A retain of an unannotated loop parameter in an exit tuple is withdrawn behind the copy-out | `leak.unannotated-loop-state-in-exit-tuple` | `GRC_NO_DEFERREDCOPYREAD`: 5, 4 and 7 cells per round |

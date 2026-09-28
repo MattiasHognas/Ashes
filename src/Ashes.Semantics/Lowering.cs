@@ -16269,7 +16269,12 @@ public sealed partial class Lowering
             tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp, request);
             if (request.RuntimeListTailBinding is null && IsRecursiveProducerTail(cons.Tail))
             {
+                int preparedTemp = tailTemp;
                 tailTemp = RetainRuntimeManagedAggregateChild(cons.Tail, tailTemp, tailType);
+                if (tailTemp == preparedTemp && IsUnplacedLetBoundTail(cons.Tail, tailTemp) && Prune(tailType) is TypeRef.TList tailList)
+                {
+                    tailTemp = EmitReferenceOrCopy(preparedTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(preparedTemp, tailList));
+                }
             }
         }
         else if (transfersChildren)
@@ -16548,6 +16553,17 @@ public sealed partial class Lowering
         }
         return resultTemp;
     }
+
+    // A recursive producer's result read from the let it was bound to, with no owner here that the
+    // cell could retain (a self call's result of the binding's own, still unresolved type asks for
+    // an arena copy): the reference-counted cell takes a reference of its own when the list is in
+    // the reference-counted region, and a copy onto it when the list is in the arena, which the
+    // enclosing scope reclaims under the cell. The binding keeps its own reference either way.
+    private bool IsUnplacedLetBoundTail(Expr tailExpression, int tailTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_LETCALLTAIL") is null
+            && CanTestRepresentation
+            && tailExpression is Expr.Var
+            && !IsRuntimeManagedResultTemp(tailTemp);
 
     private int PrepareRuntimeRcListTail(
         Expr tailExpression,
