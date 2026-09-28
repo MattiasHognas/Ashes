@@ -3119,6 +3119,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_phantom_result_variable_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns a record beside a `None` whose type variable none of its parameters
+        // name. Read as `Never`, the tuple is one of the contract's types: the callee returns it
+        // owned with the record moved in, and the caller releases it; read as unresolved, the
+        // tuple stayed in the arena and the record's owned slot leaked on every call.
+        int[] roundCounts = [4000, 32000, 256000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildPhantomResultVariableTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * rounds + 2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple result with a phantom type variable", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_arena_list_cell_with_parameter_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -11058,6 +11083,26 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + describe(go(n % 9)([])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildPhantomResultVariableTupleProgram(int rounds)
+        => $$"""
+            type State =
+                | counter: Int
+                | items: List(Int)
+
+            let build (n: Int) = State(counter = n, items = [n, n + 1, n + 2])
+
+            let make (n: Int) = (build(n), n + 1, None)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match make(n) with
+                        | (state, m, _h) -> rounds(n - 1)(total + state.counter + m)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

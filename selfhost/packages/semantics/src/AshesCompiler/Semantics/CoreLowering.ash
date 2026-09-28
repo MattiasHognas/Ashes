@@ -542,6 +542,12 @@ type CoreFunctionState =
     | pendingStackClosure: Bool
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
+    // The bindings the function being lowered was created among, the environment its scheme is
+    // generalized against, which its own bindings no longer hold (stage 0's `_enclosingScopesByLabel`).
+    | enclosingBindings: List(CoreBinding)
+    // The functions a `let` binds, with the curry stages each one returns (stage 0's
+    // `_letBoundFunctionLabels`).
+    | letBoundFunctionLabels: List(Str)
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
     | pendingSourceFunction: Maybe(SourceFunctionOrigin)
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
@@ -1137,6 +1143,22 @@ let statePendingOperatorDefaults (state: CoreLoweringState) =
 let withStatePendingOperatorDefaults value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with pendingOperatorDefaults = value))
+
+let stateEnclosingBindings (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.enclosingBindings)
+
+let withStateEnclosingBindings (value: List(CoreBinding)) (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with enclosingBindings = value))
+
+let stateLetBoundFunctionLabels (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.letBoundFunctionLabels)
+
+let withStateLetBoundFunctionLabels (value: List(Str)) (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with letBoundFunctionLabels = value))
 
 let stateSealedOperatorDefaults (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2174,6 +2196,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             pendingStackClosure = false,
             runtimeAdtRequested = false,
             pendingOperatorDefaults = [],
+            enclosingBindings = [],
+            letBoundFunctionLabels = [],
             sealedOperatorDefaults = [],
             pendingSourceFunction = None,
             activeFunctionOrigin = None,
@@ -5758,7 +5782,7 @@ let emitClosure label environmentTemp captureTotal stackAllocate state =
                                     emit(MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)(acceptsRuntimeManaged)(returnsGeneralRcOwned))(tempState)
                             in (closureState, closureTemp)
 
-let prepareLambdaBodyState parameter parameterType captures lambdaId origin state =
+let prepareLambdaBodyState parameter parameterType captures lambdaId origin (state: CoreLoweringState) =
     (let functionBindings =
         CoreBinding(
             name = parameter,
@@ -5772,6 +5796,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> enterFunctionOrigin(origin)
         |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
+        |> withStateEnclosingBindings(state.bindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> withStatePendingOperatorDefaults([])(current))
@@ -9075,7 +9100,124 @@ let emitIndependentResultCopy (copy: IndependentResultCopy) (sourceTemp: Int) (s
 // copied), and the function is recorded as handing its result over owned. The owned slots are
 // released behind a result they cannot reach: one made independent here, an inline value, or one
 // already reference-counted. Any other result may still point into them, and they are left.
-let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+// A type variable of a function's result that its scheme quantifies and none of its parameter
+// types name is a phantom: no value of its type can reach the function, so the `a` of a result's
+// `Maybe(a)` only ever reads `None`. The result's layout is decided with the variable read as
+// `Never`, at the function's return and at every call of it alike, so a result of the contract's
+// types but for the phantom is owned like any other instead of staying in the arena beside the
+// owned values it holds. A variable a pending trait goal names is not a phantom (a method of the
+// trait may produce a value of its type), and the reading is taken only where it makes the result
+// one of the contract's types (stage 0's `ResolvePhantomResultLayout`).
+let recursive substitutePhantomVariables (phantoms: List(Int)) (semanticType: SemanticType) =
+    match semanticType with
+        | SemVariable(id) ->
+            if containsInt(id)(phantoms)
+            then SemNever
+            else semanticType
+        | SemList(element) ->
+            element
+            |> substitutePhantomVariables(phantoms)
+            |> SemList
+        | SemTuple(elements) ->
+            elements
+            |> substitutePhantomVariablesIn(phantoms)
+            |> SemTuple
+        | SemNamed(symbolId, name, arguments) ->
+            arguments
+            |> substitutePhantomVariablesIn(phantoms)
+            |> SemNamed(symbolId)(name)
+        | other -> other
+and substitutePhantomVariablesIn (phantoms: List(Int)) (types: List(SemanticType)) =
+    match types with
+        | [] -> []
+        | head :: rest -> substitutePhantomVariables(phantoms)(head) :: substitutePhantomVariablesIn(phantoms)(rest)
+
+let recursive functionResultOf (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_argument, result, _row) -> functionResultOf(result)
+        | other -> other
+
+let recursive returnedStageOf (label: Str) (pairs: List((Str, Str))) =
+    match pairs with
+        | [] -> None
+        | (stage, next) :: rest ->
+            if stage == label
+            then Some(next)
+            else returnedStageOf(label)(rest)
+
+// Stage 0's `CurryChainReaches`: whether the function `label` is `current` or one of the curry
+// stages it returns.
+let recursive curryChainReaches (depth: Int) (current: Str) (label: Str) (pairs: List((Str, Str))) =
+    if current == label
+    then true
+    else
+        if depth == 0
+        then false
+        else
+            match returnedStageOf(current)(pairs) with
+                | Some(next) -> curryChainReaches(depth - 1)(next)(label)(pairs)
+                | None -> false
+
+// The bindings that hold a result's variables: every one in scope but the function's own self
+// reference, which names them itself.
+let recursive bindingsBesideSelf (label: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> []
+        | (CoreBinding { location = CoreSelf(selfLabel, _size) } as binding) :: rest ->
+            if state
+            |> stateFunctionReturnedClosureLabels
+            |> curryChainReaches(64)(selfLabel)(label)
+            then bindingsBesideSelf(label)(rest)(state)
+            else binding :: bindingsBesideSelf(label)(rest)(state)
+        | binding :: rest -> binding :: bindingsBesideSelf(label)(rest)(state)
+
+let contractLayoutOrSelf (substituted: SemanticType) (original: SemanticType) (state: CoreLoweringState) =
+    if isGeneralRcValueType(substituted)(state)
+    then substituted
+    else original
+
+// The variables of `variables` that `held` does not name.
+let recursive variablesNotHeld (held: List(Int)) (variables: List(Int)) =
+    match variables with
+        | [] -> []
+        | id :: rest ->
+            if containsInt(id)(held)
+            then variablesNotHeld(held)(rest)
+            else id :: variablesNotHeld(held)(rest)
+
+let recursive joinVariables (left: List(Int)) (right: List(Int)) =
+    match left with
+        | [] -> right
+        | id :: rest ->
+            if containsInt(id)(right)
+            then joinVariables(rest)(right)
+            else joinVariables(rest)(id :: right)
+
+// Only a function a `let` binds is generalized once lowered; any other (a lambda handed to a call, a
+// constructor taken as a function) is typed by the context it meets afterwards.
+let resolvePhantomResultLayout (label: Str) (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemFunction(_argument, _result, _row) -> semanticType
+            | _ ->
+                if !containsUnresolvedLayout(resolved)(state) || !containsLabel(label)(stateLetBoundFunctionLabels(state))
+                then semanticType
+                else
+                    match pendingOperatorScheme(state) :: resolvedBindingSchemes(bindingsBesideSelf(label)(state.bindings)(state))(state)
+                    |> freeEnvironmentVariables
+                    |> joinVariables(state
+                    |> resolvedBindingSchemes(bindingsBesideSelf(label)(stateEnclosingBindings(state))(state))
+                    |> freeEnvironmentVariables)
+                    |> (given (held: List(Int)) ->
+                        resolved
+                        |> freeTypeVariables
+                        |> variablesNotHeld(held)) with
+                        | [] -> semanticType
+                        | phantoms ->
+                            contractLayoutOrSelf(substitutePhantomVariables(phantoms)(resolved))(semanticType)(state))
+
+let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcFinishedResult(bodyTemp)(state)
     then (state, bodyTemp)
     else
@@ -9101,6 +9243,9 @@ let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp
                         match emitIndependentResultCopy(copy)(bodyTemp)(state) with
                             | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
                     | _ -> (state, bodyTemp)
+
+let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(resolvePhantomResultLayout(label)(bodyType)(state))(state)
 
 let tempIsProducedOwned (temp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(temp)(state) with
@@ -9418,6 +9563,21 @@ let beginCurryStage (label: Str) (body: Expr) (state: CoreLoweringState) =
         | ExprLambda(parameter, _inner, _annotation) -> withStateCurryStage(Some((label, parameter)))(state)
         | _ -> withStateCurryStage(None)(state)
 
+// Stage 0's `NoteLetBoundCurryStage`: a curry stage a let-bound function returns is let-bound too.
+let noteLetBoundCurryStage (stageLabel: Str) (label: Str) (state: CoreLoweringState) =
+    if state
+    |> stateLetBoundFunctionLabels
+    |> containsLabel(stageLabel)
+    then withStateLetBoundFunctionLabels(label :: stateLetBoundFunctionLabels(state))(state)
+    else state
+
+// Stage 0's `NoteLetBoundFunction`: a function whose origin is a source function is the value a
+// `let` binds.
+let noteLetBoundFunction (label: Str) (origin: IrFunctionOrigin) (state: CoreLoweringState) =
+    match origin.originKind with
+        | SourceFunctionOriginKind -> withStateLetBoundFunctionLabels(label :: stateLetBoundFunctionLabels(state))(state)
+        | _ -> state
+
 let linkCurryStage (label: Str) (parameter: Str) (state: CoreLoweringState) =
     match stateCurryStage(state) with
         | Some((stageLabel, stageParameter)) ->
@@ -9426,6 +9586,7 @@ let linkCurryStage (label: Str) (parameter: Str) (state: CoreLoweringState) =
                 state
                 |> withStateCurryStage(None)
                 |> withStateFunctionReturnedClosureLabels((stageLabel, label) :: stateFunctionReturnedClosureLabels(state))
+                |> noteLetBoundCurryStage(stageLabel)(label)
             else withStateCurryStage(None)(state)
         | None -> state
 
@@ -9689,7 +9850,8 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
             |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType)
             |> releaseNormalizedParameterBehindResult(label)(parameter)(body)(parameterType)(bodyType) with
                 | (loweredBody, bodyTemp) ->
-                    let bodyRuntimeManaged = finishedResultRuntimeManaged(bodyTemp)(bodyType)(loweredBody)
+                    let bodyRuntimeManaged =
+                        finishedResultRuntimeManaged(bodyTemp)(resolvePhantomResultLayout(label)(bodyType)(loweredBody))(loweredBody)
                     in
                         let returned =
                             match normalizeFunctionResult(label)(bodyTemp)(bodyType)(loweredBody) with
@@ -11154,14 +11316,16 @@ let withdrawCopiedLoopResultRetains (parameters: List((Int, Int))) (bodyTemp: In
 // follows finds the result finished and leaves it. The copy of an arena result borrows its
 // children ahead of the exit releases, so the retains of loop-parameter reads its cells were built
 // with are withdrawn (stage 0's `EmitGeneralRcOwnedFunctionResult`).
-let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (parameters: List((Int, Int))) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if isGeneralRcValueType(semanticType)(state) || resultSurvivesReset(semanticType)(state) && !isRuntimeTemp(bodyTemp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
-    then
-        match state
-        |> withdrawCopiedLoopResultRetains(parameters)(bodyTemp)(semanticType)
-        |> finishGeneralRcFunctionResultAs(producedOwned)(label)(bodyTemp)(semanticType) with
-            | (finished, resultTemp) -> (withGeneralRcFinishedResult(resultTemp)(finished), resultTemp)
-    else (state, bodyTemp)
+let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (parameters: List((Int, Int))) (bodyTemp: Int) (loopType: SemanticType) (state: CoreLoweringState) =
+    (let semanticType = resolvePhantomResultLayout(label)(loopType)(state)
+    in
+        if isGeneralRcValueType(semanticType)(state) || resultSurvivesReset(semanticType)(state) && !isRuntimeTemp(bodyTemp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
+        then
+            match state
+            |> withdrawCopiedLoopResultRetains(parameters)(bodyTemp)(semanticType)
+            |> finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(semanticType) with
+                | (finished, resultTemp) -> (withGeneralRcFinishedResult(resultTemp)(finished), resultTemp)
+        else (state, bodyTemp))
 
 let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match tcoEntryNormalizationEntries(candidates)(managedLists)(managedAdts)(managedStrs)(state) with
@@ -12367,6 +12531,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
             typedOuter
             |> linkCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
+            |> noteLetBoundFunction("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)
             |> lowerFunctionBodyResolvingCalls(body)(given (entered: CoreLoweringState) ->
                 entered
                 |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
@@ -14379,7 +14544,7 @@ let emitClosureReturnsGeneralRcOwnedFlag (closureTemp: Int) (state: CoreLowering
 // function returns it owned; and it is normalized otherwise, since a generic callee's result may
 // borrow its arguments' parts. The value is kept in an owned slot and handed on without a
 // runtime-managed fact.
-let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let lowerGeneralRcCallResultOwned (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     (let returnsOwned = calleeReturnsGeneralRcOwned(context)(state)
     in
         match if returnsOwned
@@ -14421,6 +14586,14 @@ let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSl
                                                 loaded
                                                 |> emit(LoadLocal(resultTemp)(ownedSlot))
                                                 |> success(resultTemp)(semanticType))
+
+// A result of the contract's types is owned by the caller once the call is lowered, so a request
+// for an arena result the call made while its type was unresolved (a phantom in it) is withdrawn
+// first, as stage 0's `LowerGeneralRcCallResult` does.
+let lowerGeneralRcCallResult (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> cancelArenaResultRequest(temp)
+    |> lowerGeneralRcCallResultOwned(context)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)
 
 let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCallStage) =
     match stage with
@@ -14658,6 +14831,127 @@ let leaveCallArgumentRetainFrame (outerRetains: List((Int, Int, SemanticType))) 
             in lowered with state = withCallArgumentRetainFrame(outerRetains)(outerCollecting)(released)
         | LoweredCoreValue { state = state } -> lowered with state = withCallArgumentRetainFrame(outerRetains)(outerCollecting)(state)
 
+// Stage 0's `ResolveCallPhantomResultLayout`: the layout of a call's result, with the phantoms of
+// the callee's scheme still unresolved at this call read as `Never`. The instantiated type is
+// walked beside the scheme's: a variable the call resolved keeps its resolution, a layout of its
+// own. A call of the function being lowered reads them the way the function's return will.
+let recursive substituteInstantiatedPhantoms (phantoms: List(Int)) (schemeType: SemanticType) (instantiated: SemanticType) =
+    match (schemeType, instantiated) with
+        | (SemVariable(id), SemVariable(_other)) ->
+            if containsInt(id)(phantoms)
+            then SemNever
+            else instantiated
+        | (SemList(schemeElement), SemList(element)) ->
+            element
+            |> substituteInstantiatedPhantoms(phantoms)(schemeElement)
+            |> SemList
+        | (SemTuple(schemeElements), SemTuple(elements)) ->
+            if coreListLength(schemeElements) == coreListLength(elements)
+            then
+                elements
+                |> substituteInstantiatedPhantomsIn(phantoms)(schemeElements)
+                |> SemTuple
+            else instantiated
+        | (SemNamed(schemeId, schemeName, schemeArguments), SemNamed(symbolId, name, arguments)) ->
+            if schemeId == symbolId && schemeName == name && coreListLength(schemeArguments) == coreListLength(arguments)
+            then
+                arguments
+                |> substituteInstantiatedPhantomsIn(phantoms)(schemeArguments)
+                |> SemNamed(symbolId)(name)
+            else instantiated
+        | _ -> instantiated
+and substituteInstantiatedPhantomsIn (phantoms: List(Int)) (schemeTypes: List(SemanticType)) (types: List(SemanticType)) =
+    match (schemeTypes, types) with
+        | (schemeHead :: schemeRest, head :: rest) -> substituteInstantiatedPhantoms(phantoms)(schemeHead)(head) :: substituteInstantiatedPhantomsIn(phantoms)(schemeRest)(rest)
+        | _ -> []
+
+// The scheme's result after `count` applications, beside the variables its parameters name.
+let recursive schemeResultAfter (count: Int) (body: SemanticType) (held: List(Int)) =
+    if count == 0
+    then Some((held, body))
+    else
+        match body with
+            | SemFunction(argument, result, _row) ->
+                held
+                |> joinVariables(freeTypeVariables(argument))
+                |> schemeResultAfter(count - 1)(result)
+            | _ -> None
+
+let recursive quantifiesVariable (id: Int) (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == id || quantifiesVariable(id)(rest)
+
+let recursive quantifiedOnly (quantified: List((Int, Str))) (variables: List(Int)) =
+    match variables with
+        | [] -> []
+        | id :: rest ->
+            if quantifiesVariable(id)(quantified)
+            then id :: quantifiedOnly(quantified)(rest)
+            else quantifiedOnly(quantified)(rest)
+
+let recursive typesVariables (types: List(SemanticType)) (held: List(Int)) =
+    match types with
+        | [] -> held
+        | semanticType :: rest ->
+            held
+            |> joinVariables(freeTypeVariables(semanticType))
+            |> typesVariables(rest)
+
+let recursive constraintVariables (constraints: List(TraitConstraint)) (held: List(Int)) =
+    match constraints with
+        | [] -> held
+        | TraitConstraint { typeArguments = arguments } :: rest ->
+            held
+            |> typesVariables(arguments)
+            |> constraintVariables(rest)
+
+let substituteSchemePhantoms (scheme: TypeScheme) (argumentCount: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match schemeResultAfter(argumentCount)(resolveType(state)(scheme.body))([]) with
+        | None -> semanticType
+        | Some((held, schemeResult)) ->
+            match schemeResult
+            |> freeTypeVariables
+            |> quantifiedOnly(scheme.quantified)
+            |> variablesNotHeld(constraintVariables(scheme.constraints)(held)) with
+                | [] -> semanticType
+                | phantoms ->
+                    contractLayoutOrSelf(semanticType
+                    |> resolveType(state)
+                    |> substituteInstantiatedPhantoms(phantoms)(schemeResult))(semanticType)(state)
+
+let resolveCallPhantomResultLayout (context: CoreCallContext) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemFunction(_argument, _result, _row) -> semanticType
+        | resolved ->
+            if !containsUnresolvedLayout(resolved)(state)
+            then semanticType
+            else
+                if context.selfCallee
+                then
+                    match context.calleeName with
+                        | Some(name) ->
+                            match lookupBinding(name)(state.bindings) with
+                                | Some(CoreBinding { location = CoreSelf(selfLabel, _size) }) -> resolvePhantomResultLayout(selfLabel)(semanticType)(state)
+                                | _ -> semanticType
+                        | None -> semanticType
+                else
+                    match context.calleeScheme with
+                        | Some(scheme) -> substituteSchemePhantoms(scheme)(context.argumentCount)(semanticType)(state)
+                        | None -> semanticType
+
+let withCallResultLayout (context: CoreCallContext) (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, semanticType = semanticType, error = None } as lowered } -> stage with lowered = (lowered with semanticType = resolveCallPhantomResultLayout(context)(semanticType)(state))
+        | _ -> stage
+
+// The call's result keeps the type the spine gave it once its window is closed and its arguments
+// released, as stage 0 returns the call's own type after deciding the result's layout.
+let withCallResultType (applied: CoreCallStage) (lowered: LoweredCoreValue) =
+    match (applied, lowered) with
+        | (CoreCallStage { lowered = LoweredCoreValue { semanticType = semanticType, error = None } }, LoweredCoreValue { error = None }) -> lowered with semanticType = semanticType
+        | _ -> lowered
+
 let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
     match state
     |> ensureResultRcEligibility
@@ -14666,14 +14960,17 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
             opened
             |> callContextOf(spine)(tailCall)(expected)
             |> (given (context: CoreCallContext) ->
-                match opened
-                |> lowerCallSpineStage(function)(argument)(context)(expected)(site)(1)(transfers)(lower)
-                |> markCallSpineResult(context) with
-                    | stage ->
-                        stage
-                        |> closeCallWindow(context)(cursorSlot)(endSlot)
-                        |> ownResultBeforeArgumentRelease(context)
-                        |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage)))
+                match opened |> lowerCallSpineStage(function)(argument)(context)(expected)(site)(1)(transfers)(lower) with
+                    | applied ->
+                        match applied
+                        |> withCallResultLayout(context)
+                        |> markCallSpineResult(context) with
+                            | stage ->
+                                stage
+                                |> closeCallWindow(context)(cursorSlot)(endSlot)
+                                |> ownResultBeforeArgumentRelease(context)
+                                |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage))
+                                |> withCallResultType(applied))
 
 // A call opens its own frame of argument retains; the enclosing call's is restored after it.
 let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =

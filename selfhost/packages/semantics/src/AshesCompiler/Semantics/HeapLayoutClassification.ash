@@ -112,6 +112,7 @@ let canArenaResetLayout (semanticType: SemanticType) =
         | SemFloat -> true
         | SemRune -> true
         | SemBool -> true
+        | SemNever -> true
         | _ -> false
 
 let resolveLayoutType (semanticType: SemanticType) (environment: TypeEnvironment) =

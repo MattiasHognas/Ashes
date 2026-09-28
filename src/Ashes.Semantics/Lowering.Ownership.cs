@@ -2414,7 +2414,7 @@ public sealed partial class Lowering
     private bool CanArenaReset(TypeRef type)
     {
         TypeRef pruned = EraseZeroCostTypeRepresentation(type);
-        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool;
+        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool or TypeRef.TNever;
     }
 
     /// <summary>

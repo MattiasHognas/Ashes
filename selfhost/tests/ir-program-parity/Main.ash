@@ -324,7 +324,8 @@ let fixtures =
         "back_edge_helper_calling_unreachable_helper_is_called",
         "tco_worklist_front_walked_or_refilled",
         "tco_pair_released_past_unnamed_successor",
-        "loop_record_cell_keeps_one_reference_to_parameter_field"
+        "loop_record_cell_keeps_one_reference_to_parameter_field",
+        "phantom_result_variable_owned_tuple_result"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

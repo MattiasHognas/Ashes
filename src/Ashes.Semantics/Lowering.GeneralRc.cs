@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -850,7 +851,8 @@ public sealed partial class Lowering
             Unify(bodyType, committed);
         }
 
-        TypeRef pruned = Prune(bodyType);
+        TypeRef pruned = ResolvePhantomResultLayout(label, bodyType);
+        _enclosingScopesByLabel.Remove(label);
         if (!GeneralRcEnabled)
         {
             return bodyTemp;
@@ -895,6 +897,271 @@ public sealed partial class Lowering
         }
 
         return resultTemp;
+    }
+
+    // A type variable of a function's result that is quantified by the function's scheme and occurs
+    // in none of its parameter types is a phantom: no value of its type can reach the function, so
+    // the `a` of a result's `Maybe(a)` only ever reads `None`. The result's layout is decided with
+    // the variable read as `Never`, at the function's return and at every call of it alike, so a
+    // result of the contract's types but for the phantom is owned like any other instead of staying
+    // in the arena beside the owned values it holds. A variable under a trait constraint is not a
+    // phantom: a method of the trait may produce a value of its type. An external function's types
+    // are the foreign interface's, which have no variables, so no external produces one either.
+    // The reading is taken only where it makes the result one of the contract's types; any other
+    // result keeps its variables, and the copy-out they choose.
+    private static bool PhantomResultRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_PHANTOM") is null;
+
+    // The scopes each function being lowered was created in, by label: the environment its scheme
+    // is generalized against, which its own scope no longer holds.
+    private readonly Dictionary<string, ImmutableSortedDictionary<string, Binding>[]> _enclosingScopesByLabel =
+        new(StringComparer.Ordinal);
+
+    // The functions a `let` binds, with the curry stages each one returns: their types are
+    // generalized once the binding is lowered, so a result variable no parameter and no binding in
+    // scope names is quantified there. Any other function (a lambda handed to a call, a constructor
+    // taken as a function) is typed by the context it meets afterwards, where such a variable may
+    // still be unified with a value's type.
+    private readonly HashSet<string> _letBoundFunctionLabels = new(StringComparer.Ordinal);
+
+    private void NoteLetBoundFunction(string label)
+    {
+        if (_activeFunctionOrigin is { Kind: IrFunctionOriginKind.SourceFunction })
+        {
+            _letBoundFunctionLabels.Add(label);
+        }
+    }
+
+    private void NoteLetBoundCurryStage(string stageLabel, string label)
+    {
+        if (_letBoundFunctionLabels.Contains(stageLabel))
+        {
+            _letBoundFunctionLabels.Add(label);
+        }
+    }
+
+    // Whether the function `label` is `selfLabel` or one of the curry stages it returns.
+    private bool CurryChainReaches(string selfLabel, string label)
+    {
+        string current = selfLabel;
+        for (int depth = 0; depth < 64; depth++)
+        {
+            if (string.Equals(current, label, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!_functionReturnedClosureLabels.TryGetValue(current, out string? next))
+            {
+                return false;
+            }
+
+            current = next;
+        }
+
+        return false;
+    }
+
+    // The layout of a function's own result at its return: the body's type with the phantoms read
+    // as `Never`, for a function a `let` binds. The function's scope and the scopes it was created
+    // in hold every variable that is not a phantom, but for the function's own binding (its self
+    // reference), which names the result's variables and is skipped.
+    private TypeRef ResolvePhantomResultLayout(string label, TypeRef resultType)
+    {
+        TypeRef pruned = Prune(resultType);
+        if (!PhantomResultRuleEnabled
+            || pruned is TypeRef.TFun
+            || !_letBoundFunctionLabels.Contains(label)
+            || !ContainsUnresolvedLayoutType(pruned, []))
+        {
+            return pruned;
+        }
+
+        HashSet<int> phantoms = [];
+        FtvType(pruned, phantoms);
+        if (phantoms.Count == 0)
+        {
+            return pruned;
+        }
+
+        phantoms.ExceptWith(VariablesHeldBesideFunction(label));
+        return phantoms.Count == 0 ? pruned : ContractLayoutOrSelf(SubstitutePhantomVariables(pruned, phantoms), pruned);
+    }
+
+    private HashSet<int> VariablesHeldBesideFunction(string label)
+    {
+        HashSet<int> held = [];
+        if (_ambientRow is not null)
+        {
+            FtvType(_ambientRow, held);
+        }
+
+        if (_scopes.Count > 0)
+        {
+            AddScopeFtvBesideSelf(_scopes.Peek(), label, held);
+        }
+
+        if (_enclosingScopesByLabel.TryGetValue(label, out ImmutableSortedDictionary<string, Binding>[]? enclosing))
+        {
+            foreach (ImmutableSortedDictionary<string, Binding> scope in enclosing)
+            {
+                AddScopeFtvBesideSelf(scope, label, held);
+            }
+        }
+
+        foreach (TraitConstraintScope scope in _traitConstraintScopes)
+        {
+            foreach (TraitConstraint constraint in scope.Constraints)
+            {
+                foreach (TypeRef argument in constraint.TypeArgs)
+                {
+                    FtvType(argument, held);
+                }
+            }
+        }
+
+        return held;
+    }
+
+    private TypeRef ContractLayoutOrSelf(TypeRef substituted, TypeRef original)
+        => IsGeneralRcValueType(substituted) ? substituted : original;
+
+    private void AddScopeFtvBesideSelf(ImmutableSortedDictionary<string, Binding> scope, string label, HashSet<int> held)
+    {
+        foreach (Binding binding in scope.Values)
+        {
+            if (binding is Binding.Self self && CurryChainReaches(self.FuncLabel, label))
+            {
+                continue;
+            }
+
+            AddBindingFtv(binding, held);
+        }
+    }
+
+    private void AddBindingFtv(Binding binding, HashSet<int> result)
+    {
+        switch (binding)
+        {
+            case Binding.Scheme scheme:
+                AddSchemeFtv(scheme.S, result);
+                break;
+            case Binding.EnvScheme environmentScheme:
+                AddSchemeFtv(environmentScheme.S, result);
+                break;
+            case Binding.Intrinsic intrinsic:
+                AddSchemeFtv(intrinsic.S, result);
+                break;
+            case Binding.PreludeValue preludeValue:
+                AddSchemeFtv(preludeValue.S, result);
+                break;
+            default:
+                AddBindingTypeFtv(binding, result);
+                break;
+        }
+    }
+
+    private TypeRef SubstitutePhantomVariables(TypeRef type, HashSet<int> phantoms)
+    {
+        TypeRef pruned = Prune(type);
+        return pruned switch
+        {
+            TypeRef.TVar variable when phantoms.Contains(variable.Id) => new TypeRef.TNever(),
+            TypeRef.TList list => new TypeRef.TList(SubstitutePhantomVariables(list.Element, phantoms)),
+            TypeRef.TTuple tuple => new TypeRef.TTuple(
+                tuple.Elements.Select(element => SubstitutePhantomVariables(element, phantoms)).ToList()),
+            TypeRef.TNamedType { TypeArgs.Count: > 0 } named => named with
+            {
+                TypeArgs = named.TypeArgs.Select(argument => SubstitutePhantomVariables(argument, phantoms)).ToList(),
+            },
+            _ => pruned,
+        };
+    }
+
+    // The layout of a call's result: the callee's scheme names the phantoms, and each one still
+    // unresolved at this call reads as `Never`. A call of a function being lowered (a self call)
+    // reads them the way the function's return will.
+    private TypeRef ResolveCallPhantomResultLayout(Expr rootExpr, int argumentCount, TypeRef callResultType)
+    {
+        if (!PhantomResultRuleEnabled || callResultType is TypeRef.TFun || !ContainsUnresolvedLayoutType(callResultType, []))
+        {
+            return callResultType;
+        }
+
+        Binding? binding = rootExpr switch
+        {
+            Expr.Var variable => Lookup(variable.Name),
+            Expr.QualifiedVar qualified => Lookup(
+                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            _ => null,
+        };
+        return binding switch
+        {
+            Binding.Scheme scheme => SubstituteSchemePhantoms(scheme.S, argumentCount, callResultType),
+            Binding.EnvScheme environmentScheme => SubstituteSchemePhantoms(environmentScheme.S, argumentCount, callResultType),
+            Binding.Self self => ResolvePhantomResultLayout(self.FuncLabel, callResultType),
+            _ => callResultType,
+        };
+    }
+
+    private TypeRef SubstituteSchemePhantoms(TypeScheme scheme, int argumentCount, TypeRef callResultType)
+    {
+        HashSet<int> held = [];
+        TypeRef cursor = Prune(scheme.Body);
+        for (int index = 0; index < argumentCount; index++)
+        {
+            if (cursor is not TypeRef.TFun function)
+            {
+                return callResultType;
+            }
+
+            FtvType(function.Arg, held);
+            cursor = Prune(function.Ret);
+        }
+
+        foreach (TraitConstraint constraint in scheme.Constraints)
+        {
+            foreach (TypeRef argument in constraint.TypeArgs)
+            {
+                FtvType(argument, held);
+            }
+        }
+
+        HashSet<int> phantoms = [];
+        FtvType(cursor, phantoms);
+        phantoms.IntersectWith(scheme.Quantified.Select(variable => variable.Id));
+        phantoms.ExceptWith(held);
+        return phantoms.Count == 0
+            ? callResultType
+            : ContractLayoutOrSelf(SubstituteInstantiatedPhantoms(cursor, callResultType, phantoms), callResultType);
+    }
+
+    // The instantiated type is walked beside the scheme's: where the scheme has a phantom and the
+    // instantiation still a variable, the variable reads as `Never`; a variable the call resolved
+    // keeps its resolution, which is a layout of its own.
+    private TypeRef SubstituteInstantiatedPhantoms(TypeRef schemeType, TypeRef instantiated, HashSet<int> phantoms)
+    {
+        TypeRef scheme = Prune(schemeType);
+        TypeRef pruned = Prune(instantiated);
+        return (scheme, pruned) switch
+        {
+            (TypeRef.TVar variable, TypeRef.TVar) when phantoms.Contains(variable.Id) => new TypeRef.TNever(),
+            (TypeRef.TList schemeList, TypeRef.TList list) =>
+                new TypeRef.TList(SubstituteInstantiatedPhantoms(schemeList.Element, list.Element, phantoms)),
+            (TypeRef.TTuple schemeTuple, TypeRef.TTuple tuple) when schemeTuple.Elements.Count == tuple.Elements.Count =>
+                new TypeRef.TTuple(tuple.Elements
+                    .Select((element, index) => SubstituteInstantiatedPhantoms(schemeTuple.Elements[index], element, phantoms))
+                    .ToList()),
+            (TypeRef.TNamedType schemeNamed, TypeRef.TNamedType named)
+                when ReferenceEquals(schemeNamed.Symbol, named.Symbol) && schemeNamed.TypeArgs.Count == named.TypeArgs.Count =>
+                named with
+                {
+                    TypeArgs = named.TypeArgs
+                        .Select((argument, index) => SubstituteInstantiatedPhantoms(schemeNamed.TypeArgs[index], argument, phantoms))
+                        .ToList(),
+                },
+            _ => pruned,
+        };
     }
 
     // A result the body produced owned (a fresh reference-counted value) is taken as it is when its

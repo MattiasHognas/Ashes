@@ -176,6 +176,7 @@ let canArenaResetType semType =
         | SemFloat -> true
         | SemBool -> true
         | SemRune -> true
+        | SemNever -> true
         | _ -> false
 
 let evaluateTcoRcEligibility facts semTypeOpt includeFreshClosures =

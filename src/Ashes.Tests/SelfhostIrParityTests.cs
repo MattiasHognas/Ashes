@@ -73,6 +73,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("tco_worklist_front_walked_or_refilled")]
     [Arguments("tco_pair_released_past_unnamed_successor")]
     [Arguments("loop_record_cell_keeps_one_reference_to_parameter_field")]
+    [Arguments("phantom_result_variable_owned_tuple_result")]
     [Arguments("aggregate_borrowing_owner_kept_by_callee")]
     [Arguments("reuse_path_rebuild_declines_copy")]
     [Arguments("rc_child_of_call_argument_kept_by_callee_result")]

@@ -7122,6 +7122,8 @@ public sealed partial class Lowering
         LambdaFunctionPlacementFrame placementFrame =
             LowerLambdaCoreEnterFunctionPlacement(lam, label, originSeed);
         LowerLambdaCoreFrame savedFrame = LowerLambdaCoreSaveFrame(label, captures);
+        _enclosingScopesByLabel[label] = savedFrame.Scopes;
+        NoteLetBoundFunction(label);
         int argSlot = LowerLambdaCoreResetFrame();
         RecordLocalDebugInfo(argSlot, lam.ParamName, paramTy);
         LowerLambdaCoreBuildScope(lam, label, paramTy, argSlot, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, savedFrame.Scopes);
@@ -12467,7 +12469,7 @@ public sealed partial class Lowering
     {
         UnifyExpectedType(currentType, request);
         RecordOrPinCallResultType(rootExpr, collectedArgs.Count, currentType);
-        var callResultType = Prune(currentType);
+        TypeRef callResultType = ResolveCallPhantomResultLayout(rootExpr, collectedArgs.Count, Prune(currentType));
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
         TrackStableReuseCallResult(currentTemp, stableReuseResult);
@@ -12475,7 +12477,7 @@ public sealed partial class Lowering
         runtimeManagedResult = ResolveUncopyableResultRuntimeManaged(rootExpr, collectedArgs.Count, callResultType, callResultCopyKind, runtimeManagedResult);
         bool generalRcResult = Environment.GetEnvironmentVariable("GRC_NO_CALL") is null && !stableReuseResult && IsGeneralRcValueType(callResultType);
         // Only a function known to normalize its result under the contract hands it over owned.
-        bool calleeReturnsOwned = generalRcResult && CalleeReturnsGeneralRcOwned(rootExpr, collectedArgs.Count, callResultType);
+        bool calleeReturnsOwned = generalRcResult && CalleeReturnsGeneralRcOwned(rootExpr, collectedArgs.Count, Prune(currentType));
         runtimeManagedResult = runtimeManagedResult && !generalRcResult;
         bool normalizesRuntimeManagedResult = !runtimeManagedResult
             && runtimeManagedResultFlagTemp >= 0

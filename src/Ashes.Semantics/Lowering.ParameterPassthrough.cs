@@ -211,6 +211,7 @@ public sealed partial class Lowering
         if (_curryStage is { } stage && ReferenceEquals(stage.Body, lambda))
         {
             _functionReturnedClosureLabels[stage.Label] = label;
+            NoteLetBoundCurryStage(stage.Label, label);
         }
 
         _curryStage = null;
