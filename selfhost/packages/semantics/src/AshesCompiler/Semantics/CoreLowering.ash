@@ -18879,17 +18879,30 @@ let requestsRuntimeList (request: ConsumerRequest) =
 
 // A list element or cons head retained when the cell will own it or carry it out of the scope
 // that owns it, stage 0's retain in `LowerRuntimeManagedListElement`.
+// A loop-parameter head the cons head normalization just copied into a fresh reference-counted value
+// for a runtime cell (a parameter read is never newly produced itself): the cell takes the copy
+// over as it is, the way stage 0's normalized head takes no duplicate. Retaining it as the
+// parameter read it came from would leave a temp that is not runtime-managed, and the cell built
+// on it in the arena.
+let headIsFreshRuntimeCopy (request: ConsumerRequest) (element: Expr) (temp: Int) (state: CoreLoweringState) =
+    requestsRuntimeList(request) && loopParameterReadSlot(element)(state) != None && (match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false)
+
 let retainListElement (request: ConsumerRequest) (transfers: Bool) (element: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) || transfers
-            then
-                match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
-                    | (retained, retainedTemp) ->
-                        retained
-                        |> success(retainedTemp)(semanticType)
-                        |> retainLoopParameterChild(element)(temp)
-            else lowered
+            if headIsFreshRuntimeCopy(request)(element)(temp)(state)
+            then lowered
+            else
+                if requestsRuntimeList(request) || transfers
+                then
+                    match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
+                        | (retained, retainedTemp) ->
+                            retained
+                            |> success(retainedTemp)(semanticType)
+                            |> retainLoopParameterChild(element)(temp)
+                else lowered
         | _ -> lowered
 
 // Stage 0's `NormalizePatternOwnerElement`: a string, or a list of scalars or strings, read out
