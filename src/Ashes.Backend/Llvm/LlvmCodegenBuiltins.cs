@@ -800,7 +800,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, loopBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, errorBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitStackStringObject(state, "readExact: unexpected EOF")), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "readExact: unexpected EOF")), resultSlot);
         LlvmApi.BuildBr(builder, doneBlock);
     }
 

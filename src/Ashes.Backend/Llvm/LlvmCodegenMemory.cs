@@ -4032,6 +4032,11 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(state.Target.Builder, continueBlock);
     }
 
+    // A string object in a stack slot of the current function, with no reference-count header in
+    // front of it: fit only for a value that never leaves the function and is never retained or
+    // released, a panic message or a comparison operand. A string a program can keep (an error
+    // message in a Result) is a heap string literal (EmitHeapStringLiteral), whose header holds the
+    // immortal count.
     private static LlvmValueHandle EmitStackStringObject(LlvmCodegenState state, string value)
     {
         byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);

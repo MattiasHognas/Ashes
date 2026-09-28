@@ -106,6 +106,41 @@ public sealed class LlvmIntegrationTests
         executable.Length.ShouldBeGreaterThan(256);
     }
 
+    [Test]
+    [Arguments(TargetIds.LinuxX64, "Process.spawn: fork failed")]
+    [Arguments(TargetIds.LinuxArm64, "Process.spawn: fork failed")]
+    [Arguments(TargetIds.WindowsX64, "Process.spawn: CreateProcessA failed")]
+    [Arguments(TargetIds.WindowsArm64, "Process.spawn: CreateProcessA failed")]
+    public void Error_messages_a_program_can_keep_carry_an_immortal_reference_count(string targetId, string spawnMessage)
+    {
+        // A Result's error message is a string the program may keep, return or store: it is a
+        // string literal whose header holds the immortal count, [count][unused][length][bytes],
+        // never a stack object with no header, which a retain or release would read before.
+        IrProgram program = LowerExpression("""
+            match Ashes.IO.readExact(1) with
+                | Ok(text) -> Ashes.IO.print(text)
+                | Error(message) ->
+                    match Ashes.IO.Process.spawn("x")([]) with
+                        | Ok(_) -> Ashes.IO.print(message)
+                        | Error(reason) -> Ashes.IO.print(message + reason)
+            """);
+
+        byte[] executable = BackendFactory.Create(targetId).Compile(program, BackendCompileOptions.Default);
+
+        ContainsImmortalStringLiteral(executable, "readExact: unexpected EOF").ShouldBeTrue();
+        ContainsImmortalStringLiteral(executable, spawnMessage).ShouldBeTrue();
+    }
+
+    private static bool ContainsImmortalStringLiteral(byte[] image, string value)
+    {
+        byte[] text = System.Text.Encoding.UTF8.GetBytes(value);
+        byte[] literal = new byte[24 + text.Length];
+        BitConverter.TryWriteBytes(literal.AsSpan(0, 8), 1UL << 62).ShouldBeTrue();
+        BitConverter.TryWriteBytes(literal.AsSpan(16, 8), (ulong)text.Length).ShouldBeTrue();
+        text.CopyTo(literal, 24);
+        return image.AsSpan().IndexOf(literal) >= 0;
+    }
+
     private static IrProgram LowerExpression(string source)
     {
         Diagnostics diagnostics = new();
