@@ -340,15 +340,40 @@ let parserNonNegativeDepth depth =
     then 0
     else depth
 
+// A token an expression can end with: a primary operand stage 0's call loop may apply.
+let parserEndsOperand kind =
+    match kind with
+        | Ident -> true
+        | Int -> true
+        | BigInt -> true
+        | Float -> true
+        | String -> true
+        | Rune -> true
+        | True -> true
+        | False -> true
+        | RParen -> true
+        | RBracket -> true
+        | RBrace -> true
+        | _ -> false
+
+// A token stage 0's call loop would take as the next argument of the operand before it: a
+// parenthesized argument list or a whitespace argument.
+let parserStartsArgument kind = kind == LParen || parserIsWhitespaceArgument(kind)
+
 // How many tokens the top-level value ahead spans: up to EOF, or up to the first token outside every
 // delimiter that starts a source line at or left of the declaration column, starts a binding pipe,
-// or starts a trailing expression after a completed call. An indented line after a completed call
-// `f(x)` starts the trailing expression only when its first token could begin a whitespace-
-// application argument; a continuation such as `then`, `else`, `in`, `with`, a pipe, or an operator
-// keeps the value going. `openers` holds, for each open parenthesis, whether the token before it can
-// be called, and `completesCall` whether the last token closed such a call.
+// or starts a trailing expression after a completed call. A value (not a type) ends at such a line
+// only where stage 0's call loop would otherwise take the line as the next argument of the operand
+// before it; after a token that needs an operand (`->`, `=`, an operator) the line continues the
+// value, and a line starting with an operator or keyword the expression parser stops at on its own.
+// An indented line after a completed call `f(x)` starts the trailing expression only when its first
+// token could begin a whitespace-application argument; a continuation such as `then`, `else`, `in`,
+// `with`, a pipe, or an operator keeps the value going. `openers` holds, for each open parenthesis, whether the token before it can
+// be called, and `completesCall` whether the last token closed such a call. `openLets` counts the
+// nested `let`s whose `in` is still ahead: as in stage 0, a nested let's own value is governed by
+// its explicit `in` rather than by layout, so no boundary falls inside it, and that `in` is its own.
 let parserTopLevelValueLength bytes declarationColumn splitBindingPipes (tokens: List(Token)) =
-    (let recursive measure (remaining: List(Token)) count previousCallable (openers: List(Bool)) completesCall parenthesisDepth bracketDepth braceDepth =
+    (let recursive measure (remaining: List(Token)) count previousCallable (openers: List(Bool)) completesCall parenthesisDepth bracketDepth braceDepth openLets endsOperand =
         match remaining with
             | [] -> count
             | token :: tail ->
@@ -356,7 +381,7 @@ let parserTopLevelValueLength bytes declarationColumn splitBindingPipes (tokens:
                 then count
                 else
                     let atBoundary =
-                        if count == 0
+                        if count == 0 || openLets > 0
                         then false
                         else
                             if parenthesisDepth != 0
@@ -383,7 +408,7 @@ let parserTopLevelValueLength bytes declarationColumn splitBindingPipes (tokens:
                                                         else completesCall && parserIsWhitespaceArgument(token.kind)
                                                 else
                                                     if column <= declarationColumn
-                                                    then true
+                                                    then endsOperand && parserStartsArgument(token.kind)
                                                     else completesCall && parserIsWhitespaceArgument(token.kind)
                     in
                         if atBoundary
@@ -407,15 +432,38 @@ let parserTopLevelValueLength bytes declarationColumn splitBindingPipes (tokens:
                                             | RBrace -> parserNonNegativeDepth(braceDepth - 1)
                                             | _ -> braceDepth
                                     in
-                                        match token.kind with
-                                            | LParen -> measure(tail)(count + 1)(false)(previousCallable :: openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
-                                            | RParen ->
-                                                match openers with
-                                                    | callable :: outer -> measure(tail)(count + 1)(true)(outer)(callable)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
-                                                    | [] -> measure(tail)(count + 1)(true)([])(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
-                                            | Ident -> measure(tail)(count + 1)(true)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
-                                            | _ -> measure(tail)(count + 1)(false)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
-    in measure(tokens)(0)(false)([])(false)(0)(0)(0))
+                                        let nextOpenLets =
+                                            match token.kind with
+                                                | Let -> openLets + 1
+                                                | LetBang -> openLets + 1
+                                                | LetQuestion -> openLets + 1
+                                                | In -> parserNonNegativeDepth(openLets - 1)
+                                                | _ -> openLets
+                                        in
+                                            match token.kind with
+                                                | LParen ->
+                                                    token.kind
+                                                    |> parserEndsOperand
+                                                    |> measure(tail)(count + 1)(false)(previousCallable :: openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
+                                                | RParen ->
+                                                    match openers with
+                                                        | callable :: outer ->
+                                                            token.kind
+                                                            |> parserEndsOperand
+                                                            |> measure(tail)(count + 1)(true)(outer)(callable)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
+                                                        | [] ->
+                                                            token.kind
+                                                            |> parserEndsOperand
+                                                            |> measure(tail)(count + 1)(true)([])(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
+                                                | Ident ->
+                                                    token.kind
+                                                    |> parserEndsOperand
+                                                    |> measure(tail)(count + 1)(true)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
+                                                | _ ->
+                                                    token.kind
+                                                    |> parserEndsOperand
+                                                    |> measure(tail)(count + 1)(false)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
+    in measure(tokens)(0)(false)([])(false)(0)(0)(0)(0)(false))
 
 // The first `count` tokens, then an EOF at the position of the token after them (`0` past the end):
 // the tokens a top-level value is parsed from on its own.
