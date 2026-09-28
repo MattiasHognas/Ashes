@@ -3297,6 +3297,20 @@ let testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo shipped unit =
     |> leakCheckLoopSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendLeakCheckOneRound")("selfhost_backend_leak_check_one_round_e2e"))
 
+// A loop whose map parameter is annotated with the shipped map type by its bare name, in a program
+// that reaches `Ashes.Collection.Map` through qualified references alone: the annotation names
+// the stitched map type, so the loop's result is the owned map every round releases.
+let shippedTypeAnnotationLoopSource rounds = "let recursive solve (seen: MapTree(Str, Bool)) (front: List(Str)) (fuel: Int) =\n    match front with\n        | [] -> seen\n        | key :: rest ->\n            if fuel <= 0\n            then seen\n            else solve(Ashes.Collection.Map.setStr(key)(false)(Ashes.Collection.Map.setStr(key)(true)(seen)))(rest)(fuel - 1)\n\nlet run (seed: Int) = Ashes.Collection.Map.size(solve(Ashes.Collection.Map.empty)([\"cinder\", \"ember\", \"smoke\", \"soot\"])(7)) + seed\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + run(8))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_shipped_type_annotation_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> shippedTypeAnnotationLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendShippedTypeAnnotationThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> shippedTypeAnnotationLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendShippedTypeAnnotationOneRound")("selfhost_backend_shipped_type_annotation_one_round_e2e"))
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -5632,6 +5646,7 @@ let run shipped =
     |> testRunStaticExecutableForShippedListLengthModule(shipped)
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
     |> testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
+    |> testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)
